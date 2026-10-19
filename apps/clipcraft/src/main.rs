@@ -2,6 +2,8 @@ use clipcraft_engine::{
     Command, CommandOutput, EngineError, LibraryScanResult, MediaEntry, MediaProbe,
     default_index_path, execute,
 };
+mod playback;
+
 use eframe::egui;
 use egui::{Align, Color32, FontId, Layout, RichText, Stroke, Vec2};
 use std::collections::HashSet;
@@ -49,6 +51,8 @@ struct ClipCraftApp {
     /// Incremented per worker so results from a replaced folder are ignored.
     probe_generation: u64,
     needs_probe: bool,
+    /// The clip open in the detail view, if any.
+    playback: Option<playback::Playback>,
     /// Probe results from this session not yet saved to the index.
     unsaved_probes: Vec<(String, MediaProbe)>,
     /// Paths already probed or tried this session, so unsupported files are not retried.
@@ -81,6 +85,7 @@ impl eframe::App for ClipCraftApp {
             self.start_probing(context);
         }
         self.poll_probes();
+        self.sync_playback(context);
         self.top_bar(context);
         self.navigation(context);
 
@@ -132,6 +137,22 @@ impl ClipCraftApp {
             Err(error) => app.error = Some(error.to_string()),
         }
         app
+    }
+
+    /// Keeps exactly one player alive for the clip open in the detail view.
+    fn sync_playback(&mut self, context: &egui::Context) {
+        match self.selected.as_ref().map(|entry| entry.path.as_str()) {
+            Some(path)
+                if self
+                    .playback
+                    .as_ref()
+                    .is_some_and(|open| open.path() == path) => {}
+            Some(path) => self.playback = Some(playback::Playback::start(path, context)),
+            None => self.playback = None,
+        }
+        if let Some(open) = self.playback.as_mut() {
+            open.poll(context);
+        }
     }
 
     /// Probes clips that have no saved facts on a worker thread so the window stays responsive.
@@ -481,28 +502,9 @@ impl ClipCraftApp {
         ui.add_space(12.0);
         ui.columns(2, |columns| {
             columns[0].vertical_centered(|ui| {
-                let (rect, _) = ui.allocate_exact_size(
-                    Vec2::new(ui.available_width(), 420.0),
-                    egui::Sense::hover(),
-                );
-                ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Local video preview is not implemented yet",
-                    FontId::proportional(16.0),
-                    MUTED,
-                );
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("▶").color(TEXT));
-                    let mut position = 0.0_f32;
-                    let _ = ui.add_enabled(
-                        false,
-                        egui::Slider::new(&mut position, 0.0_f32..=1.0_f32).show_value(false),
-                    );
-                    ui.label(RichText::new("--:--").color(MUTED));
-                });
+                if let Some(open) = self.playback.as_mut() {
+                    open.show(ui);
+                }
                 ui.add_space(10.0);
                 let _ = ui.add_enabled(false, egui::Button::new("Open in basic editor"));
             });
@@ -769,7 +771,7 @@ fn format_duration(probe: Option<&MediaProbe>) -> String {
     let Some(duration) = probe.and_then(|probe| probe.duration) else {
         return "--:--".to_owned();
     };
-    let total = duration.seconds().max(0.0).round() as u64;
+    let total = duration.seconds().max(0.0).floor() as u64;
     let (hours, minutes, seconds) = (total / 3600, total % 3600 / 60, total % 60);
     if hours > 0 {
         format!("{hours}:{minutes:02}:{seconds:02}")
@@ -1296,6 +1298,7 @@ mod tests {
         assert_eq!(format_duration(None), "--:--");
         assert_eq!(format_duration(Some(&probe_of(5_000))), "0:05");
         assert_eq!(format_duration(Some(&probe_of(125_400))), "2:05");
+        assert_eq!(format_duration(Some(&probe_of(7_500))), "0:07");
         assert_eq!(format_duration(Some(&probe_of(3_725_000))), "1:02:05");
         let mut unknown = probe_of(0);
         unknown.duration = None;

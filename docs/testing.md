@@ -12,7 +12,8 @@ license audit. Keep focused test commands in crate docs, but do not create a sec
 different pass criteria.
 
 Current focused checks include `cargo test -p clipcraft-time` for time math, `cargo test -p clipcraft-media` for container probing
-including byte-corruption and oversized-header cases, `cargo test -p clipcraft-frame` for queue limits,
+including byte-corruption and oversized-header cases, `cargo test -p clipcraft-player` for playback (it encodes its own H.264 clips in pure Rust, so it needs no
+external tools), `cargo test -p clipcraft-frame` for queue limits,
 `cargo test -p clipcraft-engine` for bounded local scans and command dispatch, and
 `cargo test -p clipcraft` for UI formatting helpers.
 

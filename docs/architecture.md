@@ -19,13 +19,16 @@ L6  clipcraft desktop app, clipcraft CLI, Rust xtask
 ```
 
 The implemented workspace currently contains `clipcraft-time` and `clipcraft-frame` (L0),
-`clipcraft-media` (L1), `clipcraft-engine` (L4), and the `clipcraft`, `clipcraft-cli`, and `xtask`
+`clipcraft-media` (L1), `clipcraft-player` (L2), `clipcraft-engine` (L4), and the `clipcraft`, `clipcraft-cli`, and `xtask`
 entry points (L6). Capture, media decoding, edit, and export crates remain planned. FilmCraft crates
 are consumed as pinned git dependencies ([ADR 0004](adr/0004-filmcraft-crates.md)).
 
 - **Time:** `clipcraft-time` re-exports FilmCraft's exact `Tick` and `FrameRate` and adds validated
   constructors and audio sample positions. Floating-point seconds are display-only.
 - **Frame queues:** `clipcraft-frame` provides item- and byte-bounded queues with observable drops.
+- **Playback:** `clipcraft-player` decodes a clip on a worker thread against a wall clock and hands
+  RGBA frames to the UI. It reads files in place, skips frames when decoding falls behind, applies
+  only the latest of several queued seeks, and reports a decoder panic as a failure.
 - **Media probing:** `clipcraft-media` reads MP4/MOV container headers (duration, size, frame rate,
   codecs) after bounding header sizes; it never decodes picture or sound data.
 - **Capture model:** portable source descriptors, capabilities, packets, timestamps, and failure

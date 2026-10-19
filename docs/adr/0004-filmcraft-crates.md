@@ -22,10 +22,13 @@ encoder, frame and audio buffer types, and OS hardware codec adapters.
    input plus audio `SampleRate` math. The older nanosecond clock is gone. Every common frame
    rate (including 23.976, 29.97 and 59.94) and sample rate (8 kHz to 192 kHz) is an exact whole
    number of ticks, so no rounding is needed.
-3. **Used now.** `filmcraft-time` and `filmcraft-isobmff`. `clipcraft-media` probes MP4 and MOV
-   files with the ISO BMFF demuxer after its own header-size check.
-4. **Planned.** `filmcraft-h264` and `filmcraft-h264enc` for decode and the software encoder;
-   `filmcraft-frame` for media buffers; `filmcraft-platform` for hardware codecs (see below).
+3. **Used now.** `filmcraft-time` and `filmcraft-isobmff`: `clipcraft-media` probes MP4 and MOV
+   files with the ISO BMFF demuxer after its own header-size check. `filmcraft-codecs` and
+   `filmcraft-media`: `clipcraft-player` opens clips through the streaming file reader and decodes
+   video (H.264 and the other codecs that hub registers) on a worker thread.
+   `filmcraft-h264enc` is a dev-dependency used to generate test clips without `ffmpeg`.
+4. **Planned.** `filmcraft-h264enc` as the software encoder; `filmcraft-platform` for hardware
+   codecs (see below); audio output from `filmcraft-codecs` audio decoding.
 5. **Not used.** `filmcraft-export`, `filmcraft-render`, `filmcraft-project` and the editor crates.
    They pull in most of FilmCraft and ClipCraft has no project format (ADR 0001).
 6. **Toolchain.** FilmCraft requires Rust 1.95, so the workspace `rust-version` is 1.95.

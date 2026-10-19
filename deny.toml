@@ -17,6 +17,24 @@ allow = [
     "Zlib",
 ]
 
+# MPL-2.0 is allowed only for these crates, used unmodified, because FilmCraft's media hub depends
+# on them for MP3/FLAC/Vorbis/AAC audio decoding (docs/adr/0005-mpl-symphonia-exception.md).
+exceptions = [
+    { allow = ["MPL-2.0"], crate = "symphonia" },
+    { allow = ["MPL-2.0"], crate = "symphonia-bundle-flac" },
+    { allow = ["MPL-2.0"], crate = "symphonia-bundle-mp3" },
+    { allow = ["MPL-2.0"], crate = "symphonia-codec-aac" },
+    { allow = ["MPL-2.0"], crate = "symphonia-codec-alac" },
+    { allow = ["MPL-2.0"], crate = "symphonia-codec-pcm" },
+    { allow = ["MPL-2.0"], crate = "symphonia-codec-vorbis" },
+    { allow = ["MPL-2.0"], crate = "symphonia-core" },
+    { allow = ["MPL-2.0"], crate = "symphonia-format-isomp4" },
+    { allow = ["MPL-2.0"], crate = "symphonia-format-ogg" },
+    { allow = ["MPL-2.0"], crate = "symphonia-format-riff" },
+    { allow = ["MPL-2.0"], crate = "symphonia-metadata" },
+    { allow = ["MPL-2.0"], crate = "symphonia-utils-xiph" },
+]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

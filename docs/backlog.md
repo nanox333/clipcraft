@@ -69,6 +69,8 @@ overflow, zero/invalid rates, and boundary trims; generated audio/video share a 
 
 **Status:** partial — clip duration, resolution, frame rate, and codec are probed from MP4/MOV headers on a background thread (`library.probe`, `library.store_probes`) and cached in the index until the file changes. `library.refresh` and `library.load` keep a versioned JSON index in the per-user data directory (atomic temp-file-and-rename saves, size and field caps, corrupt index rebuilt by rescan, missing files kept as offline entries, favorite/tags preserved across rescans). The desktop app restores and refreshes the last folder on launch. Thumbnails, UI to set favorites/tags, and multi-folder management remain future work.
 
+**Playback:** opening a clip in the desktop app plays its video (`clipcraft-player`): play/pause, a scrub bar, Space and arrow keys, and stop-on-last-frame. Video only: audio output is not implemented, and playback speed on large 4K or high-bitrate clips is unmeasured on reference hardware.
+
 **Requirements:** define versioned local metadata for library entries, tags/favorites, media path or
 fingerprint references, safe atomic index saves, missing-media behavior, and disposable caches.
 

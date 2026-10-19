@@ -1,0 +1,23 @@
+[package]
+name = "clipcraft-player"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Local clip playback: decodes video on a worker thread against a wall clock"
+
+[package.metadata.clipcraft]
+layer = 2
+
+[dependencies]
+clipcraft-time.workspace = true
+filmcraft-codecs.workspace = true
+filmcraft-media.workspace = true
+
+[dev-dependencies]
+filmcraft-h264enc.workspace = true
+filmcraft-isobmff.workspace = true
+
+[lints]
+workspace = true

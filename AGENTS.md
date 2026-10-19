@@ -17,7 +17,8 @@ this file contains the rules that must not be broken. If the two disagree, this 
 - Pure Rust still needs OS media APIs. Put platform bindings behind `clipcraft-platform` and a safe
   `Result`-returning interface. `unsafe` is forbidden everywhere else; any platform `unsafe` needs
   an ADR, a `// SAFETY:` comment for every block, and a tested fallback where practical.
-- Use permissively licensed dependencies. Implement formats from public specifications. FFmpeg and
+- Use permissively licensed dependencies. The one exception is MPL-2.0 for the unmodified `symphonia*`
+  audio decoders pulled in by FilmCraft ([ADR 0005](docs/adr/0005-mpl-symphonia-exception.md)). Implement formats from public specifications. FFmpeg and
   ffprobe may generate test fixtures or serve as external test oracles; never link, bundle, or ship
   them.
 

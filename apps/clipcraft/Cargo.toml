@@ -12,6 +12,7 @@ layer = 6
 
 [dependencies]
 clipcraft-engine.workspace = true
+clipcraft-player.workspace = true
 clipcraft-time.workspace = true
 eframe.workspace = true
 rfd.workspace = true
