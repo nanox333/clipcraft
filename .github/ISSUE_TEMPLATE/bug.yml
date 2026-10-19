@@ -1,0 +1,66 @@
+name: Bug report
+description: Report a reproducible failure or incorrect result.
+title: "[bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ClipCraft is Rust-only and local-only. Do not attach private gameplay or clip files without redaction and permission. Include evidence with private paths and IDs removed.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Expected and actual behavior
+      description: State the user impact and whether data loss, capture, editing, or export is affected.
+      placeholder: Expected … / Actual …
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Exact steps, including input type and settings. Provide a minimal synthetic case if possible.
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: task_id
+    attributes:
+      label: Milestone or gap ID
+      description: For example M2.3 or G1; use TBD only if triage must assign it.
+      placeholder: Mx.y / Gx / TBD
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: App commit/version, OS version, GPU/encoder, audio devices, and capture source type. Do not include serial numbers or private paths.
+    validations:
+      required: true
+  - type: textarea
+    id: limitations
+    attributes:
+      label: Known limitations and workaround
+      description: State unsupported cases, impact, and any workaround. Write “unknown” if not yet investigated.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Redacted logs, screenshot using non-private media, measurements, or test case.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria and regression test
+      description: Checkable behavior, including failure/recovery behavior; explain the regression test that will prevent recurrence.
+      placeholder: |
+        - [ ] …
+        - [ ] …
+    validations:
+      required: true

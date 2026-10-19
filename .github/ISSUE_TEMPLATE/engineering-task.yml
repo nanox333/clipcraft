@@ -1,0 +1,54 @@
+name: Engineering or documentation task
+description: Track bounded internal work required by a roadmap issue.
+title: "[task] "
+labels: [task]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tasks still follow the Rust-only, offline, no-server, safe-input, and dependency-layering constraints in `AGENTS.md`.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Required outcome
+      description: Name the user, developer, or reliability outcome this task enables.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and limitations
+      description: Affected crates/docs, non-goals, platforms, fallback, and known limits.
+    validations:
+      required: true
+  - type: input
+    id: work_id
+    attributes:
+      label: Stable work ID
+      description: Assign an ID during triage, for example M1.2.
+      placeholder: Mx.y / TBD
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checkable result with objective verification evidence.
+      placeholder: |
+        - [ ] …
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Tests and docs to update
+      description: Required checks, issue/gap/roadmap docs, and screenshots if UI is involved.
+    validations:
+      required: true
+  - type: input
+    id: dependency
+    attributes:
+      label: Parent issue and estimate
+      placeholder: "#issue or Gx; estimate / TBD"
+    validations:
+      required: true

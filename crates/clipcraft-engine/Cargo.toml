@@ -1,0 +1,17 @@
+[package]
+name = "clipcraft-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Local library commands and domain types for ClipCraft"
+
+[package.metadata.clipcraft]
+layer = 4
+
+[dependencies]
+serde.workspace = true
+
+[lints]
+workspace = true

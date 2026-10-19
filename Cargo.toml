@@ -1,0 +1,32 @@
+[workspace]
+members = [
+    "apps/clipcraft",
+    "apps/clipcraft-cli",
+    "crates/clipcraft-engine",
+    "crates/clipcraft-time",
+    "tools/xtask",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.88"
+publish = false
+
+[workspace.dependencies]
+clipcraft-engine = { path = "crates/clipcraft-engine" }
+clipcraft-time = { path = "crates/clipcraft-time" }
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rfd = { version = "0.17.2", default-features = true }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

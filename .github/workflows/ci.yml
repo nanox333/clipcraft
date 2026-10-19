@@ -1,0 +1,23 @@
+name: Rust quality gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Rust license checker
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Run canonical gate
+        run: cargo xtask ci

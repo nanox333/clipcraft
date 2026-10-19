@@ -1,0 +1,19 @@
+[package]
+name = "clipcraft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Native ClipCraft desktop application"
+
+[package.metadata.clipcraft]
+layer = 6
+
+[dependencies]
+clipcraft-engine.workspace = true
+eframe.workspace = true
+rfd.workspace = true
+
+[lints]
+workspace = true

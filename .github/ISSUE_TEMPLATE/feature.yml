@@ -1,0 +1,86 @@
+name: Feature or improvement
+description: Propose a user-visible behavior or bounded engineering improvement.
+title: "[feature] "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Product constraints: Rust-only first-party code; local/offline operation; no hosted service, server process, account, upload, sync, or share links. See `docs/issue-requirements.md`.
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem and impact
+      description: Who needs this and what can they not do today?
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Proposed behavior and user flow
+      description: Include defaults, keyboard behavior, empty states, and error states.
+    validations:
+      required: true
+  - type: textarea
+    id: limitations
+    attributes:
+      label: Scope, non-goals, and limitations
+      description: List platforms supported and unsupported, API/device constraints, fallbacks, and explicit non-goals. Confirm this does not require a server or non-Rust runtime.
+    validations:
+      required: true
+  - type: input
+    id: work_id
+    attributes:
+      label: Stable work ID or gap
+      description: Assign an ID during triage if unknown, for example M2.3 or G1.
+      placeholder: Mx.y / Gx / TBD
+    validations:
+      required: true
+  - type: dropdown
+    id: milestone
+    attributes:
+      label: Milestone
+      options:
+        - M0 — Product and architecture
+        - M1 — Local media and library foundation
+        - M2 — Windows capture and replay buffer
+        - M3 — Audio and clip finalization
+        - M4 — Lightweight editor and export
+        - M5 — Release hardening
+        - M6 — Additional local platforms
+        - Needs triage
+    validations:
+      required: true
+  - type: checkboxes
+    id: platforms
+    attributes:
+      label: Intended platforms
+      options:
+        - label: Windows
+        - label: macOS
+        - label: Linux
+        - label: Platform-independent
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable, testable statements. Include at least one success path and relevant failure/recovery cases.
+      placeholder: |
+        - [ ] …
+        - [ ] …
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Test and visual evidence
+      description: Name unit/property/integration/platform tests, benchmark setup, or UI screenshots needed to prove the criteria.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies, estimate, and risk
+      description: Blocking issues, affected crates, rough effort or TBD, and evidence still needed.
+    validations:
+      required: true
