@@ -32,6 +32,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), CliError> {
             write_json(&command_ids())
         }
         "library" => run_library(&arguments[1..]),
+        "recording" => run_recording(&arguments[1..]),
         _ => Err(CliError::Usage),
     }
 }
@@ -89,6 +90,17 @@ fn run_library(arguments: &[OsString]) -> Result<(), CliError> {
     }
 }
 
+fn run_recording(arguments: &[OsString]) -> Result<(), CliError> {
+    if arguments.len() != 1 || arguments[0].to_str() != Some("settings") {
+        return Err(CliError::Usage);
+    }
+    let path = clipcraft_engine::default_settings_path().ok_or(CliError::Usage)?;
+    match execute(Command::LoadRecordingSettings { path }).map_err(CliError::Engine)? {
+        CommandOutput::RecordingSettings(settings) => write_json(&settings),
+        _ => Err(CliError::UnexpectedOutput),
+    }
+}
+
 fn print_help() -> Result<(), CliError> {
     let help = concat!(
         "ClipCraft local tools\n",
@@ -100,6 +112,7 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli library reveal <file>\n",
         "  clipcraft-cli library probe <file>\n",
         "  clipcraft-cli library thumbnail <file>\n",
+        "  clipcraft-cli recording settings\n",
         "  clipcraft-cli version\n",
         "\n",
         "All commands run locally. A library scan is non-recursive and bounded.\n",

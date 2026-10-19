@@ -1,5 +1,6 @@
 use clipcraft_engine::{
-    Command, CommandOutput, EngineError, LibraryScanResult, MediaEntry, MediaProbe,
+    CaptureSource, Command, CommandOutput, Container, EngineError, FRAME_RATES, Framing, HEIGHTS,
+    LibraryScanResult, MediaEntry, MediaProbe, OutputShape, REPLAY_SECONDS, RecordingSettings,
     default_index_path, default_thumbnail_dir, execute,
 };
 mod kit;
@@ -70,6 +71,10 @@ struct ClipCraftApp {
     unsaved_probes: Vec<(String, MediaProbe)>,
     /// Paths already probed or tried this session, so unsupported files are not retried.
     probe_attempted: HashSet<String>,
+    /// How clips are recorded: container, source, and framing.
+    recording: RecordingSettings,
+    /// Where the recording settings are saved; `None` keeps them in memory only.
+    settings_path: Option<PathBuf>,
 }
 
 /// A thumbnail the worker finished: the clip and its cached JPEG.
@@ -168,11 +173,22 @@ impl ClipCraftApp {
     }
 
     fn restored_from(index_path: Option<PathBuf>) -> Self {
+        let settings_path = index_path
+            .as_ref()
+            .map(|path| path.with_file_name("recording-settings.json"));
         let mut app = Self {
+            settings_path,
             index_path,
             thumbnail_dir: default_thumbnail_dir(),
             ..Self::default()
         };
+        if let Some(path) = app.settings_path.clone() {
+            match execute(Command::LoadRecordingSettings { path }) {
+                Ok(CommandOutput::RecordingSettings(settings)) => app.recording = settings,
+                Ok(_) => {}
+                Err(error) => app.error = Some(error.to_string()),
+            }
+        }
         let Some(index_path) = app.index_path.clone() else {
             return app;
         };
@@ -873,6 +889,8 @@ impl ClipCraftApp {
                 self.choose_library_folder();
             }
 
+            self.recording_settings(ui);
+
             settings_header(
                 ui,
                 Icon::Speaker,
@@ -904,6 +922,183 @@ impl ClipCraftApp {
             });
             });
         });
+    }
+
+    /// The Recording section of Settings. Changes are saved as they are made.
+    fn recording_settings(&mut self, ui: &mut egui::Ui) {
+        settings_header(
+            ui,
+            Icon::Camera,
+            "Recording",
+            "How clips are saved and what they show. Capture itself arrives in a later release.",
+        );
+        let before = self.recording.clone();
+        let mut settings = before.clone();
+        setting_panel(ui, "Format", |ui| {
+            ui.label(RichText::new("The file type clips are saved as.").color(MUTED));
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                for container in Container::ALL {
+                    let reason = container.unavailable_reason();
+                    let hint = reason.map_or_else(|| container.detail().to_owned(), str::to_owned);
+                    if choice(
+                        ui,
+                        container.label(),
+                        settings.container == container,
+                        reason.is_none(),
+                        &hint,
+                    ) {
+                        settings.container = container;
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(settings.container.detail())
+                    .color(FAINT)
+                    .size(12.5),
+            );
+        });
+        setting_panel(ui, "Capture", |ui| {
+            ui.label(RichText::new("What to record.").color(MUTED));
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                for source in CaptureSource::ALL {
+                    if choice(
+                        ui,
+                        source.label(),
+                        settings.source == source,
+                        true,
+                        source.detail(),
+                    ) {
+                        settings.source = source;
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(settings.source.detail())
+                    .color(FAINT)
+                    .size(12.5),
+            );
+        });
+        setting_panel(ui, "Picture shape", |ui| {
+            ui.label(
+                RichText::new("Playing in 4:3? Keep it, or fit it to a widescreen clip.")
+                    .color(MUTED),
+            );
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                for shape in OutputShape::ALL {
+                    if choice(
+                        ui,
+                        shape.label(),
+                        settings.shape == shape,
+                        true,
+                        shape.label(),
+                    ) {
+                        settings.shape = shape;
+                    }
+                }
+            });
+            if settings.shape != OutputShape::Source {
+                ui.add_space(10.0);
+                ui.label(RichText::new("Fit the game to the frame").color(MUTED));
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    for framing in Framing::ALL.into_iter().filter(|f| *f != Framing::Original) {
+                        if choice(
+                            ui,
+                            framing.label(),
+                            settings.framing == framing,
+                            true,
+                            framing.detail(),
+                        ) {
+                            settings.framing = framing;
+                        }
+                    }
+                });
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(settings.framing.detail())
+                        .color(FAINT)
+                        .size(12.5),
+                );
+            }
+        });
+        setting_panel(ui, "Quality", |ui| {
+            ui.label(RichText::new("Resolution").color(MUTED));
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                for height in HEIGHTS {
+                    if choice(
+                        ui,
+                        &format!("{height}p"),
+                        settings.height == height,
+                        true,
+                        "Clip height",
+                    ) {
+                        settings.height = height;
+                    }
+                }
+            });
+            ui.add_space(10.0);
+            ui.label(RichText::new("Frame rate").color(MUTED));
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                for rate in FRAME_RATES {
+                    if choice(
+                        ui,
+                        &format!("{rate} fps"),
+                        settings.frames_per_second == rate,
+                        true,
+                        "Frames per second",
+                    ) {
+                        settings.frames_per_second = rate;
+                    }
+                }
+            });
+            ui.add_space(10.0);
+            ui.label(RichText::new("Instant replay keeps the last").color(MUTED));
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                for seconds in REPLAY_SECONDS {
+                    let label = if seconds >= 60 {
+                        format!("{} min", seconds / 60)
+                    } else {
+                        format!("{seconds} sec")
+                    };
+                    if choice(
+                        ui,
+                        &label,
+                        settings.replay_seconds == seconds,
+                        true,
+                        "Replay length",
+                    ) {
+                        settings.replay_seconds = seconds;
+                    }
+                }
+            });
+        });
+        let settings = settings.sanitized();
+        if settings != before {
+            self.recording = settings;
+            self.save_recording_settings();
+        }
+    }
+
+    fn save_recording_settings(&mut self) {
+        let Some(path) = self.settings_path.clone() else {
+            return;
+        };
+        match execute(Command::SaveRecordingSettings {
+            path,
+            settings: self.recording.clone(),
+        }) {
+            Ok(CommandOutput::RecordingSettings(stored)) => self.recording = stored,
+            Ok(_) => {}
+            Err(error) => self.error = Some(error.to_string()),
+        }
     }
 
     fn scan_library(&mut self) {
@@ -1049,6 +1244,51 @@ fn empty_panel(
         }
     });
     clicked
+}
+
+/// One option of a row of choices. True when clicked. A disabled option explains itself on hover.
+fn choice(ui: &mut egui::Ui, label: &str, selected: bool, enabled: bool, hint: &str) -> bool {
+    let font = egui::FontId::new(13.5, kit::medium());
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font, Color32::PLACEHOLDER);
+    let size = Vec2::new(galley.size().x + 28.0, 34.0);
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(size, sense);
+    let (fill, stroke, text) = if !enabled {
+        (Color32::from_rgb(20, 20, 23), BORDER, FAINT)
+    } else if selected {
+        (
+            Color32::from_rgba_unmultiplied(190, 255, 43, 30),
+            LIME,
+            LIME,
+        )
+    } else if response.hovered() {
+        (Color32::from_rgb(34, 34, 40), BORDER, TEXT)
+    } else {
+        (Color32::from_rgb(26, 26, 30), BORDER, TEXT)
+    };
+    ui.painter().rect_filled(rect, 10.0, fill);
+    ui.painter().rect_stroke(
+        rect,
+        10.0,
+        Stroke::new(1.0_f32, stroke),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().galley(
+        egui::pos2(
+            rect.center().x - galley.size().x / 2.0,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        text,
+    );
+    let clicked = response.clone().on_hover_text(hint).clicked();
+    clicked && enabled && !selected
 }
 
 fn settings_header(ui: &mut egui::Ui, icon: Icon, title: &str, description: &str) {
@@ -1534,8 +1774,8 @@ fn civil_from_days(unix_days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClipCraftApp, EngineError, MediaProbe, Page, ProbeMessage, format_date, format_duration,
-        kit, probe_paths, visible_entries,
+        ClipCraftApp, Container, EngineError, Framing, MediaProbe, OutputShape, Page, ProbeMessage,
+        RecordingSettings, format_date, format_duration, kit, probe_paths, visible_entries,
     };
     use clipcraft_engine::{LibraryScanResult, MediaEntry};
     use eframe::egui;
@@ -1566,6 +1806,22 @@ mod tests {
         ));
         fs::create_dir(&directory).expect("create temporary test directory");
         directory
+    }
+
+    #[test]
+    fn recording_choices_are_saved_and_restored_on_the_next_launch() {
+        let directory = temporary_directory();
+        let index_path = directory.join("library-index.json");
+        let mut app = ClipCraftApp::restored_from(Some(index_path.clone()));
+        assert_eq!(app.recording, RecordingSettings::default());
+        app.recording.container = Container::Mkv;
+        app.recording.shape = OutputShape::Wide16x9;
+        app.recording.framing = Framing::Letterbox;
+        app.save_recording_settings();
+        let relaunched = ClipCraftApp::restored_from(Some(index_path));
+        assert_eq!(relaunched.recording.container, Container::Mkv);
+        assert_eq!(relaunched.recording.framing, Framing::Letterbox);
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]

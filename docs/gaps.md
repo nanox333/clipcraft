@@ -19,3 +19,9 @@ evidence. Update this file whenever a gap's status, workaround, or estimate chan
 G0 tracks remaining workspace and gate work. The capture capability spike in G1 is the next blocker
 for recording features. Do not mark a gap done because code compiles; attach evidence for its user
 workflow and required failure cases. Do not publish percentages until a repeatable scorecard exists.
+
+## Recording output options
+
+- **Done:** recording preferences (container MP4/MKV, game or desktop source, 16:9 / 4:3 / source shape with stretch, black bars, or crop, resolution, frame rate, replay length) are modelled, validated, saved locally (`recording.load_settings` / `recording.save_settings`, `clipcraft-cli recording settings`), and shown in Settings. The reframe geometry is unit-tested.
+- **WebM unavailable:** FilmCraft has VP9 and Opus decoders only. Pure-Rust encoders exist on crates.io (`rusty_vp9`, `opus-pure`, `rav1e`) but are young, carry many `unsafe` blocks, and have not been vetted. WebM stays greyed out until one passes a spike (decode check with ffprobe/ffmpeg) and a licence and `unsafe` review.
+- **Not done:** capture itself (full-screen game and desktop sources), and exporting a clip with the chosen format and framing. Neither can be verified in a headless container.

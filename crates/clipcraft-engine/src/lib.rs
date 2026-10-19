@@ -9,8 +9,14 @@ use std::process::Stdio;
 use std::time::UNIX_EPOCH;
 
 mod index;
+mod recording;
 
 pub use clipcraft_media::MediaProbe;
+
+pub use recording::{
+    CaptureSource, Container, FRAME_RATES, Framing, HEIGHTS, OutputShape, PixelRect,
+    REPLAY_SECONDS, RecordingSettings, Reframe, default_settings_path, reframe,
+};
 
 pub use index::{
     INDEX_VERSION, MAX_ENTRIES_PER_FOLDER, MAX_INDEX_BYTES, MAX_INDEXED_FOLDERS,
@@ -43,6 +49,13 @@ pub enum Command {
     /// Reads one clip's container headers for duration, size, frame rate, and codecs.
     ProbeClip { path: PathBuf },
     /// Saves probe results for clips of a remembered folder into the local index.
+    /// Reads the saved recording settings, or the defaults when none are saved.
+    LoadRecordingSettings { path: PathBuf },
+    /// Validates and saves recording settings.
+    SaveRecordingSettings {
+        path: PathBuf,
+        settings: RecordingSettings,
+    },
     StoreProbes {
         index_path: PathBuf,
         directory: String,
@@ -64,6 +77,8 @@ impl Command {
             Self::ProbeClip { .. } => "library.probe",
             Self::EnsureThumbnail { .. } => "library.thumbnail",
             Self::StoreProbes { .. } => "library.store_probes",
+            Self::LoadRecordingSettings { .. } => "recording.load_settings",
+            Self::SaveRecordingSettings { .. } => "recording.save_settings",
         }
     }
 }
@@ -129,6 +144,8 @@ pub enum CommandOutput {
     ClipProbe(MediaProbe),
     /// A clip's thumbnail in the cache.
     Thumbnail(ThumbnailFile),
+    /// Recording settings as stored.
+    RecordingSettings(RecordingSettings),
 }
 
 /// Actionable errors returned by engine commands.
@@ -164,6 +181,12 @@ pub enum EngineError {
     ThumbnailFailed,
     /// The thumbnail cache folder could not be written.
     ThumbnailCacheFailed,
+    /// The saved recording settings could not be read.
+    SettingsUnavailable,
+    /// The saved recording settings are damaged or from a newer version.
+    SettingsInvalid,
+    /// The recording settings could not be saved.
+    SettingsSaveFailed,
 }
 
 impl fmt::Display for EngineError {
@@ -194,6 +217,15 @@ impl fmt::Display for EngineError {
             }
             Self::ThumbnailCacheFailed => {
                 formatter.write_str("The thumbnail cache could not be written. Check free disk space.")
+            }
+            Self::SettingsUnavailable => {
+                formatter.write_str("The recording settings could not be read.")
+            }
+            Self::SettingsInvalid => formatter.write_str(
+                "The saved recording settings are damaged or from a newer ClipCraft. Defaults are in use.",
+            ),
+            Self::SettingsSaveFailed => {
+                formatter.write_str("The recording settings could not be saved. Check free disk space.")
             }
             Self::IndexMissing => formatter.write_str("No saved library was found."),
             Self::IndexUnavailable => formatter.write_str(
@@ -238,6 +270,12 @@ pub fn execute(command: Command) -> Result<CommandOutput, EngineError> {
                     clipcraft_media::ProbeError::TooLarge => EngineError::MediaTooLarge,
                     clipcraft_media::ProbeError::Unsupported => EngineError::MediaUnsupported,
                 })
+        }
+        Command::LoadRecordingSettings { path } => {
+            recording::load_settings(&path).map(CommandOutput::RecordingSettings)
+        }
+        Command::SaveRecordingSettings { path, settings } => {
+            recording::save_settings(&path, settings).map(CommandOutput::RecordingSettings)
         }
         Command::EnsureThumbnail { path, cache_dir } => {
             if path.as_os_str().is_empty() {
@@ -452,6 +490,8 @@ pub const fn command_ids() -> &'static [&'static str] {
         "library.probe",
         "library.thumbnail",
         "library.store_probes",
+        "recording.load_settings",
+        "recording.save_settings",
     ]
 }
 
