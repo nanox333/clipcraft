@@ -289,6 +289,7 @@ dependencies = [
  "clipcraft-player",
  "clipcraft-time",
  "eframe",
+ "image",
  "rfd",
 ]
 
@@ -306,6 +307,7 @@ name = "clipcraft-engine"
 version = "0.1.0"
 dependencies = [
  "clipcraft-media",
+ "clipcraft-player",
  "clipcraft-time",
  "serde",
  "serde_json",
@@ -333,6 +335,7 @@ dependencies = [
  "filmcraft-h264enc",
  "filmcraft-isobmff",
  "filmcraft-media",
+ "image",
 ]
 
 [[package]]

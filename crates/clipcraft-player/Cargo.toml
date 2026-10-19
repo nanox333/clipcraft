@@ -12,6 +12,7 @@ layer = 2
 
 [dependencies]
 clipcraft-time.workspace = true
+image.workspace = true
 filmcraft-codecs.workspace = true
 filmcraft-media.workspace = true
 

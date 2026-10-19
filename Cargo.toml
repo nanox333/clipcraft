@@ -26,6 +26,7 @@ clipcraft-media = { path = "crates/clipcraft-media" }
 clipcraft-player = { path = "crates/clipcraft-player" }
 # FilmCraft crates are consumed as git dependencies pinned to one commit (docs/adr/0004).
 filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 filmcraft-codecs = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-media = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-h264enc = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }

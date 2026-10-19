@@ -293,3 +293,135 @@ fn notify_is_called_for_every_event() {
     let events = collect(&player, |events| !frames(events).is_empty());
     assert!(count.load(Ordering::SeqCst) >= events.len() as u64);
 }
+
+mod thumbnails {
+    use super::*;
+    use crate::thumbnail::{self, ThumbnailError};
+
+    #[test]
+    fn a_thumbnail_is_generated_cached_and_reloaded() {
+        let scratch = Scratch::new();
+        let clip = scratch.file("clip.mp4", &make_clip());
+        let cache = scratch.0.join("thumbs");
+
+        let first = thumbnail::ensure_cached(&clip, &cache).expect("thumbnail");
+        assert!(first.created);
+        assert!(first.file.starts_with(&cache));
+        assert!(std::fs::metadata(&first.file).expect("cache file").len() > 0);
+
+        // Second call reuses the cache file without decoding again.
+        let second = thumbnail::ensure_cached(&clip, &cache).expect("cached");
+        assert!(!second.created);
+        assert_eq!(second.file, first.file);
+
+        let loaded = thumbnail::load(&first.file).expect("load");
+        // The 64x48 test clip is narrower than the thumbnail width, so it keeps its size.
+        assert_eq!((loaded.width, loaded.height), (WIDTH, HEIGHT));
+        assert_eq!(loaded.rgba.len(), (WIDTH * HEIGHT * 4) as usize);
+        // About a tenth in: frame 3 of 30, brightness 24 + 3 * 7 = 45 (limited-range gray).
+        let mean = loaded
+            .rgba
+            .chunks_exact(4)
+            .map(|p| f64::from(p[0]))
+            .sum::<f64>()
+            / f64::from(WIDTH * HEIGHT);
+        assert!(
+            mean > 30.0 && mean < 80.0,
+            "mean red {mean} is not an early, dark frame"
+        );
+        assert!(loaded.rgba.chunks_exact(4).all(|p| p[3] == 255));
+    }
+
+    #[test]
+    fn replacing_a_clip_gets_a_new_thumbnail() {
+        let scratch = Scratch::new();
+        let clip = scratch.file("clip.mp4", &make_clip());
+        let cache = scratch.0.join("thumbs");
+        let before = thumbnail::ensure_cached(&clip, &cache).expect("thumbnail");
+
+        // Same path, different size: the key changes, so the old picture is not reused.
+        let mut longer = make_clip();
+        longer.extend_from_slice(&[0; 16]);
+        std::fs::write(&clip, longer).expect("rewrite clip");
+        let after = thumbnail::ensure_cached(&clip, &cache).expect("thumbnail");
+        assert!(after.created);
+        assert_ne!(after.file, before.file);
+    }
+
+    #[test]
+    fn bad_clips_report_errors_and_leave_no_cache_files() {
+        let scratch = Scratch::new();
+        let cache = scratch.0.join("thumbs");
+        assert_eq!(
+            thumbnail::ensure_cached(&scratch.0.join("missing.mp4"), &cache),
+            Err(ThumbnailError::Unreadable)
+        );
+        let garbage = scratch.file("garbage.mp4", b"not a video");
+        assert!(thumbnail::ensure_cached(&garbage, &cache).is_err());
+        assert!(thumbnail::ensure_cached(&scratch.0, &cache).is_err());
+        let leftovers = std::fs::read_dir(&cache).map_or(0, Iterator::count);
+        assert_eq!(leftovers, 0, "failures must not leave cache files");
+    }
+
+    #[test]
+    fn damaged_clips_never_panic_the_thumbnailer() {
+        let scratch = Scratch::new();
+        let cache = scratch.0.join("thumbs");
+        let good = make_clip();
+        for (number, position) in (0..good.len())
+            .step_by((good.len() / 24).max(1))
+            .enumerate()
+        {
+            let mut damaged = good.clone();
+            damaged[position] ^= 0xFF;
+            let path = scratch.file(&format!("damaged-{number}.mp4"), &damaged);
+            // Either a thumbnail or a clean error; never a panic or a hang.
+            let _ = thumbnail::ensure_cached(&path, &cache);
+        }
+    }
+
+    #[test]
+    fn unreadable_cache_files_are_refused() {
+        let scratch = Scratch::new();
+        assert_eq!(
+            thumbnail::load(&scratch.0.join("missing.jpg")),
+            Err(ThumbnailError::Unreadable)
+        );
+        let fake = scratch.file("fake.jpg", b"not a jpeg");
+        assert_eq!(thumbnail::load(&fake), Err(ThumbnailError::DecodeFailed));
+        let huge = scratch.file("huge.jpg", &vec![0; 2 * 1024 * 1024]);
+        assert_eq!(thumbnail::load(&huge), Err(ThumbnailError::Unreadable));
+    }
+
+    #[test]
+    fn pruning_removes_only_the_oldest_jpg_files() {
+        let scratch = Scratch::new();
+        let cache = scratch.0.join("thumbs");
+        std::fs::create_dir_all(&cache).expect("cache dir");
+        for number in 0..20 {
+            std::fs::write(cache.join(format!("{number:02}.jpg")), b"x").expect("jpg");
+            // Distinct modified times so "oldest" is well defined.
+            std::thread::sleep(Duration::from_millis(15));
+        }
+        std::fs::write(cache.join("keep.txt"), b"not a thumbnail").expect("txt");
+
+        thumbnail::prune(&cache, 10);
+
+        let mut left: Vec<String> = std::fs::read_dir(&cache)
+            .expect("read cache")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert!(
+            left.contains(&"keep.txt".to_owned()),
+            "non-jpg files are never deleted"
+        );
+        let jpgs: Vec<_> = left.iter().filter(|name| name.ends_with(".jpg")).collect();
+        assert_eq!(jpgs.len(), 9, "keeps max minus 10% headroom: {jpgs:?}");
+        assert!(
+            jpgs.iter().all(|name| name.as_str() >= "11.jpg"),
+            "oldest go first: {jpgs:?}"
+        );
+    }
+}

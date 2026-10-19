@@ -12,6 +12,7 @@ layer = 4
 
 [dependencies]
 clipcraft-media.workspace = true
+clipcraft-player.workspace = true
 clipcraft-time.workspace = true
 serde.workspace = true
 serde_json.workspace = true

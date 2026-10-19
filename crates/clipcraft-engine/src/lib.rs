@@ -13,7 +13,8 @@ mod index;
 pub use clipcraft_media::MediaProbe;
 
 pub use index::{
-    INDEX_VERSION, MAX_ENTRIES_PER_FOLDER, MAX_INDEX_BYTES, MAX_INDEXED_FOLDERS, default_index_path,
+    INDEX_VERSION, MAX_ENTRIES_PER_FOLDER, MAX_INDEX_BYTES, MAX_INDEXED_FOLDERS,
+    default_index_path, default_thumbnail_dir,
 };
 
 /// Maximum directory entries inspected by one library scan.
@@ -37,6 +38,8 @@ pub enum Command {
     },
     /// Restores the most recently refreshed folder from the local index without scanning.
     LoadLibrary { index_path: PathBuf },
+    /// Makes sure a thumbnail for one clip exists in the thumbnail cache, generating it if needed.
+    EnsureThumbnail { path: PathBuf, cache_dir: PathBuf },
     /// Reads one clip's container headers for duration, size, frame rate, and codecs.
     ProbeClip { path: PathBuf },
     /// Saves probe results for clips of a remembered folder into the local index.
@@ -59,6 +62,7 @@ impl Command {
             Self::RefreshLibrary { .. } => "library.refresh",
             Self::LoadLibrary { .. } => "library.load",
             Self::ProbeClip { .. } => "library.probe",
+            Self::EnsureThumbnail { .. } => "library.thumbnail",
             Self::StoreProbes { .. } => "library.store_probes",
         }
     }
@@ -102,6 +106,15 @@ pub struct MediaEntry {
     pub probe: Option<MediaProbe>,
 }
 
+/// A thumbnail stored in the local cache.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ThumbnailFile {
+    /// The cached JPEG.
+    pub file: String,
+    /// True when this call generated it; false when it was already cached.
+    pub created: bool,
+}
+
 /// Output produced by a registered engine command.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
@@ -114,6 +127,8 @@ pub enum CommandOutput {
     Revealed { path: String },
     /// Container facts read from one clip.
     ClipProbe(MediaProbe),
+    /// A clip's thumbnail in the cache.
+    Thumbnail(ThumbnailFile),
 }
 
 /// Actionable errors returned by engine commands.
@@ -145,6 +160,10 @@ pub enum EngineError {
     MediaTooLarge,
     /// The file is not an MP4 or MOV video, or its headers are damaged.
     MediaUnsupported,
+    /// A thumbnail could not be made from this video.
+    ThumbnailFailed,
+    /// The thumbnail cache folder could not be written.
+    ThumbnailCacheFailed,
 }
 
 impl fmt::Display for EngineError {
@@ -169,6 +188,12 @@ impl fmt::Display for EngineError {
             }
             Self::MediaUnsupported => {
                 formatter.write_str("This file is not a readable MP4 or MOV video.")
+            }
+            Self::ThumbnailFailed => {
+                formatter.write_str("A thumbnail could not be made from this video.")
+            }
+            Self::ThumbnailCacheFailed => {
+                formatter.write_str("The thumbnail cache could not be written. Check free disk space.")
             }
             Self::IndexMissing => formatter.write_str("No saved library was found."),
             Self::IndexUnavailable => formatter.write_str(
@@ -212,6 +237,33 @@ pub fn execute(command: Command) -> Result<CommandOutput, EngineError> {
                     clipcraft_media::ProbeError::Unreadable => EngineError::FileUnavailable,
                     clipcraft_media::ProbeError::TooLarge => EngineError::MediaTooLarge,
                     clipcraft_media::ProbeError::Unsupported => EngineError::MediaUnsupported,
+                })
+        }
+        Command::EnsureThumbnail { path, cache_dir } => {
+            if path.as_os_str().is_empty() {
+                return Err(EngineError::EmptyMediaPath);
+            }
+            clipcraft_player::thumbnail::ensure_cached(&path, &cache_dir)
+                .map(|cached| {
+                    CommandOutput::Thumbnail(ThumbnailFile {
+                        file: cached.file.to_string_lossy().into_owned(),
+                        created: cached.created,
+                    })
+                })
+                .map_err(|error| match error {
+                    clipcraft_player::thumbnail::ThumbnailError::Unreadable => {
+                        EngineError::FileUnavailable
+                    }
+                    clipcraft_player::thumbnail::ThumbnailError::Unsupported => {
+                        EngineError::MediaUnsupported
+                    }
+                    clipcraft_player::thumbnail::ThumbnailError::CacheFailed => {
+                        EngineError::ThumbnailCacheFailed
+                    }
+                    clipcraft_player::thumbnail::ThumbnailError::DecodeFailed
+                    | clipcraft_player::thumbnail::ThumbnailError::Crashed => {
+                        EngineError::ThumbnailFailed
+                    }
                 })
         }
         Command::StoreProbes {
@@ -398,6 +450,7 @@ pub const fn command_ids() -> &'static [&'static str] {
         "library.refresh",
         "library.load",
         "library.probe",
+        "library.thumbnail",
         "library.store_probes",
     ]
 }
@@ -602,6 +655,31 @@ mod tests {
         fs::write(&fake, b"not really a video").expect("fixture writes");
         assert_eq!(
             super::execute(Command::ProbeClip { path: fake }),
+            Err(EngineError::MediaUnsupported)
+        );
+    }
+
+    #[test]
+    fn thumbnail_command_maps_failures_to_actionable_errors() {
+        let directory = TestDirectory::new();
+        let cache_dir = directory.path().join("cache");
+        let command = |path: PathBuf| Command::EnsureThumbnail {
+            path,
+            cache_dir: cache_dir.clone(),
+        };
+        assert_eq!(command(PathBuf::new()).id(), "library.thumbnail");
+        assert_eq!(
+            super::execute(command(PathBuf::new())),
+            Err(EngineError::EmptyMediaPath)
+        );
+        assert_eq!(
+            super::execute(command(directory.path().join("missing.mp4"))),
+            Err(EngineError::FileUnavailable)
+        );
+        let fake = directory.path().join("fake.mp4");
+        fs::write(&fake, b"not really a video").expect("fixture writes");
+        assert_eq!(
+            super::execute(command(fake)),
             Err(EngineError::MediaUnsupported)
         );
     }

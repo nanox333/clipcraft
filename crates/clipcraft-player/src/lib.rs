@@ -425,5 +425,7 @@ impl State {
     }
 }
 
+pub mod thumbnail;
+
 #[cfg(test)]
 mod tests;

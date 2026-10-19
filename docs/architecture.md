@@ -29,6 +29,9 @@ are consumed as pinned git dependencies ([ADR 0004](adr/0004-filmcraft-crates.md
 - **Playback:** `clipcraft-player` decodes a clip on a worker thread against a wall clock and hands
   RGBA frames to the UI. It reads files in place, skips frames when decoding falls behind, applies
   only the latest of several queued seeks, and reports a decoder panic as a failure.
+- **Thumbnails:** `clipcraft-player::thumbnail` decodes a frame about a tenth into the clip, reduces it
+  in the decoder's native format before converting to RGBA, and stores a 320 px JPEG in a bounded,
+  atomically written cache. The app creates textures only for visible cards, a few per frame.
 - **Media probing:** `clipcraft-media` reads MP4/MOV container headers (duration, size, frame rate,
   codecs) after bounding header sizes; it never decodes picture or sound data.
 - **Capture model:** portable source descriptors, capabilities, packets, timestamps, and failure

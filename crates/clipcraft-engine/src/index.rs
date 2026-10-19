@@ -37,6 +37,15 @@ pub(crate) struct FolderIndex {
 
 /// Default per-user index location, or `None` when no home directory is known.
 pub fn default_index_path() -> Option<PathBuf> {
+    Some(default_data_dir()?.join("library-index.json"))
+}
+
+/// Default per-user thumbnail cache folder, or `None` when no home directory is known.
+pub fn default_thumbnail_dir() -> Option<PathBuf> {
+    Some(default_data_dir()?.join("thumbnails"))
+}
+
+fn default_data_dir() -> Option<PathBuf> {
     let base = if cfg!(target_os = "windows") {
         PathBuf::from(std::env::var_os("APPDATA")?)
     } else if cfg!(target_os = "macos") {
@@ -46,7 +55,7 @@ pub fn default_index_path() -> Option<PathBuf> {
     } else {
         PathBuf::from(std::env::var_os("HOME")?).join(".local/share")
     };
-    Some(base.join("ClipCraft").join("library-index.json"))
+    Some(base.join("ClipCraft"))
 }
 
 /// Loads the most recently refreshed folder from the index.

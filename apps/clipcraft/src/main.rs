@@ -1,8 +1,9 @@
 use clipcraft_engine::{
     Command, CommandOutput, EngineError, LibraryScanResult, MediaEntry, MediaProbe,
-    default_index_path, execute,
+    default_index_path, default_thumbnail_dir, execute,
 };
 mod playback;
+mod thumbs;
 
 use eframe::egui;
 use egui::{Align, Color32, FontId, Layout, RichText, Stroke, Vec2};
@@ -51,12 +52,26 @@ struct ClipCraftApp {
     /// Incremented per worker so results from a replaced folder are ignored.
     probe_generation: u64,
     needs_probe: bool,
+    /// Where thumbnail JPEGs are cached; `None` disables thumbnails.
+    thumbnail_dir: Option<PathBuf>,
+    /// Background thumbnail worker for the current folder, if one is running.
+    thumbnail_receiver: Option<mpsc::Receiver<ThumbnailMessage>>,
+    needs_thumbnails: bool,
+    /// Paths already tried this session, so unsupported clips are not retried.
+    thumbnail_attempted: HashSet<String>,
+    thumbs: thumbs::Thumbnails,
     /// The clip open in the detail view, if any.
     playback: Option<playback::Playback>,
     /// Probe results from this session not yet saved to the index.
     unsaved_probes: Vec<(String, MediaProbe)>,
     /// Paths already probed or tried this session, so unsupported files are not retried.
     probe_attempted: HashSet<String>,
+}
+
+/// A thumbnail the worker finished: the clip and its cached JPEG.
+struct ThumbnailMessage {
+    path: String,
+    file: PathBuf,
 }
 
 enum ProbeMessage {
@@ -85,6 +100,12 @@ impl eframe::App for ClipCraftApp {
             self.start_probing(context);
         }
         self.poll_probes();
+        if self.needs_thumbnails {
+            self.needs_thumbnails = false;
+            self.start_thumbnails(context);
+        }
+        self.poll_thumbnails();
+        self.thumbs.begin_frame();
         self.sync_playback(context);
         self.top_bar(context);
         self.navigation(context);
@@ -110,6 +131,7 @@ impl eframe::App for ClipCraftApp {
                     self.library_view(ui);
                 }
             });
+        self.thumbs.end_frame();
     }
 }
 
@@ -122,6 +144,7 @@ impl ClipCraftApp {
     fn restored_from(index_path: Option<PathBuf>) -> Self {
         let mut app = Self {
             index_path,
+            thumbnail_dir: default_thumbnail_dir(),
             ..Self::default()
         };
         let Some(index_path) = app.index_path.clone() else {
@@ -137,6 +160,51 @@ impl ClipCraftApp {
             Err(error) => app.error = Some(error.to_string()),
         }
         app
+    }
+
+    /// Generates missing thumbnails on a worker thread. A new worker replaces the old one, which
+    /// notices its closed channel and stops.
+    fn start_thumbnails(&mut self, context: &egui::Context) {
+        let (Some(cache_dir), Some(library)) = (self.thumbnail_dir.clone(), self.library.as_ref())
+        else {
+            return;
+        };
+        let paths: Vec<String> = library
+            .entries
+            .iter()
+            .filter(|entry| !entry.offline && !self.thumbnail_attempted.contains(&entry.path))
+            .map(|entry| entry.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        self.thumbnail_attempted.extend(paths.iter().cloned());
+        let (sender, receiver) = mpsc::channel();
+        self.thumbnail_receiver = Some(receiver);
+        let context = context.clone();
+        std::thread::spawn(move || {
+            thumbnail_paths(paths, &cache_dir, &sender, || context.request_repaint());
+        });
+    }
+
+    fn poll_thumbnails(&mut self) {
+        let Some(receiver) = self.thumbnail_receiver.as_ref() else {
+            return;
+        };
+        let mut disconnected = false;
+        loop {
+            match receiver.try_recv() {
+                Ok(message) => self.thumbs.set_file(message.path, message.file),
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
+            }
+        }
+        if disconnected {
+            self.thumbnail_receiver = None;
+        }
     }
 
     /// Keeps exactly one player alive for the clip open in the detail view.
@@ -384,7 +452,7 @@ impl ClipCraftApp {
                 if entries.is_empty() {
                     self.no_search_results(ui);
                 } else {
-                    card_action = Self::clip_grid(ui, &entries);
+                    card_action = Self::clip_grid(ui, &entries, &mut self.thumbs);
                 }
             }
             None => self.first_scan_state(ui),
@@ -457,7 +525,11 @@ impl ClipCraftApp {
         });
     }
 
-    fn clip_grid(ui: &mut egui::Ui, entries: &[&MediaEntry]) -> Option<ClipCardAction> {
+    fn clip_grid(
+        ui: &mut egui::Ui,
+        entries: &[&MediaEntry],
+        thumbs: &mut thumbs::Thumbnails,
+    ) -> Option<ClipCardAction> {
         let available_width = ui.available_width();
         let columns: usize = if available_width < 560.0 {
             1
@@ -483,7 +555,7 @@ impl ClipCraftApp {
                     let Some(column) = column_uis.get_mut(index % columns) else {
                         continue;
                     };
-                    if let Some(clicked) = clip_card(column, entry, card_width) {
+                    if let Some(clicked) = clip_card(column, entry, card_width, thumbs) {
                         action = Some(clicked);
                     }
                     column.add_space(16.0);
@@ -627,6 +699,7 @@ impl ClipCraftApp {
                 self.directory_text = result.directory.clone();
                 self.library = Some(result);
                 self.needs_probe = true;
+                self.needs_thumbnails = true;
             }
             Ok(_) => {
                 self.error = Some("The library scan returned an unexpected result.".to_owned());
@@ -735,6 +808,32 @@ fn open_in_file_manager_label() -> &'static str {
     }
 }
 
+/// Makes sure each clip has a cached thumbnail, reporting every one that is ready. Stops when the
+/// receiving side goes away, which is how a replaced worker is cancelled.
+fn thumbnail_paths(
+    paths: Vec<String>,
+    cache_dir: &std::path::Path,
+    sender: &mpsc::Sender<ThumbnailMessage>,
+    notify: impl Fn(),
+) {
+    for path in paths {
+        let Ok(CommandOutput::Thumbnail(thumbnail)) = execute(Command::EnsureThumbnail {
+            path: PathBuf::from(&path),
+            cache_dir: cache_dir.to_path_buf(),
+        }) else {
+            continue;
+        };
+        let message = ThumbnailMessage {
+            path,
+            file: PathBuf::from(thumbnail.file),
+        };
+        if sender.send(message).is_err() {
+            return;
+        }
+        notify();
+    }
+}
+
 /// Probes each path in turn, reporting every result and a final `Done`.
 fn probe_paths(
     paths: Vec<String>,
@@ -830,7 +929,12 @@ fn setting_panel(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui
     ui.add_space(14.0);
 }
 
-fn clip_card(ui: &mut egui::Ui, entry: &MediaEntry, width: f32) -> Option<ClipCardAction> {
+fn clip_card(
+    ui: &mut egui::Ui,
+    entry: &MediaEntry,
+    width: f32,
+    thumbs: &mut thumbs::Thumbnails,
+) -> Option<ClipCardAction> {
     let mut action = None;
     egui::Frame::new()
         .fill(CARD)
@@ -842,7 +946,9 @@ fn clip_card(ui: &mut egui::Ui, entry: &MediaEntry, width: f32) -> Option<ClipCa
                 Vec2::new(width, (width * 0.5625).clamp(120.0, 220.0)),
                 egui::Sense::click(),
             );
-            paint_video_placeholder(ui, thumbnail, entry);
+            let visible = ui.is_rect_visible(thumbnail);
+            let texture = thumbs.texture(ui.ctx(), &entry.path, visible);
+            paint_video_placeholder(ui, thumbnail, entry, texture);
             if response.hovered() {
                 ui.painter().rect_filled(
                     thumbnail,
@@ -952,7 +1058,12 @@ fn clip_card(ui: &mut egui::Ui, entry: &MediaEntry, width: f32) -> Option<ClipCa
     action
 }
 
-fn paint_video_placeholder(ui: &egui::Ui, rect: egui::Rect, entry: &MediaEntry) {
+fn paint_video_placeholder(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    entry: &MediaEntry,
+    texture: Option<&egui::TextureHandle>,
+) {
     let palette = [
         (
             Color32::from_rgb(29, 46, 42),
@@ -975,33 +1086,38 @@ fn paint_video_placeholder(ui: &egui::Ui, rect: egui::Rect, entry: &MediaEntry) 
         hash.wrapping_mul(31).wrapping_add(u32::from(byte))
     });
     let (background, accent) = palette[(seed as usize) % palette.len()];
+    let top_corners = egui::CornerRadius {
+        nw: 8,
+        ne: 8,
+        sw: 0,
+        se: 0,
+    };
     let painter = ui.painter();
-    painter.rect_filled(
-        rect,
-        egui::CornerRadius {
-            nw: 8,
-            ne: 8,
-            sw: 0,
-            se: 0,
-        },
-        background,
-    );
-    painter.circle_filled(
-        egui::pos2(
-            rect.right() - rect.width() * 0.17,
-            rect.top() + rect.height() * 0.3,
-        ),
-        rect.height() * 0.1,
-        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 100),
-    );
-    let horizon = rect.center().y + rect.height() * 0.18;
-    painter.line_segment(
-        [
-            egui::pos2(rect.left() + 16.0, horizon),
-            egui::pos2(rect.right() - 16.0, horizon),
-        ],
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 36)),
-    );
+    if let Some(texture) = texture {
+        // A real thumbnail, cropped to fill the card without stretching.
+        egui::Image::from_texture(egui::load::SizedTexture::from_handle(texture))
+            .uv(thumbs::cover_uv(texture.size_vec2(), rect.size()))
+            .corner_radius(top_corners)
+            .paint_at(ui, rect);
+    } else {
+        painter.rect_filled(rect, top_corners, background);
+        painter.circle_filled(
+            egui::pos2(
+                rect.right() - rect.width() * 0.17,
+                rect.top() + rect.height() * 0.3,
+            ),
+            rect.height() * 0.1,
+            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 100),
+        );
+        let horizon = rect.center().y + rect.height() * 0.18;
+        painter.line_segment(
+            [
+                egui::pos2(rect.left() + 16.0, horizon),
+                egui::pos2(rect.right() - 16.0, horizon),
+            ],
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 36)),
+        );
+    }
 
     let badge = egui::Rect::from_min_size(
         rect.left_top() + Vec2::new(10.0, 10.0),
@@ -1385,6 +1501,31 @@ mod tests {
             }
         ));
         assert!(matches!(messages[2], ProbeMessage::Done { generation: 3 }));
+
+        fs::remove_dir_all(directory).expect("remove temporary test directory");
+    }
+
+    #[test]
+    fn the_thumbnail_worker_skips_bad_clips_and_stops_when_replaced() {
+        let directory = temporary_directory();
+        let fake = directory.join("fake.mp4");
+        fs::write(&fake, b"not a video").expect("fake clip");
+        let paths = vec![
+            fake.to_string_lossy().into_owned(),
+            directory.join("missing.mp4").to_string_lossy().into_owned(),
+        ];
+        let cache = directory.join("cache");
+
+        // Bad clips produce no thumbnails and the worker still finishes.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        super::thumbnail_paths(paths.clone(), &cache, &sender, || {});
+        assert!(receiver.try_iter().next().is_none());
+        assert!(!cache.exists() || fs::read_dir(&cache).map_or(0, Iterator::count) == 0);
+
+        // A dropped receiver (a replaced worker) is not an error.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        drop(receiver);
+        super::thumbnail_paths(paths, &cache, &sender, || {});
 
         fs::remove_dir_all(directory).expect("remove temporary test directory");
     }

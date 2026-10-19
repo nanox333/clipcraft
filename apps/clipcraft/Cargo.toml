@@ -14,6 +14,7 @@ layer = 6
 clipcraft-engine.workspace = true
 clipcraft-player.workspace = true
 clipcraft-time.workspace = true
+image.workspace = true
 eframe.workspace = true
 rfd.workspace = true
 
