@@ -3,9 +3,11 @@ use eframe::egui;
 use egui::{Align, Color32, FontId, Layout, RichText, Stroke, Vec2};
 use std::path::PathBuf;
 
-const CANVAS: Color32 = Color32::from_rgb(14, 14, 15);
-const PANEL: Color32 = Color32::from_rgb(24, 24, 26);
-const CARD: Color32 = Color32::from_rgb(29, 29, 31);
+const CANVAS: Color32 = Color32::from_rgb(18, 18, 19);
+const SIDEBAR: Color32 = Color32::from_rgb(24, 24, 26);
+const PANEL: Color32 = Color32::from_rgb(26, 26, 29);
+const CARD: Color32 = Color32::from_rgb(33, 33, 36);
+const BORDER: Color32 = Color32::from_rgb(36, 36, 40);
 const MUTED: Color32 = Color32::from_rgb(157, 157, 164);
 const TEXT: Color32 = Color32::from_rgb(242, 242, 244);
 const LIME: Color32 = Color32::from_rgb(190, 255, 43);
@@ -54,7 +56,13 @@ impl eframe::App for ClipCraftApp {
             .frame(
                 egui::Frame::new()
                     .fill(CANVAS)
-                    .inner_margin(egui::Margin::same(20)),
+                    .corner_radius(egui::CornerRadius {
+                        nw: 10,
+                        ne: 0,
+                        sw: 0,
+                        se: 0,
+                    })
+                    .inner_margin(egui::Margin::same(16)),
             )
             .show(context, |ui| {
                 if let Some(selected) = self.selected.clone() {
@@ -69,42 +77,44 @@ impl eframe::App for ClipCraftApp {
 }
 
 impl ClipCraftApp {
-    fn top_bar(&self, context: &egui::Context) {
+    fn top_bar(&mut self, context: &egui::Context) {
         egui::TopBottomPanel::top("capture-strip")
-            .exact_height(48.0)
-            .frame(egui::Frame::new().fill(Color32::from_rgb(19, 19, 20)))
+            .exact_height(44.0)
+            .frame(egui::Frame::new().fill(SIDEBAR))
             .show(context, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.add_space(16.0);
-                    ui.label(RichText::new("◈").color(LIME).size(25.0).strong());
-                    ui.label(RichText::new("CLIPCRAFT").color(TEXT).strong());
-                    ui.add_space(16.0);
-                    ui.separator();
+                    ui.label(RichText::new("◈").color(LIME).size(26.0).strong());
+                    ui.add_space(14.0);
+                    ui.label(RichText::new("←").color(MUTED).size(17.0));
+                    ui.label(
+                        RichText::new("→")
+                            .color(Color32::from_rgb(90, 90, 96))
+                            .size(17.0),
+                    );
+                    ui.add_space(14.0);
+                    ui.label(RichText::new("🎮").color(MUTED));
                     ui.label(RichText::new("Capture unavailable").color(MUTED));
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("F8").color(TEXT).strong());
+                    ui.add_space(8.0);
+                    key_chip(ui, "F8");
                     ui.label(RichText::new("Clip 2m").color(TEXT));
-                    ui.label(RichText::new("Off").color(MUTED));
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.add_space(16.0);
-                        ui.label(RichText::new("1440p  ·  60 FPS").color(MUTED));
-                        ui.label(
-                            RichText::new("Capture provider not implemented")
-                                .color(MUTED)
-                                .small(),
-                        );
-                    });
+                    ui.add_space(8.0);
+                    key_chip(ui, "Off");
+                    ui.label(RichText::new("Long Recording").color(TEXT));
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("⚙").color(MUTED));
+                    ui.label(RichText::new("1440p 60 FPS").color(TEXT));
                 });
             });
     }
 
     fn navigation(&mut self, context: &egui::Context) {
         egui::SidePanel::left("navigation")
-            .exact_width(68.0)
-            .frame(egui::Frame::new().fill(Color32::from_rgb(19, 19, 20)))
+            .exact_width(60.0)
+            .frame(egui::Frame::new().fill(SIDEBAR))
             .show(context, |ui| {
-                ui.add_space(16.0);
-                nav_button(ui, "⌂", "Library", self.page == Page::Library, || {
+                ui.add_space(24.0);
+                nav_button(ui, "▦", "Clips", self.page == Page::Library, || {
                     self.page = Page::Library;
                     self.selected = None;
                 });
@@ -112,71 +122,36 @@ impl ClipCraftApp {
                     self.page = Page::Settings;
                     self.selected = None;
                 });
-                ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
-                    ui.label(RichText::new("LOCAL").color(MUTED).size(9.0));
-                    ui.add_space(12.0);
-                });
             });
     }
 
     fn library_view(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.heading(RichText::new("Clips").color(TEXT).size(23.0).strong());
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.label(RichText::new("Stored on this device").color(MUTED).small());
-            });
+        let (visible_count, total_count) = self.library.as_ref().map_or((0, 0), |result| {
+            (
+                visible_entries(&result.entries, &self.search_text, self.sort_newest).len(),
+                result.entries.len(),
+            )
         });
-        ui.add_space(12.0);
-
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Folder").color(MUTED));
-            let path_field = ui.add_sized(
-                [(ui.available_width() - 190.0).max(180.0), 34.0],
-                egui::TextEdit::singleline(&mut self.directory_text)
-                    .hint_text("Choose a local folder containing video clips"),
-            );
-            if path_field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
-                self.scan_library();
-            }
-            if ui
-                .add_sized([82.0, 34.0], egui::Button::new("Browse…"))
-                .clicked()
-            {
+            if toolbar_button(ui, "⤓  Import").clicked() {
                 self.choose_library_folder();
             }
-            if ui
-                .add_sized(
-                    [88.0, 34.0],
-                    egui::Button::new(RichText::new("Scan").strong()).fill(LIME),
-                )
-                .clicked()
-            {
-                self.scan_library();
-            }
-        });
-
-        ui.add_space(16.0);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("All Clips").color(TEXT).strong());
-            let sort_label = if self.sort_newest {
-                "Sort: Newest"
-            } else {
-                "Sort: Name"
-            };
-            if ui.small_button(sort_label).clicked() {
-                self.sort_newest = !self.sort_newest;
-            }
-            ui.add_space(8.0);
+            let _ = ui.add_enabled(false, toolbar_widget("▣  New Edit"));
+            ui.add_space(6.0);
+            ui.label(RichText::new("Filters").color(MUTED).size(12.0));
+            ui.add_space(4.0);
             ui.add_sized(
-                [240.0, 28.0],
+                [220.0, 28.0],
                 egui::TextEdit::singleline(&mut self.search_text).hint_text("Search clips"),
             );
-            let (visible_count, total_count) = self.library.as_ref().map_or((0, 0), |result| {
-                (
-                    visible_entries(&result.entries, &self.search_text, self.sort_newest).len(),
-                    result.entries.len(),
-                )
-            });
+            let sort_label = if self.sort_newest {
+                "Newest  ▾"
+            } else {
+                "Name  ▾"
+            };
+            if toolbar_button(ui, sort_label).clicked() {
+                self.sort_newest = !self.sort_newest;
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let count_label = if self.search_text.trim().is_empty() {
                     format!("{total_count} clips")
@@ -184,9 +159,18 @@ impl ClipCraftApp {
                     format!("{visible_count} of {total_count} clips")
                 };
                 ui.label(RichText::new(count_label).color(MUTED).small());
+                let path_field = ui.add_sized(
+                    [(ui.available_width() - 80.0).clamp(140.0, 300.0), 28.0],
+                    egui::TextEdit::singleline(&mut self.directory_text)
+                        .hint_text("Local clips folder"),
+                );
+                if path_field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                {
+                    self.scan_library();
+                }
             });
         });
-        ui.add_space(14.0);
+        ui.add_space(16.0);
 
         if let Some(error) = self.error.as_deref() {
             ui.label(RichText::new(error).color(Color32::from_rgb(255, 110, 110)));
@@ -288,7 +272,7 @@ impl ClipCraftApp {
         } else {
             6
         };
-        let card_width = ((available_width - (columns.saturating_sub(1) as f32 * 14.0))
+        let card_width = ((available_width - (columns.saturating_sub(1) as f32 * 16.0))
             / columns as f32)
             .max(180.0);
         let mut action = None;
@@ -302,7 +286,7 @@ impl ClipCraftApp {
                     if let Some(clicked) = clip_card(column, entry, card_width) {
                         action = Some(clicked);
                     }
-                    column.add_space(14.0);
+                    column.add_space(16.0);
                 }
             });
         });
@@ -370,26 +354,58 @@ impl ClipCraftApp {
     }
 
     fn settings(&self, ui: &mut egui::Ui) {
-        ui.heading(RichText::new("Settings").color(TEXT).size(23.0).strong());
-        ui.add_space(18.0);
-        setting_panel(ui, "PC Storage", "Local video folders and storage controls");
-        setting_panel(
-            ui,
-            "Recording",
-            "Capture support is not implemented yet. No recording is running.",
-        );
-        setting_panel(
-            ui,
-            "Audio",
-            "Game audio and microphone capture will be configured here.",
-        );
-        ui.add_space(6.0);
-        ui.label(
-            RichText::new(
-                "All clips remain on this device. There is no cloud sync or hosted service.",
-            )
-            .color(MUTED),
-        );
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            settings_header(
+                ui,
+                "🖵",
+                "PC Storage",
+                "Choose where ClipCraft stores the gameplay it captures. Everything stays on this device.",
+            );
+            let folder = if self.directory_text.trim().is_empty() {
+                "No folder chosen yet"
+            } else {
+                self.directory_text.as_str()
+            };
+            setting_panel(ui, "Storage Settings", |ui| {
+                ui.label(RichText::new("Capture Folder Location").color(TEXT).strong());
+                ui.label(
+                    RichText::new("Choose where you want to save your clips and videos:")
+                        .color(MUTED),
+                );
+                ui.add_space(8.0);
+                egui::Frame::new()
+                    .fill(Color32::from_rgb(30, 30, 32))
+                    .stroke(Stroke::new(1.0_f32, BORDER))
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .inner_margin(egui::Margin::same(12))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(RichText::new("Capture folder").color(TEXT).strong());
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(folder).color(MUTED));
+                    });
+            });
+            settings_header(
+                ui,
+                "🎙",
+                "Audio",
+                "Game audio and microphone capture will be configured here once capture exists.",
+            );
+            setting_panel(ui, "Recording Audio", |ui| {
+                ui.label(
+                    RichText::new("Capture support is not implemented yet. No recording is running.")
+                        .color(MUTED),
+                );
+            });
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(
+                    "All clips remain on this device. There is no cloud sync or hosted service.",
+                )
+                .color(MUTED)
+                .small(),
+            );
+        });
     }
 
     fn scan_library(&mut self) {
@@ -453,88 +469,163 @@ fn apply_theme(context: &egui::Context) {
     visuals.widgets.inactive.fg_stroke.color = TEXT;
     visuals.widgets.hovered.bg_fill = Color32::from_rgb(47, 47, 49);
     visuals.widgets.active.bg_fill = Color32::from_rgb(58, 73, 34);
+    let radius = egui::CornerRadius::same(8);
+    visuals.widgets.inactive.corner_radius = radius;
+    visuals.widgets.hovered.corner_radius = radius;
+    visuals.widgets.active.corner_radius = radius;
+    visuals.widgets.inactive.bg_stroke = Stroke::NONE;
     context.set_visuals(visuals);
 }
 
 fn nav_button(ui: &mut egui::Ui, icon: &str, label: &str, selected: bool, action: impl FnOnce()) {
-    let color = if selected { LIME } else { MUTED };
-    let response = ui.add_sized(
-        [60.0, 58.0],
-        egui::Button::new(
-            RichText::new(format!("{icon}\n{label}"))
-                .color(color)
-                .size(12.0),
-        )
-        .fill(if selected {
-            Color32::from_rgb(37, 40, 32)
-        } else {
-            Color32::TRANSPARENT
-        }),
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(60.0, 46.0), egui::Sense::click());
+    let fill = if selected {
+        Color32::from_rgb(52, 52, 56)
+    } else if response.hovered() {
+        Color32::from_rgb(34, 34, 37)
+    } else {
+        Color32::TRANSPARENT
+    };
+    ui.painter().circle_filled(rect.center(), 21.0, fill);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        icon,
+        FontId::proportional(20.0),
+        if selected { TEXT } else { MUTED },
     );
-    if response.clicked() {
+    if response.on_hover_text(label).clicked() {
         action();
     }
-    ui.add_space(6.0);
+    ui.add_space(8.0);
+}
+
+fn key_chip(ui: &mut egui::Ui, text: &str) {
+    egui::Frame::new()
+        .fill(CARD)
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(6, 2))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).color(TEXT).strong().size(12.0));
+        });
+}
+
+fn toolbar_widget(label: &str) -> egui::Button<'_> {
+    egui::Button::new(RichText::new(label).color(TEXT).strong().size(12.0))
+        .fill(Color32::TRANSPARENT)
+        .min_size(Vec2::new(0.0, 28.0))
+}
+
+fn toolbar_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add(toolbar_widget(label))
+}
+
+fn settings_header(ui: &mut egui::Ui, icon: &str, title: &str, description: &str) {
+    ui.add_space(8.0);
+    ui.vertical_centered(|ui| {
+        ui.label(RichText::new(icon).color(MUTED).size(40.0));
+        ui.label(RichText::new(title).color(TEXT).size(20.0).strong());
+        ui.add_space(4.0);
+        ui.add_sized(
+            [480.0_f32.min(ui.available_width()), 40.0],
+            egui::Label::new(RichText::new(description).color(MUTED)).wrap(),
+        );
+    });
+    ui.add_space(14.0);
+}
+
+fn setting_panel(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .fill(PANEL)
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::same(20))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(title).color(TEXT).size(16.0).strong());
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(10.0);
+            body(ui);
+        });
+    ui.add_space(14.0);
 }
 
 fn clip_card(ui: &mut egui::Ui, entry: &MediaEntry, width: f32) -> Option<ClipCardAction> {
     let mut action = None;
     egui::Frame::new()
         .fill(CARD)
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 38, 40)))
         .corner_radius(egui::CornerRadius::same(8))
-        .inner_margin(egui::Margin::same(0))
         .show(ui, |ui| {
             ui.set_width(width);
+            ui.spacing_mut().item_spacing.y = 0.0;
             let (thumbnail, response) = ui.allocate_exact_size(
                 Vec2::new(width, (width * 0.5625).clamp(120.0, 220.0)),
                 egui::Sense::click(),
             );
             paint_video_placeholder(ui, thumbnail, entry);
+            if response.hovered() {
+                ui.painter().rect_filled(
+                    thumbnail,
+                    egui::CornerRadius {
+                        nw: 8,
+                        ne: 8,
+                        sw: 0,
+                        se: 0,
+                    },
+                    Color32::from_rgba_unmultiplied(255, 255, 255, 14),
+                );
+            }
             if response.clicked() {
                 action = Some(ClipCardAction::Open(entry.clone()));
             }
 
-            ui.add_space(9.0);
-            ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                ui.horizontal(|ui| {
-                    ui.add_space(10.0);
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(&entry.title).color(TEXT).strong().size(14.0),
-                        )
-                        .truncate()
-                        .halign(Align::Min),
-                    );
-                });
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(10.0);
-                    ui.label(
-                        RichText::new(format!(
-                            "On Device  ·  {}  ·  {}",
-                            format_bytes(entry.size_bytes),
-                            format_date(entry.modified_unix_seconds)
-                        ))
-                        .color(MUTED)
-                        .size(11.0),
-                    );
-                });
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.add(
+                    egui::Label::new(RichText::new(&entry.title).color(TEXT).strong().size(14.0))
+                        .truncate(),
+                );
             });
-            ui.add_space(10.0);
-            ui.separator();
-            let (action_rect, action_response) =
-                ui.allocate_exact_size(Vec2::new(width, 38.0), egui::Sense::click());
-            ui.painter()
-                .rect_filled(action_rect, 0.0, Color32::from_rgb(31, 31, 33));
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.label(
+                    RichText::new(format!(
+                        "▭ On Device  •  {}  •  {}",
+                        format_bytes(entry.size_bytes),
+                        format_date(entry.modified_unix_seconds)
+                    ))
+                    .color(MUTED)
+                    .size(12.0),
+                );
+            });
+            ui.add_space(14.0);
+
+            let (footer, footer_response) =
+                ui.allocate_exact_size(Vec2::new(width, 48.0), egui::Sense::click());
+            ui.painter().rect_filled(
+                footer,
+                egui::CornerRadius {
+                    nw: 0,
+                    ne: 0,
+                    sw: 8,
+                    se: 8,
+                },
+                if footer_response.hovered() {
+                    Color32::from_rgb(40, 40, 44)
+                } else {
+                    Color32::from_rgb(28, 28, 31)
+                },
+            );
             ui.painter().text(
-                action_rect.left_center() + Vec2::new(11.0, 0.0),
+                footer.left_center() + Vec2::new(14.0, 0.0),
                 egui::Align2::LEFT_CENTER,
                 "⧉  Copy File Path",
-                FontId::proportional(13.0),
+                FontId::proportional(14.0),
                 TEXT,
             );
-            if action_response.clicked() {
+            if footer_response.clicked() {
                 action = Some(ClipCardAction::CopyPath(entry.path.clone()));
             }
         });
@@ -565,56 +656,36 @@ fn paint_video_placeholder(ui: &egui::Ui, rect: egui::Rect, entry: &MediaEntry) 
     });
     let (background, accent) = palette[(seed as usize) % palette.len()];
     let painter = ui.painter();
-    painter.rect_filled(rect, 0.0, background);
-
-    let horizon = rect.center().y + rect.height() * 0.18;
-    painter.add(egui::Shape::convex_polygon(
-        vec![
-            egui::pos2(rect.left(), horizon),
-            egui::pos2(rect.left() + rect.width() * 0.24, rect.top()),
-            egui::pos2(rect.left() + rect.width() * 0.68, rect.top()),
-            egui::pos2(rect.right(), horizon),
-            egui::pos2(rect.right(), rect.bottom()),
-            egui::pos2(rect.left(), rect.bottom()),
-        ],
-        Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 36),
-        Stroke::NONE,
-    ));
+    painter.rect_filled(
+        rect,
+        egui::CornerRadius {
+            nw: 8,
+            ne: 8,
+            sw: 0,
+            se: 0,
+        },
+        background,
+    );
     painter.circle_filled(
         egui::pos2(
             rect.right() - rect.width() * 0.17,
-            rect.top() + rect.height() * 0.27,
+            rect.top() + rect.height() * 0.3,
         ),
         rect.height() * 0.1,
         Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 100),
     );
+    let horizon = rect.center().y + rect.height() * 0.18;
     painter.line_segment(
         [
-            egui::pos2(rect.left() + 12.0, horizon),
-            egui::pos2(rect.right() - 12.0, horizon),
+            egui::pos2(rect.left() + 16.0, horizon),
+            egui::pos2(rect.right() - 16.0, horizon),
         ],
         Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 36)),
     );
 
-    let play_center = rect.center();
-    painter.circle_filled(
-        play_center,
-        23.0,
-        Color32::from_rgba_unmultiplied(0, 0, 0, 150),
-    );
-    painter.add(egui::Shape::convex_polygon(
-        vec![
-            play_center + Vec2::new(-5.0, -8.0),
-            play_center + Vec2::new(8.0, 0.0),
-            play_center + Vec2::new(-5.0, 8.0),
-        ],
-        TEXT,
-        Stroke::NONE,
-    ));
-
     let badge = egui::Rect::from_min_size(
         rect.left_top() + Vec2::new(10.0, 10.0),
-        Vec2::new(54.0, 22.0),
+        Vec2::new(46.0, 22.0),
     );
     painter.rect_filled(
         badge,
@@ -629,19 +700,19 @@ fn paint_video_placeholder(ui: &egui::Ui, rect: egui::Rect, entry: &MediaEntry) 
         TEXT,
     );
     let duration_badge = egui::Rect::from_min_size(
-        rect.right_bottom() - Vec2::new(53.0, 30.0),
-        Vec2::new(43.0, 22.0),
+        rect.right_bottom() - Vec2::new(55.0, 32.0),
+        Vec2::new(45.0, 24.0),
     );
     painter.rect_filled(
         duration_badge,
-        egui::CornerRadius::same(5),
-        Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+        egui::CornerRadius::same(6),
+        Color32::from_rgba_unmultiplied(0, 0, 0, 200),
     );
     painter.text(
         duration_badge.center(),
         egui::Align2::CENTER_CENTER,
         "--:--",
-        FontId::proportional(11.0),
+        FontId::proportional(12.0),
         TEXT,
     );
 }
@@ -684,20 +755,6 @@ fn detail_row(ui: &mut egui::Ui, label: &str, value: &str) {
         });
     });
     ui.add_space(10.0);
-}
-
-fn setting_panel(ui: &mut egui::Ui, title: &str, description: &str) {
-    egui::Frame::new()
-        .fill(PANEL)
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(39, 39, 41)))
-        .inner_margin(egui::Margin::same(18))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new(title).color(TEXT).strong());
-            ui.add_space(7.0);
-            ui.label(RichText::new(description).color(MUTED));
-        });
-    ui.add_space(12.0);
 }
 
 fn format_bytes(size: u64) -> String {
