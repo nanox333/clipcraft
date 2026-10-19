@@ -407,7 +407,7 @@ pub const REPLAY_SECONDS: [u32; 5] = [15, 30, 60, 120, 300];
 /// Video bitrates offered in the UI, in kilobits per second.
 pub const VIDEO_KBPS: [u32; 8] = [2_500, 5_000, 8_000, 12_000, 16_000, 25_000, 40_000, 60_000];
 /// Audio bitrates offered in the UI, in kilobits per second.
-pub const AUDIO_KBPS: [u32; 4] = [96, 128, 160, 256];
+pub const AUDIO_KBPS: [u32; 8] = [96, 128, 160, 192, 256, 320, 384, 512];
 
 impl RecordingSettings {
     /// Clamps hand-edited values into safe ranges and swaps an unwritable container for MP4.
@@ -721,6 +721,24 @@ mod tests {
         for height in [0, 1, 100_000] {
             let kbps = QualityPreset::Ultra.video_kbps(height, 1_000);
             assert!((MIN_VIDEO_KBPS..=MAX_VIDEO_KBPS).contains(&kbps));
+        }
+    }
+
+    #[test]
+    fn every_audio_bitrate_fits_the_aac_stereo_limit() {
+        // AAC allows 6144 bits per channel per 1024-sample frame: 576 kbps for stereo at 48 kHz,
+        // 529 kbps at 44.1 kHz.
+        for kbps in AUDIO_KBPS {
+            assert!(u64::from(kbps) * 1000 * 1024 / 44_100 <= 6144 * 2);
+            assert_eq!(
+                RecordingSettings {
+                    audio_kbps: kbps,
+                    ..Default::default()
+                }
+                .sanitized()
+                .audio_kbps,
+                kbps
+            );
         }
     }
 

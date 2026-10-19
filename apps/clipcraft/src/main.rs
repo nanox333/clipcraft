@@ -1153,7 +1153,7 @@ impl ClipCraftApp {
             setting_row(
                 ui,
                 "Audio bitrate",
-                "AAC audio, kilobits per second.",
+                "AAC audio, kilobits per second. 256 and above is transparent for most listeners.",
                 false,
                 |ui| {
                     for kbps in AUDIO_KBPS {
