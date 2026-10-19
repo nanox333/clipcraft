@@ -84,13 +84,23 @@ impl ClipCraftApp {
             .show(context, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.add_space(16.0);
-                    ui.label(RichText::new("◈").color(LIME).size(26.0).strong());
+                    let (logo, _) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::hover());
+                    ui.painter().add(egui::Shape::convex_polygon(
+                        vec![
+                            logo.center_top(),
+                            logo.right_center(),
+                            logo.center_bottom(),
+                            logo.left_center(),
+                        ],
+                        LIME,
+                        Stroke::NONE,
+                    ));
                     ui.add_space(14.0);
-                    ui.label(RichText::new("←").color(MUTED).size(17.0));
+                    ui.label(RichText::new("<").color(MUTED).size(18.0));
                     ui.label(
-                        RichText::new("→")
+                        RichText::new(">")
                             .color(Color32::from_rgb(90, 90, 96))
-                            .size(17.0),
+                            .size(18.0),
                     );
                     ui.add_space(14.0);
                     ui.label(RichText::new("🎮").color(MUTED));
@@ -114,7 +124,7 @@ impl ClipCraftApp {
             .frame(egui::Frame::new().fill(SIDEBAR))
             .show(context, |ui| {
                 ui.add_space(24.0);
-                nav_button(ui, "▦", "Clips", self.page == Page::Library, || {
+                nav_button(ui, "▶", "Clips", self.page == Page::Library, || {
                     self.page = Page::Library;
                     self.selected = None;
                 });
@@ -133,7 +143,7 @@ impl ClipCraftApp {
             )
         });
         ui.horizontal(|ui| {
-            if toolbar_button(ui, "⬇  Import").clicked() {
+            if toolbar_button(ui, "+  Import").clicked() {
                 self.choose_library_folder();
             }
             let _ = ui.add_enabled(false, toolbar_widget("▣  New Edit"));
@@ -145,9 +155,9 @@ impl ClipCraftApp {
                 egui::TextEdit::singleline(&mut self.search_text).hint_text("Search clips"),
             );
             let sort_label = if self.sort_newest {
-                "Newest  ▾"
+                "Sort: Newest"
             } else {
-                "Name  ▾"
+                "Sort: Name"
             };
             if toolbar_button(ui, sort_label).clicked() {
                 self.sort_newest = !self.sort_newest;
@@ -295,7 +305,7 @@ impl ClipCraftApp {
     }
 
     fn clip_details(&mut self, ui: &mut egui::Ui, entry: &MediaEntry) {
-        if ui.button("←  Back to clips").clicked() {
+        if ui.button("<  Back to clips").clicked() {
             self.selected = None;
             return;
         }
@@ -387,7 +397,7 @@ impl ClipCraftApp {
             });
             settings_header(
                 ui,
-                "🎤",
+                "🔊",
                 "Audio",
                 "Game audio and microphone capture will be configured here once capture exists.",
             );
@@ -592,7 +602,7 @@ fn clip_card(ui: &mut egui::Ui, entry: &MediaEntry, width: f32) -> Option<ClipCa
                 ui.add_space(14.0);
                 ui.label(
                     RichText::new(format!(
-                        "▭ On Device  •  {}  •  {}",
+                        "On Device  •  {}  •  {}",
                         format_bytes(entry.size_bytes),
                         format_date(entry.modified_unix_seconds)
                     ))
