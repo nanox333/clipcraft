@@ -8,6 +8,11 @@ number here. Every item inherits the constraints in [`issue-requirements.md`](is
 
 ### M0.1 — Capture capability and product constraints
 
+**Status:** documented, not measured — the platform matrix is in
+[`ADR 0002`](adr/0002-capture-platform-matrix.md) and the remaining decisions are in
+[`ADR 0003`](adr/0003-m0-open-decisions.md). Every capture row comes from public documentation;
+reference-hardware measurements are the open evidence and belong to the M2/M3 spikes.
+
 **Requirements:** document Windows/macOS/Linux capture and audio APIs, permissions, min OS versions,
 encoder availability, and known unsupported sources; record the pure-Rust and no-hosted-server
 constraints in an ADR; make `docs/gaps.md` reflect measured evidence only.
@@ -20,7 +25,7 @@ behavior; all network/server requirements are absent; open decisions and their e
 
 ### M0.2 — Rust workspace, layering, and quality gate
 
-**Status:** implemented; `cargo xtask ci` passes locally and CI calls the same gate.
+**Status:** implemented; `cargo xtask ci` passes locally and CI calls the same gate on Linux and Windows runners (the Windows job is unproven until it first runs).
 
 **Requirements:** create a Cargo workspace, `xtask`, layer checker, strict lints, license audit,
 asset attribution check, and `cargo xtask ci`; make CI call the same gate; validate all crate
@@ -34,7 +39,7 @@ Rust-only and offline/no-server checks are documented and enforced where automat
 
 ### M0.3 — Engine command registry and local CLI skeleton
 
-**Status:** partial — `library.scan`, `library.path`, `library.reveal`, `commands`, and typed dispatch exist; capture and media commands remain future work.
+**Status:** implemented for M0 — `library.scan`, `library.path`, `library.reveal`, `commands`, and typed dispatch exist, with tests for valid, missing, and unknown parameters; capture and media commands remain future work.
 
 **Requirements:** define stable command IDs, typed parameters, validation, error types, and JSON
 stdin/stdout behavior; UI and CLI dispatch through the same registry.

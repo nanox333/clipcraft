@@ -356,7 +356,7 @@ There is no sharing service, web client, user account system, or hosted mileston
 7. Extend the same local capture, audio, recovery, and export contract to macOS and Linux when the
    Windows release gate is met.
 
-Open decisions to resolve at M0: the minimum Windows version, whether to consume FilmCraft crates or
+Open decisions to resolve at M0 (answers and deferrals are recorded in `docs/adr/0002` and `docs/adr/0003`): the minimum Windows version, whether to consume FilmCraft crates or
 extract shared media crates, the first hardware encoder matrix, local library metadata/index format,
 storage quota defaults, and per-platform source-selection/permission behaviour. No custom project
 format is required for the MVP. All decisions must preserve offline operation and the no-hosted-server

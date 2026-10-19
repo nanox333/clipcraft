@@ -22,7 +22,7 @@ The complete feature proposal and acceptance details are in [`PLAN.md`](PLAN.md)
 
 | ID | Status | Outcome |
 | --- | --- | --- |
-| M0 | 🟡 In progress | Rust workspace, contributor docs, issue forms, layering rules, CLI skeleton, CI gate |
+| M0 | 🟡 Software exit criteria met; hardware evidence open | Rust workspace, layering rules, CLI, CI gate, and the synthetic video/audio timestamp check are done; decisions are recorded in ADRs 0002–0003. Capture APIs are not yet benchmarked on reference hardware, so M0 is not marked complete |
 | M1 | 🟡 In progress | Exact time primitives and read-only local media scanning; persistent metadata and export remain |
 | M2 | ⬜ Planned | Windows display/window capture and bounded replay buffer |
 | M3 | ⬜ Planned | System/game audio, microphone, synchronization, post-roll, device recovery |

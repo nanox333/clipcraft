@@ -9,7 +9,7 @@ evidence. Update this file whenever a gap's status, workaround, or estimate chan
 
 | Rank | Gap | Evidence / current limitation | Impact | Work |
 | ---: | --- | --- | --- | --- |
-| G0 | M0 platform and CI matrix remain open | Workspace, eframe shell, CLI, time crate, scanner, tests, layer/asset/license checks exist; the canonical gate passes locally on Linux, while Windows CI and the capability matrix remain unverified | Limits platform and release claims | M0 |
+| G0 | M0 hardware evidence and Windows CI remain open | Workspace, shell, CLI, time crate (including audio sample math and a one-hour synthetic A/V alignment test), scanner, and layer/asset/license checks exist; the gate passes locally on Linux. The capability matrix ([ADR 0002](adr/0002-capture-platform-matrix.md)) is documentation only, and the Windows CI job has not run | Limits platform and release claims | M0 close-out |
 | G1 | Windows capture API and hardware matrix are undecided | Must measure monitor/window capture, audio APIs, permissions, and encoder availability | Core app cannot record reliably | M0 spike, then M2/M3 |
 | G2 | Replay buffer and A/V synchronization are unimplemented | Exact rational time primitives exist; no segment ring, bounded queues, or A/V synchronization tests | Instant clipping is the core workflow | M1/M2/M3 |
 | G3 | Persistent library and storage controls are incomplete | The desktop can browse one local folder, scan it, search titles, sort clips, and copy paths; there is no persistent index, decoded thumbnail or duration metadata, quota, or full-disk behavior | Users still have no durable library organization or storage protection | M1.2/M4.1/M5 |
