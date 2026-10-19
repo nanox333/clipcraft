@@ -286,6 +286,7 @@ name = "clipcraft"
 version = "0.1.0"
 dependencies = [
  "clipcraft-engine",
+ "clipcraft-time",
  "eframe",
  "rfd",
 ]
@@ -303,6 +304,8 @@ dependencies = [
 name = "clipcraft-engine"
 version = "0.1.0"
 dependencies = [
+ "clipcraft-media",
+ "clipcraft-time",
  "serde",
  "serde_json",
 ]
@@ -312,8 +315,20 @@ name = "clipcraft-frame"
 version = "0.1.0"
 
 [[package]]
+name = "clipcraft-media"
+version = "0.1.0"
+dependencies = [
+ "clipcraft-time",
+ "filmcraft-isobmff",
+ "serde",
+]
+
+[[package]]
 name = "clipcraft-time"
 version = "0.1.0"
+dependencies = [
+ "filmcraft-time",
+]
 
 [[package]]
 name = "codespan-reporting"
@@ -657,6 +672,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
 dependencies = [
  "simd-adler32",
+]
+
+[[package]]
+name = "filmcraft-bitstream"
+version = "0.9.0"
+source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
+
+[[package]]
+name = "filmcraft-isobmff"
+version = "0.9.0"
+source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
+dependencies = [
+ "filmcraft-bitstream",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "filmcraft-time"
+version = "0.9.0"
+source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

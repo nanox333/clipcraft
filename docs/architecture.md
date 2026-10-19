@@ -18,12 +18,16 @@ L5  egui UI, Rust platform adapters
 L6  clipcraft desktop app, clipcraft CLI, Rust xtask
 ```
 
-The implemented workspace currently contains `clipcraft-time` (L0), `clipcraft-engine` (L4), and
-the `clipcraft`, `clipcraft-cli`, and `xtask` entry points (L6). Capture, media decoding, persistent
-library storage, edit, and export crates remain planned.
+The implemented workspace currently contains `clipcraft-time` and `clipcraft-frame` (L0),
+`clipcraft-media` (L1), `clipcraft-engine` (L4), and the `clipcraft`, `clipcraft-cli`, and `xtask`
+entry points (L6). Capture, media decoding, edit, and export crates remain planned. FilmCraft crates
+are consumed as pinned git dependencies ([ADR 0004](adr/0004-filmcraft-crates.md)).
 
-- **Time:** `clipcraft-time` owns integer ticks, rational frame rates, sample positions, and checked
-  conversions. Floating-point seconds are display-only.
+- **Time:** `clipcraft-time` re-exports FilmCraft's exact `Tick` and `FrameRate` and adds validated
+  constructors and audio sample positions. Floating-point seconds are display-only.
+- **Frame queues:** `clipcraft-frame` provides item- and byte-bounded queues with observable drops.
+- **Media probing:** `clipcraft-media` reads MP4/MOV container headers (duration, size, frame rate,
+  codecs) after bounding header sizes; it never decodes picture or sound data.
 - **Capture model:** portable source descriptors, capabilities, packets, timestamps, and failure
   states. No OS APIs or device handles leak into this layer.
 - **Platform:** display/window capture, audio devices, global hotkeys, and hardware encoder adapters.

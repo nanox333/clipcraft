@@ -20,7 +20,10 @@ allow = [
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# FilmCraft crates, pinned by commit in the workspace manifest (docs/adr/0004).
+allow-git = ["https://github.com/storytold/filmcraft"]

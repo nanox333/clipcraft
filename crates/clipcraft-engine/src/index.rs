@@ -129,6 +129,12 @@ pub(crate) fn merge_entries(
             if let Some(old) = previous.iter().find(|old| old.path == entry.path) {
                 entry.favorite = old.favorite;
                 entry.tags = old.tags.clone();
+                // A probe stays valid only while the file looks unchanged.
+                if old.size_bytes == entry.size_bytes
+                    && old.modified_unix_seconds == entry.modified_unix_seconds
+                {
+                    entry.probe = old.probe.clone();
+                }
             }
             entry
         })
@@ -144,6 +150,42 @@ pub(crate) fn merge_entries(
         }
     }
     merged
+}
+
+/// Most probe results accepted in one call.
+const MAX_STORED_PROBES: usize = MAX_ENTRIES_PER_FOLDER;
+
+/// Saves probe results into the remembered folder `directory`. Results for paths that are not in
+/// that folder are ignored, so a call can never grow the index beyond what a scan found.
+pub(crate) fn store_probes(
+    index_path: &Path,
+    directory: &str,
+    probes: Vec<(String, clipcraft_media::MediaProbe)>,
+) -> Result<LibraryScanResult, EngineError> {
+    if probes.len() > MAX_STORED_PROBES {
+        return Err(EngineError::IndexInvalid);
+    }
+    let mut index = read_index(index_path)?;
+    let folder = index
+        .folders
+        .iter_mut()
+        .find(|folder| folder.directory == directory)
+        .ok_or(EngineError::IndexMissing)?;
+    for (path, probe) in probes {
+        if let Some(entry) = folder.entries.iter_mut().find(|entry| entry.path == path) {
+            entry.probe = Some(probe);
+        }
+    }
+    let result = LibraryScanResult {
+        directory: folder.directory.clone(),
+        entries: folder.entries.clone(),
+        persisted: false,
+    };
+    let persisted = write_index(index_path, &index).is_ok();
+    Ok(LibraryScanResult {
+        persisted,
+        ..result
+    })
 }
 
 fn read_index(path: &Path) -> Result<LibraryIndex, EngineError> {
@@ -258,6 +300,7 @@ mod tests {
             offline: false,
             favorite: false,
             tags: Vec::new(),
+            probe: None,
         }
     }
 
@@ -402,5 +445,68 @@ mod tests {
 
         let loaded = load_library(&scratch.index()).expect("previous index still loads");
         assert_eq!(loaded.entries.len(), 1);
+    }
+
+    fn sample_probe(milliseconds: i64) -> clipcraft_media::MediaProbe {
+        clipcraft_media::MediaProbe {
+            container: "mp4".to_owned(),
+            duration: Some(clipcraft_time::Tick::from_rational(milliseconds, 1, 1000)),
+            width: Some(1920),
+            height: Some(1080),
+            frame_rate: Some(clipcraft_time::FrameRate::FPS_60),
+            video_codec: Some("avc1".to_owned()),
+            audio_tracks: 1,
+        }
+    }
+
+    #[test]
+    fn stored_probes_survive_rescans_until_the_file_changes() {
+        let scratch = Scratch::new();
+        refresh_library(
+            scan("/clips", &["/clips/a.mp4", "/clips/b.mp4"]),
+            &scratch.index(),
+        )
+        .expect("refresh");
+        let stored = store_probes(
+            &scratch.index(),
+            "/clips",
+            vec![
+                ("/clips/a.mp4".to_owned(), sample_probe(1500)),
+                ("/clips/b.mp4".to_owned(), sample_probe(2500)),
+                ("/clips/not-in-folder.mp4".to_owned(), sample_probe(1)),
+            ],
+        )
+        .expect("store");
+        assert!(stored.persisted);
+        assert_eq!(stored.entries.len(), 2, "unknown paths are ignored");
+
+        // a.mp4 is unchanged; b.mp4 grew, so its old probe must be dropped.
+        let mut rescan = scan("/clips", &["/clips/a.mp4", "/clips/b.mp4"]);
+        rescan.entries[1].size_bytes = 999;
+        let merged = refresh_library(rescan, &scratch.index()).expect("rescan");
+        assert_eq!(merged.entries[0].probe, Some(sample_probe(1500)));
+        assert_eq!(merged.entries[1].probe, None);
+
+        let loaded = load_library(&scratch.index()).expect("load");
+        assert_eq!(loaded.entries[0].probe, Some(sample_probe(1500)));
+    }
+
+    #[test]
+    fn storing_probes_needs_a_known_folder_and_a_bounded_list() {
+        let scratch = Scratch::new();
+        assert_eq!(
+            store_probes(&scratch.index(), "/clips", Vec::new()),
+            Err(EngineError::IndexMissing)
+        );
+        refresh_library(scan("/clips", &["/clips/a.mp4"]), &scratch.index()).expect("refresh");
+        assert_eq!(
+            store_probes(&scratch.index(), "/other", Vec::new()),
+            Err(EngineError::IndexMissing)
+        );
+        let too_many = vec![("/clips/a.mp4".to_owned(), sample_probe(1)); MAX_STORED_PROBES + 1];
+        assert_eq!(
+            store_probes(&scratch.index(), "/clips", too_many),
+            Err(EngineError::IndexInvalid)
+        );
     }
 }

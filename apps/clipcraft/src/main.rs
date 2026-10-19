@@ -1,9 +1,12 @@
 use clipcraft_engine::{
-    Command, CommandOutput, EngineError, LibraryScanResult, MediaEntry, default_index_path, execute,
+    Command, CommandOutput, EngineError, LibraryScanResult, MediaEntry, MediaProbe,
+    default_index_path, execute,
 };
 use eframe::egui;
 use egui::{Align, Color32, FontId, Layout, RichText, Stroke, Vec2};
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::mpsc;
 
 const CANVAS: Color32 = Color32::from_rgb(18, 18, 19);
 const SIDEBAR: Color32 = Color32::from_rgb(24, 24, 26);
@@ -41,6 +44,26 @@ struct ClipCraftApp {
     page: Page,
     /// Where the rebuildable library index lives; `None` keeps scans in memory only.
     index_path: Option<PathBuf>,
+    /// Background probe worker for the current folder, if one is running.
+    probe_receiver: Option<mpsc::Receiver<ProbeMessage>>,
+    /// Incremented per worker so results from a replaced folder are ignored.
+    probe_generation: u64,
+    needs_probe: bool,
+    /// Probe results from this session not yet saved to the index.
+    unsaved_probes: Vec<(String, MediaProbe)>,
+    /// Paths already probed or tried this session, so unsupported files are not retried.
+    probe_attempted: HashSet<String>,
+}
+
+enum ProbeMessage {
+    Result {
+        generation: u64,
+        path: String,
+        probe: Result<MediaProbe, EngineError>,
+    },
+    Done {
+        generation: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -53,6 +76,11 @@ enum Page {
 impl eframe::App for ClipCraftApp {
     fn update(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
         apply_theme(context);
+        if self.needs_probe {
+            self.needs_probe = false;
+            self.start_probing(context);
+        }
+        self.poll_probes();
         self.top_bar(context);
         self.navigation(context);
 
@@ -104,6 +132,103 @@ impl ClipCraftApp {
             Err(error) => app.error = Some(error.to_string()),
         }
         app
+    }
+
+    /// Probes clips that have no saved facts on a worker thread so the window stays responsive.
+    fn start_probing(&mut self, context: &egui::Context) {
+        let Some(library) = self.library.as_ref() else {
+            return;
+        };
+        let paths: Vec<String> = library
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.probe.is_none()
+                    && !entry.offline
+                    && !self.probe_attempted.contains(&entry.path)
+            })
+            .map(|entry| entry.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        self.probe_attempted.extend(paths.iter().cloned());
+        self.probe_generation = self.probe_generation.wrapping_add(1);
+        let generation = self.probe_generation;
+        let (sender, receiver) = mpsc::channel();
+        self.probe_receiver = Some(receiver);
+        let context = context.clone();
+        std::thread::spawn(move || {
+            probe_paths(paths, generation, &sender, || context.request_repaint());
+        });
+    }
+
+    /// Applies finished probes and saves them to the index once the worker is done.
+    fn poll_probes(&mut self) {
+        let Some(receiver) = self.probe_receiver.as_ref() else {
+            return;
+        };
+        let mut messages = Vec::new();
+        let mut disconnected = false;
+        loop {
+            match receiver.try_recv() {
+                Ok(message) => messages.push(message),
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
+            }
+        }
+        for message in messages {
+            self.handle_probe_message(message);
+        }
+        if disconnected {
+            self.probe_receiver = None;
+        }
+    }
+
+    fn handle_probe_message(&mut self, message: ProbeMessage) {
+        match message {
+            ProbeMessage::Result {
+                generation,
+                path,
+                probe,
+            } if generation == self.probe_generation => {
+                let Ok(probe) = probe else {
+                    return;
+                };
+                if let Some(entry) = self
+                    .library
+                    .as_mut()
+                    .and_then(|library| library.entries.iter_mut().find(|entry| entry.path == path))
+                {
+                    entry.probe = Some(probe.clone());
+                    self.unsaved_probes.push((path, probe));
+                }
+            }
+            ProbeMessage::Done { generation } if generation == self.probe_generation => {
+                self.save_probes();
+            }
+            ProbeMessage::Result { .. } | ProbeMessage::Done { .. } => {}
+        }
+    }
+
+    fn save_probes(&mut self) {
+        let (Some(index_path), Some(library)) = (self.index_path.clone(), self.library.as_ref())
+        else {
+            self.unsaved_probes.clear();
+            return;
+        };
+        if self.unsaved_probes.is_empty() {
+            return;
+        }
+        // Probe facts are a cache: failing to save them only means probing again next launch.
+        let _ = execute(Command::StoreProbes {
+            index_path,
+            directory: library.directory.clone(),
+            probes: std::mem::take(&mut self.unsaved_probes),
+        });
     }
 
     /// Rescans the restored folder so clips deleted since last launch show as offline. If the
@@ -245,7 +370,7 @@ impl ClipCraftApp {
         }
         if let Some(action) = card_action {
             match action {
-                ClipCardAction::Open(entry) => self.selected = Some(entry),
+                ClipCardAction::Open(entry) => self.selected = Some(*entry),
                 ClipCardAction::CopyPath(path) => {
                     self.copy_media_path(ui.ctx(), PathBuf::from(path));
                 }
@@ -392,6 +517,18 @@ impl ClipCraftApp {
                         detail_row(ui, "File size", &format_bytes(entry.size_bytes));
                         detail_row(ui, "Format", &entry.extension.to_uppercase());
                         detail_row(ui, "Modified", &format_date(entry.modified_unix_seconds));
+                        if let Some(probe) = entry.probe.as_ref() {
+                            detail_row(ui, "Duration", &format_duration(Some(probe)));
+                            if let (Some(width), Some(height)) = (probe.width, probe.height) {
+                                detail_row(ui, "Resolution", &format!("{width}×{height}"));
+                            }
+                            if let Some(rate) = probe.frame_rate {
+                                detail_row(ui, "Frame rate", &format!("{} fps", rate.label()));
+                            }
+                            if let Some(codec) = probe.video_codec.as_deref() {
+                                detail_row(ui, "Video codec", codec);
+                            }
+                        }
                         ui.add_space(8.0);
                         ui.separator();
                         ui.add_space(8.0);
@@ -482,8 +619,12 @@ impl ClipCraftApp {
                 if self.index_path.is_some() && !result.persisted {
                     self.error = Some(EngineError::IndexSaveFailed.to_string());
                 }
+                if self.directory_text != result.directory {
+                    self.probe_attempted.clear();
+                }
                 self.directory_text = result.directory.clone();
                 self.library = Some(result);
+                self.needs_probe = true;
             }
             Ok(_) => {
                 self.error = Some("The library scan returned an unexpected result.".to_owned());
@@ -533,7 +674,7 @@ impl ClipCraftApp {
 }
 
 enum ClipCardAction {
-    Open(MediaEntry),
+    Open(Box<MediaEntry>),
     CopyPath(String),
     Reveal(String),
 }
@@ -589,6 +730,51 @@ fn open_in_file_manager_label() -> &'static str {
         "Show in Finder"
     } else {
         "Show in Folder"
+    }
+}
+
+/// Probes each path in turn, reporting every result and a final `Done`.
+fn probe_paths(
+    paths: Vec<String>,
+    generation: u64,
+    sender: &mpsc::Sender<ProbeMessage>,
+    notify: impl Fn(),
+) {
+    for path in paths {
+        let probe = match execute(Command::ProbeClip {
+            path: PathBuf::from(&path),
+        }) {
+            Ok(CommandOutput::ClipProbe(probe)) => Ok(probe),
+            Ok(_) => Err(EngineError::MediaUnsupported),
+            Err(error) => Err(error),
+        };
+        if sender
+            .send(ProbeMessage::Result {
+                generation,
+                path,
+                probe,
+            })
+            .is_err()
+        {
+            return;
+        }
+        notify();
+    }
+    let _ = sender.send(ProbeMessage::Done { generation });
+    notify();
+}
+
+/// `m:ss`, or `h:mm:ss` from one hour up. Display only.
+fn format_duration(probe: Option<&MediaProbe>) -> String {
+    let Some(duration) = probe.and_then(|probe| probe.duration) else {
+        return "--:--".to_owned();
+    };
+    let total = duration.seconds().max(0.0).round() as u64;
+    let (hours, minutes, seconds) = (total / 3600, total % 3600 / 60, total % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
     }
 }
 
@@ -668,7 +854,7 @@ fn clip_card(ui: &mut egui::Ui, entry: &MediaEntry, width: f32) -> Option<ClipCa
                 );
             }
             if response.clicked() {
-                action = Some(ClipCardAction::Open(entry.clone()));
+                action = Some(ClipCardAction::Open(Box::new(entry.clone())));
             }
 
             ui.add_space(12.0);
@@ -843,7 +1029,7 @@ fn paint_video_placeholder(ui: &egui::Ui, rect: egui::Rect, entry: &MediaEntry) 
     painter.text(
         duration_badge.center(),
         egui::Align2::CENTER_CENTER,
-        "--:--",
+        format_duration(entry.probe.as_ref()),
         FontId::proportional(12.0),
         TEXT,
     );
@@ -938,7 +1124,10 @@ fn civil_from_days(unix_days: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClipCraftApp, format_date, visible_entries};
+    use super::{
+        ClipCraftApp, EngineError, MediaProbe, ProbeMessage, format_date, format_duration,
+        probe_paths, visible_entries,
+    };
     use clipcraft_engine::MediaEntry;
     use std::fs;
     use std::path::PathBuf;
@@ -954,6 +1143,7 @@ mod tests {
             offline: false,
             favorite: false,
             tags: Vec::new(),
+            probe: None,
         }
     }
 
@@ -1085,6 +1275,113 @@ mod tests {
         let third = ClipCraftApp::restored_from(Some(index_path));
         assert!(third.library.is_none());
         assert!(third.error.is_some());
+
+        fs::remove_dir_all(directory).expect("remove temporary test directory");
+    }
+
+    fn probe_of(milliseconds: i64) -> MediaProbe {
+        MediaProbe {
+            container: "mp4".to_owned(),
+            duration: Some(clipcraft_time::Tick::from_rational(milliseconds, 1, 1000)),
+            width: Some(1280),
+            height: Some(720),
+            frame_rate: Some(clipcraft_time::FrameRate::FPS_30),
+            video_codec: Some("avc1".to_owned()),
+            audio_tracks: 1,
+        }
+    }
+
+    #[test]
+    fn durations_are_formatted_for_cards() {
+        assert_eq!(format_duration(None), "--:--");
+        assert_eq!(format_duration(Some(&probe_of(5_000))), "0:05");
+        assert_eq!(format_duration(Some(&probe_of(125_400))), "2:05");
+        assert_eq!(format_duration(Some(&probe_of(3_725_000))), "1:02:05");
+        let mut unknown = probe_of(0);
+        unknown.duration = None;
+        assert_eq!(format_duration(Some(&unknown)), "--:--");
+    }
+
+    #[test]
+    fn probe_results_apply_only_to_the_current_folder_and_save_when_done() {
+        let directory = temporary_directory();
+        let index_path = directory.join("index.json");
+        let clips = directory.join("clips");
+        fs::create_dir(&clips).expect("clips folder");
+        let clip = clips.join("a.mp4");
+        fs::write(&clip, b"x").expect("clip");
+
+        let mut app = ClipCraftApp::restored_from(Some(index_path.clone()));
+        app.set_library_folder(Some(clips));
+        let path = clip.to_string_lossy().into_owned();
+        app.probe_generation = 7;
+
+        // A result from a replaced folder's worker is ignored.
+        app.handle_probe_message(ProbeMessage::Result {
+            generation: 6,
+            path: path.clone(),
+            probe: Ok(probe_of(1_000)),
+        });
+        assert!(
+            app.library.as_ref().expect("library").entries[0]
+                .probe
+                .is_none()
+        );
+
+        // A failed probe leaves the entry alone; a good one is applied.
+        app.handle_probe_message(ProbeMessage::Result {
+            generation: 7,
+            path: path.clone(),
+            probe: Err(EngineError::MediaUnsupported),
+        });
+        assert!(app.unsaved_probes.is_empty());
+        app.handle_probe_message(ProbeMessage::Result {
+            generation: 7,
+            path,
+            probe: Ok(probe_of(9_000)),
+        });
+        assert_eq!(app.unsaved_probes.len(), 1);
+
+        // `Done` persists, so a fresh launch shows the duration without probing again.
+        app.handle_probe_message(ProbeMessage::Done { generation: 7 });
+        assert!(app.unsaved_probes.is_empty());
+        let relaunched = ClipCraftApp::restored_from(Some(index_path));
+        let entry = &relaunched.library.as_ref().expect("library").entries[0];
+        assert_eq!(entry.probe, Some(probe_of(9_000)));
+
+        fs::remove_dir_all(directory).expect("remove temporary test directory");
+    }
+
+    #[test]
+    fn the_probe_worker_reports_every_path_then_done_even_for_bad_files() {
+        let directory = temporary_directory();
+        let fake = directory.join("fake.mp4");
+        fs::write(&fake, b"not a video").expect("fake clip");
+        let paths = vec![
+            fake.to_string_lossy().into_owned(),
+            directory.join("missing.mp4").to_string_lossy().into_owned(),
+        ];
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        probe_paths(paths, 3, &sender, || {});
+        let messages: Vec<_> = receiver.try_iter().collect();
+
+        assert_eq!(messages.len(), 3);
+        assert!(matches!(
+            &messages[0],
+            ProbeMessage::Result {
+                probe: Err(EngineError::MediaUnsupported),
+                ..
+            }
+        ));
+        assert!(matches!(
+            &messages[1],
+            ProbeMessage::Result {
+                probe: Err(EngineError::FileUnavailable),
+                ..
+            }
+        ));
+        assert!(matches!(messages[2], ProbeMessage::Done { generation: 3 }));
 
         fs::remove_dir_all(directory).expect("remove temporary test directory");
     }

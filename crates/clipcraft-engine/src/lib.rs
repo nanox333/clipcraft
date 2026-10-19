@@ -10,6 +10,8 @@ use std::time::UNIX_EPOCH;
 
 mod index;
 
+pub use clipcraft_media::MediaProbe;
+
 pub use index::{
     INDEX_VERSION, MAX_ENTRIES_PER_FOLDER, MAX_INDEX_BYTES, MAX_INDEXED_FOLDERS, default_index_path,
 };
@@ -35,6 +37,14 @@ pub enum Command {
     },
     /// Restores the most recently refreshed folder from the local index without scanning.
     LoadLibrary { index_path: PathBuf },
+    /// Reads one clip's container headers for duration, size, frame rate, and codecs.
+    ProbeClip { path: PathBuf },
+    /// Saves probe results for clips of a remembered folder into the local index.
+    StoreProbes {
+        index_path: PathBuf,
+        directory: String,
+        probes: Vec<(String, MediaProbe)>,
+    },
     /// Shows a local media file in the operating system's file manager.
     RevealInFileManager { path: PathBuf },
 }
@@ -48,6 +58,8 @@ impl Command {
             Self::RevealInFileManager { .. } => "library.reveal",
             Self::RefreshLibrary { .. } => "library.refresh",
             Self::LoadLibrary { .. } => "library.load",
+            Self::ProbeClip { .. } => "library.probe",
+            Self::StoreProbes { .. } => "library.store_probes",
         }
     }
 }
@@ -85,6 +97,9 @@ pub struct MediaEntry {
     /// User tags, kept across rescans.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Duration, size, and codec facts. Reused across rescans while the file is unchanged.
+    #[serde(default)]
+    pub probe: Option<MediaProbe>,
 }
 
 /// Output produced by a registered engine command.
@@ -97,6 +112,8 @@ pub enum CommandOutput {
     LocalMediaPath { path: String },
     /// A local file was handed to the file manager.
     Revealed { path: String },
+    /// Container facts read from one clip.
+    ClipProbe(MediaProbe),
 }
 
 /// Actionable errors returned by engine commands.
@@ -124,6 +141,10 @@ pub enum EngineError {
     IndexInvalid,
     /// The library index could not be saved.
     IndexSaveFailed,
+    /// The video's headers are larger than ClipCraft will read.
+    MediaTooLarge,
+    /// The file is not an MP4 or MOV video, or its headers are damaged.
+    MediaUnsupported,
 }
 
 impl fmt::Display for EngineError {
@@ -143,6 +164,12 @@ impl fmt::Display for EngineError {
             Self::FileUnavailable => formatter.write_str(
                 "This file could not be found. It may have been moved or deleted.",
             ),
+            Self::MediaTooLarge => {
+                formatter.write_str("This video's headers are too large to read safely.")
+            }
+            Self::MediaUnsupported => {
+                formatter.write_str("This file is not a readable MP4 or MOV video.")
+            }
             Self::IndexMissing => formatter.write_str("No saved library was found."),
             Self::IndexUnavailable => formatter.write_str(
                 "The saved library could not be read. Scan your clips folder again.",
@@ -175,6 +202,23 @@ pub fn execute(command: Command) -> Result<CommandOutput, EngineError> {
             let scan = scan_library_directory(&directory)?;
             index::refresh_library(scan, &index_path).map(CommandOutput::LibraryScan)
         }
+        Command::ProbeClip { path } => {
+            if path.as_os_str().is_empty() {
+                return Err(EngineError::EmptyMediaPath);
+            }
+            clipcraft_media::probe_file(&path)
+                .map(CommandOutput::ClipProbe)
+                .map_err(|error| match error {
+                    clipcraft_media::ProbeError::Unreadable => EngineError::FileUnavailable,
+                    clipcraft_media::ProbeError::TooLarge => EngineError::MediaTooLarge,
+                    clipcraft_media::ProbeError::Unsupported => EngineError::MediaUnsupported,
+                })
+        }
+        Command::StoreProbes {
+            index_path,
+            directory,
+            probes,
+        } => index::store_probes(&index_path, &directory, probes).map(CommandOutput::LibraryScan),
         Command::LoadLibrary { index_path } => {
             index::load_library(&index_path).map(CommandOutput::LibraryScan)
         }
@@ -327,6 +371,7 @@ fn scan_library_directory_with_limit(
             offline: false,
             favorite: false,
             tags: Vec::new(),
+            probe: None,
         });
     }
 
@@ -352,6 +397,8 @@ pub const fn command_ids() -> &'static [&'static str] {
         "library.reveal",
         "library.refresh",
         "library.load",
+        "library.probe",
+        "library.store_probes",
     ]
 }
 
@@ -526,6 +573,36 @@ mod tests {
                 path: directory.path().join("missing.mp4")
             }),
             Err(EngineError::FileUnavailable)
+        );
+    }
+
+    #[test]
+    fn probe_command_maps_failures_to_actionable_errors() {
+        assert_eq!(
+            Command::ProbeClip {
+                path: PathBuf::new()
+            }
+            .id(),
+            "library.probe"
+        );
+        assert_eq!(
+            super::execute(Command::ProbeClip {
+                path: PathBuf::new()
+            }),
+            Err(EngineError::EmptyMediaPath)
+        );
+        let directory = TestDirectory::new();
+        assert_eq!(
+            super::execute(Command::ProbeClip {
+                path: directory.path().join("missing.mp4")
+            }),
+            Err(EngineError::FileUnavailable)
+        );
+        let fake = directory.path().join("fake.mp4");
+        fs::write(&fake, b"not really a video").expect("fixture writes");
+        assert_eq!(
+            super::execute(Command::ProbeClip { path: fake }),
+            Err(EngineError::MediaUnsupported)
         );
     }
 }

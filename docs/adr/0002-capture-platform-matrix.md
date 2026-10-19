@@ -31,10 +31,10 @@ provisional until the audio spike confirms per-process loopback availability.
 hardware encoder is unavailable the UI shows the specific missing capability and keeps the library
 and editor usable. No fallback injects into a game process, loads a driver, or bypasses DRM.
 
-**Software encode.** No mature pure-Rust H.264 encoder is assumed. Choosing the software fallback
-(candidate pure-Rust encoders versus a licensed system codec through `clipcraft-platform`) is a
-named M2 spike deliverable. Until it lands, export and capture report "no encoder available"
-rather than producing a file.
+**Software encode.** [ADR 0004](0004-filmcraft-crates.md) identifies FilmCraft's pure-Rust H.264
+encoder (`filmcraft-h264enc`) as the software fallback candidate. Its 1080p60 speed and quality are
+unmeasured; confirming them is an M2 spike deliverable. Until it is wired in, export and capture
+report "no encoder available" rather than producing a file.
 
 ## Consequences
 

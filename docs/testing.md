@@ -11,7 +11,8 @@ strict Clippy, workspace tests, layer validation, asset attribution checks, and 
 license audit. Keep focused test commands in crate docs, but do not create a second gate with
 different pass criteria.
 
-Current focused checks include `cargo test -p clipcraft-time` for rational time math,
+Current focused checks include `cargo test -p clipcraft-time` for time math, `cargo test -p clipcraft-media` for container probing
+including byte-corruption and oversized-header cases, `cargo test -p clipcraft-frame` for queue limits,
 `cargo test -p clipcraft-engine` for bounded local scans and command dispatch, and
 `cargo test -p clipcraft` for UI formatting helpers.
 

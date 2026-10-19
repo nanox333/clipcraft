@@ -220,7 +220,7 @@ fn check_licenses() -> TaskResult<()> {
     let workspace = workspace_root()?;
     let status = Command::new("cargo")
         .current_dir(workspace)
-        .args(["deny", "check", "licenses"])
+        .args(["deny", "check", "licenses", "bans", "sources"])
         .status()
         .map_err(|_| TaskError::CommandUnavailable)?;
     if status.success() {
@@ -278,7 +278,9 @@ impl fmt::Display for TaskError {
             Self::AssetAttributionMissing => {
                 "one or more assets lack attribution or a license sidecar"
             }
-            Self::LicenseAuditFailed => "cargo-deny license audit failed; see the output above",
+            Self::LicenseAuditFailed => {
+                "cargo-deny licenses, bans, or sources audit failed; see the output above"
+            }
             Self::WorkspacePath => "could not locate the workspace root",
         };
         formatter.write_str(message)

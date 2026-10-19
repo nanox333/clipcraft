@@ -5,10 +5,13 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "Checked integer time primitives for ClipCraft"
+description = "Exact time primitives for ClipCraft, built on FilmCraft's tick clock"
 
 [package.metadata.clipcraft]
 layer = 0
+
+[dependencies]
+filmcraft-time.workspace = true
 
 [lints]
 workspace = true
