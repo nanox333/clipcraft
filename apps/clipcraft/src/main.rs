@@ -1,8 +1,8 @@
 use clipcraft_engine::{
-    AUDIO_KBPS, CaptureSource, Command, CommandOutput, Container, EngineError, FRAME_RATES,
-    Framing, HEIGHTS, LibraryScanResult, MediaEntry, MediaProbe, OutputShape, QualityPreset,
-    REPLAY_SECONDS, RateControl, RecordingSettings, VIDEO_KBPS, VideoCodec, default_index_path,
-    default_thumbnail_dir, execute,
+    AUDIO_KBPS, CaptureSource, Command, CommandOutput, Container, EncoderPreset, EngineError,
+    FRAME_RATES, Framing, HEIGHTS, KEYFRAME_SECONDS, LibraryScanResult, MediaEntry, MediaProbe,
+    OutputShape, QualityPreset, REPLAY_SECONDS, RateControl, RecordingSettings, SAMPLE_RATES,
+    VIDEO_KBPS, VideoCodec, default_index_path, default_thumbnail_dir, execute,
 };
 mod kit;
 mod playback;
@@ -100,16 +100,32 @@ enum ProbeMessage {
 enum SettingsTab {
     #[default]
     General,
-    Recording,
+    Capture,
+    Video,
+    Audio,
+    Advanced,
 }
 
 impl SettingsTab {
-    const ALL: [SettingsTab; 2] = [SettingsTab::General, SettingsTab::Recording];
-
     fn label(self) -> &'static str {
         match self {
             Self::General => "General",
-            Self::Recording => "Recording",
+            Self::Capture => "Capture",
+            Self::Video => "Video",
+            Self::Audio => "Audio",
+            Self::Advanced => "Advanced",
+        }
+    }
+
+    fn help(self) -> &'static str {
+        match self {
+            Self::General => "Where your clips live and how playback behaves.",
+            Self::Capture => "What gets recorded and how it is framed.",
+            Self::Video => "File format, resolution, and quality.",
+            Self::Audio => "What sound is recorded and how well.",
+            Self::Advanced => {
+                "Fine control over the encoder and audio. The defaults suit most people."
+            }
         }
     }
 }
@@ -853,48 +869,112 @@ impl ClipCraftApp {
     }
 
     fn settings(&mut self, ui: &mut egui::Ui) {
-        let column = 760.0_f32.min(ui.available_width());
-        let margin = ((ui.available_width() - column) / 2.0).max(0.0);
+        if self.settings_tab == SettingsTab::Advanced && !self.recording.show_advanced {
+            self.settings_tab = SettingsTab::General;
+        }
+        let height = ui.available_height().max(0.0);
+        let nav_width = 210.0_f32.min(ui.available_width() * 0.35).max(0.0);
         ui.horizontal_top(|ui| {
-            ui.add_space(margin);
-            ui.vertical(|ui| {
-                ui.set_width(column.max(0.0));
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new("Settings")
-                        .color(TEXT)
-                        .size(24.0)
-                        .family(kit::semibold()),
-                );
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    for tab in SettingsTab::ALL {
-                        if choice(ui, tab.label(), self.settings_tab == tab, true, tab.label()) {
-                            self.settings_tab = tab;
-                        }
-                    }
-                });
-                ui.add_space(14.0);
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        match self.settings_tab {
-                            SettingsTab::General => self.general_settings(ui),
-                            SettingsTab::Recording => self.recording_settings(ui),
-                        }
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(
-                                "All clips remain on this device. There is no cloud sync or hosted service.",
-                            )
-                            .color(FAINT)
-                            .size(12.5),
-                        );
-                        ui.add_space(24.0);
-                    });
-            });
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.allocate_ui_with_layout(
+                Vec2::new(nav_width, height),
+                Layout::top_down(Align::Min),
+                |ui| self.settings_nav(ui),
+            );
+            let content_width = ui.available_width().max(0.0);
+            ui.allocate_ui_with_layout(
+                Vec2::new(content_width, height),
+                Layout::top_down(Align::Min),
+                |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            let column = (content_width - 40.0).clamp(0.0, 640.0);
+                            ui.horizontal_top(|ui| {
+                                ui.add_space(((content_width - column) / 2.0).clamp(0.0, 48.0));
+                                ui.vertical(|ui| {
+                                    ui.set_width(column);
+                                    self.settings_content(ui);
+                                });
+                            });
+                        });
+                },
+            );
         });
+    }
+
+    /// The category list on the left of Settings.
+    fn settings_nav(&mut self, ui: &mut egui::Ui) {
+        ui.set_width(ui.available_width());
+        ui.add_space(8.0);
+        let advanced = self.recording.show_advanced;
+        let groups: [(&str, Vec<SettingsTab>); 2] = [
+            ("Settings", vec![SettingsTab::General]),
+            (
+                "Recording",
+                [SettingsTab::Capture, SettingsTab::Video, SettingsTab::Audio]
+                    .into_iter()
+                    .chain(advanced.then_some(SettingsTab::Advanced))
+                    .collect(),
+            ),
+        ];
+        for (group, tabs) in groups {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(group.to_uppercase())
+                    .color(FAINT)
+                    .size(11.5)
+                    .family(kit::semibold()),
+            );
+            ui.add_space(4.0);
+            for tab in tabs {
+                let (rect, response) = ui.allocate_exact_size(
+                    Vec2::new((ui.available_width() - 12.0).max(0.0), 34.0),
+                    egui::Sense::click(),
+                );
+                let selected = self.settings_tab == tab;
+                if selected {
+                    ui.painter().rect_filled(rect, 8.0, kit::CARD_HOVER);
+                } else if response.hovered() {
+                    ui.painter().rect_filled(rect, 8.0, kit::CARD);
+                }
+                ui.painter().text(
+                    egui::pos2(rect.left() + 12.0, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    tab.label(),
+                    egui::FontId::new(14.0, kit::medium()),
+                    if selected { TEXT } else { MUTED },
+                );
+                if response.clicked() {
+                    self.settings_tab = tab;
+                }
+            }
+        }
+    }
+
+    fn settings_content(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(14.0);
+        ui.label(
+            RichText::new(self.settings_tab.label())
+                .color(TEXT)
+                .size(24.0)
+                .family(kit::semibold()),
+        );
+        ui.label(RichText::new(self.settings_tab.help()).color(MUTED));
+        ui.add_space(12.0);
+        match self.settings_tab {
+            SettingsTab::General => self.general_settings(ui),
+            tab => self.recording_settings(ui, tab),
+        }
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(
+                "All clips remain on this device. There is no cloud sync or hosted service.",
+            )
+            .color(FAINT)
+            .size(12.5),
+        );
+        ui.add_space(24.0);
     }
 
     fn general_settings(&mut self, ui: &mut egui::Ui) {
@@ -968,232 +1048,27 @@ impl ClipCraftApp {
         });
     }
 
-    /// The Recording tab of Settings. Changes are saved as they are made.
-    fn recording_settings(&mut self, ui: &mut egui::Ui) {
+    /// One Recording tab of Settings. Changes are saved as they are made.
+    fn recording_settings(&mut self, ui: &mut egui::Ui, tab: SettingsTab) {
         let before = self.recording.clone();
         let mut settings = before.clone();
-        card(ui, "What to record", |ui| {
-            setting_row(ui, "Capture", settings.source.detail(), false, |ui| {
-                for source in CaptureSource::ALL {
-                    if choice(
-                        ui,
-                        source.label(),
-                        settings.source == source,
-                        true,
-                        source.detail(),
-                    ) {
-                        settings.source = source;
-                    }
-                }
-            });
-            setting_row(
+        match tab {
+            SettingsTab::Capture => capture_tab(ui, &mut settings),
+            SettingsTab::Video => video_tab(ui, &mut settings),
+            SettingsTab::Audio => audio_tab(ui, &mut settings),
+            SettingsTab::Advanced => advanced_tab(ui, &mut settings),
+            SettingsTab::General => {}
+        }
+        if tab != SettingsTab::Advanced {
+            divider(ui);
+            toggle_row(
                 ui,
-                "Picture shape",
-                "Playing in 4:3? Keep it, or fit it to a widescreen clip.",
-                settings.shape == OutputShape::Source,
-                |ui| {
-                    for shape in OutputShape::ALL {
-                        if choice(
-                            ui,
-                            shape.label(),
-                            settings.shape == shape,
-                            true,
-                            shape.label(),
-                        ) {
-                            settings.shape = shape;
-                        }
-                    }
-                },
-            );
-            if settings.shape != OutputShape::Source {
-                setting_row(ui, "Fit to frame", settings.framing.detail(), true, |ui| {
-                    for framing in Framing::ALL.into_iter().filter(|f| *f != Framing::Original) {
-                        if choice(
-                            ui,
-                            framing.label(),
-                            settings.framing == framing,
-                            true,
-                            framing.detail(),
-                        ) {
-                            settings.framing = framing;
-                        }
-                    }
-                });
-            }
-        });
-        card(ui, "Video", |ui| {
-            setting_row(ui, "Format", settings.container.detail(), false, |ui| {
-                for container in Container::ALL {
-                    let reason = container.unavailable_reason();
-                    let hint = reason.map_or_else(|| container.detail().to_owned(), str::to_owned);
-                    if choice(
-                        ui,
-                        container.label(),
-                        settings.container == container,
-                        reason.is_none(),
-                        &hint,
-                    ) {
-                        settings.container = container;
-                    }
-                }
-            });
-            setting_row(ui, "Codec", settings.codec.detail(), false, |ui| {
-                for codec in VideoCodec::ALL {
-                    let reason = codec.unavailable_reason();
-                    let hint = reason.map_or_else(|| codec.detail().to_owned(), str::to_owned);
-                    if choice(
-                        ui,
-                        codec.label(),
-                        settings.codec == codec,
-                        reason.is_none(),
-                        &hint,
-                    ) {
-                        settings.codec = codec;
-                    }
-                }
-            });
-            setting_row(
-                ui,
-                "Resolution",
-                "The clip's height. Width follows the shape.",
-                false,
-                |ui| {
-                    for height in HEIGHTS {
-                        if choice(
-                            ui,
-                            &format!("{height}p"),
-                            settings.height == height,
-                            true,
-                            "Clip height",
-                        ) {
-                            settings.height = height;
-                        }
-                    }
-                },
-            );
-            setting_row(ui, "Frame rate", "Frames per second.", false, |ui| {
-                for rate in FRAME_RATES {
-                    if choice(
-                        ui,
-                        &format!("{rate} fps"),
-                        settings.frames_per_second == rate,
-                        true,
-                        "Frames per second",
-                    ) {
-                        settings.frames_per_second = rate;
-                    }
-                }
-            });
-            setting_row(
-                ui,
-                "Quality",
-                &format!(
-                    "About {} MB per minute of video.",
-                    u64::from(settings.video_kbps) * 60 / 8 / 1000
-                ),
-                false,
-                |ui| {
-                    for preset in QualityPreset::ALL {
-                        let kbps = preset.video_kbps(settings.height, settings.frames_per_second);
-                        if choice(
-                            ui,
-                            preset.label(),
-                            settings.video_kbps == kbps,
-                            true,
-                            &format!(
-                                "About {} Mbps at this resolution and frame rate",
-                                kbps / 1000
-                            ),
-                        ) {
-                            settings.video_kbps = kbps;
-                        }
-                    }
-                },
-            );
-            setting_row(
-                ui,
-                "Bitrate",
-                "Choose an exact video bitrate.",
-                false,
-                |ui| {
-                    for kbps in VIDEO_KBPS {
-                        if choice(
-                            ui,
-                            &format!("{} Mbps", kbps as f32 / 1000.0),
-                            settings.video_kbps == kbps,
-                            true,
-                            "Video bitrate",
-                        ) {
-                            settings.video_kbps = kbps;
-                        }
-                    }
-                },
-            );
-            setting_row(
-                ui,
-                "Bitrate mode",
-                settings.rate_control.detail(),
+                "Show advanced settings",
+                "Adds an Advanced section with encoder and audio details.",
+                &mut settings.show_advanced,
                 true,
-                |ui| {
-                    for mode in RateControl::ALL {
-                        if choice(
-                            ui,
-                            mode.label(),
-                            settings.rate_control == mode,
-                            true,
-                            mode.detail(),
-                        ) {
-                            settings.rate_control = mode;
-                        }
-                    }
-                },
             );
-        });
-        card(ui, "Audio and replay", |ui| {
-            setting_row(
-                ui,
-                "Audio bitrate",
-                "AAC audio, kilobits per second. 256 and above is transparent for most listeners.",
-                false,
-                |ui| {
-                    for kbps in AUDIO_KBPS {
-                        if choice(
-                            ui,
-                            &format!("{kbps} kbps"),
-                            settings.audio_kbps == kbps,
-                            true,
-                            "Audio bitrate",
-                        ) {
-                            settings.audio_kbps = kbps;
-                        }
-                    }
-                },
-            );
-            setting_row(
-                ui,
-                "Instant replay",
-                "How much play before the hotkey is kept.",
-                true,
-                |ui| {
-                    for seconds in REPLAY_SECONDS {
-                        let label = if seconds >= 60 {
-                            format!("{} min", seconds / 60)
-                        } else {
-                            format!("{seconds} sec")
-                        };
-                        if choice(
-                            ui,
-                            &label,
-                            settings.replay_seconds == seconds,
-                            true,
-                            "Replay length",
-                        ) {
-                            settings.replay_seconds = seconds;
-                        }
-                    }
-                },
-            );
-        });
+        }
         let settings = settings.sanitized();
         if settings != before {
             self.recording = settings;
@@ -1405,7 +1280,7 @@ fn choice(ui: &mut egui::Ui, label: &str, selected: bool, enabled: bool, hint: &
     clicked && enabled && !selected
 }
 
-/// A rounded group of setting rows under a small heading.
+/// A small heading over a group of setting rows.
 fn card(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
     ui.label(
         RichText::new(title.to_uppercase())
@@ -1413,17 +1288,467 @@ fn card(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
             .size(11.5)
             .family(kit::semibold()),
     );
-    ui.add_space(6.0);
-    egui::Frame::new()
-        .fill(PANEL)
-        .stroke(Stroke::new(1.0_f32, BORDER))
-        .corner_radius(egui::CornerRadius::same(14))
-        .inner_margin(egui::Margin::symmetric(20, 4))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            body(ui);
-        });
+    body(ui);
     ui.add_space(18.0);
+}
+
+/// A row with a switch on the right.
+fn toggle_row(ui: &mut egui::Ui, title: &str, help: &str, value: &mut bool, last: bool) {
+    ui.add_space(14.0);
+    ui.horizontal(|ui| {
+        let text_width = (ui.available_width() - 56.0).max(0.0);
+        ui.vertical(|ui| {
+            ui.set_width(text_width);
+            ui.label(
+                RichText::new(title)
+                    .color(TEXT)
+                    .size(14.5)
+                    .family(kit::semibold()),
+            );
+            ui.label(RichText::new(help).color(MUTED).size(12.5));
+        });
+        ui.add_space(12.0);
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(40.0, 22.0), egui::Sense::click());
+        let fill = if *value {
+            LIME
+        } else {
+            Color32::from_rgb(62, 62, 69)
+        };
+        ui.painter().rect_filled(rect, 11.0, fill);
+        let knob_x = if *value {
+            rect.right() - 11.0
+        } else {
+            rect.left() + 11.0
+        };
+        ui.painter().circle_filled(
+            egui::pos2(knob_x, rect.center().y),
+            8.0,
+            if *value {
+                Color32::BLACK
+            } else {
+                Color32::WHITE
+            },
+        );
+        if response.on_hover_text(title).clicked() {
+            *value = !*value;
+        }
+    });
+    ui.add_space(14.0);
+    if !last {
+        divider(ui);
+    }
+}
+
+fn divider(ui: &mut egui::Ui) {
+    let (line, _) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter().rect_filled(line, 0.0, BORDER);
+}
+
+/// A row with a 0-100 percent slider.
+fn percent_row(ui: &mut egui::Ui, title: &str, help: &str, value: &mut u32, enabled: bool) {
+    ui.add_space(10.0);
+    ui.label(
+        RichText::new(title)
+            .color(if enabled { TEXT } else { FAINT })
+            .size(13.5),
+    );
+    ui.label(RichText::new(help).color(MUTED).size(12.5));
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - 80.0).max(0.0);
+        if let Some(next) = kit::slim_slider(ui, width, *value as f32 / 100.0, enabled, title) {
+            *value = (next * 100.0).round() as u32;
+        }
+        ui.add_space(8.0);
+        ui.label(RichText::new(format!("{value}%")).color(MUTED));
+    });
+    ui.add_space(10.0);
+}
+
+/// One option of a radio list: a circle, a title, and a description. True when clicked.
+fn radio_row(ui: &mut egui::Ui, title: &str, help: &str, selected: bool) -> bool {
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), egui::Sense::click());
+    let center = egui::pos2(rect.left() + 10.0, rect.top() + 14.0);
+    ui.painter().circle_stroke(
+        center,
+        8.5,
+        Stroke::new(1.5_f32, if selected { LIME } else { MUTED }),
+    );
+    if selected {
+        ui.painter().circle_filled(center, 4.5, LIME);
+    }
+    ui.painter().text(
+        egui::pos2(rect.left() + 30.0, rect.top() + 14.0),
+        egui::Align2::LEFT_CENTER,
+        title,
+        egui::FontId::new(14.0, kit::medium()),
+        TEXT,
+    );
+    ui.painter().text(
+        egui::pos2(rect.left() + 30.0, rect.top() + 33.0),
+        egui::Align2::LEFT_CENTER,
+        help,
+        egui::FontId::proportional(12.5),
+        MUTED,
+    );
+    response.clicked() && !selected
+}
+
+fn capture_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
+    card(ui, "What to record", |ui| {
+        setting_row(ui, "Capture", settings.source.detail(), false, |ui| {
+            for source in CaptureSource::ALL {
+                if choice(
+                    ui,
+                    source.label(),
+                    settings.source == source,
+                    true,
+                    source.detail(),
+                ) {
+                    settings.source = source;
+                }
+            }
+        });
+        setting_row(
+            ui,
+            "Picture shape",
+            "Playing in 4:3? Keep it, or fit it to a widescreen clip.",
+            settings.shape == OutputShape::Source,
+            |ui| {
+                for shape in OutputShape::ALL {
+                    if choice(
+                        ui,
+                        shape.label(),
+                        settings.shape == shape,
+                        true,
+                        shape.label(),
+                    ) {
+                        settings.shape = shape;
+                    }
+                }
+            },
+        );
+        if settings.shape != OutputShape::Source {
+            setting_row(ui, "Fit to frame", settings.framing.detail(), true, |ui| {
+                for framing in Framing::ALL.into_iter().filter(|f| *f != Framing::Original) {
+                    if choice(
+                        ui,
+                        framing.label(),
+                        settings.framing == framing,
+                        true,
+                        framing.detail(),
+                    ) {
+                        settings.framing = framing;
+                    }
+                }
+            });
+        }
+    });
+    card(ui, "Overlay", |ui| {
+        toggle_row(
+            ui,
+            "Show the mouse cursor",
+            "Draw the pointer in your clips.",
+            &mut settings.capture_cursor,
+            false,
+        );
+    });
+}
+
+fn video_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
+    card(ui, "File", |ui| {
+        setting_row(ui, "Format", settings.container.detail(), false, |ui| {
+            for container in Container::ALL {
+                let reason = container.unavailable_reason();
+                let hint = reason.map_or_else(|| container.detail().to_owned(), str::to_owned);
+                if choice(
+                    ui,
+                    container.label(),
+                    settings.container == container,
+                    reason.is_none(),
+                    &hint,
+                ) {
+                    settings.container = container;
+                }
+            }
+        });
+        setting_row(ui, "Codec", settings.codec.detail(), true, |ui| {
+            for codec in VideoCodec::ALL {
+                let reason = codec.unavailable_reason();
+                let hint = reason.map_or_else(|| codec.detail().to_owned(), str::to_owned);
+                if choice(
+                    ui,
+                    codec.label(),
+                    settings.codec == codec,
+                    reason.is_none(),
+                    &hint,
+                ) {
+                    settings.codec = codec;
+                }
+            }
+        });
+    });
+    card(ui, "Picture", |ui| {
+        setting_row(
+            ui,
+            "Resolution",
+            "The clip's height. Width follows the shape.",
+            false,
+            |ui| {
+                for height in HEIGHTS {
+                    if choice(
+                        ui,
+                        &format!("{height}p"),
+                        settings.height == height,
+                        true,
+                        "Clip height",
+                    ) {
+                        settings.height = height;
+                    }
+                }
+            },
+        );
+        setting_row(ui, "Frame rate", "Frames per second.", true, |ui| {
+            for rate in FRAME_RATES {
+                if choice(
+                    ui,
+                    &format!("{rate} fps"),
+                    settings.frames_per_second == rate,
+                    true,
+                    "Frames per second",
+                ) {
+                    settings.frames_per_second = rate;
+                }
+            }
+        });
+    });
+    card(ui, "Quality", |ui| {
+        setting_row(
+            ui,
+            "Preset",
+            &format!(
+                "About {} MB per minute of video.",
+                u64::from(settings.video_kbps) * 60 / 8 / 1000
+            ),
+            false,
+            |ui| {
+                for preset in QualityPreset::ALL {
+                    let kbps = preset.video_kbps(settings.height, settings.frames_per_second);
+                    if choice(
+                        ui,
+                        preset.label(),
+                        settings.video_kbps == kbps,
+                        true,
+                        &format!(
+                            "About {} Mbps at this resolution and frame rate",
+                            kbps / 1000
+                        ),
+                    ) {
+                        settings.video_kbps = kbps;
+                    }
+                }
+            },
+        );
+        setting_row(
+            ui,
+            "Bitrate",
+            "Choose an exact video bitrate.",
+            false,
+            |ui| {
+                for kbps in VIDEO_KBPS {
+                    if choice(
+                        ui,
+                        &format!("{} Mbps", kbps as f32 / 1000.0),
+                        settings.video_kbps == kbps,
+                        true,
+                        "Video bitrate",
+                    ) {
+                        settings.video_kbps = kbps;
+                    }
+                }
+            },
+        );
+        setting_row(
+            ui,
+            "Bitrate mode",
+            settings.rate_control.detail(),
+            true,
+            |ui| {
+                for mode in RateControl::ALL {
+                    if choice(
+                        ui,
+                        mode.label(),
+                        settings.rate_control == mode,
+                        true,
+                        mode.detail(),
+                    ) {
+                        settings.rate_control = mode;
+                    }
+                }
+            },
+        );
+    });
+}
+
+fn audio_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
+    card(ui, "Sources", |ui| {
+        toggle_row(
+            ui,
+            "Game and system sound",
+            "Record what you hear.",
+            &mut settings.capture_game_audio,
+            false,
+        );
+        percent_row(
+            ui,
+            "Game volume",
+            "How loud the game is in the clip.",
+            &mut settings.game_audio_percent,
+            settings.capture_game_audio,
+        );
+        divider(ui);
+        toggle_row(
+            ui,
+            "Microphone",
+            "Record your voice with the clip.",
+            &mut settings.capture_microphone,
+            false,
+        );
+        percent_row(
+            ui,
+            "Microphone volume",
+            "How loud your voice is in the clip.",
+            &mut settings.microphone_percent,
+            settings.capture_microphone,
+        );
+    });
+    card(ui, "Quality", |ui| {
+        setting_row(
+            ui,
+            "Audio bitrate",
+            "AAC audio, kilobits per second. 256 and above is transparent for most listeners.",
+            true,
+            |ui| {
+                for kbps in AUDIO_KBPS {
+                    if choice(
+                        ui,
+                        &format!("{kbps} kbps"),
+                        settings.audio_kbps == kbps,
+                        true,
+                        "Audio bitrate",
+                    ) {
+                        settings.audio_kbps = kbps;
+                    }
+                }
+            },
+        );
+    });
+    card(ui, "Instant replay", |ui| {
+        setting_row(
+            ui,
+            "Replay length",
+            "How much play before the hotkey is kept.",
+            true,
+            |ui| {
+                for seconds in REPLAY_SECONDS {
+                    let label = if seconds >= 60 {
+                        format!("{} min", seconds / 60)
+                    } else {
+                        format!("{seconds} sec")
+                    };
+                    if choice(
+                        ui,
+                        &label,
+                        settings.replay_seconds == seconds,
+                        true,
+                        "Replay length",
+                    ) {
+                        settings.replay_seconds = seconds;
+                    }
+                }
+            },
+        );
+    });
+}
+
+fn advanced_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
+    card(ui, "Encoder", |ui| {
+        ui.add_space(8.0);
+        for preset in EncoderPreset::ALL {
+            if radio_row(
+                ui,
+                preset.label(),
+                preset.detail(),
+                settings.encoder_preset == preset,
+            ) {
+                settings.encoder_preset = preset;
+            }
+        }
+        divider(ui);
+        setting_row(
+            ui,
+            "Keyframe interval",
+            "Seconds between keyframes. Shorter clips scrub faster; longer ones are smaller.",
+            true,
+            |ui| {
+                for seconds in KEYFRAME_SECONDS {
+                    if choice(
+                        ui,
+                        &format!("{seconds} s"),
+                        settings.keyframe_seconds == seconds,
+                        true,
+                        "Keyframe interval",
+                    ) {
+                        settings.keyframe_seconds = seconds;
+                    }
+                }
+            },
+        );
+    });
+    card(ui, "Audio", |ui| {
+        setting_row(
+            ui,
+            "Sample rate",
+            "48 kHz is the video standard.",
+            false,
+            |ui| {
+                for rate in SAMPLE_RATES {
+                    if choice(
+                        ui,
+                        &format!("{} kHz", rate as f32 / 1000.0),
+                        settings.audio_sample_rate == rate,
+                        true,
+                        "Sample rate",
+                    ) {
+                        settings.audio_sample_rate = rate;
+                    }
+                }
+            },
+        );
+        setting_row(
+            ui,
+            "Channels",
+            "Stereo keeps left and right apart.",
+            true,
+            |ui| {
+                for (channels, label) in [(2, "Stereo"), (1, "Mono")] {
+                    if choice(ui, label, settings.audio_channels == channels, true, label) {
+                        settings.audio_channels = channels;
+                    }
+                }
+            },
+        );
+    });
+    card(ui, "Advanced settings", |ui| {
+        toggle_row(
+            ui,
+            "Show advanced settings",
+            "Turn off to hide this section again.",
+            &mut settings.show_advanced,
+            true,
+        );
+    });
 }
 
 /// A title and help line, then the row's controls, with a divider after it unless `last`.

@@ -273,6 +273,42 @@ impl RateControl {
     }
 }
 
+/// How hard the encoder works to shrink the video.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EncoderPreset {
+    /// Least CPU. Larger files at the same quality.
+    Fast,
+    /// A good balance of CPU and size.
+    #[default]
+    Balanced,
+    /// Most CPU. Smallest files at the same quality.
+    Quality,
+}
+
+impl EncoderPreset {
+    /// Every preset, fastest first.
+    pub const ALL: [EncoderPreset; 3] = [Self::Fast, Self::Balanced, Self::Quality];
+
+    /// The name shown to people.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fast => "Fast",
+            Self::Balanced => "Balanced",
+            Self::Quality => "Quality",
+        }
+    }
+
+    /// A short description.
+    pub fn detail(self) -> &'static str {
+        match self {
+            Self::Fast => "Lowest CPU use, so the game keeps its frame rate. Larger files.",
+            Self::Balanced => "A good balance of CPU use and file size.",
+            Self::Quality => "Smallest files for the quality. Uses the most CPU.",
+        }
+    }
+}
+
 /// A named video quality: a bitrate that suits the clip's height and frame rate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QualityPreset {
@@ -376,6 +412,26 @@ pub struct RecordingSettings {
     pub rate_control: RateControl,
     /// Audio bitrate in kilobits per second.
     pub audio_kbps: u32,
+    /// Whether the Advanced settings are shown.
+    pub show_advanced: bool,
+    /// How hard the encoder works.
+    pub encoder_preset: EncoderPreset,
+    /// Seconds between keyframes. Shorter is easier to scrub; longer is smaller.
+    pub keyframe_seconds: u32,
+    /// Audio sample rate in hertz.
+    pub audio_sample_rate: u32,
+    /// Audio channels: 1 (mono) or 2 (stereo).
+    pub audio_channels: u32,
+    /// Draw the mouse cursor in the clip.
+    pub capture_cursor: bool,
+    /// Record the game's and system's sound.
+    pub capture_game_audio: bool,
+    /// Record the microphone.
+    pub capture_microphone: bool,
+    /// Game sound level, 0 to 100 percent.
+    pub game_audio_percent: u32,
+    /// Microphone level, 0 to 100 percent.
+    pub microphone_percent: u32,
     /// How many seconds of play before the hotkey are kept.
     pub replay_seconds: u32,
 }
@@ -393,6 +449,16 @@ impl Default for RecordingSettings {
             video_kbps: 12_000,
             rate_control: RateControl::Variable,
             audio_kbps: 160,
+            show_advanced: false,
+            encoder_preset: EncoderPreset::Balanced,
+            keyframe_seconds: 2,
+            audio_sample_rate: 48_000,
+            audio_channels: 2,
+            capture_cursor: true,
+            capture_game_audio: true,
+            capture_microphone: false,
+            game_audio_percent: 100,
+            microphone_percent: 100,
             replay_seconds: 30,
         }
     }
@@ -406,6 +472,11 @@ pub const FRAME_RATES: [u32; 3] = [24, 30, 60];
 pub const REPLAY_SECONDS: [u32; 5] = [15, 30, 60, 120, 300];
 /// Video bitrates offered in the UI, in kilobits per second.
 pub const VIDEO_KBPS: [u32; 8] = [2_500, 5_000, 8_000, 12_000, 16_000, 25_000, 40_000, 60_000];
+/// Audio bitrates offered in the UI, in kilobits per second.
+/// Keyframe intervals offered in the UI, in seconds.
+pub const KEYFRAME_SECONDS: [u32; 4] = [1, 2, 4, 10];
+/// Audio sample rates offered in the UI, in hertz.
+pub const SAMPLE_RATES: [u32; 2] = [44_100, 48_000];
 /// Audio bitrates offered in the UI, in kilobits per second.
 pub const AUDIO_KBPS: [u32; 8] = [96, 128, 160, 192, 256, 320, 384, 512];
 
@@ -422,6 +493,13 @@ impl RecordingSettings {
         self.frames_per_second = self.frames_per_second.clamp(1, 240);
         self.video_kbps = self.video_kbps.clamp(MIN_VIDEO_KBPS, MAX_VIDEO_KBPS);
         self.audio_kbps = self.audio_kbps.clamp(32, 512);
+        self.keyframe_seconds = self.keyframe_seconds.clamp(1, 30);
+        if !SAMPLE_RATES.contains(&self.audio_sample_rate) {
+            self.audio_sample_rate = 48_000;
+        }
+        self.audio_channels = self.audio_channels.clamp(1, 2);
+        self.game_audio_percent = self.game_audio_percent.min(100);
+        self.microphone_percent = self.microphone_percent.min(100);
         self.replay_seconds = self.replay_seconds.clamp(5, 600);
         // Distorting or trimming means nothing when the shape is the source's own.
         if self.shape == OutputShape::Source {
@@ -740,6 +818,28 @@ mod tests {
                 kbps
             );
         }
+    }
+
+    #[test]
+    fn advanced_values_are_clamped_and_old_files_keep_working() {
+        let settings = RecordingSettings {
+            keyframe_seconds: 0,
+            audio_sample_rate: 12_345,
+            audio_channels: 9,
+            game_audio_percent: 500,
+            microphone_percent: 101,
+            ..RecordingSettings::default()
+        }
+        .sanitized();
+        assert_eq!(settings.keyframe_seconds, 1);
+        assert_eq!(settings.audio_sample_rate, 48_000);
+        assert_eq!(settings.audio_channels, 2);
+        assert_eq!(settings.game_audio_percent, 100);
+        assert_eq!(settings.microphone_percent, 100);
+        // A file written before these options existed still loads with their defaults.
+        let old: SettingsFile =
+            serde_json::from_str(r#"{"version":1,"settings":{"height":720}}"#).unwrap();
+        assert!(old.settings.capture_cursor && !old.settings.show_advanced);
     }
 
     #[test]
