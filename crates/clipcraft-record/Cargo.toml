@@ -1,0 +1,21 @@
+[package]
+name = "clipcraft-record"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Replay-buffer recorder: reframe, encode, buffer, and save clips"
+
+[package.metadata.clipcraft]
+layer = 3
+
+[dependencies]
+clipcraft-capture.workspace = true
+clipcraft-time.workspace = true
+filmcraft-h264enc.workspace = true
+filmcraft-isobmff.workspace = true
+filmcraft-matroska.workspace = true
+
+[lints]
+workspace = true

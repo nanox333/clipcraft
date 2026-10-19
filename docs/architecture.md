@@ -20,7 +20,7 @@ L6  clipcraft desktop app, clipcraft CLI, Rust xtask
 
 The implemented workspace currently contains `clipcraft-time` and `clipcraft-frame` (L0),
 `clipcraft-media` (L1), `clipcraft-player` (L2), `clipcraft-engine` (L4), `clipcraft-audio-out` (L5), and the `clipcraft`, `clipcraft-cli`, and `xtask`
-entry points (L6). Capture, media decoding, edit, and export crates remain planned. FilmCraft crates
+entry points (L6). `clipcraft-capture` (L1), `clipcraft-record` (L3), and `clipcraft-platform` (L5) hold capture, the replay buffer, and the operating-system providers ([ADR 0006](adr/0006-m2-capture-and-replay-buffer.md)). Edit and export crates remain planned. FilmCraft crates
 are consumed as pinned git dependencies ([ADR 0004](adr/0004-filmcraft-crates.md)).
 
 - **Time:** `clipcraft-time` re-exports FilmCraft's exact `Tick` and `FrameRate` and adds validated

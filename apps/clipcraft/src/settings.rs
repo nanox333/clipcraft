@@ -23,7 +23,7 @@ pub struct SettingsState {
     mic: Option<MicMeter>,
     mic_error: Option<String>,
     mic_shown: f32,
-    capturing: Option<HotkeyAction>,
+    pub(crate) capturing: Option<HotkeyAction>,
     usage: Option<StorageUsage>,
     usage_for: Option<PathBuf>,
     usage_receiver: Option<mpsc::Receiver<StorageUsage>>,
@@ -502,7 +502,12 @@ pub fn quality_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
     });
 }
 
-pub fn capture_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
+pub fn capture_tab(
+    ui: &mut egui::Ui,
+    settings: &mut RecordingSettings,
+    targets: &[clipcraft_capture::CaptureTarget],
+    refresh: &mut bool,
+) {
     card(ui, "What to record", |ui| {
         setting_row(ui, "Capture", settings.source.detail(), false, |ui| {
             for source in CaptureSource::ALL {
@@ -517,6 +522,85 @@ pub fn capture_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
                 }
             }
         });
+        let want_window = settings.source == CaptureSource::Game;
+        let kind = if want_window {
+            clipcraft_capture::TargetKind::Window
+        } else {
+            clipcraft_capture::TargetKind::Display
+        };
+        let choices: Vec<&clipcraft_capture::CaptureTarget> = targets
+            .iter()
+            .filter(|target| target.kind == kind)
+            .collect();
+        let current = match choices
+            .iter()
+            .find(|target| target.id == settings.capture_target)
+        {
+            Some(target) => target.name.clone(),
+            None if !settings.capture_target.is_empty() => {
+                format!("{} (not open)", settings.capture_target_name)
+            }
+            None if want_window => "Choose a window".to_owned(),
+            None => "First screen".to_owned(),
+        };
+        let mut options = vec![(
+            if want_window {
+                "None chosen".to_owned()
+            } else {
+                "First screen".to_owned()
+            },
+            true,
+        )];
+        options.extend(choices.iter().map(|target| {
+            (
+                format!("{}  ({}\u{d7}{})", target.name, target.width, target.height),
+                true,
+            )
+        }));
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            if let Some(index) = dropdown(
+                ui,
+                if want_window { "Game window" } else { "Screen" },
+                &current,
+                &options,
+            ) {
+                match index.checked_sub(1).and_then(|at| choices.get(at)) {
+                    Some(target) => {
+                        settings.capture_target = target.id.clone();
+                        settings.capture_target_name = target.name.clone();
+                    }
+                    None => {
+                        settings.capture_target.clear();
+                        settings.capture_target_name.clear();
+                    }
+                }
+            }
+            ui.add_space(12.0);
+            ui.vertical(|ui| {
+                ui.add_space(21.0);
+                if kit::labelled_button(ui, kit::Icon::Loop, "Refresh", false, true).clicked() {
+                    *refresh = true;
+                }
+            });
+        });
+        if want_window && choices.is_empty() {
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("No windows were found. Open the game, then press Refresh.")
+                    .color(FAINT)
+                    .size(12.5),
+            );
+        }
+        ui.add_space(10.0);
+        divider(ui);
+        toggle_row(
+            ui,
+            "Record when ClipCraft opens",
+            "Starts filling the replay buffer as soon as the app starts.",
+            &mut settings.record_on_launch,
+            false,
+        );
         toggle_row(
             ui,
             "Show the mouse cursor",
@@ -798,35 +882,37 @@ fn key_for_egui(key: egui::Key) -> Option<&'static str> {
 }
 
 /// The shortcut being pressed this frame, in canonical text, if any.
-fn pressed_shortcut(ui: &egui::Ui) -> Option<String> {
-    ui.input(|input| {
-        input.events.iter().find_map(|event| {
-            let egui::Event::Key {
-                key,
-                pressed: true,
-                repeat: false,
-                modifiers,
-                ..
-            } = event
-            else {
-                return None;
-            };
-            let name = key_for_egui(*key).map_or_else(|| key.name().to_owned(), str::to_owned);
-            let mut text = String::new();
-            for (on, label) in [
-                (modifiers.ctrl || modifiers.command, "Ctrl"),
-                (modifiers.alt, "Alt"),
-                (modifiers.shift, "Shift"),
-            ] {
-                if on {
-                    text.push_str(label);
-                    text.push('+');
-                }
+pub(crate) fn pressed_shortcut_in(input: &egui::InputState) -> Option<String> {
+    input.events.iter().find_map(|event| {
+        let egui::Event::Key {
+            key,
+            pressed: true,
+            repeat: false,
+            modifiers,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        let name = key_for_egui(*key).map_or_else(|| key.name().to_owned(), str::to_owned);
+        let mut text = String::new();
+        for (on, label) in [
+            (modifiers.ctrl || modifiers.command, "Ctrl"),
+            (modifiers.alt, "Alt"),
+            (modifiers.shift, "Shift"),
+        ] {
+            if on {
+                text.push_str(label);
+                text.push('+');
             }
-            text.push_str(&name);
-            normalize_hotkey(&text)
-        })
+        }
+        text.push_str(&name);
+        normalize_hotkey(&text)
     })
+}
+
+fn pressed_shortcut(ui: &egui::Ui) -> Option<String> {
+    ui.input(pressed_shortcut_in)
 }
 
 pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &mut SettingsState) {

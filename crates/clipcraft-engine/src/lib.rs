@@ -12,21 +12,27 @@ mod hotkeys;
 mod index;
 mod library_meta;
 mod recording;
+mod session;
 mod startup;
 mod storage;
 
 pub use clipcraft_media::MediaProbe;
 
+pub use clipcraft_capture::reframe::{
+    Framing, MAX_OUTPUT_EDGE, MIN_OUTPUT_EDGE, OutputShape, PixelRect, Reframe, reframe,
+};
 pub use hotkeys::{HotkeyAction, Hotkeys, normalize_hotkey};
 pub use library_meta::{
     GameGroup, MAX_COLLECTIONS, MAX_COLLECTIONS_PER_CLIP, MAX_NAME_CHARS, MetaEdit, apply_edit,
     clean_name, game_of, games, guess_game_from_file_name,
 };
 pub use recording::{
-    AUDIO_KBPS, CaptureSource, Container, EncoderPreset, FRAME_RATES, Framing, HEIGHTS,
-    KEYFRAME_SECONDS, OutputShape, PixelRect, QualityMode, REPLAY_SECONDS, RateControl,
-    RecordingSettings, Reframe, SAMPLE_RATES, VIDEO_KBPS, VideoCodec, VideoEncoder,
-    default_settings_path, reframe,
+    AUDIO_KBPS, CaptureSource, Container, EncoderPreset, FRAME_RATES, HEIGHTS, KEYFRAME_SECONDS,
+    QualityMode, REPLAY_SECONDS, RateControl, RecordingSettings, SAMPLE_RATES, VIDEO_KBPS,
+    VideoCodec, VideoEncoder, default_settings_path,
+};
+pub use session::{
+    CLIP_PREFIX, CaptureSession, SavedClipReport, clip_format, clip_stem, record_config,
 };
 pub use storage::{
     StorageUsage, StoredClip, cleanup_plan, default_capture_folder, list_clips, storage_usage,
@@ -230,6 +236,14 @@ pub enum EngineError {
     StartupFailed,
     /// A collection or game name is empty, too long, or does not exist.
     NameInvalid,
+    /// Recording could not start or a clip could not be saved.
+    Record(clipcraft_record::RecordError),
+    /// A recording is already running.
+    AlreadyRecording,
+    /// No recording is running.
+    NotRecording,
+    /// The capture folder is at its storage limit and the setting is to stop saving.
+    StorageLimit,
     /// A collection with that name already exists.
     NameTaken,
     /// There are too many collections.
@@ -274,6 +288,12 @@ impl fmt::Display for EngineError {
             Self::SettingsSaveFailed => {
                 formatter.write_str("The recording settings could not be saved. Check free disk space.")
             }
+            Self::Record(error) => std::fmt::Display::fmt(error, formatter),
+            Self::AlreadyRecording => formatter.write_str("A recording is already running."),
+            Self::NotRecording => formatter.write_str("Start recording first."),
+            Self::StorageLimit => formatter.write_str(
+                "The capture folder is at its storage limit, so the clip was not saved. Raise the limit or delete clips.",
+            ),
             Self::NameInvalid => formatter.write_str(
                 "Use a name of 1 to 40 characters, and pick a collection that exists.",
             ),
@@ -569,6 +589,10 @@ pub const fn command_ids() -> &'static [&'static str] {
         "recording.load_settings",
         "storage.usage",
         "app.launch_at_startup",
+        "capture.start",
+        "capture.stop",
+        "capture.status",
+        "capture.save_clip",
         "recording.save_settings",
     ]
 }

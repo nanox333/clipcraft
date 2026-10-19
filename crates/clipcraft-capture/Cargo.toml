@@ -1,0 +1,18 @@
+[package]
+name = "clipcraft-capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Capture model: targets, frames, and the provider trait for screens and windows"
+
+[package.metadata.clipcraft]
+layer = 1
+
+[dependencies]
+clipcraft-time.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

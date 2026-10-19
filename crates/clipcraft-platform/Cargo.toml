@@ -1,0 +1,28 @@
+[package]
+name = "clipcraft-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Operating-system capture providers and global hotkeys behind a safe interface"
+
+[package.metadata.clipcraft]
+layer = 5
+
+[dependencies]
+clipcraft-capture.workspace = true
+clipcraft-time.workspace = true
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+x11rb = { version = "0.14", default-features = false, features = ["randr"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-capture = "2.0.1"
+global-hotkey = "0.9"
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dev-dependencies]
+x11rb = { version = "0.14" }
+
+[lints]
+workspace = true

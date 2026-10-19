@@ -1,0 +1,388 @@
+//! Screen and window capture on Windows through the Windows Graphics Capture API, using the
+//! `windows-capture` crate for the WinRT and Direct3D details (it holds the `unsafe`; this crate
+//! has none).
+//!
+//! This module compiles for Windows (`cargo check --target x86_64-pc-windows-gnu`) but has not
+//! been run on real hardware. See `docs/gaps.md`.
+
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
+
+use clipcraft_capture::{
+    Capabilities, CaptureError, CaptureFrame, CaptureSource, CaptureTarget, MAX_CAPTURE_EDGE,
+    TargetKind,
+};
+use clipcraft_time::Tick;
+use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
+use windows_capture::frame::Frame;
+use windows_capture::graphics_capture_api::InternalCaptureControl;
+use windows_capture::monitor::Monitor;
+use windows_capture::settings::{
+    ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
+    GraphicsCaptureItemType, MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
+};
+use windows_capture::window::Window;
+
+use crate::CaptureOptions;
+
+/// Most windows listed.
+const MAX_WINDOWS: usize = 512;
+
+pub fn capabilities() -> Capabilities {
+    Capabilities {
+        windows: true,
+        cursor: true,
+        // Games in exclusive full screen may not be capturable; borderless windowed always is.
+        exclusive_fullscreen: false,
+        hdr: false,
+    }
+}
+
+pub fn list_targets() -> Result<Vec<CaptureTarget>, CaptureError> {
+    let mut targets = Vec::new();
+    let monitors = Monitor::enumerate().map_err(|_| CaptureError::Failed)?;
+    for (index, monitor) in monitors.iter().enumerate() {
+        let (Ok(width), Ok(height)) = (monitor.width(), monitor.height()) else {
+            continue;
+        };
+        let name = monitor
+            .name()
+            .ok()
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| format!("Display {}", index + 1));
+        targets.push(CaptureTarget {
+            id: format!("monitor:{index}"),
+            name,
+            kind: TargetKind::Display,
+            width,
+            height,
+        });
+    }
+    for window in Window::enumerate()
+        .map_err(|_| CaptureError::Failed)?
+        .into_iter()
+        .take(MAX_WINDOWS)
+    {
+        let (Ok(title), Ok(width), Ok(height)) = (window.title(), window.width(), window.height())
+        else {
+            continue;
+        };
+        if title.is_empty() || width <= 0 || height <= 0 {
+            continue;
+        }
+        targets.push(CaptureTarget {
+            id: format!("window:{:x}", window.as_raw_hwnd() as usize),
+            name: title,
+            kind: TargetKind::Window,
+            width: width as u32,
+            height: height as u32,
+        });
+    }
+    Ok(targets)
+}
+
+/// The newest picture the capture thread produced.
+#[derive(Default)]
+struct Latest {
+    frame: Option<CaptureFrame>,
+    sequence: u64,
+    closed: bool,
+    failed: bool,
+}
+
+struct Shared {
+    latest: Mutex<Latest>,
+    changed: Condvar,
+    started: Instant,
+}
+
+fn lock(shared: &Shared) -> MutexGuard<'_, Latest> {
+    shared.latest.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+struct Handler {
+    shared: Arc<Shared>,
+}
+
+impl GraphicsCaptureApiHandler for Handler {
+    type Flags = Arc<Shared>;
+    type Error = &'static str;
+
+    fn new(context: Context<Self::Flags>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            shared: context.flags,
+        })
+    }
+
+    fn on_frame_arrived(
+        &mut self,
+        frame: &mut Frame<'_>,
+        _control: InternalCaptureControl,
+    ) -> Result<(), Self::Error> {
+        let buffer = frame.buffer().map_err(|_| "could not read the frame")?;
+        let (width, height) = (buffer.width(), buffer.height());
+        if width == 0 || height == 0 || width > MAX_CAPTURE_EDGE || height > MAX_CAPTURE_EDGE {
+            return Err("impossible frame size");
+        }
+        let mut scratch = Vec::new();
+        let pixels = buffer.as_nopadding_buffer(&mut scratch);
+        let captured = CaptureFrame {
+            width,
+            height,
+            stride: width as usize * 4,
+            bgra: pixels.to_vec(),
+            captured_at: Tick::from_units(
+                i64::try_from(self.shared.started.elapsed().as_micros()).unwrap_or(i64::MAX),
+                1_000_000,
+            ),
+        };
+        if captured.validate().is_err() {
+            return Err("damaged frame");
+        }
+        let mut latest = lock(&self.shared);
+        latest.frame = Some(captured);
+        latest.sequence += 1;
+        drop(latest);
+        self.shared.changed.notify_all();
+        Ok(())
+    }
+
+    fn on_closed(&mut self) -> Result<(), Self::Error> {
+        lock(&self.shared).closed = true;
+        self.shared.changed.notify_all();
+        Ok(())
+    }
+}
+
+struct WindowsSource {
+    shared: Arc<Shared>,
+    control: Option<CaptureControl<Handler, &'static str>>,
+    target: CaptureTarget,
+    seen: u64,
+}
+
+fn settings<T: TryInto<GraphicsCaptureItemType>>(
+    item: T,
+    cursor: CursorCaptureSettings,
+    shared: &Arc<Shared>,
+) -> Settings<Arc<Shared>, T> {
+    Settings::new(
+        item,
+        cursor,
+        DrawBorderSettings::WithoutBorder,
+        SecondaryWindowSettings::Default,
+        MinimumUpdateIntervalSettings::Default,
+        DirtyRegionSettings::Default,
+        ColorFormat::Bgra8,
+        shared.clone(),
+    )
+}
+
+pub fn open(
+    target_id: &str,
+    options: &CaptureOptions,
+) -> Result<Box<dyn CaptureSource>, CaptureError> {
+    let shared = Arc::new(Shared {
+        latest: Mutex::new(Latest::default()),
+        changed: Condvar::new(),
+        started: Instant::now(),
+    });
+    let cursor = if options.show_cursor {
+        CursorCaptureSettings::WithCursor
+    } else {
+        CursorCaptureSettings::WithoutCursor
+    };
+    let (control, target) = if let Some(index) = target_id.strip_prefix("monitor:") {
+        let index: usize = index.parse().map_err(|_| CaptureError::TargetGone)?;
+        let monitor = Monitor::from_index(index).map_err(|_| CaptureError::TargetGone)?;
+        let (width, height) = (
+            monitor.width().map_err(|_| CaptureError::Failed)?,
+            monitor.height().map_err(|_| CaptureError::Failed)?,
+        );
+        let control = Handler::start_free_threaded(settings(monitor, cursor, &shared))
+            .map_err(|_| CaptureError::Failed)?;
+        (
+            control,
+            CaptureTarget {
+                id: target_id.to_owned(),
+                name: format!("Display {}", index + 1),
+                kind: TargetKind::Display,
+                width,
+                height,
+            },
+        )
+    } else if let Some(handle) = target_id.strip_prefix("window:") {
+        let handle = usize::from_str_radix(handle, 16).map_err(|_| CaptureError::TargetGone)?;
+        let window = Window::from_raw_hwnd(handle as *mut std::ffi::c_void);
+        if !window.is_valid() {
+            return Err(CaptureError::TargetGone);
+        }
+        let title = window.title().unwrap_or_else(|_| "Window".to_owned());
+        let (width, height) = (
+            u32::try_from(window.width().map_err(|_| CaptureError::TargetGone)?).unwrap_or(0),
+            u32::try_from(window.height().map_err(|_| CaptureError::TargetGone)?).unwrap_or(0),
+        );
+        let control = Handler::start_free_threaded(settings(window, cursor, &shared))
+            .map_err(|_| CaptureError::Failed)?;
+        (
+            control,
+            CaptureTarget {
+                id: target_id.to_owned(),
+                name: title,
+                kind: TargetKind::Window,
+                width,
+                height,
+            },
+        )
+    } else {
+        return Err(CaptureError::TargetGone);
+    };
+    Ok(Box::new(WindowsSource {
+        shared,
+        control: Some(control),
+        target,
+        seen: 0,
+    }))
+}
+
+impl CaptureSource for WindowsSource {
+    fn target(&self) -> &CaptureTarget {
+        &self.target
+    }
+
+    fn capture(&mut self) -> Result<CaptureFrame, CaptureError> {
+        // Graphics Capture only delivers a picture when the screen changes, so wait a little for a
+        // new one and otherwise repeat the last.
+        let deadline = Instant::now() + Duration::from_millis(40);
+        let mut latest = lock(&self.shared);
+        while latest.sequence == self.seen && !latest.closed && !latest.failed {
+            let now = Instant::now();
+            // With no picture at all yet, allow a longer wait for the first one.
+            let limit = if latest.frame.is_none() {
+                deadline + Duration::from_secs(3)
+            } else {
+                deadline
+            };
+            if now >= limit {
+                break;
+            }
+            latest = self
+                .shared
+                .changed
+                .wait_timeout(latest, limit - now)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+        if latest.closed {
+            return Err(CaptureError::TargetGone);
+        }
+        if latest.failed {
+            return Err(CaptureError::Failed);
+        }
+        self.seen = latest.sequence;
+        let frame = latest.frame.clone().ok_or(CaptureError::Failed)?;
+        self.target.width = frame.width;
+        self.target.height = frame.height;
+        Ok(frame)
+    }
+}
+
+impl Drop for WindowsSource {
+    fn drop(&mut self) {
+        if let Some(control) = self.control.take() {
+            let _ = control.stop();
+        }
+    }
+}
+
+// ----- hotkeys -----
+
+use global_hotkey::hotkey::{Code, HotKey, Modifiers};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+
+use crate::hotkey::{HotkeyBinding, HotkeyEvent, HotkeyListener, parse_shortcut};
+
+/// Hotkeys registered with the operating system. Dropping it unregisters them.
+pub struct WindowsHotkeys {
+    manager: GlobalHotKeyManager,
+    registered: Vec<(HotKey, u32)>,
+}
+
+impl WindowsHotkeys {
+    /// The next press or release of a registered shortcut.
+    pub fn try_next(&self) -> Option<HotkeyEvent> {
+        while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+            if let Some((_, id)) = self.registered.iter().find(|(key, _)| key.id() == event.id) {
+                return Some(HotkeyEvent {
+                    id: *id,
+                    pressed: event.state == HotKeyState::Pressed,
+                });
+            }
+        }
+        None
+    }
+}
+
+impl Drop for WindowsHotkeys {
+    fn drop(&mut self) {
+        for (key, _) in &self.registered {
+            let _ = self.manager.unregister(*key);
+        }
+    }
+}
+
+fn code_of(name: &str) -> Option<Code> {
+    let mut chars = name.chars();
+    if let (Some(only), None) = (chars.next(), chars.next()) {
+        if only.is_ascii_uppercase() {
+            return format!("Key{only}").parse().ok();
+        }
+        if only.is_ascii_digit() {
+            return format!("Digit{only}").parse().ok();
+        }
+    }
+    if name.starts_with('F') && name[1..].chars().all(|c| c.is_ascii_digit()) {
+        return name.parse().ok();
+    }
+    let canonical = match name {
+        "Space" | "Tab" | "Enter" | "Backspace" | "Delete" | "Home" | "End" | "PageUp"
+        | "PageDown" | "Insert" | "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight"
+        | "Minus" | "Comma" | "Period" | "Slash" => name,
+        "Equals" => "Equal",
+        "Backtick" => "Backquote",
+        _ => return None,
+    };
+    canonical.parse().ok()
+}
+
+pub fn start_hotkeys(bindings: Vec<HotkeyBinding>) -> Result<HotkeyListener, CaptureError> {
+    let manager = GlobalHotKeyManager::new().map_err(|_| CaptureError::Failed)?;
+    let mut registered = Vec::new();
+    let mut skipped = Vec::new();
+    for binding in bindings {
+        let key = parse_shortcut(&binding.shortcut).and_then(|(modifiers, name)| {
+            let mut mods = Modifiers::empty();
+            if modifiers.ctrl {
+                mods |= Modifiers::CONTROL;
+            }
+            if modifiers.alt {
+                mods |= Modifiers::ALT;
+            }
+            if modifiers.shift {
+                mods |= Modifiers::SHIFT;
+            }
+            Some(HotKey::new(Some(mods), code_of(&name)?))
+        });
+        match key {
+            Some(key) if manager.register(key).is_ok() => registered.push((key, binding.id)),
+            _ => skipped.push(binding.shortcut),
+        }
+    }
+    Ok(HotkeyListener::from_windows(
+        WindowsHotkeys {
+            manager,
+            registered,
+        },
+        skipped,
+    ))
+}

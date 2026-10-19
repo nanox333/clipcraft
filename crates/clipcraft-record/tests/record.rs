@@ -1,0 +1,317 @@
+//! End-to-end checks of the recorder with a synthetic screen. ffprobe and ffmpeg are used only as
+//! outside judges of the written files and are skipped when they are not installed.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, Instant};
+
+use clipcraft_capture::reframe::{Framing, OutputShape};
+use clipcraft_capture::{CaptureError, SyntheticSource};
+use clipcraft_record::{
+    ClipFormat, EncoderSpeed, RecordConfig, RecordError, RecordState, Recorder,
+};
+
+fn config() -> RecordConfig {
+    RecordConfig {
+        output_height: 180,
+        shape: OutputShape::Source,
+        framing: Framing::Original,
+        fps: 30,
+        video_kbps: 2_000,
+        constant_bitrate: false,
+        speed: EncoderSpeed::Fast,
+        keyframe_seconds: 1,
+        replay_seconds: 10,
+        max_buffer_bytes: 64 * 1024 * 1024,
+        threads: 2,
+    }
+}
+
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(name: &str) -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("clipcraft-record-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+
+    fn file(&self, name: &str) -> PathBuf {
+        self.0.join(name)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn wait_for(
+    recorder: &Recorder,
+    what: &str,
+    ready: impl Fn(&clipcraft_record::RecordStatus) -> bool,
+) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        if ready(&recorder.status()) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("timed out waiting for {what}: {:?}", recorder.status());
+}
+
+fn tool(name: &str) -> bool {
+    Command::new(name).arg("-version").output().is_ok()
+}
+
+fn probe(path: &Path) -> serde_like::Probe {
+    let output = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-count_frames",
+            "-show_entries",
+        ])
+        .arg("stream=codec_name,width,height,nb_read_frames,avg_frame_rate:format=duration")
+        .args(["-of", "default=noprint_wrappers=1"])
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "ffprobe: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_like::Probe::parse(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Just enough parsing of `key=value` lines.
+mod serde_like {
+    #[derive(Debug, Default)]
+    pub struct Probe {
+        pub codec: String,
+        pub width: u32,
+        pub height: u32,
+        pub frames: u32,
+        pub duration: f64,
+        pub frame_rate: String,
+    }
+
+    impl Probe {
+        pub fn parse(text: &str) -> Self {
+            let mut probe = Probe::default();
+            for line in text.lines() {
+                let Some((key, value)) = line.split_once('=') else {
+                    continue;
+                };
+                match key {
+                    "codec_name" => probe.codec = value.to_owned(),
+                    "width" => probe.width = value.parse().unwrap_or(0),
+                    "height" => probe.height = value.parse().unwrap_or(0),
+                    "nb_read_frames" => probe.frames = value.parse().unwrap_or(0),
+                    "duration" => probe.duration = value.parse().unwrap_or(0.0),
+                    "avg_frame_rate" => probe.frame_rate = value.to_owned(),
+                    _ => {}
+                }
+            }
+            probe
+        }
+    }
+}
+
+/// Decodes every frame and fails on any decoder complaint.
+fn decodes_cleanly(path: &Path) {
+    let output = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(path)
+        .args(["-f", "null", "-"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        output.stderr.is_empty(),
+        "decoder said: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn a_synthetic_screen_is_saved_as_a_valid_mp4_and_mkv() {
+    let scratch = Scratch::new("save");
+    let recorder = Recorder::start(Box::new(SyntheticSource::new(320, 180, 30)), config()).unwrap();
+    wait_for(&recorder, "three seconds of video", |s| {
+        s.buffered_seconds >= 3.0
+    });
+    for (format, name) in [(ClipFormat::Mp4, "clip.mp4"), (ClipFormat::Mkv, "clip.mkv")] {
+        let path = scratch.file(name);
+        let saved = recorder.save_clip(2, format, &path).unwrap();
+        assert!(saved.frames >= 50, "{saved:?}");
+        assert!(saved.bytes > 1_000 && path.exists());
+        assert!(!scratch.file(&format!("{name}.partial")).exists());
+        if tool("ffprobe") && tool("ffmpeg") {
+            let probe = probe(&path);
+            assert_eq!(probe.codec, "h264");
+            assert_eq!((probe.width, probe.height), (320, 180));
+            assert_eq!(probe.frames as u64, saved.frames, "{probe:?}");
+            // At least the two seconds asked for, plus at most one keyframe interval.
+            assert!(probe.duration >= 1.9 && probe.duration <= 3.2, "{probe:?}");
+            decodes_cleanly(&path);
+        }
+    }
+    let status = recorder.stop();
+    assert_eq!(status.state, RecordState::Stopped);
+    assert!(status.frames_encoded >= 80, "{status:?}");
+}
+
+#[test]
+fn a_clip_is_never_longer_than_the_buffer_and_never_overwrites() {
+    let scratch = Scratch::new("exists");
+    let recorder = Recorder::start(Box::new(SyntheticSource::new(160, 90, 30)), config()).unwrap();
+    wait_for(&recorder, "one second", |s| s.buffered_seconds >= 1.2);
+    let path = scratch.file("a.mp4");
+    recorder.save_clip(600, ClipFormat::Mp4, &path).unwrap();
+    assert_eq!(
+        recorder.save_clip(5, ClipFormat::Mp4, &path),
+        Err(RecordError::AlreadyExists)
+    );
+    // The refused save left the first file alone.
+    assert!(std::fs::metadata(&path).unwrap().len() > 0);
+}
+
+#[test]
+fn saving_before_any_video_is_a_clear_error() {
+    let scratch = Scratch::new("early");
+    let recorder = Recorder::start(
+        Box::new(SyntheticSource::new(160, 90, 30).failing_after(0)),
+        config(),
+    )
+    .unwrap();
+    wait_for(&recorder, "the failure", |s| {
+        matches!(s.state, RecordState::Failed(_))
+    });
+    assert_eq!(
+        recorder.save_clip(5, ClipFormat::Mp4, &scratch.file("x.mp4")),
+        Err(RecordError::NothingBuffered)
+    );
+    assert!(!scratch.file("x.mp4").exists());
+}
+
+#[test]
+fn losing_the_screen_keeps_what_was_recorded_and_says_why() {
+    let scratch = Scratch::new("lost");
+    let source = SyntheticSource::new(160, 90, 30).failing_after(45);
+    let recorder = Recorder::start(Box::new(source), config()).unwrap();
+    wait_for(&recorder, "the failure", |s| {
+        matches!(s.state, RecordState::Failed(_))
+    });
+    assert_eq!(
+        recorder.status().state,
+        RecordState::Failed(RecordError::Capture(CaptureError::TargetGone))
+    );
+    // The video taken before the loss is still there to save.
+    let saved = recorder
+        .save_clip(60, ClipFormat::Mp4, &scratch.file("kept.mp4"))
+        .unwrap();
+    assert!(saved.frames > 0);
+}
+
+#[test]
+fn a_changing_picture_size_restarts_the_stream_with_matching_clips() {
+    let scratch = Scratch::new("resize");
+    let source = SyntheticSource::new(160, 90, 30).resizing_after(30, 240, 120);
+    let recorder = Recorder::start(Box::new(source), config()).unwrap();
+    wait_for(&recorder, "the restart", |s| {
+        s.restarts >= 1 && s.buffered_seconds >= 1.0
+    });
+    let path = scratch.file("resized.mkv");
+    recorder.save_clip(60, ClipFormat::Mkv, &path).unwrap();
+    if tool("ffprobe") && tool("ffmpeg") {
+        // Output height stays 180, so the new 240x120 picture is 360x180 and nothing mixes sizes.
+        let probe = probe(&path);
+        assert_eq!((probe.width, probe.height), (360, 180), "{probe:?}");
+        decodes_cleanly(&path);
+    }
+}
+
+#[test]
+fn black_bars_make_a_16_9_clip_of_a_4_3_screen() {
+    let scratch = Scratch::new("bars");
+    let mut wide = config();
+    wide.shape = OutputShape::Wide16x9;
+    wide.framing = Framing::Letterbox;
+    wide.output_height = 144;
+    let recorder = Recorder::start(Box::new(SyntheticSource::new(160, 120, 30)), wide).unwrap();
+    wait_for(&recorder, "video", |s| s.buffered_seconds >= 1.0);
+    assert_eq!(recorder.status().output, Some((256, 144)));
+    let path = scratch.file("wide.mp4");
+    recorder.save_clip(5, ClipFormat::Mp4, &path).unwrap();
+    if tool("ffprobe") {
+        let probe = probe(&path);
+        assert_eq!((probe.width, probe.height), (256, 144));
+    }
+}
+
+#[test]
+fn stopping_and_dropping_are_prompt() {
+    let started = Instant::now();
+    let recorder = Recorder::start(Box::new(SyntheticSource::new(160, 90, 30)), config()).unwrap();
+    wait_for(&recorder, "a frame", |s| s.frames_encoded >= 1);
+    let status = recorder.stop();
+    assert_eq!(status.state, RecordState::Stopped);
+    drop(Recorder::start(Box::new(SyntheticSource::new(160, 90, 30)), config()).unwrap());
+    assert!(started.elapsed() < Duration::from_secs(20));
+}
+
+#[test]
+fn unusable_settings_are_refused() {
+    for bad in [
+        RecordConfig { fps: 0, ..config() },
+        RecordConfig {
+            fps: 500,
+            ..config()
+        },
+        RecordConfig {
+            replay_seconds: 0,
+            ..config()
+        },
+        RecordConfig {
+            keyframe_seconds: 0,
+            ..config()
+        },
+        RecordConfig {
+            video_kbps: 0,
+            ..config()
+        },
+        RecordConfig {
+            max_buffer_bytes: 10,
+            ..config()
+        },
+        RecordConfig {
+            output_height: 2,
+            ..config()
+        },
+    ] {
+        assert!(matches!(
+            Recorder::start(Box::new(SyntheticSource::new(16, 16, 30)), bad),
+            Err(RecordError::BadConfig)
+        ));
+    }
+}
+
+#[test]
+fn an_unwritable_folder_is_reported_and_leaves_no_partial_file() {
+    let scratch = Scratch::new("readonly");
+    let recorder = Recorder::start(Box::new(SyntheticSource::new(160, 90, 30)), config()).unwrap();
+    wait_for(&recorder, "video", |s| s.buffered_seconds >= 1.0);
+    // A file where the folder should be.
+    let blocker = scratch.file("blocker");
+    std::fs::write(&blocker, b"x").unwrap();
+    let result = recorder.save_clip(5, ClipFormat::Mp4, &blocker.join("clip.mp4"));
+    assert!(result.is_err());
+}

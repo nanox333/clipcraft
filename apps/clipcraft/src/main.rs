@@ -2,6 +2,7 @@ use clipcraft_engine::{
     Command, CommandOutput, EngineError, LibraryScanResult, MediaEntry, MediaProbe, MetaEdit,
     RecordingSettings, apply_edit, default_index_path, default_thumbnail_dir, execute, game_of,
 };
+mod capture;
 mod kit;
 mod organize;
 mod playback;
@@ -102,6 +103,8 @@ struct ClipCraftApp {
     collection_edit: Option<CollectionEdit>,
     /// The game name being typed for the open clip: its path and the text.
     game_draft: Option<(String, String)>,
+    /// Recording: the replay buffer, hotkeys, and the clip being saved.
+    capture: capture::CaptureState,
 }
 
 /// A thumbnail the worker finished: the clip and its cached JPEG.
@@ -184,6 +187,7 @@ impl eframe::App for ClipCraftApp {
         }
         self.poll_thumbnails();
         self.thumbs.begin_frame();
+        self.capture_frame(context);
         self.sync_playback(context);
         self.draw_screen(context);
     }
@@ -501,32 +505,7 @@ impl ClipCraftApp {
                     );
                     ui.add_space(22.0);
 
-                    // Capture state: honest about the fact that capture is not built yet.
-                    kit::status_pill(ui, FAINT, "Capture unavailable");
-                    ui.add_space(6.0);
-                    let clip_key = self.recording.hotkeys.save_clip.replace('+', " + ");
-                    kit::keycap(
-                        ui,
-                        if clip_key.is_empty() {
-                            "—"
-                        } else {
-                            &clip_key
-                        },
-                    );
-                    let replay = self.recording.replay_seconds;
-                    let replay = if replay >= 60 {
-                        format!("{}m", replay / 60)
-                    } else {
-                        format!("{replay}s")
-                    };
-                    ui.label(
-                        RichText::new(format!("Clip {replay}"))
-                            .color(TEXT)
-                            .size(13.0),
-                    );
-                    ui.add_space(6.0);
-                    ui.label(RichText::new("Long recording").color(MUTED).size(13.0));
-                    kit::keycap(ui, "Off");
+                    self.capture_controls(ui);
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(20.0);
@@ -1339,6 +1318,30 @@ impl ClipCraftApp {
         );
         ui.label(RichText::new(self.settings_tab.help()).color(MUTED));
         ui.add_space(12.0);
+        if self.capture.is_stale(&self.recording) {
+            egui::Frame::new()
+                .fill(Color32::from_rgba_unmultiplied(190, 255, 43, 18))
+                .stroke(Stroke::new(
+                    1.0_f32,
+                    Color32::from_rgba_unmultiplied(190, 255, 43, 80),
+                ))
+                .corner_radius(egui::CornerRadius::same(10))
+                .inner_margin(egui::Margin::symmetric(14, 10))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Recording is using the earlier settings.").color(TEXT),
+                        );
+                        if kit::labelled_button(ui, Icon::Record, "Restart recording", true, true)
+                            .clicked()
+                        {
+                            self.stop_capture();
+                            self.start_capture();
+                        }
+                    });
+                });
+            ui.add_space(10.0);
+        }
         let tab = self.settings_tab;
         self.settings_state
             .leave(tab == SettingsTab::Audio, tab == SettingsTab::Hotkeys);
@@ -1352,7 +1355,13 @@ impl ClipCraftApp {
             SettingsTab::Hotkeys => {
                 settings::hotkeys_tab(ui, &mut working, &mut self.settings_state)
             }
-            SettingsTab::Capture => settings::capture_tab(ui, &mut working),
+            SettingsTab::Capture => {
+                let mut refresh = !self.capture.targets_loaded();
+                settings::capture_tab(ui, &mut working, &self.capture.targets, &mut refresh);
+                if refresh {
+                    self.capture.refresh_targets();
+                }
+            }
             SettingsTab::Quality => settings::quality_tab(ui, &mut working),
             SettingsTab::Audio => settings::audio_tab(ui, &mut working, &mut self.settings_state),
             SettingsTab::Advanced => settings::advanced_tab(ui, &mut working),

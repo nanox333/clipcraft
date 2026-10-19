@@ -24,9 +24,9 @@ The complete feature proposal and acceptance details are in [`PLAN.md`](PLAN.md)
 | --- | --- | --- |
 | M0 | 🟡 Software exit criteria met; hardware evidence open | Rust workspace, layering rules, CLI, CI gate, and the synthetic video/audio timestamp check are done; decisions are recorded in ADRs 0002–0003. Capture APIs are not yet benchmarked on reference hardware, so M0 is not marked complete |
 | M1 | 🟡 In progress | Exact time primitives, audio sample math, bounded queues, and a persistent rebuildable library index are in place; MP4/MOV file probing, in-app playback with sound and full controls (scrub, frame step, speed, loop, volume, tracks, fullscreen), and cached thumbnails are in place via FilmCraft crates; other-container probing and export remain |
-| M2 | ⬜ Planned | Windows display/window capture and bounded replay buffer |
+| M2 | 🟡 Pipeline proven on Linux; Windows capture unrun | Capture model, replay buffer, H.264 encode, and MP4/MKV save are built and tested end to end against an X11 screen (see [ADR 0006](docs/adr/0006-m2-capture-and-replay-buffer.md)); the app records, saves a clip from a global hotkey, and honours the quality, framing, folder, and storage-limit settings. The Windows Graphics Capture provider compiles but has not run on Windows hardware, so M2 is not marked complete |
 | M3 | ⬜ Planned | System/game audio, microphone, synchronization, post-roll, device recovery |
-| M4 | 🟡 Partial | Local folder scanning, clip-first library shell, search, sorting, and path copy are in place; thumbnails, persistence, quick editing, and export remain |
+| M4 | 🟡 Partial | The clip-first library is in place: search, sorting, persistence, thumbnails, favorites, collections, and games. The quick editor (cut/trim) and export are not built |
 | M5 | ⬜ Planned | Crash recovery, storage quota, installer, accessibility, performance hardening |
 | M6 | ⬜ Planned | macOS and Linux local capture/audio providers |
 

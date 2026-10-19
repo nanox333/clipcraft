@@ -33,6 +33,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), CliError> {
         }
         "library" => run_library(&arguments[1..]),
         "recording" => run_recording(&arguments[1..]),
+        "capture" => run_capture(&arguments[1..]),
         _ => Err(CliError::Usage),
     }
 }
@@ -101,6 +102,110 @@ fn run_recording(arguments: &[OsString]) -> Result<(), CliError> {
     }
 }
 
+/// `capture targets` lists what can be captured. `capture record --seconds N [--target ID]
+/// [--out DIR]` records for N seconds with the saved settings, then saves the replay buffer as a
+/// clip and prints where it went.
+fn run_capture(arguments: &[OsString]) -> Result<(), CliError> {
+    match arguments.first().and_then(|argument| argument.to_str()) {
+        Some("targets") if arguments.len() == 1 => {
+            let targets = clipcraft_platform::list_targets()
+                .map_err(|error| CliError::Capture(error.to_string()))?;
+            let rows: Vec<serde_json::Value> = targets
+                .iter()
+                .map(|target| {
+                    serde_json::json!({
+                        "id": target.id,
+                        "name": target.name,
+                        "kind": match target.kind {
+                            clipcraft_capture::TargetKind::Display => "display",
+                            clipcraft_capture::TargetKind::Window => "window",
+                        },
+                        "width": target.width,
+                        "height": target.height,
+                    })
+                })
+                .collect();
+            write_json(&rows)
+        }
+        Some("record") => run_record(&arguments[1..]),
+        _ => Err(CliError::Usage),
+    }
+}
+
+fn run_record(arguments: &[OsString]) -> Result<(), CliError> {
+    let (mut seconds, mut target, mut out) = (None::<u64>, None::<String>, None::<PathBuf>);
+    let mut rest = arguments.iter();
+    while let Some(flag) = rest.next() {
+        let value = rest.next().ok_or(CliError::Usage)?;
+        match flag.to_str() {
+            Some("--seconds") => {
+                seconds = Some(
+                    value
+                        .to_str()
+                        .and_then(|v| v.parse().ok())
+                        .ok_or(CliError::Usage)?,
+                );
+            }
+            Some("--target") => target = Some(value.to_str().ok_or(CliError::Usage)?.to_owned()),
+            Some("--out") => out = Some(PathBuf::from(value)),
+            _ => return Err(CliError::Usage),
+        }
+    }
+    let seconds = seconds
+        .filter(|seconds| (1..=3_600).contains(seconds))
+        .ok_or(CliError::Usage)?;
+    let settings_path = clipcraft_engine::default_settings_path().ok_or(CliError::Usage)?;
+    let settings = match execute(Command::LoadRecordingSettings {
+        path: settings_path,
+    })
+    .map_err(CliError::Engine)?
+    {
+        CommandOutput::RecordingSettings(settings) => *settings,
+        _ => return Err(CliError::UnexpectedOutput),
+    };
+    let target_id = match target {
+        Some(id) => id,
+        None => clipcraft_platform::list_targets()
+            .map_err(|error| CliError::Capture(error.to_string()))?
+            .into_iter()
+            .find(|target| target.kind == clipcraft_capture::TargetKind::Display)
+            .map(|target| target.id)
+            .ok_or_else(|| CliError::Capture("no screen was found".to_owned()))?,
+    };
+    let source = clipcraft_platform::open(
+        &target_id,
+        &clipcraft_platform::CaptureOptions {
+            show_cursor: settings.capture_cursor,
+        },
+    )
+    .map_err(|error| CliError::Capture(error.to_string()))?;
+    let folder = out
+        .or_else(|| {
+            (!settings.capture_folder.is_empty()).then(|| PathBuf::from(&settings.capture_folder))
+        })
+        .or_else(clipcraft_engine::default_capture_folder)
+        .ok_or(CliError::Usage)?;
+    let mut session = clipcraft_engine::CaptureSession::new();
+    session.start(&settings, source).map_err(CliError::Engine)?;
+    std::thread::sleep(std::time::Duration::from_secs(seconds));
+    let report = session
+        .save_clip(&settings, &folder)
+        .map_err(CliError::Engine)?;
+    let status = session.stop();
+    write_json(&serde_json::json!({
+        "path": report.clip.path,
+        "frames": report.clip.frames,
+        "duration_frames": report.clip.duration_frames,
+        "bytes": report.clip.bytes,
+        "deleted": report.deleted,
+        "frames_captured": status.as_ref().map(|s| s.frames_captured),
+        "frames_encoded": status.as_ref().map(|s| s.frames_encoded),
+        "frames_dropped": status.as_ref().map(|s| s.frames_dropped),
+        "average_encode_ms": status.as_ref().map(|s| s.average_encode_ms),
+        "output": status.as_ref().and_then(|s| s.output),
+    }))
+}
+
 fn print_help() -> Result<(), CliError> {
     let help = concat!(
         "ClipCraft local tools\n",
@@ -113,6 +218,8 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli library probe <file>\n",
         "  clipcraft-cli library thumbnail <file>\n",
         "  clipcraft-cli recording settings\n",
+        "  clipcraft-cli capture targets\n",
+        "  clipcraft-cli capture record --seconds N [--target ID] [--out DIR]\n",
         "  clipcraft-cli version\n",
         "\n",
         "All commands run locally. A library scan is non-recursive and bounded.\n",
@@ -134,6 +241,7 @@ fn write_stdout(bytes: &[u8]) -> Result<(), CliError> {
 enum CliError {
     Usage,
     Engine(clipcraft_engine::EngineError),
+    Capture(String),
     UnexpectedOutput,
     Json(serde_json::Error),
     Io(io::Error),
@@ -145,6 +253,7 @@ impl fmt::Display for CliError {
             Self::Usage => formatter
                 .write_str("invalid arguments. Run `clipcraft-cli help` for local command usage."),
             Self::Engine(error) => error.fmt(formatter),
+            Self::Capture(message) => formatter.write_str(message),
             Self::UnexpectedOutput => {
                 formatter.write_str("the command returned an unexpected result.")
             }
@@ -157,7 +266,7 @@ impl fmt::Display for CliError {
 impl std::error::Error for CliError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Usage | Self::UnexpectedOutput => None,
+            Self::Usage | Self::UnexpectedOutput | Self::Capture(_) => None,
             Self::Engine(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::Io(error) => Some(error),

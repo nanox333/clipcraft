@@ -177,6 +177,8 @@ pub enum Icon {
     Gear,
     Import,
     Heart,
+    Record,
+    Stop,
 }
 
 /// Draws `icon` centered on `c`, about 18 px across at `scale` 1.0.
@@ -345,6 +347,16 @@ pub fn draw_icon(painter: &Painter, c: Pos2, icon: Icon, color: Color32, scale: 
             line(&[at(-4.0, -1.0), at(0.0, 3.5), at(4.0, -1.0)]);
         }
         Icon::Heart => draw_heart(painter, c, color, false, scale),
+        Icon::Record => {
+            painter.circle_filled(c, 6.5 * scale, color);
+        }
+        Icon::Stop => {
+            painter.rect_filled(
+                Rect::from_center_size(c, Vec2::splat(11.0 * scale)),
+                2.0,
+                color,
+            );
+        }
     }
 }
 

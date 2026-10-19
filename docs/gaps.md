@@ -27,7 +27,7 @@ workflow and required failure cases. Do not publish percentages until a repeatab
 - **Not done:** capture itself (full-screen game and desktop sources), and exporting a clip with the chosen format and framing. Neither can be verified in a headless container.
 - **H.265:** FilmCraft has a pure-Rust HEVC *decoder* only. Encoding is hardware-only (VideoToolbox on macOS, NVENC on Windows, via `filmcraft-platform`, which contains `unsafe` FFI), so H.265 is greyed out in Settings until that path is adopted and checked on real hardware.
 
-### Recording settings added in this pass (none are applied yet, because capture and export are not built)
+### Recording settings (applied by M2 where noted below)
 
 - Quality tiles (Low 360p24, Standard 720p60, High 1080p60, Custom with resolution, FPS, bitrate, encoder, codec).
 - Hotkeys for save clip, long recording, mute microphone, push to talk, screenshot, with conflict detection. They are saved but not yet registered with the operating system; global key capture needs the capture work.
@@ -40,3 +40,36 @@ workflow and required failure cases. Do not publish percentages until a repeatab
 
 - **Done:** favorites (heart on a card or in the clip view, right-click menu), collections (create, rename, delete from the sidebar; add or remove from a card's right-click menu or the clip view), and games (guessed from a sub-folder of the library or a recorder-style file name such as `Valorant 2024.03.01 - 21.04.mp4`; set by hand in the clip view). The sidebar lists All clips, Favorites, collections, and games with counts. All of it is saved in the local index, kept across rescans, and exposed as the `library.edit` command.
 - **Limits:** the library scan is not recursive, so the sub-folder rule for games only helps once recursive scans exist; today games come from file names or your own choice. A plain file name with no date or ` - ` is not treated as a game. Collections hold clips by path, so a file moved outside ClipCraft leaves its collections.
+
+### M2: capture and replay buffer
+
+Verified here (Linux, a virtual X display, ffprobe and ffmpeg as outside judges): screen and
+single-window capture with correct colours, window loss reported, global hotkeys with Caps Lock and
+Num Lock, MP4 and MKV clips that ffprobe reads as H.264 at the right size and that ffmpeg decodes
+without a complaint, framing (black bars, crop, stretch), size changes, a lost screen keeps what
+was recorded, no overwriting, no partial files, a bounded buffer, storage-limit trimming that only
+touches ClipCraft's own clips.
+
+**Not verified or not built:**
+
+- **Windows.** The Graphics Capture provider and the Windows hotkeys compile
+  (`cargo check --target x86_64-pc-windows-gnu`) but have never run. Exclusive-full-screen games,
+  the cursor option, protected content, and elevated windows are all untested.
+- **Wayland and macOS** have no provider (Wayland needs the desktop portal; macOS needs
+  ScreenCaptureKit).
+- **Sound.** Nothing records audio yet (M3). The microphone, push-to-talk, separate-tracks, and
+  game-audio settings are saved and shown but do nothing. The mute and screenshot hotkeys are
+  saved but not wired.
+- **Settings not yet applied:** force window capture, HDR conversion, GPU encoding, H.265, WebM,
+  the audio and keyframe details beyond the keyframe interval.
+- **Speed.** Measured on a shared 4-core container with a software-rendered video playing on the
+  same screen, using the Fast preset: 360p30 keeps up (10 ms per picture); 720p30 keeps up (25 ms;
+  241 of 241 pictures); 720p60 encodes about two of every three pictures (it drops a third); 1080p
+  at any rate is not sustainable in software. Pixel conversion alone is 4 to 11 ms at 1080p. A
+  real gaming computer is faster and the game also competes for it; hardware encoders are the way
+  to 1080p60 and are not wired. The top bar shows when more than 5% of pictures are dropped.
+- **Clip length** can be up to one keyframe interval longer than the replay setting, and a clip
+  from a struggling computer is variable frame rate.
+- **Saved clips are named in UTC** (`ClipCraft 2026-10-19 21-04-55.mp4`).
+- **Changing a quality setting while recording** needs a restart; the Settings page offers it.
+- **A resize** restarts the stream and drops the buffered video.

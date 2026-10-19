@@ -12,6 +12,9 @@ layer = 6
 
 [dependencies]
 clipcraft-audio-out.workspace = true
+clipcraft-capture.workspace = true
+clipcraft-platform.workspace = true
+clipcraft-record.workspace = true
 clipcraft-engine.workspace = true
 clipcraft-player.workspace = true
 clipcraft-time.workspace = true

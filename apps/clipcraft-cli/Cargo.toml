@@ -11,7 +11,9 @@ description = "Local ClipCraft command-line tool"
 layer = 6
 
 [dependencies]
+clipcraft-capture.workspace = true
 clipcraft-engine.workspace = true
+clipcraft-platform.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

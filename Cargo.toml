@@ -2,10 +2,13 @@
 members = [
     "apps/clipcraft",
     "apps/clipcraft-cli",
+    "crates/clipcraft-capture",
     "crates/clipcraft-engine",
     "crates/clipcraft-frame",
     "crates/clipcraft-media",
+    "crates/clipcraft-platform",
     "crates/clipcraft-player",
+    "crates/clipcraft-record",
     "crates/clipcraft-audio-out",
     "crates/clipcraft-time",
     "tools/xtask",
@@ -20,10 +23,13 @@ rust-version = "1.95"
 publish = false
 
 [workspace.dependencies]
+clipcraft-capture = { path = "crates/clipcraft-capture" }
 clipcraft-engine = { path = "crates/clipcraft-engine" }
 clipcraft-frame = { path = "crates/clipcraft-frame" }
 clipcraft-time = { path = "crates/clipcraft-time" }
 clipcraft-media = { path = "crates/clipcraft-media" }
+clipcraft-platform = { path = "crates/clipcraft-platform" }
+clipcraft-record = { path = "crates/clipcraft-record" }
 clipcraft-player = { path = "crates/clipcraft-player" }
 clipcraft-audio-out = { path = "crates/clipcraft-audio-out" }
 cpal = "0.16"
@@ -33,6 +39,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 filmcraft-codecs = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-media = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-h264enc = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
+filmcraft-matroska = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-isobmff = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 serde = { version = "1", features = ["derive"] }
