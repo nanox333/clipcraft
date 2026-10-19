@@ -37,6 +37,7 @@ filmcraft-isobmff = { git = "https://github.com/storytold/filmcraft", rev = "6c3
 eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+fs4 = "1.1"
 rfd = { version = "0.17.2", default-features = true }
 
 [workspace.lints.rust]

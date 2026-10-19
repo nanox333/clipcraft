@@ -8,16 +8,23 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::UNIX_EPOCH;
 
+mod hotkeys;
 mod index;
 mod recording;
+mod startup;
+mod storage;
 
 pub use clipcraft_media::MediaProbe;
 
+pub use hotkeys::{HotkeyAction, Hotkeys, normalize_hotkey};
 pub use recording::{
     AUDIO_KBPS, CaptureSource, Container, EncoderPreset, FRAME_RATES, Framing, HEIGHTS,
-    KEYFRAME_SECONDS, OutputShape, PixelRect, QualityPreset, REPLAY_SECONDS, RateControl,
-    RecordingSettings, Reframe, SAMPLE_RATES, VIDEO_KBPS, VideoCodec, default_settings_path,
-    reframe,
+    KEYFRAME_SECONDS, OutputShape, PixelRect, QualityMode, REPLAY_SECONDS, RateControl,
+    RecordingSettings, Reframe, SAMPLE_RATES, VIDEO_KBPS, VideoCodec, VideoEncoder,
+    default_settings_path, reframe,
+};
+pub use storage::{
+    StorageUsage, StoredClip, cleanup_plan, default_capture_folder, list_clips, storage_usage,
 };
 
 pub use index::{
@@ -53,10 +60,14 @@ pub enum Command {
     /// Saves probe results for clips of a remembered folder into the local index.
     /// Reads the saved recording settings, or the defaults when none are saved.
     LoadRecordingSettings { path: PathBuf },
+    /// Measures a capture folder and the disk it is on.
+    StorageUsage { folder: PathBuf },
+    /// Turns launching at sign-in on or off.
+    SetLaunchAtStartup { enabled: bool, executable: PathBuf },
     /// Validates and saves recording settings.
     SaveRecordingSettings {
         path: PathBuf,
-        settings: RecordingSettings,
+        settings: Box<RecordingSettings>,
     },
     StoreProbes {
         index_path: PathBuf,
@@ -80,6 +91,8 @@ impl Command {
             Self::EnsureThumbnail { .. } => "library.thumbnail",
             Self::StoreProbes { .. } => "library.store_probes",
             Self::LoadRecordingSettings { .. } => "recording.load_settings",
+            Self::StorageUsage { .. } => "storage.usage",
+            Self::SetLaunchAtStartup { .. } => "app.launch_at_startup",
             Self::SaveRecordingSettings { .. } => "recording.save_settings",
         }
     }
@@ -147,7 +160,11 @@ pub enum CommandOutput {
     /// A clip's thumbnail in the cache.
     Thumbnail(ThumbnailFile),
     /// Recording settings as stored.
-    RecordingSettings(RecordingSettings),
+    RecordingSettings(Box<RecordingSettings>),
+    /// Folder and disk usage.
+    StorageUsage(StorageUsage),
+    /// Whether ClipCraft now launches at sign-in.
+    LaunchAtStartup { enabled: bool },
 }
 
 /// Actionable errors returned by engine commands.
@@ -189,6 +206,8 @@ pub enum EngineError {
     SettingsInvalid,
     /// The recording settings could not be saved.
     SettingsSaveFailed,
+    /// Launching at sign-in could not be changed.
+    StartupFailed,
 }
 
 impl fmt::Display for EngineError {
@@ -229,6 +248,8 @@ impl fmt::Display for EngineError {
             Self::SettingsSaveFailed => {
                 formatter.write_str("The recording settings could not be saved. Check free disk space.")
             }
+            Self::StartupFailed => formatter
+                .write_str("Launching at sign-in could not be changed on this computer."),
             Self::IndexMissing => formatter.write_str("No saved library was found."),
             Self::IndexUnavailable => formatter.write_str(
                 "The saved library could not be read. Scan your clips folder again.",
@@ -273,12 +294,23 @@ pub fn execute(command: Command) -> Result<CommandOutput, EngineError> {
                     clipcraft_media::ProbeError::Unsupported => EngineError::MediaUnsupported,
                 })
         }
-        Command::LoadRecordingSettings { path } => {
-            recording::load_settings(&path).map(CommandOutput::RecordingSettings)
-        }
+        Command::LoadRecordingSettings { path } => recording::load_settings(&path)
+            .map(|settings| CommandOutput::RecordingSettings(Box::new(settings))),
         Command::SaveRecordingSettings { path, settings } => {
-            recording::save_settings(&path, settings).map(CommandOutput::RecordingSettings)
+            recording::save_settings(&path, *settings)
+                .map(|settings| CommandOutput::RecordingSettings(Box::new(settings)))
         }
+        Command::StorageUsage { folder } => {
+            if folder.as_os_str().is_empty() {
+                return Err(EngineError::DirectoryUnavailable);
+            }
+            Ok(CommandOutput::StorageUsage(storage_usage(&folder)))
+        }
+        Command::SetLaunchAtStartup {
+            enabled,
+            executable,
+        } => startup::set_launch_at_startup(enabled, &executable)
+            .map(|()| CommandOutput::LaunchAtStartup { enabled }),
         Command::EnsureThumbnail { path, cache_dir } => {
             if path.as_os_str().is_empty() {
                 return Err(EngineError::EmptyMediaPath);
@@ -493,6 +525,8 @@ pub const fn command_ids() -> &'static [&'static str] {
         "library.thumbnail",
         "library.store_probes",
         "recording.load_settings",
+        "storage.usage",
+        "app.launch_at_startup",
         "recording.save_settings",
     ]
 }

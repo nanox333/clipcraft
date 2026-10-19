@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::EngineError;
+use crate::hotkeys::Hotkeys;
 
 /// Largest settings file ClipCraft will read.
 pub const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
@@ -309,51 +310,85 @@ impl EncoderPreset {
     }
 }
 
-/// A named video quality: a bitrate that suits the clip's height and frame rate.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum QualityPreset {
-    /// Small files.
+/// A named recording quality, or the person's own choices.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QualityMode {
+    /// Small files for slower computers and quick uploads.
     Low,
-    /// A good balance.
-    Medium,
-    /// Sharp, larger files.
+    /// Smooth and easy to share.
+    Standard,
+    /// Sharp, for powerful computers.
+    #[default]
     High,
-    /// Near-lossless looking, very large files.
-    Ultra,
+    /// Resolution, frame rate, and bitrate chosen by hand.
+    Custom,
 }
 
-impl QualityPreset {
-    /// Every preset, lowest first.
-    pub const ALL: [QualityPreset; 4] = [Self::Low, Self::Medium, Self::High, Self::Ultra];
+impl QualityMode {
+    /// Every mode, in the order the tiles are shown.
+    pub const ALL: [QualityMode; 4] = [Self::Low, Self::Standard, Self::High, Self::Custom];
 
     /// The name shown to people.
     pub fn label(self) -> &'static str {
         match self {
-            Self::Low => "Low",
-            Self::Medium => "Medium",
-            Self::High => "High",
-            Self::Ultra => "Ultra",
+            Self::Low => "Low Quality",
+            Self::Standard => "Standard",
+            Self::High => "High Quality",
+            Self::Custom => "Custom",
         }
     }
 
-    /// Bits per pixel per frame this preset aims for.
-    fn bits_per_pixel(self) -> f64 {
+    /// Who it suits.
+    pub fn detail(self) -> &'static str {
         match self {
-            Self::Low => 0.04,
-            Self::Medium => 0.07,
-            Self::High => 0.10,
-            Self::Ultra => 0.16,
+            Self::Low => "Lower end PCs & faster uploads",
+            Self::Standard => "Performance & fast sharing",
+            Self::High => "Higher quality & slower uploads",
+            Self::Custom => "Customize your own settings",
         }
     }
 
-    /// The video bitrate, in kilobits per second, for a 16:9 clip of `height` at `frames_per_second`.
-    pub fn video_kbps(self, height: u32, frames_per_second: u32) -> u32 {
-        let height = u64::from(height.clamp(MIN_OUTPUT_EDGE, 4_320));
-        let width = height * 16 / 9;
-        let pixels_per_second =
-            (width * height * u64::from(frames_per_second.clamp(1, 240))) as f64;
-        let kbps = (pixels_per_second * self.bits_per_pixel() / 1000.0 / 100.0).round() * 100.0;
-        (kbps as u32).clamp(MIN_VIDEO_KBPS, MAX_VIDEO_KBPS)
+    /// Height, frame rate, and video bitrate in kbps this mode sets, or `None` for Custom.
+    pub fn values(self) -> Option<(u32, u32, u32)> {
+        match self {
+            Self::Low => Some((360, 24, 1_000)),
+            Self::Standard => Some((720, 60, 5_000)),
+            Self::High => Some((1080, 60, 10_000)),
+            Self::Custom => None,
+        }
+    }
+}
+
+/// Which chip does the video encoding.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VideoEncoder {
+    /// The processor. Works on every computer.
+    #[default]
+    Cpu,
+    /// The graphics card's encoder, which leaves the processor free for the game.
+    Gpu,
+}
+
+impl VideoEncoder {
+    /// Every encoder, in menu order.
+    pub const ALL: [VideoEncoder; 2] = [Self::Cpu, Self::Gpu];
+
+    /// The name shown to people.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Cpu => "CPU",
+            Self::Gpu => "GPU",
+        }
+    }
+
+    /// Why this encoder cannot be used yet, or `None` when it can.
+    pub fn unavailable_reason(self) -> Option<&'static str> {
+        match self {
+            Self::Cpu => None,
+            Self::Gpu => Some("GPU encoding is not connected yet."),
+        }
     }
 }
 
@@ -394,6 +429,10 @@ pub struct Reframe {
 pub struct RecordingSettings {
     /// File format.
     pub container: Container,
+    /// A named quality, or `Custom` to use the values below.
+    pub quality: QualityMode,
+    /// Which chip encodes the video.
+    pub video_encoder: VideoEncoder,
     /// Video compression format.
     pub codec: VideoCodec,
     /// What is captured.
@@ -428,6 +467,32 @@ pub struct RecordingSettings {
     pub capture_game_audio: bool,
     /// Record the microphone.
     pub capture_microphone: bool,
+    /// Keyboard shortcuts.
+    pub hotkeys: Hotkeys,
+    /// Microphone to record; empty means the system default.
+    pub microphone_device: String,
+    /// Output device whose sound is recorded; empty means the system default.
+    pub output_device: String,
+    /// Keep game sound and microphone on separate tracks in the file.
+    pub separate_audio_tracks: bool,
+    /// Record the microphone only while the push-to-talk key is held.
+    pub push_to_talk: bool,
+    /// The microphone is mono: copy it to both channels.
+    pub microphone_mono: bool,
+    /// Capture the game's window even when the game is full screen.
+    pub force_window_capture: bool,
+    /// Convert HDR games to standard colours so clips look right everywhere.
+    pub hdr_compatibility: bool,
+    /// Where clips are saved; empty means the default folder.
+    pub capture_folder: String,
+    /// Most space clips may take, in gigabytes; 0 means no limit.
+    pub storage_limit_gb: u32,
+    /// Delete the oldest clips to stay under the limit instead of stopping.
+    pub delete_oldest_when_full: bool,
+    /// Open ClipCraft in the background.
+    pub start_minimized: bool,
+    /// Open ClipCraft when you sign in.
+    pub launch_at_startup: bool,
     /// Game sound level, 0 to 100 percent.
     pub game_audio_percent: u32,
     /// Microphone level, 0 to 100 percent.
@@ -440,13 +505,15 @@ impl Default for RecordingSettings {
     fn default() -> Self {
         Self {
             container: Container::Mp4,
+            quality: QualityMode::High,
+            video_encoder: VideoEncoder::Cpu,
             codec: VideoCodec::H264,
             source: CaptureSource::Game,
             shape: OutputShape::Source,
             framing: Framing::Original,
             height: 1080,
             frames_per_second: 60,
-            video_kbps: 12_000,
+            video_kbps: 10_000,
             rate_control: RateControl::Variable,
             audio_kbps: 160,
             show_advanced: false,
@@ -457,6 +524,19 @@ impl Default for RecordingSettings {
             capture_cursor: true,
             capture_game_audio: true,
             capture_microphone: false,
+            hotkeys: Hotkeys::default(),
+            microphone_device: String::new(),
+            output_device: String::new(),
+            separate_audio_tracks: false,
+            push_to_talk: false,
+            microphone_mono: false,
+            force_window_capture: false,
+            hdr_compatibility: true,
+            capture_folder: String::new(),
+            storage_limit_gb: 0,
+            delete_oldest_when_full: true,
+            start_minimized: false,
+            launch_at_startup: false,
             game_audio_percent: 100,
             microphone_percent: 100,
             replay_seconds: 30,
@@ -465,13 +545,15 @@ impl Default for RecordingSettings {
 }
 
 /// Heights offered in the UI.
-pub const HEIGHTS: [u32; 4] = [480, 720, 1080, 1440];
+pub const HEIGHTS: [u32; 6] = [360, 480, 720, 1080, 1440, 2160];
 /// Frame rates offered in the UI.
 pub const FRAME_RATES: [u32; 3] = [24, 30, 60];
 /// Replay lengths offered in the UI.
 pub const REPLAY_SECONDS: [u32; 5] = [15, 30, 60, 120, 300];
 /// Video bitrates offered in the UI, in kilobits per second.
-pub const VIDEO_KBPS: [u32; 8] = [2_500, 5_000, 8_000, 12_000, 16_000, 25_000, 40_000, 60_000];
+pub const VIDEO_KBPS: [u32; 9] = [
+    1_000, 2_500, 5_000, 8_000, 10_000, 16_000, 25_000, 40_000, 60_000,
+];
 /// Audio bitrates offered in the UI, in kilobits per second.
 /// Keyframe intervals offered in the UI, in seconds.
 pub const KEYFRAME_SECONDS: [u32; 4] = [1, 2, 4, 10];
@@ -489,6 +571,18 @@ impl RecordingSettings {
         if !self.codec.is_available() {
             self.codec = VideoCodec::H264;
         }
+        if self.video_encoder.unavailable_reason().is_some() {
+            self.video_encoder = VideoEncoder::Cpu;
+        }
+        self.hotkeys = self.hotkeys.sanitized();
+        for text in [&mut self.microphone_device, &mut self.output_device] {
+            text.truncate(floor_boundary(text, 200));
+        }
+        self.capture_folder = self.capture_folder.trim().to_owned();
+        if self.capture_folder.len() > 1_024 || self.capture_folder.contains('\0') {
+            self.capture_folder.clear();
+        }
+        self.storage_limit_gb = self.storage_limit_gb.min(100_000);
         self.height = self.height.clamp(MIN_OUTPUT_EDGE, 4_320);
         self.frames_per_second = self.frames_per_second.clamp(1, 240);
         self.video_kbps = self.video_kbps.clamp(MIN_VIDEO_KBPS, MAX_VIDEO_KBPS);
@@ -501,6 +595,11 @@ impl RecordingSettings {
         self.game_audio_percent = self.game_audio_percent.min(100);
         self.microphone_percent = self.microphone_percent.min(100);
         self.replay_seconds = self.replay_seconds.clamp(5, 600);
+        if let Some((height, frames_per_second, video_kbps)) = self.quality.values() {
+            self.height = height;
+            self.frames_per_second = frames_per_second;
+            self.video_kbps = video_kbps;
+        }
         // Distorting or trimming means nothing when the shape is the source's own.
         if self.shape == OutputShape::Source {
             self.framing = Framing::Original;
@@ -520,6 +619,15 @@ impl RecordingSettings {
             self.height.clamp(MIN_OUTPUT_EDGE, 4_320),
         )
     }
+}
+
+/// The largest index at or below `limit` that is a character boundary of `text`.
+fn floor_boundary(text: &str, limit: usize) -> usize {
+    let mut index = limit.min(text.len());
+    while !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
 }
 
 fn even(value: u32) -> u32 {
@@ -784,22 +892,47 @@ mod tests {
     }
 
     #[test]
-    fn presets_scale_with_resolution_and_frame_rate() {
-        assert_eq!(QualityPreset::Medium.video_kbps(1080, 60), 8_700);
-        let mut last = 0;
-        for preset in QualityPreset::ALL {
-            let kbps = preset.video_kbps(1080, 60);
-            assert!(kbps > last);
-            last = kbps;
+    fn named_qualities_set_the_picture_values_and_custom_keeps_them() {
+        let low = RecordingSettings {
+            quality: QualityMode::Low,
+            height: 2160,
+            ..RecordingSettings::default()
         }
-        assert!(QualityPreset::High.video_kbps(1080, 60) > QualityPreset::High.video_kbps(720, 60));
-        assert!(
-            QualityPreset::High.video_kbps(1080, 60) > QualityPreset::High.video_kbps(1080, 30)
+        .sanitized();
+        assert_eq!(
+            (low.height, low.frames_per_second, low.video_kbps),
+            (360, 24, 1_000)
         );
-        for height in [0, 1, 100_000] {
-            let kbps = QualityPreset::Ultra.video_kbps(height, 1_000);
-            assert!((MIN_VIDEO_KBPS..=MAX_VIDEO_KBPS).contains(&kbps));
+        let custom = RecordingSettings {
+            quality: QualityMode::Custom,
+            height: 1440,
+            frames_per_second: 30,
+            video_kbps: 16_000,
+            ..RecordingSettings::default()
         }
+        .sanitized();
+        assert_eq!(
+            (custom.height, custom.frames_per_second, custom.video_kbps),
+            (1440, 30, 16_000)
+        );
+        let default = RecordingSettings::default();
+        assert_eq!(default.clone().sanitized(), default);
+    }
+
+    #[test]
+    fn text_settings_are_bounded() {
+        let settings = RecordingSettings {
+            microphone_device: "é".repeat(500),
+            capture_folder: "x".repeat(2_000),
+            storage_limit_gb: u32::MAX,
+            video_encoder: VideoEncoder::Gpu,
+            ..RecordingSettings::default()
+        }
+        .sanitized();
+        assert!(settings.microphone_device.len() <= 200);
+        assert!(settings.capture_folder.is_empty());
+        assert_eq!(settings.storage_limit_gb, 100_000);
+        assert_eq!(settings.video_encoder, VideoEncoder::Cpu);
     }
 
     #[test]
@@ -868,6 +1001,7 @@ mod tests {
     #[test]
     fn sanitizing_clamps_values_and_reconciles_framing() {
         let settings = RecordingSettings {
+            quality: QualityMode::Custom,
             height: 0,
             frames_per_second: 9_999,
             video_kbps: 0,
@@ -928,7 +1062,11 @@ mod tests {
         fs::write(&path, br#"{"version":99,"settings":{}}"#).unwrap();
         assert_eq!(load_settings(&path), Err(EngineError::SettingsInvalid));
         // Unknown or missing fields fall back to defaults rather than losing the file.
-        fs::write(&path, br#"{"version":1,"settings":{"height":720}}"#).unwrap();
+        fs::write(
+            &path,
+            br#"{"version":1,"settings":{"quality":"custom","height":720}}"#,
+        )
+        .unwrap();
         assert_eq!(load_settings(&path).unwrap().height, 720);
         let _ = fs::remove_dir_all(&dir);
     }

@@ -16,6 +16,7 @@ clipcraft-player.workspace = true
 clipcraft-time.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+fs4.workspace = true
 
 [lints]
 workspace = true

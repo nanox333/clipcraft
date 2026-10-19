@@ -7,6 +7,10 @@
 //! (unplugged, or a driver error) sets [`AudioOutput::failed`] so the caller can restart it, and
 //! hands the playback clock back to the wall clock in the meantime.
 
+mod input;
+
+pub use input::{DeviceNames, MAX_DEVICES, MicMeter, MicTestError, list_devices, peak};
+
 use clipcraft_player::audio::AudioFeed;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, SizedSample, Stream, StreamConfig};
