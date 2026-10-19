@@ -18,5 +18,5 @@ unknown outcomes without silently retrying destructive operations.
 
 Before work, read [`CLAUDE.md`](../CLAUDE.md), [`AGENTS.md`](../AGENTS.md), the ranked
 [`gaps.md`](gaps.md), and [`issue-requirements.md`](issue-requirements.md). The CLI currently exposes
-`commands`, the local `library scan` operation, and the local `library path` operation. It has no
+`commands`, the local `library scan` operation, the local `library path` operation, and `library reveal` (show a file in the system file manager). It has no
 capture, edit, playback, or export commands yet.

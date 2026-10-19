@@ -1,9 +1,11 @@
 //! Shared command and local library behavior for the ClipCraft UI and CLI.
 
 use serde::Serialize;
+use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::UNIX_EPOCH;
 
 /// Maximum directory entries inspected by one library scan.
@@ -20,6 +22,8 @@ pub enum Command {
     ScanLibrary { directory: PathBuf },
     /// Returns a local media path for display or clipboard use.
     LocalMediaPath { path: PathBuf },
+    /// Shows a local media file in the operating system's file manager.
+    RevealInFileManager { path: PathBuf },
 }
 
 impl Command {
@@ -28,6 +32,7 @@ impl Command {
         match self {
             Self::ScanLibrary { .. } => "library.scan",
             Self::LocalMediaPath { .. } => "library.path",
+            Self::RevealInFileManager { .. } => "library.reveal",
         }
     }
 }
@@ -64,6 +69,8 @@ pub enum CommandOutput {
     LibraryScan(LibraryScanResult),
     /// A local file path requested by the library UI or CLI.
     LocalMediaPath { path: String },
+    /// A local file was handed to the file manager.
+    Revealed { path: String },
 }
 
 /// Actionable errors returned by engine commands.
@@ -79,6 +86,10 @@ pub enum EngineError {
     ResultLimit,
     /// A local media path was empty.
     EmptyMediaPath,
+    /// The media file no longer exists or cannot be read.
+    FileUnavailable,
+    /// The system file manager could not be started.
+    FileManagerUnavailable,
 }
 
 impl fmt::Display for EngineError {
@@ -95,6 +106,12 @@ impl fmt::Display for EngineError {
                 "This folder contains more videos than one scan can show. Choose a narrower folder.",
             ),
             Self::EmptyMediaPath => formatter.write_str("Choose a local media file first."),
+            Self::FileUnavailable => formatter.write_str(
+                "This file could not be found. It may have been moved or deleted.",
+            ),
+            Self::FileManagerUnavailable => formatter.write_str(
+                "The system file manager could not be opened. Copy the file path instead.",
+            ),
         }
     }
 }
@@ -107,6 +124,9 @@ pub fn execute(command: Command) -> Result<CommandOutput, EngineError> {
         Command::ScanLibrary { directory } => {
             scan_library_directory(&directory).map(CommandOutput::LibraryScan)
         }
+        Command::RevealInFileManager { path } => {
+            reveal_in_file_manager(&path).map(|path| CommandOutput::Revealed { path })
+        }
         Command::LocalMediaPath { path } => {
             if path.as_os_str().is_empty() {
                 return Err(EngineError::EmptyMediaPath);
@@ -116,6 +136,66 @@ pub fn execute(command: Command) -> Result<CommandOutput, EngineError> {
             })
         }
     }
+}
+
+/// File managers ClipCraft can hand a path to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FileManager {
+    Explorer,
+    Finder,
+    XdgOpen,
+}
+
+impl FileManager {
+    const fn current() -> Self {
+        if cfg!(target_os = "windows") {
+            Self::Explorer
+        } else if cfg!(target_os = "macos") {
+            Self::Finder
+        } else {
+            Self::XdgOpen
+        }
+    }
+}
+
+/// Returns the program and arguments that show `path` in a file manager.
+///
+/// `path` must be absolute so it can never be read as a command-line option.
+fn reveal_invocation(manager: FileManager, path: &Path) -> (&'static str, Vec<OsString>) {
+    match manager {
+        FileManager::Explorer => {
+            let mut selection = OsString::from("/select,");
+            selection.push(path);
+            ("explorer", vec![selection])
+        }
+        FileManager::Finder => ("open", vec![OsString::from("-R"), path.into()]),
+        FileManager::XdgOpen => (
+            "xdg-open",
+            vec![path.parent().unwrap_or(path).as_os_str().to_owned()],
+        ),
+    }
+}
+
+fn reveal_in_file_manager(path: &Path) -> Result<String, EngineError> {
+    if path.as_os_str().is_empty() {
+        return Err(EngineError::EmptyMediaPath);
+    }
+    let absolute = std::path::absolute(path).map_err(|_| EngineError::FileUnavailable)?;
+    fs::metadata(&absolute).map_err(|_| EngineError::FileUnavailable)?;
+
+    let (program, arguments) = reveal_invocation(FileManager::current(), &absolute);
+    let mut child = std::process::Command::new(program)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| EngineError::FileManagerUnavailable)?;
+    // Reap the launcher without blocking the caller; Explorer exits non-zero on success.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(absolute.to_string_lossy().into_owned())
 }
 
 /// Scans one folder for common local video containers.
@@ -208,14 +288,15 @@ fn scan_library_directory_with_limit(
 
 /// Lists stable user-facing command IDs available to the first application slice.
 pub const fn command_ids() -> &'static [&'static str] {
-    &["library.scan", "library.path"]
+    &["library.scan", "library.path", "library.reveal"]
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Command, CommandOutput, EngineError, MAX_DIRECTORY_ENTRIES, MAX_LIBRARY_RESULTS,
-        scan_library_directory, scan_library_directory_with_limit,
+        Command, CommandOutput, EngineError, FileManager, MAX_DIRECTORY_ENTRIES,
+        MAX_LIBRARY_RESULTS, reveal_invocation, scan_library_directory,
+        scan_library_directory_with_limit,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -340,6 +421,47 @@ mod tests {
                 path: PathBuf::new()
             }),
             Err(EngineError::EmptyMediaPath)
+        );
+    }
+
+    #[test]
+    fn reveal_invocation_selects_the_file_on_each_platform() {
+        let file = PathBuf::from("/clips/a.mp4");
+
+        let (program, arguments) = reveal_invocation(FileManager::Explorer, &file);
+        assert_eq!(program, "explorer");
+        assert_eq!(arguments, ["/select,/clips/a.mp4"]);
+
+        let (program, arguments) = reveal_invocation(FileManager::Finder, &file);
+        assert_eq!(program, "open");
+        assert_eq!(arguments, ["-R", "/clips/a.mp4"]);
+
+        let (program, arguments) = reveal_invocation(FileManager::XdgOpen, &file);
+        assert_eq!(program, "xdg-open");
+        assert_eq!(arguments, ["/clips"]);
+    }
+
+    #[test]
+    fn reveal_command_rejects_empty_and_missing_files_without_launching_anything() {
+        assert_eq!(
+            Command::RevealInFileManager {
+                path: PathBuf::new()
+            }
+            .id(),
+            "library.reveal"
+        );
+        assert_eq!(
+            super::execute(Command::RevealInFileManager {
+                path: PathBuf::new()
+            }),
+            Err(EngineError::EmptyMediaPath)
+        );
+        let directory = TestDirectory::new();
+        assert_eq!(
+            super::execute(Command::RevealInFileManager {
+                path: directory.path().join("missing.mp4")
+            }),
+            Err(EngineError::FileUnavailable)
         );
     }
 }

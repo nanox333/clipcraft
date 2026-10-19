@@ -51,14 +51,28 @@ fn run_library(arguments: &[OsString]) -> Result<(), CliError> {
                 execute(Command::ScanLibrary { directory: path }).map_err(CliError::Engine)?;
             match output {
                 CommandOutput::LibraryScan(result) => write_json(&result),
-                CommandOutput::LocalMediaPath { .. } => Err(CliError::UnexpectedOutput),
+                CommandOutput::LocalMediaPath { .. } | CommandOutput::Revealed { .. } => {
+                    Err(CliError::UnexpectedOutput)
+                }
+            }
+        }
+        "reveal" => {
+            let output =
+                execute(Command::RevealInFileManager { path }).map_err(CliError::Engine)?;
+            match output {
+                CommandOutput::Revealed { path } => write_json(&path),
+                CommandOutput::LibraryScan(_) | CommandOutput::LocalMediaPath { .. } => {
+                    Err(CliError::UnexpectedOutput)
+                }
             }
         }
         "path" => {
             let output = execute(Command::LocalMediaPath { path }).map_err(CliError::Engine)?;
             match output {
                 CommandOutput::LocalMediaPath { path } => write_json(&path),
-                CommandOutput::LibraryScan(_) => Err(CliError::UnexpectedOutput),
+                CommandOutput::LibraryScan(_) | CommandOutput::Revealed { .. } => {
+                    Err(CliError::UnexpectedOutput)
+                }
             }
         }
         _ => Err(CliError::Usage),
@@ -73,6 +87,7 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli commands\n",
         "  clipcraft-cli library scan <folder>\n",
         "  clipcraft-cli library path <file>\n",
+        "  clipcraft-cli library reveal <file>\n",
         "  clipcraft-cli version\n",
         "\n",
         "All commands run locally. A library scan is non-recursive and bounded.\n",

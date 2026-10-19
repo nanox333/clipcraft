@@ -34,7 +34,7 @@ Rust-only and offline/no-server checks are documented and enforced where automat
 
 ### M0.3 — Engine command registry and local CLI skeleton
 
-**Status:** partial — `library.scan`, `library.path`, `commands`, and typed dispatch exist; capture and media commands remain future work.
+**Status:** partial — `library.scan`, `library.path`, `library.reveal`, `commands`, and typed dispatch exist; capture and media commands remain future work.
 
 **Requirements:** define stable command IDs, typed parameters, validation, error types, and JSON
 stdin/stdout behavior; UI and CLI dispatch through the same registry.

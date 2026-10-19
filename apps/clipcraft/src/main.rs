@@ -206,6 +206,7 @@ impl ClipCraftApp {
                 ClipCardAction::CopyPath(path) => {
                     self.copy_media_path(ui.ctx(), PathBuf::from(path));
                 }
+                ClipCardAction::Reveal(path) => self.reveal_media(PathBuf::from(path)),
             }
         }
     }
@@ -355,9 +356,14 @@ impl ClipCraftApp {
                         ui.add_space(4.0);
                         ui.label(RichText::new(&entry.path).color(TEXT).small());
                         ui.add_space(16.0);
-                        if ui.button("Copy File Path").clicked() {
-                            self.copy_media_path(ui.ctx(), PathBuf::from(&entry.path));
-                        }
+                        ui.horizontal(|ui| {
+                            if ui.button("Copy File Path").clicked() {
+                                self.copy_media_path(ui.ctx(), PathBuf::from(&entry.path));
+                            }
+                            if ui.button(open_in_file_manager_label()).clicked() {
+                                self.reveal_media(PathBuf::from(&entry.path));
+                            }
+                        });
                     });
             });
         });
@@ -426,7 +432,7 @@ impl ClipCraftApp {
                 self.directory_text = result.directory.clone();
                 self.library = Some(result);
             }
-            Ok(CommandOutput::LocalMediaPath { .. }) => {
+            Ok(_) => {
                 self.error = Some("The library scan returned an unexpected result.".to_owned());
             }
             Err(error) => self.error = Some(error.to_string()),
@@ -436,8 +442,20 @@ impl ClipCraftApp {
     fn copy_media_path(&mut self, context: &egui::Context, path: PathBuf) {
         match execute(Command::LocalMediaPath { path }) {
             Ok(CommandOutput::LocalMediaPath { path }) => context.copy_text(path),
-            Ok(CommandOutput::LibraryScan(_)) => {
+            Ok(_) => {
                 self.error = Some("The path command returned an unexpected result.".to_owned());
+            }
+            Err(error) => self.error = Some(error.to_string()),
+        }
+    }
+
+    fn reveal_media(&mut self, path: PathBuf) {
+        self.error = None;
+        match execute(Command::RevealInFileManager { path }) {
+            Ok(CommandOutput::Revealed { .. }) => {}
+            Ok(_) => {
+                self.error =
+                    Some("The file manager command returned an unexpected result.".to_owned());
             }
             Err(error) => self.error = Some(error.to_string()),
         }
@@ -464,6 +482,7 @@ impl ClipCraftApp {
 enum ClipCardAction {
     Open(MediaEntry),
     CopyPath(String),
+    Reveal(String),
 }
 
 fn apply_theme(context: &egui::Context) {
@@ -508,6 +527,16 @@ fn nav_button(ui: &mut egui::Ui, icon: &str, label: &str, selected: bool, action
         action();
     }
     ui.add_space(8.0);
+}
+
+fn open_in_file_manager_label() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "Open in Explorer"
+    } else if cfg!(target_os = "macos") {
+        "Show in Finder"
+    } else {
+        "Show in Folder"
+    }
 }
 
 fn key_chip(ui: &mut egui::Ui, text: &str) {
@@ -612,31 +641,66 @@ fn clip_card(ui: &mut egui::Ui, entry: &MediaEntry, width: f32) -> Option<ClipCa
             });
             ui.add_space(14.0);
 
-            let (footer, footer_response) =
-                ui.allocate_exact_size(Vec2::new(width, 48.0), egui::Sense::click());
+            let (footer, _) = ui.allocate_exact_size(Vec2::new(width, 48.0), egui::Sense::hover());
+            let (copy_rect, reveal_rect) = {
+                let split = footer.left() + width * 0.5;
+                (
+                    egui::Rect::from_min_max(footer.min, egui::pos2(split, footer.bottom())),
+                    egui::Rect::from_min_max(egui::pos2(split, footer.top()), footer.max),
+                )
+            };
+            let copy_response =
+                ui.interact(copy_rect, response.id.with("copy"), egui::Sense::click());
+            let reveal_response = ui.interact(
+                reveal_rect,
+                response.id.with("reveal"),
+                egui::Sense::click(),
+            );
+            let idle = Color32::from_rgb(28, 28, 31);
+            let hover = Color32::from_rgb(40, 40, 44);
             ui.painter().rect_filled(
-                footer,
+                copy_rect,
                 egui::CornerRadius {
                     nw: 0,
                     ne: 0,
                     sw: 8,
+                    se: 0,
+                },
+                if copy_response.hovered() { hover } else { idle },
+            );
+            ui.painter().rect_filled(
+                reveal_rect,
+                egui::CornerRadius {
+                    nw: 0,
+                    ne: 0,
+                    sw: 0,
                     se: 8,
                 },
-                if footer_response.hovered() {
-                    Color32::from_rgb(40, 40, 44)
+                if reveal_response.hovered() {
+                    hover
                 } else {
-                    Color32::from_rgb(28, 28, 31)
+                    idle
                 },
             );
             ui.painter().text(
-                footer.left_center() + Vec2::new(14.0, 0.0),
+                copy_rect.left_center() + Vec2::new(14.0, 0.0),
                 egui::Align2::LEFT_CENTER,
-                "📋  Copy File Path",
-                FontId::proportional(14.0),
+                "📋  Copy Path",
+                FontId::proportional(13.0),
                 TEXT,
             );
-            if footer_response.clicked() {
+            ui.painter().text(
+                reveal_rect.left_center() + Vec2::new(14.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                format!("📁  {}", open_in_file_manager_label()),
+                FontId::proportional(13.0),
+                TEXT,
+            );
+            if copy_response.clicked() {
                 action = Some(ClipCardAction::CopyPath(entry.path.clone()));
+            }
+            if reveal_response.clicked() {
+                action = Some(ClipCardAction::Reveal(entry.path.clone()));
             }
         });
     action
