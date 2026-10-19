@@ -279,4 +279,43 @@ mod tests {
             assert_eq!(video.frame_at_or_before(video_time), Ok(frame));
         }
     }
+
+    #[test]
+    fn common_frame_and_sample_rates_round_trip_and_stay_monotonic() {
+        let frame_rates = [
+            (24, 1),
+            (25, 1),
+            (30, 1),
+            (50, 1),
+            (60, 1),
+            (24_000, 1_001),
+            (30_000, 1_001),
+            (60_000, 1_001),
+        ];
+        for (numerator, denominator) in frame_rates {
+            let rate = FrameRate::new(numerator, denominator).expect("valid frame rate");
+            let mut previous = Tick::ZERO;
+            for frame in 0..20_000 {
+                let start = rate.frame_start(frame).expect("frame time fits");
+                assert!(
+                    frame == 0 || start > previous,
+                    "{numerator}/{denominator} not monotonic"
+                );
+                assert_eq!(rate.frame_at_or_before(start), Ok(frame));
+                // One tick before a frame start belongs to the previous frame (trim boundary).
+                if frame > 0 {
+                    let before = start.checked_sub(Tick::from_ticks(1)).expect("tick before");
+                    assert_eq!(rate.frame_at_or_before(before), Ok(frame - 1));
+                }
+                previous = start;
+            }
+        }
+        for hertz in [8_000, 22_050, 44_100, 48_000, 96_000, 192_000] {
+            let rate = SampleRate::new(hertz).expect("valid sample rate");
+            for sample in (0..2_000_000).step_by(997) {
+                let start = rate.sample_start(sample).expect("sample time fits");
+                assert_eq!(rate.sample_at_or_before(start), Ok(sample));
+            }
+        }
+    }
 }

@@ -1,4 +1,6 @@
-use clipcraft_engine::{Command, CommandOutput, LibraryScanResult, MediaEntry, execute};
+use clipcraft_engine::{
+    Command, CommandOutput, EngineError, LibraryScanResult, MediaEntry, default_index_path, execute,
+};
 use eframe::egui;
 use egui::{Align, Color32, FontId, Layout, RichText, Stroke, Vec2};
 use std::path::PathBuf;
@@ -24,7 +26,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "ClipCraft",
         options,
-        Box::new(|_| Ok(Box::<ClipCraftApp>::default())),
+        Box::new(|_| Ok(Box::new(ClipCraftApp::restored()))),
     )
 }
 
@@ -37,6 +39,8 @@ struct ClipCraftApp {
     search_text: String,
     sort_newest: bool,
     page: Page,
+    /// Where the rebuildable library index lives; `None` keeps scans in memory only.
+    index_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -77,6 +81,45 @@ impl eframe::App for ClipCraftApp {
 }
 
 impl ClipCraftApp {
+    /// Starts with the last scanned folder restored from the local index, if there is one.
+    fn restored() -> Self {
+        Self::restored_from(default_index_path())
+    }
+
+    fn restored_from(index_path: Option<PathBuf>) -> Self {
+        let mut app = Self {
+            index_path,
+            ..Self::default()
+        };
+        let Some(index_path) = app.index_path.clone() else {
+            return app;
+        };
+        match execute(Command::LoadLibrary { index_path }) {
+            Ok(CommandOutput::LibraryScan(result)) => {
+                app.directory_text = result.directory.clone();
+                app.library = Some(result);
+                app.refresh_restored_library();
+            }
+            Ok(_) | Err(EngineError::IndexMissing) => {}
+            Err(error) => app.error = Some(error.to_string()),
+        }
+        app
+    }
+
+    /// Rescans the restored folder so clips deleted since last launch show as offline. If the
+    /// folder cannot be read (for example an unplugged drive), every remembered clip is offline.
+    fn refresh_restored_library(&mut self) {
+        self.scan_library();
+        if self.error.is_none() {
+            return;
+        }
+        if let Some(library) = self.library.as_mut() {
+            for entry in &mut library.entries {
+                entry.offline = true;
+            }
+        }
+    }
+
     fn top_bar(&mut self, context: &egui::Context) {
         egui::TopBottomPanel::top("capture-strip")
             .exact_height(44.0)
@@ -427,8 +470,18 @@ impl ClipCraftApp {
     fn scan_library(&mut self) {
         self.error = None;
         let directory = PathBuf::from(self.directory_text.trim());
-        match execute(Command::ScanLibrary { directory }) {
+        let command = match self.index_path.clone() {
+            Some(index_path) => Command::RefreshLibrary {
+                directory,
+                index_path,
+            },
+            None => Command::ScanLibrary { directory },
+        };
+        match execute(command) {
             Ok(CommandOutput::LibraryScan(result)) => {
+                if self.index_path.is_some() && !result.persisted {
+                    self.error = Some(EngineError::IndexSaveFailed.to_string());
+                }
                 self.directory_text = result.directory.clone();
                 self.library = Some(result);
             }
@@ -631,7 +684,12 @@ fn clip_card(ui: &mut egui::Ui, entry: &MediaEntry, width: f32) -> Option<ClipCa
                 ui.add_space(14.0);
                 ui.label(
                     RichText::new(format!(
-                        "On Device  •  {}  •  {}",
+                        "{}  •  {}  •  {}",
+                        if entry.offline {
+                            "Offline"
+                        } else {
+                            "On Device"
+                        },
                         format_bytes(entry.size_bytes),
                         format_date(entry.modified_unix_seconds)
                     ))
@@ -893,6 +951,9 @@ mod tests {
             size_bytes: 100,
             modified_unix_seconds,
             extension: "mp4".to_owned(),
+            offline: false,
+            favorite: false,
+            tags: Vec::new(),
         }
     }
 
@@ -987,6 +1048,43 @@ mod tests {
             Some(1)
         );
         assert_eq!(app.error.as_deref(), Some("prior message"));
+
+        fs::remove_dir_all(directory).expect("remove temporary test directory");
+    }
+
+    #[test]
+    fn a_new_launch_restores_the_last_library_and_flags_files_removed_since() {
+        let directory = temporary_directory();
+        let index_path = directory.join("data").join("library-index.json");
+        let clips = directory.join("clips");
+        fs::create_dir(&clips).expect("clips folder");
+        fs::write(clips.join("keep.mp4"), b"x").expect("keep clip");
+        fs::write(clips.join("gone.mp4"), b"x").expect("gone clip");
+
+        let mut first = ClipCraftApp::restored_from(Some(index_path.clone()));
+        assert!(first.library.is_none());
+        first.set_library_folder(Some(clips.clone()));
+        assert_eq!(first.error, None);
+
+        fs::remove_file(clips.join("gone.mp4")).expect("remove clip");
+        let second = ClipCraftApp::restored_from(Some(index_path.clone()));
+        assert_eq!(second.directory_text, clips.to_string_lossy());
+        assert_eq!(second.library.as_ref().map(|l| l.entries.len()), Some(2));
+        let entries = &second.library.as_ref().expect("library").entries;
+        assert_eq!(entries.iter().filter(|entry| entry.offline).count(), 1);
+        assert!(entries.iter().any(|e| e.title == "gone.mp4" && e.offline));
+
+        // An unreadable folder marks every remembered clip offline instead of hiding them.
+        fs::remove_dir_all(&clips).expect("remove clips folder");
+        let unplugged = ClipCraftApp::restored_from(Some(index_path.clone()));
+        let entries = &unplugged.library.as_ref().expect("library").entries;
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|entry| entry.offline));
+
+        fs::write(&index_path, b"damaged").expect("damage index");
+        let third = ClipCraftApp::restored_from(Some(index_path));
+        assert!(third.library.is_none());
+        assert!(third.error.is_some());
 
         fs::remove_dir_all(directory).expect("remove temporary test directory");
     }

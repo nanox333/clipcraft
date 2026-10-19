@@ -54,7 +54,7 @@ for valid, missing, and unknown parameters; test runs need no network.
 
 ### M1.1 — Exact time and bounded media primitives
 
-**Status:** partial — integer nanosecond ticks and rational frame conversions have checked unit coverage; audio sample positions and bounded frame buffers remain future work.
+**Status:** implemented for the current scope — integer ticks, rational frame rates, audio sample positions, and `clipcraft-frame` bounded queues (item and byte caps, drop-oldest or reject policy, every drop counted) are covered by deterministic invariant tests over common frame/sample rates, overflow, zero limits, and trim boundaries. Not yet done: frame and audio buffer types that carry media, and generated A/V fixtures beyond the timestamp test.
 
 **Requirements:** implement integer ticks/rational rates, audio sample positions, checked conversion,
 bounded frame/audio buffers, and deterministic generated fixtures.
@@ -67,7 +67,7 @@ overflow, zero/invalid rates, and boundary trims; generated audio/video share a 
 
 ### M1.2 — Rebuildable local library index
 
-**Status:** partial — the current scanner reads one folder into an in-memory result; persistent index, rescan recovery, and thumbnails remain future work.
+**Status:** partial — `library.refresh` and `library.load` keep a versioned JSON index in the per-user data directory (atomic temp-file-and-rename saves, size and field caps, corrupt index rebuilt by rescan, missing files kept as offline entries, favorite/tags preserved across rescans). The desktop app restores and refreshes the last folder on launch. Thumbnails, UI to set favorites/tags, and multi-folder management remain future work.
 
 **Requirements:** define versioned local metadata for library entries, tags/favorites, media path or
 fingerprint references, safe atomic index saves, missing-media behavior, and disposable caches.

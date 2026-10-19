@@ -1,0 +1,16 @@
+[package]
+name = "clipcraft-frame"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Bounded queues for frames and audio packets"
+
+[package.metadata.clipcraft]
+layer = 0
+
+[dependencies]
+
+[lints]
+workspace = true

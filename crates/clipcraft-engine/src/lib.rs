@@ -1,12 +1,18 @@
 //! Shared command and local library behavior for the ClipCraft UI and CLI.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::UNIX_EPOCH;
+
+mod index;
+
+pub use index::{
+    INDEX_VERSION, MAX_ENTRIES_PER_FOLDER, MAX_INDEX_BYTES, MAX_INDEXED_FOLDERS, default_index_path,
+};
 
 /// Maximum directory entries inspected by one library scan.
 pub const MAX_DIRECTORY_ENTRIES: usize = 20_000;
@@ -22,6 +28,13 @@ pub enum Command {
     ScanLibrary { directory: PathBuf },
     /// Returns a local media path for display or clipboard use.
     LocalMediaPath { path: PathBuf },
+    /// Scans a folder, merges it into the local index, and saves the index atomically.
+    RefreshLibrary {
+        directory: PathBuf,
+        index_path: PathBuf,
+    },
+    /// Restores the most recently refreshed folder from the local index without scanning.
+    LoadLibrary { index_path: PathBuf },
     /// Shows a local media file in the operating system's file manager.
     RevealInFileManager { path: PathBuf },
 }
@@ -33,6 +46,8 @@ impl Command {
             Self::ScanLibrary { .. } => "library.scan",
             Self::LocalMediaPath { .. } => "library.path",
             Self::RevealInFileManager { .. } => "library.reveal",
+            Self::RefreshLibrary { .. } => "library.refresh",
+            Self::LoadLibrary { .. } => "library.load",
         }
     }
 }
@@ -44,10 +59,12 @@ pub struct LibraryScanResult {
     pub directory: String,
     /// Video files discovered in the folder.
     pub entries: Vec<MediaEntry>,
+    /// Whether these entries are saved in the local index (false for a plain scan or a failed save).
+    pub persisted: bool,
 }
 
 /// Local metadata that can be shown in a library card.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MediaEntry {
     /// Full local path. This is never sent outside the process.
     pub path: String,
@@ -59,6 +76,15 @@ pub struct MediaEntry {
     pub modified_unix_seconds: Option<u64>,
     /// Lowercase file extension without a leading dot.
     pub extension: String,
+    /// True when the file was remembered by the index but is no longer on disk.
+    #[serde(default)]
+    pub offline: bool,
+    /// User favorite flag, kept across rescans.
+    #[serde(default)]
+    pub favorite: bool,
+    /// User tags, kept across rescans.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// Output produced by a registered engine command.
@@ -90,6 +116,14 @@ pub enum EngineError {
     FileUnavailable,
     /// The system file manager could not be started.
     FileManagerUnavailable,
+    /// No saved library index exists yet.
+    IndexMissing,
+    /// The saved library index could not be read.
+    IndexUnavailable,
+    /// The saved library index is malformed, oversized, or from an unsupported version.
+    IndexInvalid,
+    /// The library index could not be saved.
+    IndexSaveFailed,
 }
 
 impl fmt::Display for EngineError {
@@ -109,6 +143,16 @@ impl fmt::Display for EngineError {
             Self::FileUnavailable => formatter.write_str(
                 "This file could not be found. It may have been moved or deleted.",
             ),
+            Self::IndexMissing => formatter.write_str("No saved library was found."),
+            Self::IndexUnavailable => formatter.write_str(
+                "The saved library could not be read. Scan your clips folder again.",
+            ),
+            Self::IndexInvalid => formatter.write_str(
+                "The saved library is damaged or from a newer version. Scan your clips folder to rebuild it.",
+            ),
+            Self::IndexSaveFailed => formatter.write_str(
+                "The library could not be saved. Your clips are untouched; check free disk space.",
+            ),
             Self::FileManagerUnavailable => formatter.write_str(
                 "The system file manager could not be opened. Copy the file path instead.",
             ),
@@ -123,6 +167,16 @@ pub fn execute(command: Command) -> Result<CommandOutput, EngineError> {
     match command {
         Command::ScanLibrary { directory } => {
             scan_library_directory(&directory).map(CommandOutput::LibraryScan)
+        }
+        Command::RefreshLibrary {
+            directory,
+            index_path,
+        } => {
+            let scan = scan_library_directory(&directory)?;
+            index::refresh_library(scan, &index_path).map(CommandOutput::LibraryScan)
+        }
+        Command::LoadLibrary { index_path } => {
+            index::load_library(&index_path).map(CommandOutput::LibraryScan)
         }
         Command::RevealInFileManager { path } => {
             reveal_in_file_manager(&path).map(|path| CommandOutput::Revealed { path })
@@ -270,6 +324,9 @@ fn scan_library_directory_with_limit(
             size_bytes: metadata.len(),
             modified_unix_seconds,
             extension,
+            offline: false,
+            favorite: false,
+            tags: Vec::new(),
         });
     }
 
@@ -283,12 +340,19 @@ fn scan_library_directory_with_limit(
     Ok(LibraryScanResult {
         directory: directory.to_string_lossy().into_owned(),
         entries: media,
+        persisted: false,
     })
 }
 
 /// Lists stable user-facing command IDs available to the first application slice.
 pub const fn command_ids() -> &'static [&'static str] {
-    &["library.scan", "library.path", "library.reveal"]
+    &[
+        "library.scan",
+        "library.path",
+        "library.reveal",
+        "library.refresh",
+        "library.load",
+    ]
 }
 
 #[cfg(test)]
