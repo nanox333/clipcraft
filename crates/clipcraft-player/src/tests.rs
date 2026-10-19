@@ -18,6 +18,18 @@ fn brightness(index: u32) -> u8 {
 
 /// Encodes a one-second flat-gray clip whose brightness rises every frame, with the pure-Rust encoder.
 fn make_clip() -> Vec<u8> {
+    build_clip(false)
+}
+
+/// The same clip with one second of 440 Hz sound: 16-bit mono PCM at 48 kHz.
+fn make_clip_with_sound() -> Vec<u8> {
+    build_clip(true)
+}
+
+const SOUND_RATE: u32 = 48_000;
+const TONE_HZ: f64 = 440.0;
+
+fn build_clip(sound: bool) -> Vec<u8> {
     let mut config = EncoderConfig::new(WIDTH, HEIGHT, FPS, 1);
     config.rate = RateControl::Crf(10.0);
     config.bframes = 0;
@@ -36,6 +48,19 @@ fn make_clip() -> Vec<u8> {
     let track = writer
         .add_track(TrackConfig::new(entry, FPS))
         .expect("track");
+    let sound_track = sound.then(|| {
+        let pcm = filmcraft_isobmff::PcmConfig {
+            bits: 16,
+            float: false,
+            big_endian: false,
+            signed: true,
+            channels: 1,
+            sample_rate: f64::from(SOUND_RATE),
+        };
+        writer
+            .add_track(TrackConfig::new(SampleEntry::pcm(pcm), SOUND_RATE))
+            .expect("sound track")
+    });
 
     let mut write = |packets: Vec<filmcraft_h264enc::Packet>| {
         for packet in packets {
@@ -65,6 +90,30 @@ fn make_clip() -> Vec<u8> {
         write(encoder.encode(&frame, i64::from(index)).expect("encode"));
     }
     write(encoder.flush());
+    if let Some(sound_track) = sound_track {
+        // One second of tone in 0.1 s chunks.
+        for chunk in 0..10_u32 {
+            let bytes: Vec<u8> = (0..SOUND_RATE / 10)
+                .flat_map(|n| {
+                    let index = f64::from(chunk * (SOUND_RATE / 10) + n);
+                    let value =
+                        (index * TONE_HZ * std::f64::consts::TAU / f64::from(SOUND_RATE)).sin();
+                    ((value * 12_000.0) as i16).to_le_bytes()
+                })
+                .collect();
+            writer
+                .write_sample(
+                    sound_track,
+                    WriteSample {
+                        data: &bytes,
+                        duration: 0,
+                        composition_offset: 0,
+                        is_sync: true,
+                    },
+                )
+                .expect("sound sample");
+        }
+    }
     writer.finish().expect("finish").into_inner()
 }
 
@@ -422,6 +471,194 @@ mod thumbnails {
         assert!(
             jpgs.iter().all(|name| name.as_str() >= "11.jpg"),
             "oldest go first: {jpgs:?}"
+        );
+    }
+}
+
+mod sound {
+    use super::*;
+    use crate::audio::AudioFeed;
+    use std::sync::atomic::AtomicBool;
+
+    /// A stand-in for a sound card: pulls 10 ms of stereo at 48 kHz every 10 ms, like a callback.
+    struct FakeDevice {
+        stop: Arc<AtomicBool>,
+        thread: Option<thread::JoinHandle<Vec<f32>>>,
+    }
+
+    impl FakeDevice {
+        fn start(feed: Arc<AudioFeed>) -> Self {
+            assert!(feed.configure_output(SOUND_RATE, 2));
+            feed.set_output_active(true);
+            let stop = Arc::new(AtomicBool::new(false));
+            let flag = stop.clone();
+            let thread = thread::spawn(move || {
+                let mut heard = Vec::new();
+                let mut buffer = vec![0.0_f32; 480 * 2];
+                let mut next = Instant::now();
+                while !flag.load(Ordering::SeqCst) {
+                    feed.fill(&mut buffer);
+                    heard.extend_from_slice(&buffer);
+                    next += Duration::from_millis(10);
+                    thread::sleep(next.saturating_duration_since(Instant::now()));
+                }
+                heard
+            });
+            Self {
+                stop,
+                thread: Some(thread),
+            }
+        }
+
+        fn stop(mut self) -> Vec<f32> {
+            self.stop.store(true, Ordering::SeqCst);
+            self.thread
+                .take()
+                .expect("device thread")
+                .join()
+                .expect("join")
+        }
+    }
+
+    /// Estimated frequency of the left channel from rising zero crossings.
+    fn frequency(stereo: &[f32]) -> f64 {
+        let left: Vec<f32> = stereo.iter().step_by(2).copied().collect();
+        let crossings = left
+            .windows(2)
+            .filter(|w| w[0] <= 0.0 && w[1] > 0.0)
+            .count();
+        crossings as f64 / (left.len() as f64 / f64::from(SOUND_RATE))
+    }
+
+    fn open_with_feed(scratch: &Scratch) -> (Player, Arc<AudioFeed>) {
+        let player = Player::start(scratch.file("clip.mp4", &make_clip_with_sound()), || {});
+        let events = collect(&player, |events| {
+            events.iter().any(|e| matches!(e, PlayerEvent::Opened(_)))
+        });
+        let Some(PlayerEvent::Opened(info)) = events.first() else {
+            panic!("expected Opened, got {events:?}");
+        };
+        assert!(info.has_audio);
+        let feed = player.audio_feed().expect("a clip with sound has a feed");
+        (player, feed)
+    }
+
+    #[test]
+    fn a_clip_without_sound_has_no_feed() {
+        let scratch = Scratch::new();
+        let player = Player::start(scratch.file("clip.mp4", &make_clip()), || {});
+        collect(&player, |events| !frames(events).is_empty());
+        assert!(player.audio_feed().is_none());
+    }
+
+    #[test]
+    fn the_tone_is_decoded_played_at_the_right_pitch_and_the_picture_follows_it() {
+        let scratch = Scratch::new();
+        let (player, feed) = open_with_feed(&scratch);
+        let device = FakeDevice::start(feed.clone());
+
+        player.play();
+        let events = collect(&player, |events| events.contains(&PlayerEvent::Ended));
+        assert!(events.contains(&PlayerEvent::Ended));
+        let heard = device.stop();
+
+        // Real sound reached the device, not silence.
+        let loud = heard.iter().filter(|s| s.abs() > 0.1).count();
+        assert!(
+            loud > heard.len() / 3,
+            "only {loud} of {} samples were audible",
+            heard.len()
+        );
+        assert!(
+            heard.iter().all(|s| s.abs() <= 1.0),
+            "samples must stay in range"
+        );
+        // The pitch is the encoded 440 Hz (measured on the audible stretch).
+        let first = heard
+            .iter()
+            .position(|s| s.abs() > 0.1)
+            .expect("sound starts");
+        let tone = &heard[first - first % 2..];
+        let pitch = frequency(&tone[..(SOUND_RATE as usize * 2 / 2).min(tone.len())]);
+        assert!((pitch - TONE_HZ).abs() < 15.0, "pitch was {pitch} Hz");
+        // Mono sound is spread to both channels.
+        assert!(heard.chunks_exact(2).all(|f| (f[0] - f[1]).abs() < 1e-6));
+        // About one second of sound was consumed in total.
+        let seconds = feed.position().seconds();
+        assert!(seconds > 0.85 && seconds < 1.1, "clock reached {seconds}");
+        // The picture followed the sound clock and ended on the last frame.
+        let shown = frames(&events);
+        assert!(shown.len() >= 3);
+        assert!(shown.windows(2).all(|pair| pair[0].pts <= pair[1].pts));
+        assert!(shown[shown.len() - 1].pts.seconds() > 0.9);
+    }
+
+    #[test]
+    fn seeking_while_playing_moves_the_sound_and_the_picture_together() {
+        let scratch = Scratch::new();
+        let (player, feed) = open_with_feed(&scratch);
+        let device = FakeDevice::start(feed.clone());
+        player.play();
+        collect(&player, |events| frames(events).len() >= 2);
+
+        player.seek(Tick::from_seconds_f64(0.6));
+        let events = collect(&player, |events| {
+            frames(events).iter().any(|f| f.pts.seconds() >= 0.6)
+        });
+        let landed = frames(&events)
+            .iter()
+            .find(|f| f.pts.seconds() >= 0.6)
+            .map(|f| f.pts.seconds())
+            .expect("a frame at or after the seek target");
+        assert!(landed < 0.8, "picture landed at {landed}");
+        let clock = feed.position().seconds();
+        assert!((0.6..0.95).contains(&clock), "sound clock {clock}");
+        drop(device.stop());
+    }
+
+    #[test]
+    fn playback_finishes_on_the_wall_clock_when_no_device_ever_runs() {
+        let scratch = Scratch::new();
+        let (player, feed) = open_with_feed(&scratch);
+        assert!(!feed.driving());
+        player.play();
+        let events = collect(&player, |events| events.contains(&PlayerEvent::Ended));
+        assert!(
+            events.contains(&PlayerEvent::Ended),
+            "must not wait for a device that is absent"
+        );
+    }
+
+    #[test]
+    fn a_device_that_fails_mid_play_hands_the_clock_back_and_playback_still_ends() {
+        let scratch = Scratch::new();
+        let (player, feed) = open_with_feed(&scratch);
+        let device = FakeDevice::start(feed.clone());
+        player.play();
+        collect(&player, |events| frames(events).len() >= 2);
+
+        // The device dies: its callbacks stop and it reports itself inactive.
+        feed.set_output_active(false);
+        drop(device.stop());
+        let events = collect(&player, |events| events.contains(&PlayerEvent::Ended));
+        assert!(events.contains(&PlayerEvent::Ended));
+    }
+
+    #[test]
+    fn a_device_that_starts_late_picks_up_at_the_current_position() {
+        let scratch = Scratch::new();
+        let (player, feed) = open_with_feed(&scratch);
+        player.play();
+        thread::sleep(Duration::from_millis(250));
+
+        let device = FakeDevice::start(feed.clone());
+        thread::sleep(Duration::from_millis(250));
+        let clock = feed.position().seconds();
+        drop(device.stop());
+        // The sound joined at roughly where the picture already was (0.25 s in), not at zero.
+        assert!(
+            clock > 0.3,
+            "sound clock {clock} did not join the running playback"
         );
     }
 }

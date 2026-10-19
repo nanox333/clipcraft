@@ -6,6 +6,7 @@ members = [
     "crates/clipcraft-frame",
     "crates/clipcraft-media",
     "crates/clipcraft-player",
+    "crates/clipcraft-audio-out",
     "crates/clipcraft-time",
     "tools/xtask",
 ]
@@ -24,6 +25,8 @@ clipcraft-frame = { path = "crates/clipcraft-frame" }
 clipcraft-time = { path = "crates/clipcraft-time" }
 clipcraft-media = { path = "crates/clipcraft-media" }
 clipcraft-player = { path = "crates/clipcraft-player" }
+clipcraft-audio-out = { path = "crates/clipcraft-audio-out" }
+cpal = "0.16"
 # FilmCraft crates are consumed as git dependencies pinned to one commit (docs/adr/0004).
 filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }

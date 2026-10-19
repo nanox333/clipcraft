@@ -19,7 +19,7 @@ L6  clipcraft desktop app, clipcraft CLI, Rust xtask
 ```
 
 The implemented workspace currently contains `clipcraft-time` and `clipcraft-frame` (L0),
-`clipcraft-media` (L1), `clipcraft-player` (L2), `clipcraft-engine` (L4), and the `clipcraft`, `clipcraft-cli`, and `xtask`
+`clipcraft-media` (L1), `clipcraft-player` (L2), `clipcraft-engine` (L4), `clipcraft-audio-out` (L5), and the `clipcraft`, `clipcraft-cli`, and `xtask`
 entry points (L6). Capture, media decoding, edit, and export crates remain planned. FilmCraft crates
 are consumed as pinned git dependencies ([ADR 0004](adr/0004-filmcraft-crates.md)).
 
@@ -29,6 +29,12 @@ are consumed as pinned git dependencies ([ADR 0004](adr/0004-filmcraft-crates.md
 - **Playback:** `clipcraft-player` decodes a clip on a worker thread against a wall clock and hands
   RGBA frames to the UI. It reads files in place, skips frames when decoding falls behind, applies
   only the latest of several queued seeks, and reports a decoder panic as a failure.
+- **Sound:** `clipcraft-player::audio` decodes a clip's audio at the output device's rate into a
+  bounded feed. The device callback (`clipcraft-audio-out`, the only crate that talks to the OS
+  audio system) drains it and counts only frames it really delivered; that count is the playback
+  clock, so the picture follows the sound and an underrun pauses the picture instead of desyncing
+  it. With no device, or after a device error, playback keeps time with the wall clock, and the app
+  restarts a failed device a few times.
 - **Thumbnails:** `clipcraft-player::thumbnail` decodes a frame about a tenth into the clip, reduces it
   in the decoder's native format before converting to RGBA, and stores a 320 px JPEG in a bounded,
   atomically written cache. The app creates textures only for visible cards, a few per frame.

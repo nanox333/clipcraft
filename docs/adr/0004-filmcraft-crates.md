@@ -27,8 +27,10 @@ encoder, frame and audio buffer types, and OS hardware codec adapters.
    `filmcraft-media`: `clipcraft-player` opens clips through the streaming file reader and decodes
    video (H.264 and the other codecs that hub registers) on a worker thread.
    `filmcraft-h264enc` is a dev-dependency used to generate test clips without `ffmpeg`.
+   Audio is decoded by the same hub (`MediaSource::audio`, resampled to the output device's rate)
+   and played through ClipCraft's own `cpal` wrapper in `clipcraft-audio-out`.
 4. **Planned.** `filmcraft-h264enc` as the software encoder; `filmcraft-platform` for hardware
-   codecs (see below); audio output from `filmcraft-codecs` audio decoding.
+   codecs (see below).
 5. **Not used.** `filmcraft-export`, `filmcraft-render`, `filmcraft-project` and the editor crates.
    They pull in most of FilmCraft and ClipCraft has no project format (ADR 0001).
 6. **Toolchain.** FilmCraft requires Rust 1.95, so the workspace `rust-version` is 1.95.

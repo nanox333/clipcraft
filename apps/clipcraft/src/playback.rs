@@ -1,16 +1,21 @@
 //! In-app clip playback: turns `clipcraft-player` events into a texture and simple controls.
 
+use clipcraft_audio_out::{AudioOutput, AudioOutputError};
 use clipcraft_player::{ClipInfoSummary, Player, PlayerEvent};
 use clipcraft_time::Tick;
 use eframe::egui;
 use egui::{Align2, Color32, FontId, RichText, Sense, Stroke, Vec2};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 const MUTED: Color32 = Color32::from_rgb(157, 157, 164);
 const TEXT: Color32 = Color32::from_rgb(242, 242, 244);
 const LIME: Color32 = Color32::from_rgb(190, 255, 43);
 /// Seconds skipped by the arrow keys.
 const KEY_SEEK_SECONDS: f64 = 5.0;
+/// How long to wait before restarting a sound device that reported an error, and how often to try.
+const AUDIO_RETRY_DELAY: Duration = Duration::from_secs(1);
+const AUDIO_RETRY_LIMIT: u32 = 5;
 
 /// A clip open in the detail view.
 pub struct Playback {
@@ -21,6 +26,13 @@ pub struct Playback {
     position: Tick,
     playing: bool,
     error: Option<String>,
+    /// The sound device, while one is running.
+    audio: Option<AudioOutput>,
+    /// Why there is no sound, shown under the controls. The picture keeps playing without it.
+    audio_note: Option<String>,
+    muted: bool,
+    audio_retry_at: Option<Instant>,
+    audio_retries: u32,
 }
 
 impl Playback {
@@ -37,6 +49,11 @@ impl Playback {
             position: Tick::ZERO,
             playing: true,
             error: None,
+            audio: None,
+            audio_note: None,
+            muted: false,
+            audio_retry_at: None,
+            audio_retries: 0,
         }
     }
 
@@ -50,11 +67,70 @@ impl Playback {
         for event in self.player.poll() {
             self.apply(event, context);
         }
+        self.watch_audio(context);
+    }
+
+    /// Opens the sound device for the clip's audio, if it has any.
+    fn start_audio(&mut self) {
+        let Some(feed) = self.player.audio_feed() else {
+            return;
+        };
+        feed.set_muted(self.muted);
+        match AudioOutput::start(feed) {
+            Ok(output) => {
+                self.audio = Some(output);
+                self.audio_note = None;
+            }
+            Err(error) => {
+                self.audio_note = Some(error.to_string());
+                // A missing or unusable device will not appear by itself; a failed start might.
+                if error == AudioOutputError::StartFailed {
+                    self.audio_retry_at = Some(Instant::now() + AUDIO_RETRY_DELAY);
+                }
+            }
+        }
+    }
+
+    /// Restarts a sound device that stopped (unplugged, driver error) a few times, then gives up.
+    fn watch_audio(&mut self, context: &egui::Context) {
+        if self.audio.as_ref().is_some_and(AudioOutput::failed) {
+            // Dropping the output hands the clock back to the wall clock, so the picture goes on.
+            self.audio = None;
+            self.audio_retry_at = Some(Instant::now() + AUDIO_RETRY_DELAY);
+            self.audio_note = Some("The sound device stopped. Trying to reconnect…".to_owned());
+        }
+        let Some(retry_at) = self.audio_retry_at else {
+            return;
+        };
+        if Instant::now() < retry_at {
+            context.request_repaint_after(retry_at.saturating_duration_since(Instant::now()));
+            return;
+        }
+        self.audio_retry_at = None;
+        if self.audio_retries >= AUDIO_RETRY_LIMIT {
+            self.audio_note =
+                Some("The sound device is unavailable. The video plays without sound.".to_owned());
+            return;
+        }
+        self.audio_retries += 1;
+        self.start_audio();
+    }
+
+    fn toggle_mute(&mut self) {
+        self.muted = !self.muted;
+        if let Some(feed) = self.player.audio_feed() {
+            feed.set_muted(self.muted);
+        }
     }
 
     fn apply(&mut self, event: PlayerEvent, context: &egui::Context) {
         match event {
-            PlayerEvent::Opened(info) => self.info = Some(info),
+            PlayerEvent::Opened(info) => {
+                self.info = Some(info);
+                if info.has_audio {
+                    self.start_audio();
+                }
+            }
             PlayerEvent::Frame(frame) => {
                 let size = [frame.width as usize, frame.height as usize];
                 // `from_rgba_unmultiplied` asserts on a size mismatch; refuse instead of panicking.
@@ -168,22 +244,35 @@ impl Playback {
                 .color(TEXT)
                 .monospace(),
             );
+            if self.info.is_some_and(|info| info.has_audio)
+                && speaker_button(ui, self.muted || self.audio.is_none()).clicked()
+            {
+                self.toggle_mute();
+            }
         });
+        if let Some(note) = &self.audio_note {
+            ui.add_space(4.0);
+            ui.label(RichText::new(note).color(MUTED).small());
+        }
     }
 
     fn handle_keys(&mut self, context: &egui::Context) {
         if context.wants_keyboard_input() || self.error.is_some() {
             return;
         }
-        let (space, left, right) = context.input(|input| {
+        let (space, left, right, mute) = context.input(|input| {
             (
                 input.key_pressed(egui::Key::Space),
                 input.key_pressed(egui::Key::ArrowLeft),
                 input.key_pressed(egui::Key::ArrowRight),
+                input.key_pressed(egui::Key::M),
             )
         });
         if space {
             self.toggle();
+        }
+        if mute {
+            self.toggle_mute();
         }
         if left {
             self.seek(self.position.seconds() - KEY_SEEK_SECONDS);
@@ -238,6 +327,51 @@ fn play_button(ui: &mut egui::Ui, playing: bool) -> egui::Response {
         ));
     }
     response
+}
+
+/// A speaker icon: with a slash when sound is off.
+fn speaker_button(ui: &mut egui::Ui, off: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::click());
+    let painter = ui.painter();
+    let color = if response.hovered() { LIME } else { TEXT };
+    let center = rect.center();
+    // Speaker body: a small box and a cone.
+    painter.rect_filled(
+        egui::Rect::from_center_size(center + Vec2::new(-5.0, 0.0), Vec2::new(4.0, 6.0)),
+        0.0,
+        color,
+    );
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            center + Vec2::new(-3.0, -3.0),
+            center + Vec2::new(2.0, -7.0),
+            center + Vec2::new(2.0, 7.0),
+            center + Vec2::new(-3.0, 3.0),
+        ],
+        color,
+        Stroke::NONE,
+    ));
+    if off {
+        painter.line_segment(
+            [center + Vec2::new(5.0, -5.0), center + Vec2::new(11.0, 5.0)],
+            Stroke::new(2.0_f32, color),
+        );
+        painter.line_segment(
+            [center + Vec2::new(11.0, -5.0), center + Vec2::new(5.0, 5.0)],
+            Stroke::new(2.0_f32, color),
+        );
+    } else {
+        for radius in [5.0_f32, 9.0] {
+            let points: Vec<egui::Pos2> = (-4..=4)
+                .map(|step| {
+                    let angle = step as f32 * 0.19;
+                    center + Vec2::new(3.0 + radius * angle.cos() * 0.9, radius * angle.sin())
+                })
+                .collect();
+            painter.add(egui::Shape::line(points, Stroke::new(1.6_f32, color)));
+        }
+    }
+    response.on_hover_text(if off { "Unmute (M)" } else { "Mute (M)" })
 }
 
 /// `m:ss`, or `h:mm:ss` from one hour up. Display only.

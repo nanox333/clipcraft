@@ -68,6 +68,7 @@ cargo run --package clipcraft-cli -- library path /path/to/video.mp4
 cargo run --package clipcraft-cli -- library reveal /path/to/video.mp4
 cargo run --package clipcraft-cli -- library probe /path/to/video.mp4
 cargo run --package clipcraft-cli -- library thumbnail /path/to/video.mp4
+cargo run --package clipcraft-audio-out --example play -- /path/to/video.mp4   # sound check, no window
 ```
 
 The desktop app needs a graphical session. The scanner only reads one selected folder, does not

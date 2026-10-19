@@ -11,6 +11,7 @@ description = "Native ClipCraft desktop application"
 layer = 6
 
 [dependencies]
+clipcraft-audio-out.workspace = true
 clipcraft-engine.workspace = true
 clipcraft-player.workspace = true
 clipcraft-time.workspace = true

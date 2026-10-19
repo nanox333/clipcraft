@@ -13,8 +13,8 @@ use filmcraft_media::{FrameRequest, MediaError, SharedReader, SharedSource};
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -141,6 +141,7 @@ pub struct Player {
     commands: Sender<Command>,
     events: Receiver<PlayerEvent>,
     worker: Option<JoinHandle<()>>,
+    audio: Arc<OnceLock<Arc<audio::AudioFeed>>>,
 }
 
 impl Player {
@@ -149,11 +150,19 @@ impl Player {
     pub fn start(path: PathBuf, notify: impl Fn() + Send + 'static) -> Self {
         let (command_sender, command_receiver) = mpsc::channel();
         let (event_sender, event_receiver) = mpsc::channel();
+        let audio = Arc::new(OnceLock::new());
+        let worker_audio = audio.clone();
         let worker = thread::Builder::new()
             .name("clipcraft-player".to_owned())
             .spawn(move || {
                 let outcome = catch_unwind(AssertUnwindSafe(|| {
-                    run(&path, &command_receiver, &event_sender, &notify);
+                    run(
+                        &path,
+                        &command_receiver,
+                        &event_sender,
+                        &notify,
+                        &worker_audio,
+                    );
                 }));
                 if outcome.is_err() {
                     let _ = event_sender.send(PlayerEvent::Failed(PlayerError::Crashed));
@@ -165,6 +174,7 @@ impl Player {
             commands: command_sender,
             events: event_receiver,
             worker,
+            audio,
         }
     }
 
@@ -181,6 +191,13 @@ impl Player {
     /// Jumps to `position` and shows that picture. Playback state is kept.
     pub fn seek(&self, position: Tick) {
         let _ = self.commands.send(Command::Seek(position));
+    }
+
+    /// The clip's sound feed, available once the clip has opened and only when it has audio.
+    /// Connect it to an output device (`clipcraft-audio-out`) to hear the clip; until a device
+    /// runs, playback keeps time with the wall clock.
+    pub fn audio_feed(&self) -> Option<Arc<audio::AudioFeed>> {
+        self.audio.get().cloned()
     }
 
     /// Takes every event that arrived since the last call. Returns a worker failure if the thread
@@ -293,6 +310,7 @@ fn run(
     commands: &Receiver<Command>,
     events: &Sender<PlayerEvent>,
     notify: &impl Fn(),
+    audio_slot: &OnceLock<Arc<audio::AudioFeed>>,
 ) {
     let send = |event: PlayerEvent| {
         let delivered = events.send(event).is_ok();
@@ -309,6 +327,13 @@ fn run(
             return;
         }
     };
+    // The feed exists before `Opened` is announced, so a listener that reacts to `Opened` can
+    // already fetch it. It is closed on every way out of this function.
+    let feed = info.has_audio.then(|| audio::start_feed(source.clone()));
+    let _close_feed = feed.as_ref().map(|feed| CloseFeed(feed.clone()));
+    if let Some(feed) = &feed {
+        let _ = audio_slot.set(feed.clone());
+    }
     if !send(PlayerEvent::Opened(ClipInfoSummary::from(&info))) {
         return;
     }
@@ -322,6 +347,7 @@ fn run(
         show: true, // show the first picture right away
         ended: false,
         next_tick: Instant::now(),
+        audio_synced: false,
     };
 
     loop {
@@ -354,11 +380,11 @@ fn run(
             Ok(command) => {
                 // Apply everything already queued before decoding, so scrubbing quickly decodes
                 // only the latest position instead of every intermediate one.
-                if state.apply(command, &info) {
+                if state.apply(command, &info, feed.as_deref()) {
                     return;
                 }
                 for command in commands.try_iter() {
-                    if state.apply(command, &info) {
+                    if state.apply(command, &info, feed.as_deref()) {
                         return;
                     }
                 }
@@ -367,18 +393,26 @@ fn run(
             Err(RecvTimeoutError::Timeout) => {}
         }
 
+        state.sync_audio(feed.as_deref());
+
         if state.playing && !state.show && Instant::now() >= state.next_tick {
-            let target = state.clock_base + ticks_from(state.clock_start.elapsed());
+            let target = state.clock_position(feed.as_deref());
             if target + info.frame_rate.frame_duration() >= info.duration {
                 // Stop on the true last picture so playing again restarts from the beginning.
                 state.playing = false;
+                if let Some(feed) = &feed {
+                    feed.set_playing(false);
+                }
                 state.position = (info.duration - info.frame_rate.frame_duration()).max(Tick::ZERO);
                 state.show = true;
                 state.ended = true;
                 continue;
             }
-            state.position = target;
-            state.show = true;
+            // Only decode when the clock has moved on to a different picture.
+            if info.frame_rate.frame_at(target) != info.frame_rate.frame_at(state.position) {
+                state.position = target;
+                state.show = true;
+            }
             state.next_tick = Instant::now() + period;
         }
     }
@@ -393,11 +427,18 @@ struct State {
     show: bool,
     ended: bool,
     next_tick: Instant,
+    /// The sound feed has been given the current position and is the clock.
+    audio_synced: bool,
 }
 
 impl State {
     /// Applies one command. Returns true when the worker should stop.
-    fn apply(&mut self, command: Command, info: &ClipInfo) -> bool {
+    fn apply(
+        &mut self,
+        command: Command,
+        info: &ClipInfo,
+        feed: Option<&audio::AudioFeed>,
+    ) -> bool {
         match command {
             Command::Shutdown => return true,
             Command::Play => {
@@ -411,20 +452,75 @@ impl State {
                     self.clock_start = Instant::now();
                     self.clock_base = self.position;
                     self.next_tick = Instant::now();
+                    if let Some(feed) = feed {
+                        feed.seek(self.position);
+                        feed.set_playing(true);
+                    }
                 }
             }
-            Command::Pause => self.playing = false,
+            Command::Pause => {
+                self.playing = false;
+                if let Some(feed) = feed {
+                    feed.set_playing(false);
+                }
+            }
             Command::Seek(target) => {
                 self.position = target.clamp(Tick::ZERO, info.duration);
                 self.clock_start = Instant::now();
                 self.clock_base = self.position;
                 self.show = true;
+                if let Some(feed) = feed {
+                    feed.seek(self.position);
+                }
             }
         }
         false
     }
+
+    /// The playback position now: the sound clock while a device drives it, else the wall clock.
+    fn clock_position(&self, feed: Option<&audio::AudioFeed>) -> Tick {
+        match feed {
+            Some(feed) if self.audio_synced && feed.driving() => feed.position(),
+            _ => self.clock_base + ticks_from(self.clock_start.elapsed()),
+        }
+    }
+
+    /// Hands the current position to the feed when a sound device starts (or restarts) mid-play,
+    /// and goes back to the wall clock when it stops.
+    fn sync_audio(&mut self, feed: Option<&audio::AudioFeed>) {
+        let Some(feed) = feed else {
+            return;
+        };
+        if feed.driving() {
+            if !self.audio_synced {
+                let now = if self.playing {
+                    self.clock_base + ticks_from(self.clock_start.elapsed())
+                } else {
+                    self.position
+                };
+                feed.seek(now);
+                feed.set_playing(self.playing);
+                self.audio_synced = true;
+            }
+        } else if self.audio_synced {
+            // The device went away: keep time from where the sound got to.
+            self.clock_base = feed.position();
+            self.clock_start = Instant::now();
+            self.audio_synced = false;
+        }
+    }
 }
 
+/// Stops the audio decoder thread when the worker exits, however it exits.
+struct CloseFeed(Arc<audio::AudioFeed>);
+
+impl Drop for CloseFeed {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
+pub mod audio;
 pub mod thumbnail;
 
 #[cfg(test)]

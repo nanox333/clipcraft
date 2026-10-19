@@ -1,0 +1,18 @@
+[package]
+name = "clipcraft-audio-out"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Sound output device for ClipCraft playback"
+
+[package.metadata.clipcraft]
+layer = 5
+
+[dependencies]
+clipcraft-player.workspace = true
+cpal.workspace = true
+
+[lints]
+workspace = true
