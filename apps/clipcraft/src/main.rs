@@ -1,7 +1,8 @@
 use clipcraft_engine::{
-    CaptureSource, Command, CommandOutput, Container, EngineError, FRAME_RATES, Framing, HEIGHTS,
-    LibraryScanResult, MediaEntry, MediaProbe, OutputShape, REPLAY_SECONDS, RecordingSettings,
-    default_index_path, default_thumbnail_dir, execute,
+    AUDIO_KBPS, CaptureSource, Command, CommandOutput, Container, EngineError, FRAME_RATES,
+    Framing, HEIGHTS, LibraryScanResult, MediaEntry, MediaProbe, OutputShape, QualityPreset,
+    REPLAY_SECONDS, RateControl, RecordingSettings, VIDEO_KBPS, default_index_path,
+    default_thumbnail_dir, execute,
 };
 mod kit;
 mod playback;
@@ -1055,6 +1056,90 @@ impl ClipCraftApp {
                         "Frames per second",
                     ) {
                         settings.frames_per_second = rate;
+                    }
+                }
+            });
+            ui.add_space(10.0);
+            ui.label(RichText::new("Video quality").color(MUTED));
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                for preset in QualityPreset::ALL {
+                    let kbps = preset.video_kbps(settings.height, settings.frames_per_second);
+                    let selected = settings.video_kbps == kbps;
+                    if choice(
+                        ui,
+                        preset.label(),
+                        selected,
+                        true,
+                        &format!(
+                            "About {} Mbps at this resolution and frame rate",
+                            kbps / 1000
+                        ),
+                    ) {
+                        settings.video_kbps = kbps;
+                    }
+                }
+            });
+            ui.add_space(10.0);
+            ui.label(RichText::new("Video bitrate").color(MUTED));
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                for kbps in VIDEO_KBPS {
+                    if choice(
+                        ui,
+                        &format!("{} Mbps", kbps as f32 / 1000.0),
+                        settings.video_kbps == kbps,
+                        true,
+                        "Video bitrate",
+                    ) {
+                        settings.video_kbps = kbps;
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(format!(
+                    "About {} MB per minute of video.",
+                    u64::from(settings.video_kbps) * 60 / 8 / 1000
+                ))
+                .color(FAINT)
+                .size(12.5),
+            );
+            ui.add_space(10.0);
+            ui.label(RichText::new("Bitrate mode").color(MUTED));
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                for mode in RateControl::ALL {
+                    if choice(
+                        ui,
+                        mode.label(),
+                        settings.rate_control == mode,
+                        true,
+                        mode.detail(),
+                    ) {
+                        settings.rate_control = mode;
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(settings.rate_control.detail())
+                    .color(FAINT)
+                    .size(12.5),
+            );
+            ui.add_space(10.0);
+            ui.label(RichText::new("Audio bitrate").color(MUTED));
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                for kbps in AUDIO_KBPS {
+                    if choice(
+                        ui,
+                        &format!("{kbps} kbps"),
+                        settings.audio_kbps == kbps,
+                        true,
+                        "Audio bitrate",
+                    ) {
+                        settings.audio_kbps = kbps;
                     }
                 }
             });

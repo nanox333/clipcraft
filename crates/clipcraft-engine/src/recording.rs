@@ -194,6 +194,91 @@ impl OutputShape {
     }
 }
 
+/// How the video encoder spends its bitrate.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RateControl {
+    /// Spend more on busy scenes and less on calm ones, averaging the chosen bitrate.
+    #[default]
+    Variable,
+    /// Hold the chosen bitrate steadily, which suits streaming and fixed-size limits.
+    Constant,
+}
+
+impl RateControl {
+    /// Every mode, in menu order.
+    pub const ALL: [RateControl; 2] = [RateControl::Variable, RateControl::Constant];
+
+    /// The name shown to people.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Variable => "Variable",
+            Self::Constant => "Constant",
+        }
+    }
+
+    /// A short description.
+    pub fn detail(self) -> &'static str {
+        match self {
+            Self::Variable => "Best quality for the size. Bitrate follows the action.",
+            Self::Constant => "Steady bitrate. Predictable file size.",
+        }
+    }
+}
+
+/// A named video quality: a bitrate that suits the clip's height and frame rate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QualityPreset {
+    /// Small files.
+    Low,
+    /// A good balance.
+    Medium,
+    /// Sharp, larger files.
+    High,
+    /// Near-lossless looking, very large files.
+    Ultra,
+}
+
+impl QualityPreset {
+    /// Every preset, lowest first.
+    pub const ALL: [QualityPreset; 4] = [Self::Low, Self::Medium, Self::High, Self::Ultra];
+
+    /// The name shown to people.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+            Self::Ultra => "Ultra",
+        }
+    }
+
+    /// Bits per pixel per frame this preset aims for.
+    fn bits_per_pixel(self) -> f64 {
+        match self {
+            Self::Low => 0.04,
+            Self::Medium => 0.07,
+            Self::High => 0.10,
+            Self::Ultra => 0.16,
+        }
+    }
+
+    /// The video bitrate, in kilobits per second, for a 16:9 clip of `height` at `frames_per_second`.
+    pub fn video_kbps(self, height: u32, frames_per_second: u32) -> u32 {
+        let height = u64::from(height.clamp(MIN_OUTPUT_EDGE, 4_320));
+        let width = height * 16 / 9;
+        let pixels_per_second =
+            (width * height * u64::from(frames_per_second.clamp(1, 240))) as f64;
+        let kbps = (pixels_per_second * self.bits_per_pixel() / 1000.0 / 100.0).round() * 100.0;
+        (kbps as u32).clamp(MIN_VIDEO_KBPS, MAX_VIDEO_KBPS)
+    }
+}
+
+/// Lowest accepted video bitrate.
+pub const MIN_VIDEO_KBPS: u32 = 100;
+/// Highest accepted video bitrate.
+pub const MAX_VIDEO_KBPS: u32 = 200_000;
+
 /// A rectangle of pixels inside a frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PixelRect {
@@ -238,6 +323,10 @@ pub struct RecordingSettings {
     pub frames_per_second: u32,
     /// Video bitrate in kilobits per second.
     pub video_kbps: u32,
+    /// How the encoder spends that bitrate.
+    pub rate_control: RateControl,
+    /// Audio bitrate in kilobits per second.
+    pub audio_kbps: u32,
     /// How many seconds of play before the hotkey are kept.
     pub replay_seconds: u32,
 }
@@ -252,6 +341,8 @@ impl Default for RecordingSettings {
             height: 1080,
             frames_per_second: 60,
             video_kbps: 12_000,
+            rate_control: RateControl::Variable,
+            audio_kbps: 160,
             replay_seconds: 30,
         }
     }
@@ -263,6 +354,10 @@ pub const HEIGHTS: [u32; 4] = [480, 720, 1080, 1440];
 pub const FRAME_RATES: [u32; 3] = [24, 30, 60];
 /// Replay lengths offered in the UI.
 pub const REPLAY_SECONDS: [u32; 5] = [15, 30, 60, 120, 300];
+/// Video bitrates offered in the UI, in kilobits per second.
+pub const VIDEO_KBPS: [u32; 8] = [2_500, 5_000, 8_000, 12_000, 16_000, 25_000, 40_000, 60_000];
+/// Audio bitrates offered in the UI, in kilobits per second.
+pub const AUDIO_KBPS: [u32; 4] = [96, 128, 160, 256];
 
 impl RecordingSettings {
     /// Clamps hand-edited values into safe ranges and swaps an unwritable container for MP4.
@@ -272,7 +367,8 @@ impl RecordingSettings {
         }
         self.height = self.height.clamp(MIN_OUTPUT_EDGE, 4_320);
         self.frames_per_second = self.frames_per_second.clamp(1, 240);
-        self.video_kbps = self.video_kbps.clamp(100, 200_000);
+        self.video_kbps = self.video_kbps.clamp(MIN_VIDEO_KBPS, MAX_VIDEO_KBPS);
+        self.audio_kbps = self.audio_kbps.clamp(32, 512);
         self.replay_seconds = self.replay_seconds.clamp(5, 600);
         // Distorting or trimming means nothing when the shape is the source's own.
         if self.shape == OutputShape::Source {
@@ -554,6 +650,25 @@ mod tests {
         assert!(reframe(0, 10, OutputShape::Source, Framing::Original, 1080).is_none());
         assert!(reframe(10, 0, OutputShape::Source, Framing::Original, 1080).is_none());
         assert!(reframe(70_000, 10, OutputShape::Source, Framing::Original, 1080).is_none());
+    }
+
+    #[test]
+    fn presets_scale_with_resolution_and_frame_rate() {
+        assert_eq!(QualityPreset::Medium.video_kbps(1080, 60), 8_700);
+        let mut last = 0;
+        for preset in QualityPreset::ALL {
+            let kbps = preset.video_kbps(1080, 60);
+            assert!(kbps > last);
+            last = kbps;
+        }
+        assert!(QualityPreset::High.video_kbps(1080, 60) > QualityPreset::High.video_kbps(720, 60));
+        assert!(
+            QualityPreset::High.video_kbps(1080, 60) > QualityPreset::High.video_kbps(1080, 30)
+        );
+        for height in [0, 1, 100_000] {
+            let kbps = QualityPreset::Ultra.video_kbps(height, 1_000);
+            assert!((MIN_VIDEO_KBPS..=MAX_VIDEO_KBPS).contains(&kbps));
+        }
     }
 
     #[test]
