@@ -56,3 +56,17 @@ How it behaves:
 - Software H.264 encoding is the limit on weak computers; see the measurements in `docs/gaps.md`.
   Hardware encoders (FilmCraft's platform crate) are the way past it and are a separate decision.
 - Wayland-only sessions and macOS have no provider and report that plainly.
+
+## Addendum: GPU encoding, HDR, and forcing a window
+
+- **Hardware encoders** enter through a small trait in `clipcraft-record`
+  (`HardwareEncoder`, `HardwareProvider`). `clipcraft-platform` implements it with FilmCraft's
+  encoders (`filmcraft-platform` and `filmcraft-export`, which hold the NVENC and VideoToolbox
+  code and their `unsafe`). The recorder hands the encoder RGBA pictures already fitted to the
+  clip frame and treats any error or reordered picture as the hardware failing: it restarts the
+  stream on the software encoder and says why in the status.
+- **HDR** is converted to standard range inside the capture provider (`clipcraft-capture::hdr`),
+  so nothing downstream knows about it.
+- **Force window capture** asks the provider for the focused window at the moment recording starts.
+- New dependencies: `filmcraft-platform` and `filmcraft-export` (already allowed by ADR 0004), for
+  Windows, 64-bit Linux, and macOS only.

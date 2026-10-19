@@ -16,6 +16,20 @@ use egui::{Color32, RichText, Stroke, Vec2};
 
 use crate::kit::{self, BORDER, CARD, CARD_HOVER, DANGER, FAINT, LIME, MUTED, TEXT};
 
+/// Whether the graphics card can encode video, as found by trying it.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum GpuProbe {
+    /// Not tried yet.
+    #[default]
+    Unknown,
+    /// Being tried.
+    Checking,
+    /// Works; the encoder's name.
+    Ready(String),
+    /// Does not work; why.
+    Unavailable(String),
+}
+
 /// What the Settings screens keep between frames.
 #[derive(Default)]
 pub struct SettingsState {
@@ -377,7 +391,7 @@ fn summary(mode: QualityMode, settings: &RecordingSettings) -> String {
     }
 }
 
-pub fn quality_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
+pub fn quality_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, gpu: &GpuProbe) {
     card(ui, "Recording quality", |ui| {
         ui.add_space(10.0);
         ui.label(
@@ -433,16 +447,20 @@ pub fn quality_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
             ui.add_space(12.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(14.0, 12.0);
-                let encoders: Vec<(String, bool)> = VideoEncoder::ALL
-                    .iter()
-                    .map(|e| (e.label().to_owned(), e.unavailable_reason().is_none()))
-                    .collect();
-                if let Some(index) = dropdown(
-                    ui,
-                    "Video Encoder",
-                    settings.video_encoder.label(),
-                    &encoders,
-                ) {
+                let gpu_label = match gpu {
+                    GpuProbe::Ready(name) => format!("GPU ({name})"),
+                    GpuProbe::Checking | GpuProbe::Unknown => "GPU (checking\u{2026})".to_owned(),
+                    GpuProbe::Unavailable(_) => "GPU (unavailable)".to_owned(),
+                };
+                let encoders = vec![
+                    ("CPU".to_owned(), true),
+                    (gpu_label.clone(), matches!(gpu, GpuProbe::Ready(_))),
+                ];
+                let shown = match settings.video_encoder {
+                    VideoEncoder::Cpu => "CPU".to_owned(),
+                    VideoEncoder::Gpu => gpu_label,
+                };
+                if let Some(index) = dropdown(ui, "Video Encoder", &shown, &encoders) {
                     settings.video_encoder = VideoEncoder::ALL[index];
                 }
                 let codecs: Vec<(String, bool)> = VideoCodec::ALL
@@ -454,13 +472,34 @@ pub fn quality_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
                 }
             });
             ui.add_space(8.0);
-            ui.label(
-                RichText::new(
-                    "GPU encoding and H.265 are not available yet. They stay greyed out until a hardware encoder is connected.",
-                )
-                .color(FAINT)
-                .size(12.0),
-            );
+            let (note, color) = match gpu {
+                GpuProbe::Ready(name) => (
+                    format!(
+                        "{name} encodes the video, which leaves your processor free for the game. H.265 is not available yet."
+                    ),
+                    FAINT,
+                ),
+                GpuProbe::Unavailable(why) => (
+                    format!(
+                        "GPU encoding is not available on this computer: {why}. Recording uses the CPU. H.265 is not available yet."
+                    ),
+                    FAINT,
+                ),
+                _ => ("Checking the graphics card\u{2026}".to_owned(), FAINT),
+            };
+            ui.label(RichText::new(note).color(color).size(12.0));
+            if settings.video_encoder == VideoEncoder::Gpu
+                && matches!(gpu, GpuProbe::Unavailable(_))
+            {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(
+                        "GPU is selected but cannot be used here, so the CPU will be used.",
+                    )
+                    .color(DANGER)
+                    .size(12.0),
+                );
+            }
         }
         ui.add_space(14.0);
     });
@@ -507,6 +546,7 @@ pub fn capture_tab(
     settings: &mut RecordingSettings,
     targets: &[clipcraft_capture::CaptureTarget],
     refresh: &mut bool,
+    capabilities: clipcraft_capture::Capabilities,
 ) {
     card(ui, "What to record", |ui| {
         setting_row(ui, "Capture", settings.source.detail(), false, |ui| {
@@ -611,14 +651,22 @@ pub fn capture_tab(
         toggle_row(
             ui,
             "Force window capture",
-            "Capture the game's window instead of the whole screen. Try this if a game records black or shows the wrong thing.",
+            if capabilities.windows {
+                "Record the window that has the focus (your game) even when you picked a whole screen, and never the screen around it. Start recording with its hotkey while the game is in front. Try this if a game records black."
+            } else {
+                "Window capture is not available on this computer."
+            },
             &mut settings.force_window_capture,
             false,
         );
         toggle_row(
             ui,
             "HDR compatibility",
-            "Convert HDR games to standard colours so clips are not washed out when shared.",
+            if capabilities.hdr {
+                "Convert an HDR screen to standard colours, with highlights rolled off instead of clipped, so clips are not washed out when shared. Does nothing on a standard screen."
+            } else {
+                "This computer's screen capture does not report HDR, so this has no effect here."
+            },
             &mut settings.hdr_compatibility,
             true,
         );

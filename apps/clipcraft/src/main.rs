@@ -1357,12 +1357,18 @@ impl ClipCraftApp {
             }
             SettingsTab::Capture => {
                 let mut refresh = !self.capture.targets_loaded();
-                settings::capture_tab(ui, &mut working, &self.capture.targets, &mut refresh);
+                settings::capture_tab(
+                    ui,
+                    &mut working,
+                    &self.capture.targets,
+                    &mut refresh,
+                    clipcraft_platform::capabilities(),
+                );
                 if refresh {
                     self.capture.refresh_targets();
                 }
             }
-            SettingsTab::Quality => settings::quality_tab(ui, &mut working),
+            SettingsTab::Quality => settings::quality_tab(ui, &mut working, &self.capture.gpu),
             SettingsTab::Audio => settings::audio_tab(ui, &mut working, &mut self.settings_state),
             SettingsTab::Advanced => settings::advanced_tab(ui, &mut working),
         }
@@ -2281,6 +2287,24 @@ mod tests {
                 .any(|entry| entry.favorite && entry.collections == ["Best"])
         );
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn forcing_window_capture_without_a_game_in_front_says_how_to_use_it() {
+        let mut app = ClipCraftApp::default();
+        app.recording.force_window_capture = true;
+        app.recording.source = clipcraft_engine::CaptureSource::Desktop;
+        // There is no focused game window in a test, so the person is told what to do.
+        let message = app.capture_target_id().unwrap_err();
+        assert!(
+            message.contains("hotkey") && message.contains("focus"),
+            "{message}"
+        );
+        // Without the option, the desktop is simply the first screen (or nothing, with no display).
+        app.recording.force_window_capture = false;
+        if let Err(message) = app.capture_target_id() {
+            assert!(!message.contains("hotkey"), "{message}");
+        }
     }
 
     #[test]

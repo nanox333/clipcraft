@@ -5,6 +5,7 @@
 //! live in `clipcraft-platform` and hand back [`CaptureFrame`]s through [`CaptureSource`]. A
 //! deterministic [`SyntheticSource`] stands in for hardware in tests.
 
+pub mod hdr;
 pub mod reframe;
 
 use clipcraft_time::Tick;

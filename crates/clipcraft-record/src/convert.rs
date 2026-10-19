@@ -287,6 +287,99 @@ pub fn convert(
     Ok(())
 }
 
+/// Fills `out` (RGBA, `output_width * output_height * 4` bytes) from `frame` as `plan` describes,
+/// with the same fitting and scaling as [`convert`]. Used for encoders that take RGB pictures.
+pub fn convert_rgba(
+    frame: &CaptureFrame,
+    plan: &Reframe,
+    out: &mut Vec<u8>,
+    threads: usize,
+) -> Result<(), RecordError> {
+    frame.validate().map_err(|_| RecordError::BadFrame)?;
+    let PixelRect {
+        x: sx,
+        y: sy,
+        width: sw,
+        height: sh,
+    } = plan.source;
+    let PixelRect {
+        x: dx,
+        y: dy,
+        width: dw,
+        height: dh,
+    } = plan.destination;
+    let (ow, oh) = (plan.output_width as usize, plan.output_height as usize);
+    if sw == 0
+        || sh == 0
+        || dw == 0
+        || dh == 0
+        || ow == 0
+        || oh == 0
+        || sx.saturating_add(sw) > frame.width
+        || sy.saturating_add(sh) > frame.height
+        || (dx as usize).saturating_add(dw as usize) > ow
+        || (dy as usize).saturating_add(dh as usize) > oh
+    {
+        return Err(RecordError::BadSize);
+    }
+    let size = ow
+        .checked_mul(oh)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(RecordError::BadSize)?;
+    out.clear();
+    out.resize(size, 0);
+    // Opaque black everywhere; the destination is drawn over it.
+    for pixel in out.chunks_exact_mut(4) {
+        pixel[3] = 255;
+    }
+    let columns = taps(sx, sw, dw);
+    let rows = taps(sy, sh, dh);
+    let unscaled = sw == dw && sh == dh;
+    let threads = threads.clamp(1, 32).min(dh as usize);
+    let rows_per_band = (dh as usize).div_ceil(threads).max(1);
+    let first = dy as usize * ow * 4;
+    let region = out
+        .get_mut(first..first + dh as usize * ow * 4)
+        .ok_or(RecordError::BadSize)?;
+    let work = |band: usize, chunk: &mut [u8]| {
+        let mut scaled = vec![0_u8; if unscaled { 0 } else { dw as usize * 4 }];
+        let mut blend = Vec::new();
+        for (line, target) in chunk.chunks_exact_mut(ow * 4).enumerate() {
+            let top = band * rows_per_band + line;
+            let row: &[u8] = if unscaled {
+                source_row(frame, sy + top as u32, sx, dw)
+            } else {
+                if let Some(&tap) = rows.get(top) {
+                    scale_row(frame, tap, &columns, sx, sw, &mut blend, &mut scaled);
+                }
+                &scaled
+            };
+            let start = dx as usize * 4;
+            if let Some(destination) = target.get_mut(start..start + dw as usize * 4) {
+                for (from, to) in row.chunks_exact(4).zip(destination.chunks_exact_mut(4)) {
+                    to[0] = from[2];
+                    to[1] = from[1];
+                    to[2] = from[0];
+                    to[3] = 255;
+                }
+            }
+        }
+    };
+    if threads == 1 {
+        for (band, chunk) in region.chunks_mut(rows_per_band * ow * 4).enumerate() {
+            work(band, chunk);
+        }
+    } else {
+        std::thread::scope(|scope| {
+            for (band, chunk) in region.chunks_mut(rows_per_band * ow * 4).enumerate() {
+                let work = &work;
+                scope.spawn(move || work(band, chunk));
+            }
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,6 +565,90 @@ mod tests {
         };
         assert_eq!(
             convert(&frame, &odd_plan, &mut out, 1),
+            Err(RecordError::BadSize)
+        );
+    }
+
+    #[test]
+    fn rgba_output_matches_the_fit_and_swaps_channels() {
+        // Blue, green, red, alpha in; red, green, blue, opaque out.
+        let frame = solid(64, 48, [10, 20, 30, 7]);
+        let plan = reframe(64, 48, OutputShape::Wide16x9, Framing::Letterbox, 36).unwrap();
+        let mut out = Vec::new();
+        convert_rgba(&frame, &plan, &mut out, 2).unwrap();
+        assert_eq!(
+            out.len(),
+            (plan.output_width * plan.output_height * 4) as usize
+        );
+        let d = plan.destination;
+        let at = |x: u32, y: u32| {
+            let i = ((y * plan.output_width + x) * 4) as usize;
+            [out[i], out[i + 1], out[i + 2], out[i + 3]]
+        };
+        assert_eq!(at(0, plan.output_height / 2), [0, 0, 0, 255], "left bar");
+        assert_eq!(
+            at(d.x + d.width / 2, plan.output_height / 2),
+            [30, 20, 10, 255]
+        );
+        assert_eq!(at(plan.output_width - 1, 0), [0, 0, 0, 255], "right bar");
+    }
+
+    #[test]
+    fn rgba_output_is_the_same_for_one_thread_or_many_and_scaled_or_not() {
+        let mut frame = solid(90, 70, [0, 0, 0, 255]);
+        for (index, byte) in frame.bgra.iter_mut().enumerate() {
+            *byte = (index * 13 % 251) as u8;
+        }
+        for (shape, framing, height) in [
+            (OutputShape::Source, Framing::Original, 70),
+            (OutputShape::Wide16x9, Framing::Crop, 48),
+            (OutputShape::Wide16x9, Framing::Letterbox, 90),
+        ] {
+            let plan = reframe(90, 70, shape, framing, height).unwrap();
+            let (mut one, mut many) = (Vec::new(), Vec::new());
+            convert_rgba(&frame, &plan, &mut one, 1).unwrap();
+            convert_rgba(&frame, &plan, &mut many, 5).unwrap();
+            assert_eq!(one, many);
+        }
+        // Unscaled and scaled paths agree on luma with the 4:2:0 converter (same sampling).
+        let plan = reframe(90, 70, OutputShape::Source, Framing::Original, 70).unwrap();
+        let (mut rgba, mut yuv) = (
+            Vec::new(),
+            I420::black(plan.output_width, plan.output_height).unwrap(),
+        );
+        convert_rgba(&frame, &plan, &mut rgba, 1).unwrap();
+        convert(&frame, &plan, &mut yuv, 1).unwrap();
+        let first = &rgba[..4];
+        assert_eq!(
+            yuv.y[0],
+            luma(
+                i32::from(first[0]),
+                i32::from(first[1]),
+                i32::from(first[2])
+            )
+        );
+    }
+
+    #[test]
+    fn rgba_conversion_refuses_bad_input() {
+        let frame = solid(32, 32, [1, 2, 3, 255]);
+        let plan = reframe(32, 32, OutputShape::Source, Framing::Original, 32).unwrap();
+        let mut out = Vec::new();
+        let mut short = frame.clone();
+        short.bgra.truncate(8);
+        assert_eq!(
+            convert_rgba(&short, &plan, &mut out, 1),
+            Err(RecordError::BadFrame)
+        );
+        let bad = Reframe {
+            source: PixelRect {
+                width: 99,
+                ..plan.source
+            },
+            ..plan
+        };
+        assert_eq!(
+            convert_rgba(&frame, &bad, &mut out, 1),
             Err(RecordError::BadSize)
         );
     }

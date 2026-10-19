@@ -13,6 +13,7 @@ layer = 5
 [dependencies]
 clipcraft-capture.workspace = true
 clipcraft-time.workspace = true
+clipcraft-record.workspace = true
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 x11rb = { version = "0.14", default-features = false, features = ["randr"] }
@@ -23,6 +24,12 @@ global-hotkey = "0.9"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dev-dependencies]
 x11rb = { version = "0.14" }
+
+[target.'cfg(any(windows, all(target_os = "linux", target_pointer_width = "64"), target_os = "macos"))'.dependencies]
+filmcraft-platform.workspace = true
+filmcraft-export.workspace = true
+filmcraft-time.workspace = true
+filmcraft-isobmff.workspace = true
 
 [lints]
 workspace = true

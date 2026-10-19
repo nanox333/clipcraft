@@ -9,6 +9,7 @@ use clipcraft_platform::{HotkeyBinding, HotkeyListener, list_targets_on, open_on
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConnectionExt, CreateWindowAux, WindowClass};
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 struct Server {
     child: Child,
@@ -212,4 +213,51 @@ fn a_global_hotkey_fires_on_press_and_release_even_with_lock_keys_on() {
     assert!(wait(1, true) && wait(1, false), "F8 not seen");
     press("ctrl+shift+r");
     assert!(wait(2, true), "Ctrl+Shift+R not seen");
+}
+
+#[test]
+fn the_focused_window_is_found_through_the_window_managers_hint() {
+    let Some(server) = Server::start(65) else {
+        return;
+    };
+    // No window manager runs here, so there is no hint yet.
+    assert_eq!(
+        clipcraft_platform::active_window_on(&server.display).unwrap(),
+        None
+    );
+    let window = make_window(&server.display, 200, 100, 0x336699);
+    // Publish the hint the way a window manager does.
+    let (conn, screen) = RustConnection::connect(Some(&server.display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    let atom = |name: &[u8]| conn.intern_atom(false, name).unwrap().reply().unwrap().atom;
+    let active = atom(b"_NET_ACTIVE_WINDOW");
+    let net_name = atom(b"_NET_WM_NAME");
+    let utf8 = atom(b"UTF8_STRING");
+    conn.change_property32(
+        x11rb::protocol::xproto::PropMode::REPLACE,
+        root,
+        active,
+        x11rb::protocol::xproto::AtomEnum::WINDOW,
+        &[window],
+    )
+    .unwrap();
+    conn.change_property8(
+        x11rb::protocol::xproto::PropMode::REPLACE,
+        window,
+        net_name,
+        utf8,
+        "My Game".as_bytes(),
+    )
+    .unwrap();
+    conn.flush().unwrap();
+    conn.get_input_focus().unwrap().reply().unwrap();
+    let found = clipcraft_platform::active_window_on(&server.display)
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.name, "My Game");
+    assert_eq!((found.width, found.height), (200, 100));
+    assert_eq!(found.id, format!("window:{window:x}"));
+    // The hint can be opened and captured.
+    let mut source = open_on(&server.display, &found.id).unwrap();
+    assert_eq!(source.capture().unwrap().width, 200);
 }

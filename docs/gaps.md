@@ -60,8 +60,7 @@ touches ClipCraft's own clips.
 - **Sound.** Nothing records audio yet (M3). The microphone, push-to-talk, separate-tracks, and
   game-audio settings are saved and shown but do nothing. The mute and screenshot hotkeys are
   saved but not wired.
-- **Settings not yet applied:** force window capture, HDR conversion, GPU encoding, H.265, WebM,
-  the audio and keyframe details beyond the keyframe interval.
+- **Settings not yet applied:** H.265, WebM, and the audio details.
 - **Speed.** Measured on a shared 4-core container with a software-rendered video playing on the
   same screen, using the Fast preset: 360p30 keeps up (10 ms per picture); 720p30 keeps up (25 ms;
   241 of 241 pictures); 720p60 encodes about two of every three pictures (it drops a third); 1080p
@@ -73,3 +72,26 @@ touches ClipCraft's own clips.
 - **Saved clips are named in UTC** (`ClipCraft 2026-10-19 21-04-55.mp4`).
 - **Changing a quality setting while recording** needs a restart; the Settings page offers it.
 - **A resize** restarts the stream and drops the buffered video.
+
+### Force window capture, HDR, and GPU encoding
+
+- **Force window capture** records the window with the focus (found through `_NET_ACTIVE_WINDOW`
+  on X11, `GetForegroundWindow` on Windows) instead of a screen, unless a game window was chosen.
+  ClipCraft's own window is never picked. Verified on X11 with a published focus hint; on Windows
+  it is compiled only. Because clicking Record puts ClipCraft in front, it only finds the game
+  when recording is started with its hotkey while the game has the focus; the app says so.
+- **HDR compatibility** tone maps linear scRGB half floats (Windows' HDR format) to standard
+  range: reference white 203 nits, a smooth highlight roll-off, sRGB encoding. The maths is unit
+  tested. Windows capture asks for half floats when the setting is on. **Not run on an HDR
+  screen**, and it guesses "this frame is HDR" from any value above 1.05 instead of asking
+  Windows for the screen's SDR white level. HDR content in BT.2020 outside BT.709 is clipped to
+  BT.709. X11 reports no HDR.
+- **GPU encoding** uses FilmCraft's NVENC encoder (Windows and 64-bit Linux, NVIDIA only) or
+  VideoToolbox (macOS), asked for H.264 Baseline so pictures stay in order. The recorder is tested
+  against a stand-in hardware encoder that produces real H.264: a valid clip, the fitted picture,
+  a missing GPU (software, with the reason in the status), a GPU that fails mid-recording or
+  reorders pictures (handed to the software encoder and the buffer restarted). **No real GPU
+  encoder has run**: this container has none, so NVENC and VideoToolbox are untested. AMD and
+  Intel graphics have no encoder in FilmCraft yet and fall back to the CPU. H.265 through the GPU
+  is not wired (the file writer is H.264 only). The Quality tab probes the card once at start-up
+  and greys out GPU when it cannot be used.

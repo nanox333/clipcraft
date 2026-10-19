@@ -24,6 +24,7 @@ fn config() -> RecordConfig {
         replay_seconds: 10,
         max_buffer_bytes: 64 * 1024 * 1024,
         threads: 2,
+        hardware: None,
     }
 }
 

@@ -281,7 +281,8 @@ pub enum VideoEncoder {
     /// The processor. Works on every computer.
     #[default]
     Cpu,
-    /// The graphics card's encoder, which leaves the processor free for the game.
+    /// The graphics card's encoder, which leaves the processor free for the game. Whether this
+    /// computer has one is found out when recording starts; without one the CPU is used.
     Gpu,
 }
 
@@ -294,14 +295,6 @@ impl VideoEncoder {
         match self {
             Self::Cpu => "CPU",
             Self::Gpu => "GPU",
-        }
-    }
-
-    /// Why this encoder cannot be used yet, or `None` when it can.
-    pub fn unavailable_reason(self) -> Option<&'static str> {
-        match self {
-            Self::Cpu => None,
-            Self::Gpu => Some("GPU encoding is not connected yet."),
         }
     }
 }
@@ -468,9 +461,6 @@ impl RecordingSettings {
         }
         if !self.codec.is_available() {
             self.codec = VideoCodec::H264;
-        }
-        if self.video_encoder.unavailable_reason().is_some() {
-            self.video_encoder = VideoEncoder::Cpu;
         }
         self.hotkeys = self.hotkeys.sanitized();
         for text in [
@@ -730,7 +720,8 @@ mod tests {
         assert!(settings.microphone_device.len() <= 200);
         assert!(settings.capture_folder.is_empty());
         assert_eq!(settings.storage_limit_gb, 100_000);
-        assert_eq!(settings.video_encoder, VideoEncoder::Cpu);
+        // The GPU choice is kept; whether it works is decided when recording starts.
+        assert_eq!(settings.video_encoder, VideoEncoder::Gpu);
     }
 
     #[test]

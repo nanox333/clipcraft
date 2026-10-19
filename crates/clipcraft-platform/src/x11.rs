@@ -525,3 +525,43 @@ pub fn start_hotkeys(
         .map_err(|_| CaptureError::Failed)?;
     Ok(HotkeyListener::from_channel(receiver, stop, skipped))
 }
+
+/// The window the window manager says has the focus, if there is one and it can be captured.
+pub fn active_window(display: Option<&str>) -> Result<Option<CaptureTarget>, CaptureError> {
+    let (conn, screen_number) = connect(display)?;
+    let root = conn
+        .setup()
+        .roots
+        .get(screen_number)
+        .ok_or(CaptureError::NoProvider)?
+        .root;
+    let (Some(active), Some(net_name), Some(utf8)) = (
+        atom(&conn, b"_NET_ACTIVE_WINDOW"),
+        atom(&conn, b"_NET_WM_NAME"),
+        atom(&conn, b"UTF8_STRING"),
+    ) else {
+        return Ok(None);
+    };
+    let window = conn
+        .get_property(false, root, active, AtomEnum::WINDOW, 0, 1)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .and_then(|reply| reply.value32().and_then(|mut ids| ids.next()))
+        .filter(|window| *window != 0);
+    let Some(window) = window else {
+        return Ok(None);
+    };
+    let Some(geometry) = conn.get_geometry(window).ok().and_then(|c| c.reply().ok()) else {
+        return Ok(None);
+    };
+    if geometry.width == 0 || geometry.height == 0 {
+        return Ok(None);
+    }
+    Ok(Some(CaptureTarget {
+        id: format!("window:{window:x}"),
+        name: window_name(&conn, window, net_name, utf8),
+        kind: TargetKind::Window,
+        width: u32::from(geometry.width),
+        height: u32::from(geometry.height),
+    }))
+}

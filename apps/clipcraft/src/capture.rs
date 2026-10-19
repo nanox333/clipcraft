@@ -16,6 +16,7 @@ use egui::RichText;
 
 use crate::ClipCraftApp;
 use crate::kit::{self, DANGER, FAINT, Icon, LIME, MUTED, TEXT};
+use crate::settings::GpuProbe;
 
 /// Hotkey ids handed to the platform listener.
 const SAVE_ID: u32 = 1;
@@ -41,6 +42,9 @@ pub struct CaptureState {
     listened_for: Vec<(u32, String)>,
     pub targets: Vec<CaptureTarget>,
     targets_loaded: bool,
+    /// Whether the graphics card can encode video, found by trying it once.
+    pub gpu: GpuProbe,
+    gpu_receiver: Option<mpsc::Receiver<Result<String, String>>>,
     launched: bool,
     last_hotkey: Option<(HotkeyAction, Instant)>,
     /// Set after a clip was saved into the library folder, so the library is rescanned.
@@ -67,6 +71,10 @@ impl CaptureState {
                 || started.keyframe_seconds != current.keyframe_seconds
                 || started.capture_target != current.capture_target
                 || started.source != current.source
+                || started.video_encoder != current.video_encoder
+                || started.force_window_capture != current.force_window_capture
+                || started.hdr_compatibility != current.hdr_compatibility
+                || started.capture_cursor != current.capture_cursor
         })
     }
 
@@ -99,6 +107,7 @@ impl ClipCraftApp {
                 self.start_capture();
             }
         }
+        self.poll_gpu_probe();
         self.sync_hotkeys();
         let mut actions = Vec::new();
         if let Some(listener) = self.capture.listener.as_ref() {
@@ -171,6 +180,34 @@ impl ClipCraftApp {
         }
     }
 
+    /// Finds out once, off the interface thread, whether the graphics card can encode video.
+    fn poll_gpu_probe(&mut self) {
+        if self.capture.gpu == GpuProbe::Unknown {
+            self.capture.gpu = GpuProbe::Checking;
+            let (sender, receiver) = mpsc::channel();
+            self.capture.gpu_receiver = Some(receiver);
+            std::thread::spawn(move || {
+                let _ = sender.send(clipcraft_platform::probe_hardware_encoder());
+            });
+        }
+        if let Some(receiver) = self.capture.gpu_receiver.as_ref() {
+            match receiver.try_recv() {
+                Ok(result) => {
+                    self.capture.gpu = match result {
+                        Ok(name) => GpuProbe::Ready(name),
+                        Err(why) => GpuProbe::Unavailable(why),
+                    };
+                    self.capture.gpu_receiver = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.capture.gpu = GpuProbe::Unavailable("the check did not finish".to_owned());
+                    self.capture.gpu_receiver = None;
+                }
+            }
+        }
+    }
+
     /// Keeps the global hotkeys in step with the settings.
     fn sync_hotkeys(&mut self) {
         let wanted: Vec<(u32, String)> = [
@@ -213,12 +250,22 @@ impl ClipCraftApp {
     }
 
     /// Picks what to record from the settings.
-    fn capture_target_id(&mut self) -> Result<String, String> {
+    pub(crate) fn capture_target_id(&mut self) -> Result<String, String> {
         if !self.capture.targets_loaded() {
             self.capture.refresh_targets();
         }
         let chosen = self.recording.capture_target.clone();
         let want_window = self.recording.source == clipcraft_engine::CaptureSource::Game;
+        // Forcing window capture follows the window in front, unless a game window was chosen.
+        if self.recording.force_window_capture && (!want_window || chosen.is_empty()) {
+            return match clipcraft_platform::active_window() {
+                Ok(Some(window)) if !is_own_window(&window) => Ok(window.id),
+                _ => Err(
+                    "Force window capture records the window in front. Start recording with its hotkey while your game has the focus, or choose the window in Settings \u{203a} Capture."
+                        .to_owned(),
+                ),
+            };
+        }
         let kind = if want_window {
             TargetKind::Window
         } else {
@@ -267,6 +314,7 @@ impl ClipCraftApp {
         };
         let options = CaptureOptions {
             show_cursor: self.recording.capture_cursor,
+            hdr_to_sdr: self.recording.hdr_compatibility,
         };
         let source: Box<dyn clipcraft_capture::CaptureSource> =
             match clipcraft_platform::open(&id, &options) {
@@ -276,7 +324,14 @@ impl ClipCraftApp {
                     return;
                 }
             };
-        match self.capture.session.start(&self.recording, source) {
+        let hardware = (self.recording.video_encoder == clipcraft_engine::VideoEncoder::Gpu)
+            .then(clipcraft_platform::hardware_provider)
+            .flatten();
+        match self
+            .capture
+            .session
+            .start(&self.recording, source, hardware)
+        {
             Ok(()) => {
                 self.capture.started_with = Some(self.recording.clone());
                 self.capture.status = self.capture.session.status();
@@ -378,9 +433,15 @@ impl ClipCraftApp {
         let (dot, text) = match self.capture.status.as_ref() {
             Some(status) => match status.state {
                 RecordState::Running => {
+                    let encoder = status.encoder.split([' ', '(']).next().unwrap_or("");
                     let tag = status
                         .output
-                        .map(|(_, height)| format!(" \u{00b7} {height}p{}", status.target_fps))
+                        .map(|(_, height)| {
+                            format!(
+                                " \u{00b7} {height}p{} \u{00b7} {encoder}",
+                                status.target_fps
+                            )
+                        })
                         .unwrap_or_default();
                     (LIME, format!("Recording{tag}"))
                 }
@@ -453,7 +514,8 @@ impl ClipCraftApp {
                 RichText::new(format!("{:.0}s buffered", status.buffered_seconds))
                     .color(MUTED)
                     .size(12.5),
-            );
+            )
+            .on_hover_text(format!("Encoder: {}", status.encoder));
             if behind {
                 ui.label(
                     RichText::new(format!("\u{00b7} dropping {dropped:.0}% of frames"))
@@ -496,4 +558,9 @@ impl std::fmt::Display for RecordErrorText {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(&self.0, formatter)
     }
+}
+
+/// ClipCraft's own window is never the game, even when it has the focus.
+fn is_own_window(window: &CaptureTarget) -> bool {
+    window.name.trim() == "ClipCraft"
 }

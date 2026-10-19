@@ -11,12 +11,14 @@
 //! Sound is not recorded here yet; that is milestone M3.
 
 pub mod convert;
+pub mod hardware;
 pub mod mux;
 mod recorder;
 pub mod replay;
 
 use std::fmt;
 
+pub use hardware::{HardwareEncoder, HardwarePacket, HardwareProvider, HardwareRequest};
 pub use mux::{ClipFormat, SavedClip, VideoInfo, write_clip};
 pub use recorder::{EncoderSpeed, RecordConfig, RecordState, RecordStatus, Recorder, output_size};
 

@@ -8,11 +8,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clipcraft_capture::CaptureSource;
 use clipcraft_record::{
-    ClipFormat, EncoderSpeed, RecordConfig, RecordError, RecordStatus, Recorder, SavedClip,
+    ClipFormat, EncoderSpeed, HardwareProvider, RecordConfig, RecordError, RecordStatus, Recorder,
+    SavedClip,
 };
 
 use crate::storage::{StoredClip, cleanup_plan, list_clips};
-use crate::{Container, EncoderPreset, EngineError, RateControl, RecordingSettings};
+use crate::{Container, EncoderPreset, EngineError, RateControl, RecordingSettings, VideoEncoder};
 
 /// Every clip ClipCraft saves starts with this, so cleanup only ever deletes its own clips.
 pub const CLIP_PREFIX: &str = "ClipCraft ";
@@ -42,6 +43,7 @@ pub fn record_config(settings: &RecordingSettings) -> RecordConfig {
         max_buffer_bytes: usize::try_from(wanted.clamp(64 * 1024 * 1024, 2 * 1024 * 1024 * 1024))
             .unwrap_or(64 * 1024 * 1024),
         threads: 0,
+        hardware: None,
     }
 }
 
@@ -79,18 +81,28 @@ impl CaptureSession {
         self.recorder.is_some()
     }
 
-    /// Starts recording `source` with the picture, bitrate, and replay settings.
-    /// Command id `capture.start`.
+    /// Starts recording `source` with the picture, bitrate, and replay settings. `hardware` is
+    /// the computer's hardware encoder, used only when the settings ask for the GPU; if it cannot
+    /// be opened the software encoder runs and the status says why. Command id `capture.start`.
     pub fn start(
         &mut self,
         settings: &RecordingSettings,
         source: Box<dyn CaptureSource>,
+        hardware: Option<HardwareProvider>,
     ) -> Result<(), EngineError> {
         if self.recorder.is_some() {
             return Err(EngineError::AlreadyRecording);
         }
-        let recorder = Recorder::start(source, record_config(&settings.clone().sanitized()))
-            .map_err(EngineError::Record)?;
+        let settings = settings.clone().sanitized();
+        let mut config = record_config(&settings);
+        if settings.video_encoder == VideoEncoder::Gpu {
+            config.hardware = Some(hardware.unwrap_or_else(|| {
+                HardwareProvider::new(|_| {
+                    Err("this computer has no supported hardware encoder".to_owned())
+                })
+            }));
+        }
+        let recorder = Recorder::start(source, config).map_err(EngineError::Record)?;
         self.recorder = Some(Arc::new(recorder));
         Ok(())
     }
@@ -388,10 +400,18 @@ mod tests {
             Err(EngineError::NotRecording)
         );
         session
-            .start(&settings, Box::new(SyntheticSource::new(320, 180, 30)))
+            .start(
+                &settings,
+                Box::new(SyntheticSource::new(320, 180, 30)),
+                None,
+            )
             .unwrap();
         assert_eq!(
-            session.start(&settings, Box::new(SyntheticSource::new(320, 180, 30))),
+            session.start(
+                &settings,
+                Box::new(SyntheticSource::new(320, 180, 30)),
+                None
+            ),
             Err(EngineError::AlreadyRecording)
         );
         wait_for_video(&session);
@@ -431,7 +451,7 @@ mod tests {
         };
         let mut session = CaptureSession::new();
         session
-            .start(&settings, Box::new(SyntheticSource::new(160, 90, 30)))
+            .start(&settings, Box::new(SyntheticSource::new(160, 90, 30)), None)
             .unwrap();
         wait_for_video(&session);
         assert_eq!(
@@ -452,5 +472,42 @@ mod tests {
             .unwrap();
         assert!(report.deleted.is_empty() && dir.join("big.mp4").exists());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn asking_for_the_gpu_on_a_computer_without_one_records_in_software() {
+        let settings = RecordingSettings {
+            video_encoder: VideoEncoder::Gpu,
+            quality: crate::QualityMode::Custom,
+            height: 180,
+            frames_per_second: 30,
+            video_kbps: 1_000,
+            ..RecordingSettings::default()
+        };
+        let mut session = CaptureSession::new();
+        session
+            .start(
+                &settings,
+                Box::new(SyntheticSource::new(320, 180, 30)),
+                None,
+            )
+            .unwrap();
+        wait_for_video(&session);
+        let encoder = session.status().unwrap().encoder;
+        assert!(encoder.starts_with("CPU (GPU unavailable"), "{encoder}");
+        // And with the CPU chosen the encoder is just the CPU.
+        let mut plain = CaptureSession::new();
+        plain
+            .start(
+                &RecordingSettings {
+                    video_encoder: VideoEncoder::Cpu,
+                    ..settings
+                },
+                Box::new(SyntheticSource::new(320, 180, 30)),
+                None,
+            )
+            .unwrap();
+        wait_for_video(&plain);
+        assert_eq!(plain.status().unwrap().encoder, "CPU");
     }
 }

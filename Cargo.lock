@@ -384,7 +384,12 @@ name = "clipcraft-platform"
 version = "0.1.0"
 dependencies = [
  "clipcraft-capture",
+ "clipcraft-record",
  "clipcraft-time",
+ "filmcraft-export",
+ "filmcraft-isobmff",
+ "filmcraft-platform",
+ "filmcraft-time",
  "global-hotkey",
  "windows-capture",
  "x11rb 0.14.0",
@@ -905,6 +910,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "filmcraft-audio-dsp"
+version = "0.9.0"
+source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
+
+[[package]]
 name = "filmcraft-av1"
 version = "0.9.0"
 source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
@@ -923,6 +933,19 @@ source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d92476
 name = "filmcraft-bitstream"
 version = "0.9.0"
 source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
+
+[[package]]
+name = "filmcraft-captions"
+version = "0.9.0"
+source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
+dependencies = [
+ "filmcraft-color",
+ "filmcraft-project",
+ "filmcraft-text",
+ "filmcraft-time",
+ "roxmltree",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "filmcraft-codecs"
@@ -989,6 +1012,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "filmcraft-export"
+version = "0.9.0"
+source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
+dependencies = [
+ "filmcraft-aac",
+ "filmcraft-apv",
+ "filmcraft-audio-dsp",
+ "filmcraft-color",
+ "filmcraft-dnx",
+ "filmcraft-flac",
+ "filmcraft-frame",
+ "filmcraft-geom",
+ "filmcraft-h264enc",
+ "filmcraft-isobmff",
+ "filmcraft-media",
+ "filmcraft-mxf",
+ "filmcraft-project",
+ "filmcraft-prores",
+ "filmcraft-render",
+ "filmcraft-text",
+ "filmcraft-time",
+ "image",
+ "rayon",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "web-time",
+]
+
+[[package]]
+name = "filmcraft-flac"
+version = "0.9.0"
+source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
+dependencies = [
+ "filmcraft-bitstream",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "filmcraft-frame"
 version = "0.9.0"
 source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
@@ -996,6 +1058,14 @@ dependencies = [
  "filmcraft-color",
  "filmcraft-time",
  "rayon",
+ "serde",
+]
+
+[[package]]
+name = "filmcraft-geom"
+version = "0.9.0"
+source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
+dependencies = [
  "serde",
 ]
 
@@ -1100,6 +1170,43 @@ version = "0.9.0"
 source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
 
 [[package]]
+name = "filmcraft-platform"
+version = "0.9.0"
+source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
+dependencies = [
+ "filmcraft-bitstream",
+ "filmcraft-codecs",
+ "filmcraft-color",
+ "filmcraft-export",
+ "filmcraft-frame",
+ "filmcraft-h264",
+ "filmcraft-hevc",
+ "filmcraft-isobmff",
+ "filmcraft-time",
+ "libloading",
+ "log",
+ "objc2-core-foundation",
+ "objc2-core-media",
+ "objc2-core-video",
+ "objc2-video-toolbox",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "filmcraft-project"
+version = "0.9.0"
+source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
+dependencies = [
+ "filmcraft-color",
+ "filmcraft-geom",
+ "filmcraft-media",
+ "filmcraft-time",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "filmcraft-prores"
 version = "0.9.0"
 source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
@@ -1107,6 +1214,38 @@ dependencies = [
  "filmcraft-bitstream",
  "rayon",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "filmcraft-render"
+version = "0.9.0"
+source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
+dependencies = [
+ "filmcraft-audio-dsp",
+ "filmcraft-captions",
+ "filmcraft-color",
+ "filmcraft-frame",
+ "filmcraft-geom",
+ "filmcraft-media",
+ "filmcraft-project",
+ "filmcraft-text",
+ "filmcraft-time",
+ "rayon",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "filmcraft-text"
+version = "0.9.0"
+source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
+dependencies = [
+ "filmcraft-color",
+ "harfrust",
+ "skrifa",
+ "unicode-bidi",
+ "unicode-linebreak",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -1157,6 +1296,15 @@ name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
+name = "font-types"
+version = "0.12.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "835ae9d781464a79026cde387f9cbc650c9a4909d7cf7e658b127e3c35d2f35d"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "foreign-types"
@@ -1387,6 +1535,18 @@ dependencies = [
  "crunchy",
  "num-traits",
  "zerocopy",
+]
+
+[[package]]
+name = "harfrust"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c03d949a14aa089bbb282f7dd76a498a7f684428e4257202efc119ec010376f9"
+dependencies = [
+ "bitflags 2.13.2",
+ "bytemuck",
+ "read-fonts",
+ "smallvec",
 ]
 
 [[package]]
@@ -2063,7 +2223,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a180dd8642fa45cdb7dd721cd4c11b1cadd4929ce112ebd8b9f5803cc79d536"
 dependencies = [
  "bitflags 2.13.2",
+ "block2 0.6.2",
  "dispatch2",
+ "libc",
  "objc2 0.6.5",
 ]
 
@@ -2089,7 +2251,7 @@ dependencies = [
  "block2 0.5.1",
  "objc2 0.5.3",
  "objc2-foundation 0.2.2",
- "objc2-metal",
+ "objc2-metal 0.2.2",
 ]
 
 [[package]]
@@ -2102,6 +2264,37 @@ dependencies = [
  "objc2 0.5.3",
  "objc2-contacts",
  "objc2-foundation 0.2.2",
+]
+
+[[package]]
+name = "objc2-core-media"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05ec576860167a15dd9fce7fbee7512beb4e31f532159d3482d1f9c6caedf31d"
+dependencies = [
+ "bitflags 2.13.2",
+ "block2 0.6.2",
+ "dispatch2",
+ "objc2 0.6.5",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+ "objc2-core-video",
+]
+
+[[package]]
+name = "objc2-core-video"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d425caf1df73233f29fd8a5c3e5edbc30d2d4307870f802d18f00d83dc5141a6"
+dependencies = [
+ "bitflags 2.13.2",
+ "block2 0.6.2",
+ "objc2 0.6.5",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-io-surface",
+ "objc2-metal 0.3.2",
 ]
 
 [[package]]
@@ -2170,6 +2363,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-metal"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0125f776a10d00af4152d74616409f0d4a2053a6f57fa5b7d6aa2854ac04794"
+dependencies = [
+ "bitflags 2.13.2",
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
 name = "objc2-quartz-core"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2179,7 +2383,7 @@ dependencies = [
  "block2 0.5.1",
  "objc2 0.5.3",
  "objc2-foundation 0.2.2",
- "objc2-metal",
+ "objc2-metal 0.2.2",
 ]
 
 [[package]]
@@ -2235,6 +2439,23 @@ dependencies = [
  "objc2 0.5.3",
  "objc2-core-location",
  "objc2-foundation 0.2.2",
+]
+
+[[package]]
+name = "objc2-video-toolbox"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05bf9a3c14831a7d9641b0d81d87dd913ee238a012b2fde27db5a84b56f5df3e"
+dependencies = [
+ "bitflags 2.13.2",
+ "block2 0.6.2",
+ "objc2 0.6.5",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-core-media",
+ "objc2-core-video",
+ "objc2-foundation 0.3.2",
+ "objc2-metal 0.3.2",
 ]
 
 [[package]]
@@ -2479,6 +2700,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "read-fonts"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "046a7d674daf459825b32f5062056d6882db0d2f5a479fbd76ccfc870ac18709"
+dependencies = [
+ "bytemuck",
+ "font-types",
+ "once_cell",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2536,6 +2768,15 @@ dependencies = [
  "wayland-protocols",
  "web-sys",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "roxmltree"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -2688,6 +2929,16 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "skrifa"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "819ab7d62b1d3e72d9d9dea5650bac30424f9111364bb94928dbf5ecad1baa68"
+dependencies = [
+ "bytemuck",
+ "read-fonts",
+]
 
 [[package]]
 name = "slab"
@@ -3121,10 +3372,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "unicode-bidi"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
+
+[[package]]
+name = "unicode-linebreak"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
 
 [[package]]
 name = "unicode-segmentation"

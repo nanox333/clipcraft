@@ -34,7 +34,7 @@ pub fn capabilities() -> Capabilities {
         cursor: true,
         // Games in exclusive full screen may not be capturable; borderless windowed always is.
         exclusive_fullscreen: false,
-        hdr: false,
+        hdr: true,
     }
 }
 
@@ -126,11 +126,19 @@ impl GraphicsCaptureApiHandler for Handler {
         }
         let mut scratch = Vec::new();
         let pixels = buffer.as_nopadding_buffer(&mut scratch);
+        // HDR frames arrive as linear half floats and are tone mapped to standard range here.
+        let bgra = if buffer.color_format() == ColorFormat::Rgba16F {
+            let white = clipcraft_capture::hdr::reference_white_for(pixels);
+            clipcraft_capture::hdr::scrgb_to_bgra8(pixels, width, height, width as usize * 8, white)
+                .ok_or("damaged HDR frame")?
+        } else {
+            pixels.to_vec()
+        };
         let captured = CaptureFrame {
             width,
             height,
             stride: width as usize * 4,
-            bgra: pixels.to_vec(),
+            bgra,
             captured_at: Tick::from_units(
                 i64::try_from(self.shared.started.elapsed().as_micros()).unwrap_or(i64::MAX),
                 1_000_000,
@@ -164,6 +172,7 @@ struct WindowsSource {
 fn settings<T: TryInto<GraphicsCaptureItemType>>(
     item: T,
     cursor: CursorCaptureSettings,
+    color: ColorFormat,
     shared: &Arc<Shared>,
 ) -> Settings<Arc<Shared>, T> {
     Settings::new(
@@ -173,7 +182,7 @@ fn settings<T: TryInto<GraphicsCaptureItemType>>(
         SecondaryWindowSettings::Default,
         MinimumUpdateIntervalSettings::Default,
         DirtyRegionSettings::Default,
-        ColorFormat::Bgra8,
+        color,
         shared.clone(),
     )
 }
@@ -192,6 +201,13 @@ pub fn open(
     } else {
         CursorCaptureSettings::WithoutCursor
     };
+    // Asking for half floats is how HDR is captured; on a standard display they hold the same
+    // picture and the tone mapper leaves it alone.
+    let color = if options.hdr_to_sdr {
+        ColorFormat::Rgba16F
+    } else {
+        ColorFormat::Bgra8
+    };
     let (control, target) = if let Some(index) = target_id.strip_prefix("monitor:") {
         let index: usize = index.parse().map_err(|_| CaptureError::TargetGone)?;
         let monitor = Monitor::from_index(index).map_err(|_| CaptureError::TargetGone)?;
@@ -199,7 +215,7 @@ pub fn open(
             monitor.width().map_err(|_| CaptureError::Failed)?,
             monitor.height().map_err(|_| CaptureError::Failed)?,
         );
-        let control = Handler::start_free_threaded(settings(monitor, cursor, &shared))
+        let control = Handler::start_free_threaded(settings(monitor, cursor, color, &shared))
             .map_err(|_| CaptureError::Failed)?;
         (
             control,
@@ -222,7 +238,7 @@ pub fn open(
             u32::try_from(window.width().map_err(|_| CaptureError::TargetGone)?).unwrap_or(0),
             u32::try_from(window.height().map_err(|_| CaptureError::TargetGone)?).unwrap_or(0),
         );
-        let control = Handler::start_free_threaded(settings(window, cursor, &shared))
+        let control = Handler::start_free_threaded(settings(window, cursor, color, &shared))
             .map_err(|_| CaptureError::Failed)?;
         (
             control,
@@ -385,4 +401,25 @@ pub fn start_hotkeys(bindings: Vec<HotkeyBinding>) -> Result<HotkeyListener, Cap
         },
         skipped,
     ))
+}
+
+/// The window in front, if there is one and it can be captured.
+pub fn active_window() -> Result<Option<CaptureTarget>, CaptureError> {
+    let Ok(window) = Window::foreground() else {
+        return Ok(None);
+    };
+    let (Ok(title), Ok(width), Ok(height)) = (window.title(), window.width(), window.height())
+    else {
+        return Ok(None);
+    };
+    if title.is_empty() || width <= 0 || height <= 0 || !window.is_valid() {
+        return Ok(None);
+    }
+    Ok(Some(CaptureTarget {
+        id: format!("window:{:x}", window.as_raw_hwnd() as usize),
+        name: title,
+        kind: TargetKind::Window,
+        width: width as u32,
+        height: height as u32,
+    }))
 }

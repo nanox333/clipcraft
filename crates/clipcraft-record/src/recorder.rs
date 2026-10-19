@@ -1,5 +1,6 @@
 //! The recording threads and the status the rest of the app reads.
 
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -13,7 +14,8 @@ use filmcraft_h264enc::{
 };
 
 use crate::RecordError;
-use crate::convert::{I420, convert};
+use crate::convert::{I420, convert, convert_rgba};
+use crate::hardware::{HardwareEncoder, HardwareProvider, HardwareRequest};
 use crate::mux::{ClipFormat, SavedClip, VideoInfo, write_clip};
 use crate::replay::{EncodedSample, ReplayBuffer};
 
@@ -53,6 +55,9 @@ pub struct RecordConfig {
     pub max_buffer_bytes: usize,
     /// Threads the encoder and the pixel conversion may use (0 chooses half the processors).
     pub threads: usize,
+    /// Opens a hardware encoder to use instead of the software one. When it cannot, or fails
+    /// later, the software encoder takes over.
+    pub hardware: Option<HardwareProvider>,
 }
 
 impl RecordConfig {
@@ -129,6 +134,8 @@ pub struct RecordStatus {
     pub average_encode_ms: f32,
     /// Frames per second the recorder is aiming for.
     pub target_fps: u32,
+    /// Which encoder is working, and why when it is not the one asked for.
+    pub encoder: String,
 }
 
 #[derive(Default)]
@@ -157,6 +164,7 @@ struct Shared {
     source_name: String,
     buffer: Mutex<ReplayBuffer>,
     video: Mutex<Option<VideoInfo>>,
+    encoder: Mutex<String>,
     stats: Mutex<Stats>,
     state: Mutex<RecordState>,
     mailbox: Mutex<Mailbox>,
@@ -197,6 +205,7 @@ impl Recorder {
             source_name: source.target().name.clone(),
             buffer: Mutex::new(ReplayBuffer::new(window_frames, config.max_buffer_bytes)),
             video: Mutex::new(None),
+            encoder: Mutex::new(String::from("Starting")),
             stats: Mutex::new(Stats::default()),
             state: Mutex::new(RecordState::Running),
             mailbox: Mutex::new(Mailbox::default()),
@@ -256,6 +265,7 @@ impl Recorder {
             output,
             average_encode_ms,
             target_fps: self.shared.fps,
+            encoder: lock(&self.shared.encoder).clone(),
         }
     }
 
@@ -359,11 +369,20 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32) {
     shared.wake.notify_all();
 }
 
+enum Stage {
+    Software(Box<Encoder>),
+    Hardware(Box<dyn HardwareEncoder>),
+}
+
 struct Active {
-    encoder: Encoder,
+    stage: Stage,
     source_size: (u32, u32),
     plan: Reframe,
     picture: I420,
+    rgba: Vec<u8>,
+    /// Times of the pictures a hardware encoder has taken and not yet returned.
+    pending: VecDeque<i64>,
+    avcc_sent: bool,
     last_pts: i64,
 }
 
@@ -424,20 +443,149 @@ fn encode_loop(shared: &Shared, config: &RecordConfig) {
         lock(&shared.stats).encode_nanos += started.elapsed().as_nanos();
     }
     if let Some(mut finished) = active {
-        for packet in finished.encoder.flush() {
-            store(shared, packet);
+        flush(shared, &mut finished);
+    }
+}
+
+fn store_packet(shared: &Shared, data: Vec<u8>, keyframe: bool, pts: i64) {
+    // A refused sample (out of order, or no keyframe yet) is simply not stored.
+    let _ = lock(&shared.buffer).push(EncodedSample {
+        pts,
+        data,
+        keyframe,
+    });
+}
+
+fn flush(shared: &Shared, active: &mut Active) {
+    match &mut active.stage {
+        Stage::Software(encoder) => {
+            for packet in encoder.flush() {
+                store_packet(shared, packet.data, packet.keyframe, packet.pts);
+            }
+        }
+        Stage::Hardware(encoder) => {
+            if let Ok(packets) = encoder.flush() {
+                for packet in packets {
+                    if let Some(pts) = active.pending.pop_front() {
+                        store_packet(shared, packet.data, packet.keyframe, pts);
+                    }
+                }
+            }
         }
     }
 }
 
-fn store(shared: &Shared, packet: filmcraft_h264enc::Packet) {
-    let sample = EncodedSample {
-        pts: packet.pts,
-        data: packet.data,
-        keyframe: packet.keyframe,
+fn software_stage(
+    shared: &Shared,
+    config: &RecordConfig,
+    plan: &Reframe,
+    threads: usize,
+    label: String,
+) -> Result<Stage, RecordError> {
+    let encoder = Encoder::new(encoder_config(config, plan, threads))
+        .map_err(|_| RecordError::EncoderFailed)?;
+    *lock(&shared.video) = Some(VideoInfo {
+        width: plan.output_width,
+        height: plan.output_height,
+        fps: config.fps,
+        avcc: encoder.avcc(),
+    });
+    *lock(&shared.encoder) = label;
+    Ok(Stage::Software(Box::new(encoder)))
+}
+
+/// Opens the hardware encoder if one was offered and works; otherwise the software encoder, with
+/// the reason in the status.
+fn open_stage(
+    shared: &Shared,
+    config: &RecordConfig,
+    plan: &Reframe,
+    threads: usize,
+) -> Result<Stage, RecordError> {
+    let Some(provider) = config.hardware.as_ref() else {
+        return software_stage(shared, config, plan, threads, "CPU".to_owned());
     };
-    // A refused sample (out of order, or no keyframe yet) is simply not stored.
-    let _ = lock(&shared.buffer).push(sample);
+    let request = HardwareRequest {
+        width: plan.output_width,
+        height: plan.output_height,
+        fps: config.fps,
+        video_kbps: config.video_kbps,
+        constant_bitrate: config.constant_bitrate,
+        keyframe_frames: config.keyframe_seconds.saturating_mul(config.fps).max(1),
+    };
+    match provider.open(&request) {
+        Ok(encoder) => {
+            *lock(&shared.encoder) = format!("GPU ({})", encoder.name());
+            // The decoder configuration is complete only after the first picture.
+            *lock(&shared.video) = None;
+            Ok(Stage::Hardware(encoder))
+        }
+        Err(why) => software_stage(
+            shared,
+            config,
+            plan,
+            threads,
+            format!("CPU (GPU unavailable: {why})"),
+        ),
+    }
+}
+
+fn new_active(
+    shared: &Shared,
+    config: &RecordConfig,
+    threads: usize,
+    frame: &CaptureFrame,
+) -> Result<Active, RecordError> {
+    let plan = reframe(
+        frame.width,
+        frame.height,
+        config.shape,
+        config.framing,
+        config.output_height,
+    )
+    .ok_or(RecordError::BadSize)?;
+    // Video from before a size change does not match the new stream's parameters.
+    lock(&shared.buffer).clear();
+    let stage = open_stage(shared, config, &plan, threads)?;
+    let software = matches!(stage, Stage::Software(_));
+    Ok(Active {
+        stage,
+        source_size: (frame.width, frame.height),
+        picture: I420::black(
+            if software { plan.output_width } else { 2 },
+            if software { plan.output_height } else { 2 },
+        )?,
+        rgba: Vec::new(),
+        pending: VecDeque::new(),
+        avcc_sent: software,
+        plan,
+        last_pts: -1,
+    })
+}
+
+/// The hardware encoder failed: carry on in software, starting a fresh stream.
+fn fail_over(
+    shared: &Shared,
+    config: &RecordConfig,
+    threads: usize,
+    active: &mut Active,
+    why: &str,
+) -> Result<(), RecordError> {
+    lock(&shared.buffer).clear();
+    let stage = software_stage(
+        shared,
+        config,
+        &active.plan,
+        threads,
+        format!("CPU (GPU stopped: {why})"),
+    )?;
+    active.stage = stage;
+    active.picture = I420::black(active.plan.output_width, active.plan.output_height)?;
+    active.pending.clear();
+    active.avcc_sent = true;
+    active.last_pts = -1;
+    lock(&shared.stats).restarts += 1;
+    Ok(())
 }
 
 fn encode_one(
@@ -454,42 +602,17 @@ fn encode_one(
         .as_ref()
         .is_none_or(|current| current.source_size != size)
     {
-        let plan = reframe(
-            frame.width,
-            frame.height,
-            config.shape,
-            config.framing,
-            config.output_height,
-        )
-        .ok_or(RecordError::BadSize)?;
         let restarted = if let Some(mut old) = active.take() {
-            for packet in old.encoder.flush() {
-                store(shared, packet);
-            }
+            flush(shared, &mut old);
             true
         } else {
             false
         };
-        // Video from before a size change does not match the new stream's parameters.
-        lock(&shared.buffer).clear();
-        let encoder = Encoder::new(encoder_config(config, &plan, threads))
-            .map_err(|_| RecordError::EncoderFailed)?;
-        *lock(&shared.video) = Some(VideoInfo {
-            width: plan.output_width,
-            height: plan.output_height,
-            fps: config.fps,
-            avcc: encoder.avcc(),
-        });
+        let fresh = new_active(shared, config, threads, frame)?;
         if restarted {
             lock(&shared.stats).restarts += 1;
         }
-        *active = Some(Active {
-            encoder,
-            source_size: size,
-            picture: I420::black(plan.output_width, plan.output_height)?,
-            plan,
-            last_pts: -1,
-        });
+        *active = Some(fresh);
     }
     let Some(current) = active.as_mut() else {
         return Err(RecordError::EncoderFailed);
@@ -497,6 +620,20 @@ fn encode_one(
     if pts <= current.last_pts {
         lock(&shared.stats).dropped += 1;
         return Ok(());
+    }
+    if let Stage::Hardware(_) = current.stage {
+        match encode_hardware(shared, current, frame, pts, threads) {
+            Ok(()) => {}
+            Err(why) => {
+                fail_over(shared, config, threads, current, &why)?;
+            }
+        }
+        if let Stage::Hardware(_) = current.stage {
+            current.last_pts = pts;
+            lock(&shared.stats).encoded += 1;
+            return Ok(());
+        }
+        // Fell back to software: this picture is encoded below, as the new stream's first.
     }
     convert(frame, &current.plan, &mut current.picture, threads)?;
     let picture = &current.picture;
@@ -507,14 +644,55 @@ fn encode_one(
         y_stride: picture.width as usize,
         uv_stride: picture.width as usize / 2,
     };
-    let packets = current
-        .encoder
+    let Stage::Software(encoder) = &mut current.stage else {
+        return Err(RecordError::EncoderFailed);
+    };
+    let packets = encoder
         .try_encode(&yuv, pts)
         .map_err(|_| RecordError::EncoderFailed)?;
     current.last_pts = pts;
     for packet in packets {
-        store(shared, packet);
+        store_packet(shared, packet.data, packet.keyframe, packet.pts);
     }
     lock(&shared.stats).encoded += 1;
+    Ok(())
+}
+
+/// Encodes one picture on the hardware encoder. Any error, or a B-frame, hands the stream back
+/// to the software encoder.
+fn encode_hardware(
+    shared: &Shared,
+    current: &mut Active,
+    frame: &CaptureFrame,
+    pts: i64,
+    threads: usize,
+) -> Result<(), String> {
+    convert_rgba(frame, &current.plan, &mut current.rgba, threads)
+        .map_err(|error| error.to_string())?;
+    let Stage::Hardware(encoder) = &mut current.stage else {
+        return Err("not a hardware stage".to_owned());
+    };
+    current.pending.push_back(pts);
+    let packets = encoder
+        .encode(&current.rgba, u64::try_from(pts).unwrap_or(0))
+        .map_err(|why| why.clone())?;
+    for packet in packets {
+        if packet.reordered {
+            return Err("it reorders pictures".to_owned());
+        }
+        let Some(time) = current.pending.pop_front() else {
+            return Err("it returned more pictures than it was given".to_owned());
+        };
+        if !current.avcc_sent {
+            *lock(&shared.video) = Some(VideoInfo {
+                width: current.plan.output_width,
+                height: current.plan.output_height,
+                fps: shared.fps,
+                avcc: encoder.avcc(),
+            });
+            current.avcc_sent = true;
+        }
+        store_packet(shared, packet.data, packet.keyframe, time);
+    }
     Ok(())
 }

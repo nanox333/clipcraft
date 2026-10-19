@@ -176,6 +176,7 @@ fn run_record(arguments: &[OsString]) -> Result<(), CliError> {
         &target_id,
         &clipcraft_platform::CaptureOptions {
             show_cursor: settings.capture_cursor,
+            hdr_to_sdr: settings.hdr_compatibility,
         },
     )
     .map_err(|error| CliError::Capture(error.to_string()))?;
@@ -186,7 +187,10 @@ fn run_record(arguments: &[OsString]) -> Result<(), CliError> {
         .or_else(clipcraft_engine::default_capture_folder)
         .ok_or(CliError::Usage)?;
     let mut session = clipcraft_engine::CaptureSession::new();
-    session.start(&settings, source).map_err(CliError::Engine)?;
+    let hardware = clipcraft_platform::hardware_provider();
+    session
+        .start(&settings, source, hardware)
+        .map_err(CliError::Engine)?;
     std::thread::sleep(std::time::Duration::from_secs(seconds));
     let report = session
         .save_clip(&settings, &folder)
@@ -202,6 +206,7 @@ fn run_record(arguments: &[OsString]) -> Result<(), CliError> {
         "frames_encoded": status.as_ref().map(|s| s.frames_encoded),
         "frames_dropped": status.as_ref().map(|s| s.frames_dropped),
         "average_encode_ms": status.as_ref().map(|s| s.average_encode_ms),
+        "encoder": status.as_ref().map(|s| s.encoder.clone()),
         "output": status.as_ref().and_then(|s| s.output),
     }))
 }
