@@ -1083,7 +1083,8 @@ mod tests {
 
     #[test]
     fn the_player_draws_windowed_and_fullscreen_at_any_size_without_panicking() {
-        let (mut playback, context) = opened(125.0, 3);
+        let (mut playback, _) = opened(125.0, 3);
+        let context = crate::kit::test_context();
         let context_ref = &context;
         let draw = |playback: &mut Playback, size: (f32, f32), fullscreen: bool| {
             let input = egui::RawInput {

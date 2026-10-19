@@ -8,6 +8,8 @@ use egui::{
     Align2, Color32, CornerRadius, FontFamily, FontId, Painter, Pos2, Rect, Response, Sense,
     Stroke, StrokeKind, TextStyle, Vec2,
 };
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const CANVAS: Color32 = Color32::from_rgb(17, 17, 19);
 pub const SIDEBAR: Color32 = Color32::from_rgb(22, 22, 25);
@@ -20,6 +22,65 @@ pub const MUTED: Color32 = Color32::from_rgb(150, 150, 161);
 pub const FAINT: Color32 = Color32::from_rgb(92, 92, 102);
 pub const LIME: Color32 = Color32::from_rgb(190, 255, 43);
 pub const DANGER: Color32 = Color32::from_rgb(255, 112, 112);
+
+// Inter (SIL OFL 1.1), unmodified; see ATTRIBUTION.md and assets/fonts/OFL-Inter.md.
+const INTER_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
+const INTER_MEDIUM: &[u8] = include_bytes!("../../../assets/fonts/Inter-Medium.ttf");
+const INTER_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
+
+static FONTS_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+/// Installs Inter as the UI face, with Medium and SemiBold as named families (egui has no
+/// synthetic bold, and `RichText::strong` only changes color). egui's own fonts stay behind Inter
+/// as fallbacks, so symbols and emoji Inter lacks still draw. Call once at startup, before the
+/// first frame; in tests, run one empty frame afterwards so the fonts take effect.
+pub fn install_fonts(context: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    for (name, bytes) in [
+        ("inter", INTER_REGULAR),
+        ("inter-medium", INTER_MEDIUM),
+        ("inter-semibold", INTER_SEMIBOLD),
+    ] {
+        fonts.font_data.insert(
+            name.to_owned(),
+            Arc::new(egui::FontData::from_static(bytes)),
+        );
+    }
+    let fallbacks = fonts
+        .families
+        .get(&FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
+    for (family, face) in [
+        (FontFamily::Proportional, "inter"),
+        (FontFamily::Name("medium".into()), "inter-medium"),
+        (FontFamily::Name("semibold".into()), "inter-semibold"),
+    ] {
+        let mut chain = vec![face.to_owned()];
+        chain.extend(fallbacks.iter().cloned());
+        fonts.families.insert(family, chain);
+    }
+    context.set_fonts(fonts);
+    FONTS_INSTALLED.store(true, Ordering::SeqCst);
+}
+
+/// The semibold face for headings, or the regular face if fonts were not installed.
+pub fn semibold() -> FontFamily {
+    if FONTS_INSTALLED.load(Ordering::SeqCst) {
+        FontFamily::Name("semibold".into())
+    } else {
+        FontFamily::Proportional
+    }
+}
+
+/// The medium face for buttons and labels, or the regular face if fonts were not installed.
+pub fn medium() -> FontFamily {
+    if FONTS_INSTALLED.load(Ordering::SeqCst) {
+        FontFamily::Name("medium".into())
+    } else {
+        FontFamily::Proportional
+    }
+}
 
 /// Applies the ClipCraft theme: dark surfaces, rounded widgets, a lime accent, readable type.
 pub fn apply_theme(context: &egui::Context) {
@@ -347,7 +408,7 @@ pub fn labelled_button_sized(
 ) -> Response {
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
-        FontId::proportional(14.0),
+        FontId::new(14.0, medium()),
         Color32::PLACEHOLDER,
     );
     let size = Vec2::new((galley.size().x + 52.0).max(min_width), 36.0);
@@ -377,7 +438,7 @@ pub fn labelled_button_sized(
         Pos2::new(rect.left() + 36.0, rect.center().y),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(14.0),
+        FontId::new(14.0, medium()),
         content,
     );
     response
@@ -458,7 +519,7 @@ pub fn pill_menu(
     tooltip: &str,
     content: impl FnOnce(&mut egui::Ui),
 ) -> Response {
-    let font = FontId::proportional(13.5);
+    let font = FontId::new(13.5, medium());
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), font.clone(), Color32::PLACEHOLDER);
@@ -493,7 +554,7 @@ pub fn pill_menu(
 
 /// A key-style label such as `F8`, painted at an exact size so it never stretches in a row.
 pub fn keycap(ui: &mut egui::Ui, text: &str) {
-    let font = FontId::proportional(12.0);
+    let font = FontId::new(12.0, medium());
     let galley = ui
         .painter()
         .layout_no_wrap(text.to_owned(), font.clone(), Color32::PLACEHOLDER);
@@ -526,4 +587,14 @@ pub fn status_pill(ui: &mut egui::Ui, dot: Color32, text: &str) {
         font,
         MUTED,
     );
+}
+
+/// A context with the app fonts installed and active, for tests that draw text.
+#[cfg(test)]
+pub fn test_context() -> egui::Context {
+    let context = egui::Context::default();
+    install_fonts(&context);
+    // Fonts take effect at the start of the next frame.
+    let _ = context.run(egui::RawInput::default(), |_| {});
+    context
 }

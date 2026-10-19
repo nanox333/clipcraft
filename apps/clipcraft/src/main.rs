@@ -28,7 +28,11 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "ClipCraft",
         options,
-        Box::new(|_| Ok(Box::new(ClipCraftApp::restored()))),
+        Box::new(|creation| {
+            // Fonts must be installed before the first frame uses a named family.
+            kit::install_fonts(&creation.egui_ctx);
+            Ok(Box::new(ClipCraftApp::restored()))
+        }),
     )
 }
 
@@ -404,7 +408,12 @@ impl ClipCraftApp {
                         Stroke::NONE,
                     ));
                     ui.add_space(2.0);
-                    ui.label(RichText::new("ClipCraft").color(TEXT).size(17.0).strong());
+                    ui.label(
+                        RichText::new("ClipCraft")
+                            .color(TEXT)
+                            .size(17.0)
+                            .family(kit::semibold()),
+                    );
                     ui.add_space(22.0);
 
                     // Capture state: honest about the fact that capture is not built yet.
@@ -459,7 +468,12 @@ impl ClipCraftApp {
 
         // Title row.
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Clips").color(TEXT).size(26.0).strong());
+            ui.label(
+                RichText::new("Clips")
+                    .color(TEXT)
+                    .size(26.0)
+                    .family(kit::semibold()),
+            );
             if self.library.is_some() {
                 let count = if self.search_text.trim().is_empty() {
                     format!("{total_count}")
@@ -669,8 +683,13 @@ impl ClipCraftApp {
             }
             ui.add_space(6.0);
             ui.add(
-                egui::Label::new(RichText::new(&entry.title).color(TEXT).size(22.0).strong())
-                    .truncate(),
+                egui::Label::new(
+                    RichText::new(&entry.title)
+                        .color(TEXT)
+                        .size(22.0)
+                        .family(kit::semibold()),
+                )
+                .truncate(),
             );
         });
         if back {
@@ -728,7 +747,12 @@ impl ClipCraftApp {
             .inner_margin(egui::Margin::same(20))
             .show(ui, |ui| {
                 ui.set_width((width - 42.0).max(0.0));
-                ui.label(RichText::new("Details").color(TEXT).size(16.0).strong());
+                ui.label(
+                    RichText::new("Details")
+                        .color(TEXT)
+                        .size(16.0)
+                        .family(kit::semibold()),
+                );
                 ui.add_space(6.0);
                 detail_row(ui, "Source", "Local video");
                 detail_row(ui, "Modified", &format_date(entry.modified_unix_seconds));
@@ -824,9 +848,12 @@ impl ClipCraftApp {
                     .corner_radius(egui::CornerRadius::same(10))
                     .inner_margin(egui::Margin::symmetric(14, 10))
                     .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.set_min_height(36.0);
-                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        // An exact row height: a centered layout would otherwise claim all the
+                        // height a scroll area offers.
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(ui.available_width(), 36.0),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
                             let (icon, _) =
                                 ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
                             kit::draw_icon(ui.painter(), icon.center(), Icon::Folder, MUTED, 0.8);
@@ -838,7 +865,8 @@ impl ClipCraftApp {
                                 browse = kit::labelled_button(ui, Icon::Folder, "Browse", false, true)
                                     .clicked();
                             });
-                        });
+                            },
+                        );
                     });
             });
             if browse {
@@ -1008,7 +1036,12 @@ fn empty_panel(
         );
         kit::draw_icon(ui.painter(), circle.center(), icon, MUTED, 1.9);
         ui.add_space(10.0);
-        ui.label(RichText::new(headline).color(TEXT).size(20.0).strong());
+        ui.label(
+            RichText::new(headline)
+                .color(TEXT)
+                .size(20.0)
+                .family(kit::semibold()),
+        );
         ui.label(RichText::new(help).color(MUTED));
         if let Some(button) = button {
             ui.add_space(8.0);
@@ -1027,7 +1060,12 @@ fn settings_header(ui: &mut egui::Ui, icon: Icon, title: &str, description: &str
         kit::draw_icon(ui.painter(), circle.center(), icon, LIME, 1.1);
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.label(RichText::new(title).color(TEXT).size(21.0).strong());
+            ui.label(
+                RichText::new(title)
+                    .color(TEXT)
+                    .size(21.0)
+                    .family(kit::semibold()),
+            );
             ui.label(RichText::new(description).color(MUTED));
         });
     });
@@ -1042,7 +1080,12 @@ fn setting_panel(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui
         .inner_margin(egui::Margin::same(22))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new(title).color(TEXT).size(16.0).strong());
+            ui.label(
+                RichText::new(title)
+                    .color(TEXT)
+                    .size(16.0)
+                    .family(kit::semibold()),
+            );
             ui.add_space(4.0);
             body(ui);
         });
@@ -1208,7 +1251,7 @@ fn clip_card(
     let text_left = card.left() + 14.0;
     let mut title = egui::text::LayoutJob::simple_singleline(
         entry.title.clone(),
-        egui::FontId::proportional(15.0),
+        egui::FontId::new(15.0, kit::medium()),
         TEXT,
     );
     title.wrap.max_width = width - 28.0;
@@ -1389,7 +1432,7 @@ fn paint_video_placeholder(
         badge.center(),
         egui::Align2::CENTER_CENTER,
         entry.extension.to_uppercase(),
-        egui::FontId::proportional(10.5),
+        egui::FontId::new(10.5, kit::medium()),
         TEXT,
     );
     let duration = format_duration(entry.probe.as_ref());
@@ -1406,7 +1449,7 @@ fn paint_video_placeholder(
         duration_badge.center(),
         egui::Align2::CENTER_CENTER,
         duration,
-        egui::FontId::proportional(12.0),
+        egui::FontId::new(12.0, kit::medium()),
         TEXT,
     );
 }
@@ -1812,7 +1855,7 @@ mod tests {
 
     #[test]
     fn every_screen_draws_at_any_window_size_without_panicking() {
-        let context = egui::Context::default();
+        let context = kit::test_context();
         let sizes = [
             (1.0, 1.0),
             (120.0, 80.0),

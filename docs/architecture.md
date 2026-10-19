@@ -29,6 +29,11 @@ are consumed as pinned git dependencies ([ADR 0004](adr/0004-filmcraft-crates.md
 - **Playback:** `clipcraft-player` decodes a clip on a worker thread against a wall clock and hands
   RGBA frames to the UI. It reads files in place, skips frames when decoding falls behind, applies
   only the latest of several queued seeks, and reports a decoder panic as a failure.
+- **Typeface:** the UI uses Inter (SIL OFL 1.1) in Regular, Medium, and SemiBold, embedded from
+  `assets/fonts/` and installed by `kit::install_fonts` as the proportional face plus named
+  `medium` and `semibold` families (egui has no synthetic bold). egui's own fonts stay behind it
+  as fallbacks for symbols and emoji. It covers Latin, Greek and Cyrillic; CJK, Arabic and Thai
+  titles are not covered yet (see the shared `craft-fonts` repo for candidates).
 - **Look and feel:** `apps/clipcraft/src/kit.rs` holds the palette, the egui theme, painted icons and
   shared widgets (buttons, chips, pill menus, sliders, gradients). Icons are drawn from strokes and
   polygons, not text glyphs, because egui's bundled fonts miss many symbols. Every computed width is
