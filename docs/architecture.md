@@ -29,6 +29,10 @@ are consumed as pinned git dependencies ([ADR 0004](adr/0004-filmcraft-crates.md
 - **Playback:** `clipcraft-player` decodes a clip on a worker thread against a wall clock and hands
   RGBA frames to the UI. It reads files in place, skips frames when decoding falls behind, applies
   only the latest of several queued seeks, and reports a decoder panic as a failure.
+- **Look and feel:** `apps/clipcraft/src/kit.rs` holds the palette, the egui theme, painted icons and
+  shared widgets (buttons, chips, pill menus, sliders, gradients). Icons are drawn from strokes and
+  polygons, not text glyphs, because egui's bundled fonts miss many symbols. Every computed width is
+  clamped at zero, since egui panics on a negative one.
 - **Sound:** `clipcraft-player::audio` decodes a clip's audio at the output device's rate into a
   bounded feed. The device callback (`clipcraft-audio-out`, the only crate that talks to the OS
   audio system) drains it and counts only frames it really delivered; that count is the playback

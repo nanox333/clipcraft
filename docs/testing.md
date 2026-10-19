@@ -15,7 +15,9 @@ Current focused checks include `cargo test -p clipcraft-time` for time math, `ca
 including byte-corruption and oversized-header cases, `cargo test -p clipcraft-player` for playback, sound, speed, stepping, looping, track selection, stalled devices, and thumbnails (it encodes its own H.264 clips in pure Rust, so it needs no
 external tools), `cargo test -p clipcraft-frame` for queue limits,
 `cargo test -p clipcraft-engine` for bounded local scans and command dispatch, and
-`cargo test -p clipcraft` for UI formatting helpers.
+`cargo test -p clipcraft` for UI helpers, keyboard handling, and smoke tests that draw every screen
+(library, empty states, details, settings, the player windowed and fullscreen) at window sizes from
+1×1 to 6000×4000 with awkward titles, so a layout that panics fails the gate.
 
 ## Required evidence by area
 

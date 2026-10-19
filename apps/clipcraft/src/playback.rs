@@ -4,18 +4,16 @@
 //! playback speed, loop, an audio-track picker, and fullscreen with controls that hide when the
 //! pointer rests. Every control also has a key (see [`Playback::handle_keys`]).
 
+use crate::kit::{self, Icon, LIME, MUTED, PANEL, TEXT};
 use clipcraft_audio_out::{AudioOutput, AudioOutputError};
 use clipcraft_player::{ClipInfoSummary, Player, PlayerEvent};
 use clipcraft_time::Tick;
 use eframe::egui;
-use egui::{Align2, Color32, FontId, Painter, Pos2, RichText, Sense, Stroke, Vec2};
+use egui::{Align2, Color32, FontId, Pos2, RichText, Sense, Vec2};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-const MUTED: Color32 = Color32::from_rgb(157, 157, 164);
-const TEXT: Color32 = Color32::from_rgb(242, 242, 244);
-const LIME: Color32 = Color32::from_rgb(190, 255, 43);
-const TRACK: Color32 = Color32::from_rgb(58, 58, 64);
+const TRACK: Color32 = Color32::from_rgb(62, 62, 69);
 /// Seconds skipped by the arrow keys and by the skip buttons.
 const SMALL_SKIP_SECONDS: f64 = 5.0;
 const BIG_SKIP_SECONDS: f64 = 10.0;
@@ -26,6 +24,8 @@ const AUDIO_RETRY_DELAY: Duration = Duration::from_secs(1);
 const AUDIO_RETRY_LIMIT: u32 = 5;
 /// Fullscreen controls hide after the pointer has rested this long while playing.
 const CONTROLS_HIDE_AFTER: Duration = Duration::from_millis(2500);
+/// Height of the control card (seek bar and buttons), used to size the picture above it.
+const CONTROLS_HEIGHT: f32 = 100.0;
 /// Speeds offered by the menu and the `[` / `]` keys.
 pub const SPEEDS: [f64; 10] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 3.0, 4.0];
 const NORMAL_SPEED_INDEX: usize = 3;
@@ -383,18 +383,24 @@ impl Playback {
     // ---- drawing --------------------------------------------------------------------------
 
     /// Draws the picture area and fills it. Returns the response for clicks.
-    fn draw_picture(&mut self, ui: &mut egui::Ui, size: Vec2) -> egui::Response {
+    fn draw_picture(&mut self, ui: &mut egui::Ui, size: Vec2, rounded: bool) -> egui::Response {
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-        ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
+        let corner = if rounded { 14 } else { 0 };
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(corner), Color32::BLACK);
         let message = match (&self.texture, &self.error) {
             (Some(texture), _) => {
                 let fitted = fit(texture.size_vec2(), rect);
-                ui.painter().image(
-                    texture.id(),
-                    fitted,
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    Color32::WHITE,
-                );
+                // Round the picture's corners only when it reaches the corners of its area.
+                let fills = (fitted.width() - rect.width()).abs() < 1.5
+                    && (fitted.height() - rect.height()).abs() < 1.5;
+                egui::Image::from_texture(egui::load::SizedTexture::from_handle(texture))
+                    .corner_radius(egui::CornerRadius::same(if rounded && fills {
+                        corner
+                    } else {
+                        0
+                    }))
+                    .paint_at(ui, fitted);
                 None
             }
             (None, Some(message)) => Some(message.as_str()),
@@ -418,12 +424,24 @@ impl Playback {
         response
     }
 
-    /// The picture with its controls underneath, for the detail view.
+    /// The picture with its controls underneath, for the detail view. The picture takes the
+    /// largest 16:9 area that leaves room for the controls.
     pub fn show(&mut self, ui: &mut egui::Ui) {
         self.handle_keys(ui.ctx());
-        self.draw_picture(ui, Vec2::new(ui.available_width(), 420.0));
-        ui.add_space(8.0);
-        self.controls(ui);
+        let width = ui.available_width();
+        let room = (ui.available_height() - CONTROLS_HEIGHT - 12.0).max(220.0);
+        let height = (width * 9.0 / 16.0).min(room);
+        self.draw_picture(ui, Vec2::new(width, height), true);
+        ui.add_space(12.0);
+        egui::Frame::new()
+            .fill(PANEL)
+            .stroke(egui::Stroke::new(1.0_f32, kit::BORDER))
+            .corner_radius(egui::CornerRadius::same(14))
+            .inner_margin(egui::Margin::symmetric(16, 12))
+            .show(ui, |ui| {
+                ui.set_width((width - 34.0).max(0.0));
+                self.controls(ui);
+            });
     }
 
     /// The picture filling the whole window, with controls that fade away when the pointer rests.
@@ -438,24 +456,28 @@ impl Playback {
             self.last_activity = Instant::now();
         }
         let size = ui.available_size();
-        let bar_height = 92.0;
-        let picture = self.draw_picture(ui, size);
+        let picture = self.draw_picture(ui, size, false);
         let rect = picture.rect;
+        let bar_height = CONTROLS_HEIGHT + 24.0;
 
         let near_bar = ui
             .input(|input| input.pointer.hover_pos())
-            .is_some_and(|pointer| pointer.y > rect.bottom() - bar_height);
+            .is_some_and(|pointer| pointer.y > rect.bottom() - bar_height - 40.0);
         let idle = self.last_activity.elapsed();
         let visible = !self.playing || near_bar || idle < CONTROLS_HIDE_AFTER;
         if visible {
+            // A soft gradient, not a hard bar, so the picture stays visible behind the controls.
+            let fade = egui::Rect::from_min_max(
+                egui::pos2(rect.left(), rect.bottom() - bar_height - 70.0),
+                rect.max,
+            );
+            kit::bottom_fade(ui.painter(), fade, 215);
             let bar = egui::Rect::from_min_max(
                 egui::pos2(rect.left(), rect.bottom() - bar_height),
                 rect.max,
             );
-            ui.painter()
-                .rect_filled(bar, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 170));
             let mut inner =
-                ui.new_child(egui::UiBuilder::new().max_rect(bar.shrink2(Vec2::new(18.0, 8.0))));
+                ui.new_child(egui::UiBuilder::new().max_rect(bar.shrink2(Vec2::new(28.0, 10.0))));
             self.controls(&mut inner);
             if self.playing && !near_bar {
                 ui.ctx()
@@ -488,14 +510,24 @@ impl Playback {
             self.playing = true;
         }
 
-        ui.add_space(4.0);
+        ui.add_space(2.0);
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.spacing_mut().item_spacing.x = 4.0;
             let enabled = usable;
-            if icon_button(ui, Icon::SkipBack, false, enabled, "Back 10 s (J)").clicked() {
+            if kit::icon_button(ui, Icon::SkipBack, 36.0, false, enabled, "Back 10 s (J)").clicked()
+            {
                 self.skip(-BIG_SKIP_SECONDS);
             }
-            if icon_button(ui, Icon::StepBack, false, enabled, "Previous frame (,)").clicked() {
+            if kit::icon_button(
+                ui,
+                Icon::StepBack,
+                36.0,
+                false,
+                enabled,
+                "Previous frame (,)",
+            )
+            .clicked()
+            {
                 self.step(-1);
             }
             let play = if self.playing {
@@ -511,25 +543,47 @@ impl Playback {
             if play_button(ui, play, enabled, tooltip).clicked() {
                 self.toggle();
             }
-            if icon_button(ui, Icon::StepForward, false, enabled, "Next frame (.)").clicked() {
+            if kit::icon_button(
+                ui,
+                Icon::StepForward,
+                36.0,
+                false,
+                enabled,
+                "Next frame (.)",
+            )
+            .clicked()
+            {
                 self.step(1);
             }
-            if icon_button(ui, Icon::SkipForward, false, enabled, "Forward 10 s (L)").clicked() {
+            if kit::icon_button(
+                ui,
+                Icon::SkipForward,
+                36.0,
+                false,
+                enabled,
+                "Forward 10 s (L)",
+            )
+            .clicked()
+            {
                 self.skip(BIG_SKIP_SECONDS);
             }
             ui.add_space(10.0);
             ui.label(
-                RichText::new(format!(
-                    "{} / {}",
-                    format_clock(self.position),
-                    format_clock(self.duration())
-                ))
-                .color(TEXT)
-                .monospace(),
+                RichText::new(format_clock(self.position))
+                    .color(TEXT)
+                    .monospace()
+                    .size(14.0),
+            );
+            ui.add_space(2.0);
+            ui.label(
+                RichText::new(format!("/ {}", format_clock(self.duration())))
+                    .color(MUTED)
+                    .monospace()
+                    .size(14.0),
             );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.spacing_mut().item_spacing.x = 4.0;
                 let fullscreen = if self.fullscreen {
                     Icon::ExitFullscreen
                 } else {
@@ -540,10 +594,13 @@ impl Playback {
                 } else {
                     "Fullscreen (F)"
                 };
-                if icon_button(ui, fullscreen, self.fullscreen, true, tooltip).clicked() {
+                if kit::icon_button(ui, fullscreen, 36.0, self.fullscreen, true, tooltip).clicked()
+                {
                     self.toggle_fullscreen();
                 }
-                if icon_button(ui, Icon::Loop, self.prefs.looping, true, "Loop (R)").clicked() {
+                if kit::icon_button(ui, Icon::Loop, 36.0, self.prefs.looping, true, "Loop (R)")
+                    .clicked()
+                {
                     self.toggle_loop();
                 }
                 self.speed_menu(ui);
@@ -553,31 +610,27 @@ impl Playback {
                 }
             });
         });
-        if let Some(note) = &self.audio_note {
-            ui.add_space(2.0);
-            ui.label(RichText::new(note).color(MUTED).small());
+        // The note would run off the bottom edge over a fullscreen picture; it shows windowed.
+        if let Some(note) = self.audio_note.as_ref().filter(|_| !self.fullscreen) {
+            ui.label(RichText::new(note).color(MUTED).size(12.0));
         }
     }
 
     fn speed_menu(&mut self, ui: &mut egui::Ui) {
         let label = format!("{}×", speed_label(self.speed()));
         let mut choice = None;
-        ui.menu_button(RichText::new(label).color(TEXT).monospace(), |ui| {
+        kit::pill_menu(ui, &label, "Speed ([ and ])", |ui| {
             for (index, speed) in SPEEDS.iter().enumerate() {
-                let selected = index == self.speed_index;
-                let text = format!(
-                    "{}{}×",
-                    if selected { "• " } else { "   " },
-                    speed_label(*speed)
-                );
-                if ui.button(text).clicked() {
+                let text = format!("{}×", speed_label(*speed));
+                if ui
+                    .selectable_label(index == self.speed_index, text)
+                    .clicked()
+                {
                     choice = Some(index);
                     ui.close();
                 }
             }
-        })
-        .response
-        .on_hover_text("Speed ([ and ])");
+        });
         if let Some(index) = choice {
             self.set_speed_index(index);
         }
@@ -593,23 +646,18 @@ impl Playback {
             return;
         };
         let mut choice = None;
-        ui.menu_button(
-            RichText::new(format!("Audio {}", self.audio_track + 1)).color(TEXT),
-            |ui| {
-                for (index, track) in tracks.iter().enumerate() {
-                    let selected = index == self.audio_track;
-                    if ui
-                        .button(format!("{}{track}", if selected { "• " } else { "   " }))
-                        .clicked()
-                    {
-                        choice = Some(index);
-                        ui.close();
-                    }
+        let label = format!("Audio {}", self.audio_track + 1);
+        kit::pill_menu(ui, &label, "Audio track", |ui| {
+            for (index, track) in tracks.iter().enumerate() {
+                if ui
+                    .selectable_label(index == self.audio_track, track)
+                    .clicked()
+                {
+                    choice = Some(index);
+                    ui.close();
                 }
-            },
-        )
-        .response
-        .on_hover_text("Audio track");
+            }
+        });
         if let Some(index) = choice {
             self.select_audio(index);
         }
@@ -617,19 +665,19 @@ impl Playback {
 
     fn volume_controls(&mut self, ui: &mut egui::Ui) {
         // Right-to-left layout: the slider is added first so the speaker ends up on its left.
-        let mut volume = if self.prefs.muted {
+        let volume = if self.prefs.muted {
             0.0
         } else {
             self.prefs.volume
         };
-        ui.spacing_mut().slider_width = 80.0;
-        let slider = ui.add(egui::Slider::new(&mut volume, 0.0..=1.0).show_value(false));
-        if slider.changed() {
-            self.set_volume(volume);
+        let tooltip = format!("Volume {}% (↑ ↓)", (volume * 100.0).round() as u32);
+        if let Some(new) = kit::slim_slider(ui, 96.0, volume, true, &tooltip) {
+            self.set_volume(new);
         }
-        slider.on_hover_text(format!("Volume {}% (↑ ↓)", (volume * 100.0).round() as u32));
         let off = self.prefs.muted || self.prefs.volume == 0.0 || self.audio.is_none();
-        if speaker_button(ui, off).clicked() {
+        let icon = if off { Icon::SpeakerOff } else { Icon::Speaker };
+        let tip = if off { "Unmute (M)" } else { "Mute (M)" };
+        if kit::icon_button(ui, icon, 36.0, false, true, tip).clicked() {
             self.toggle_mute();
         }
     }
@@ -650,7 +698,7 @@ fn seek_bar(ui: &mut egui::Ui, width: f32, position: f64, duration: f64, enabled
     } else {
         Sense::hover()
     };
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 20.0), sense);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width.max(0.0), 20.0), sense);
     let track = egui::Rect::from_center_size(rect.center(), Vec2::new(rect.width(), 5.0));
     let fraction = if duration > 0.0 {
         (position / duration).clamp(0.0, 1.0) as f32
@@ -689,182 +737,6 @@ fn seek_bar(ui: &mut egui::Ui, width: f32, position: f64, duration: f64, enabled
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Icon {
-    Play,
-    Pause,
-    StepBack,
-    StepForward,
-    SkipBack,
-    SkipForward,
-    Loop,
-    Fullscreen,
-    ExitFullscreen,
-}
-
-fn icon_color(enabled: bool, hovered: bool, active: bool) -> Color32 {
-    if !enabled {
-        Color32::from_rgb(90, 90, 96)
-    } else if hovered || active {
-        LIME
-    } else {
-        TEXT
-    }
-}
-
-fn icon_button(
-    ui: &mut egui::Ui,
-    icon: Icon,
-    active: bool,
-    enabled: bool,
-    tooltip: &str,
-) -> egui::Response {
-    let sense = if enabled {
-        Sense::click()
-    } else {
-        Sense::hover()
-    };
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(32.0), sense);
-    draw_icon(
-        ui.painter(),
-        rect.center(),
-        icon,
-        icon_color(enabled, response.hovered(), active),
-    );
-    response.on_hover_text(tooltip)
-}
-
-/// The round primary button.
-fn play_button(ui: &mut egui::Ui, icon: Icon, enabled: bool, tooltip: &str) -> egui::Response {
-    let sense = if enabled {
-        Sense::click()
-    } else {
-        Sense::hover()
-    };
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(38.0), sense);
-    let hovered = response.hovered() && enabled;
-    ui.painter().circle_filled(
-        rect.center(),
-        18.0,
-        if hovered {
-            LIME
-        } else {
-            Color32::from_rgb(52, 52, 56)
-        },
-    );
-    draw_icon(
-        ui.painter(),
-        rect.center(),
-        icon,
-        if hovered {
-            Color32::BLACK
-        } else {
-            icon_color(enabled, false, false)
-        },
-    );
-    response.on_hover_text(tooltip)
-}
-
-/// Draws `icon` centered on `c`, about 18 px across.
-fn draw_icon(painter: &Painter, c: Pos2, icon: Icon, color: Color32) {
-    let stroke = Stroke::new(1.8_f32, color);
-    let fill = |points: Vec<Pos2>| {
-        painter.add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
-    };
-    let at = |x: f32, y: f32| c + Vec2::new(x, y);
-    match icon {
-        Icon::Play => fill(vec![at(-4.0, -7.0), at(7.0, 0.0), at(-4.0, 7.0)]),
-        Icon::Pause => {
-            for x in [-4.0_f32, 4.0] {
-                painter.rect_filled(
-                    egui::Rect::from_center_size(at(x, 0.0), Vec2::new(3.5, 12.0)),
-                    1.0,
-                    color,
-                );
-            }
-        }
-        Icon::StepForward => {
-            fill(vec![at(-6.0, -6.0), at(3.0, 0.0), at(-6.0, 6.0)]);
-            painter.rect_filled(
-                egui::Rect::from_center_size(at(6.0, 0.0), Vec2::new(2.5, 12.0)),
-                0.5,
-                color,
-            );
-        }
-        Icon::StepBack => {
-            fill(vec![at(6.0, -6.0), at(-3.0, 0.0), at(6.0, 6.0)]);
-            painter.rect_filled(
-                egui::Rect::from_center_size(at(-6.0, 0.0), Vec2::new(2.5, 12.0)),
-                0.5,
-                color,
-            );
-        }
-        Icon::SkipBack | Icon::SkipForward => {
-            // An open circle with an arrowhead where it starts, and "10" inside.
-            let direction: f32 = if icon == Icon::SkipForward { 1.0 } else { -1.0 };
-            let radius = 9.0_f32;
-            let start = -std::f32::consts::FRAC_PI_2 + direction * 0.45;
-            let points: Vec<Pos2> = (0..=22)
-                .map(|step| {
-                    let angle = start - direction * (step as f32) * 0.2;
-                    c + Vec2::new(angle.cos(), angle.sin()) * radius
-                })
-                .collect();
-            painter.add(egui::Shape::line(points, stroke));
-            let tip = c + Vec2::new(start.cos(), start.sin()) * radius;
-            let tangent = Vec2::new(-start.sin(), start.cos()) * direction;
-            let normal = Vec2::new(tangent.y, -tangent.x);
-            fill(vec![
-                tip + tangent * 4.5,
-                tip - tangent * 1.5 + normal * 3.5,
-                tip - tangent * 1.5 - normal * 3.5,
-            ]);
-            painter.text(
-                c,
-                Align2::CENTER_CENTER,
-                "10",
-                FontId::proportional(8.5),
-                color,
-            );
-        }
-        Icon::Loop => {
-            let line = |points: [Pos2; 3]| {
-                painter.add(egui::Shape::line(points.to_vec(), stroke));
-            };
-            line([at(-9.0, 2.0), at(-9.0, -3.0), at(6.0, -3.0)]);
-            fill(vec![at(5.0, -7.0), at(10.0, -3.0), at(5.0, 1.0)]);
-            line([at(9.0, -2.0), at(9.0, 3.0), at(-6.0, 3.0)]);
-            fill(vec![at(-5.0, -1.0), at(-10.0, 3.0), at(-5.0, 7.0)]);
-        }
-        Icon::Fullscreen => {
-            for (sx, sy) in [(-1.0_f32, -1.0_f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-                let corner = at(sx * 8.0, sy * 8.0);
-                painter.add(egui::Shape::line(
-                    vec![
-                        corner + Vec2::new(-sx * 5.0, 0.0),
-                        corner,
-                        corner + Vec2::new(0.0, -sy * 5.0),
-                    ],
-                    stroke,
-                ));
-            }
-        }
-        Icon::ExitFullscreen => {
-            for (sx, sy) in [(-1.0_f32, -1.0_f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-                let corner = at(sx * 3.5, sy * 3.5);
-                painter.add(egui::Shape::line(
-                    vec![
-                        corner + Vec2::new(sx * 5.0, 0.0),
-                        corner,
-                        corner + Vec2::new(0.0, sy * 5.0),
-                    ],
-                    stroke,
-                ));
-            }
-        }
-    }
-}
-
 /// Largest rectangle with `size`'s aspect ratio that fits in `bounds`, centered.
 fn fit(size: Vec2, bounds: egui::Rect) -> egui::Rect {
     if size.x <= 0.0 || size.y <= 0.0 {
@@ -874,49 +746,39 @@ fn fit(size: Vec2, bounds: egui::Rect) -> egui::Rect {
     egui::Rect::from_center_size(bounds.center(), size * scale)
 }
 
-/// A speaker icon: with a slash when sound is off.
-fn speaker_button(ui: &mut egui::Ui, off: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
-    let painter = ui.painter();
-    let color = if response.hovered() { LIME } else { TEXT };
-    let center = rect.center();
-    // Speaker body: a small box and a cone.
-    painter.rect_filled(
-        egui::Rect::from_center_size(center + Vec2::new(-5.0, 0.0), Vec2::new(4.0, 6.0)),
-        0.0,
-        color,
-    );
-    painter.add(egui::Shape::convex_polygon(
-        vec![
-            center + Vec2::new(-3.0, -3.0),
-            center + Vec2::new(2.0, -7.0),
-            center + Vec2::new(2.0, 7.0),
-            center + Vec2::new(-3.0, 3.0),
-        ],
-        color,
-        Stroke::NONE,
-    ));
-    if off {
-        painter.line_segment(
-            [center + Vec2::new(5.0, -5.0), center + Vec2::new(11.0, 5.0)],
-            Stroke::new(2.0_f32, color),
-        );
-        painter.line_segment(
-            [center + Vec2::new(11.0, -5.0), center + Vec2::new(5.0, 5.0)],
-            Stroke::new(2.0_f32, color),
-        );
+/// The round primary play/pause button.
+fn play_button(ui: &mut egui::Ui, icon: Icon, enabled: bool, tooltip: &str) -> egui::Response {
+    let sense = if enabled {
+        Sense::click()
     } else {
-        for radius in [5.0_f32, 9.0] {
-            let points: Vec<Pos2> = (-4..=4)
-                .map(|step| {
-                    let angle = step as f32 * 0.19;
-                    center + Vec2::new(3.0 + radius * angle.cos() * 0.9, radius * angle.sin())
-                })
-                .collect();
-            painter.add(egui::Shape::line(points, Stroke::new(1.6_f32, color)));
-        }
-    }
-    response.on_hover_text(if off { "Unmute (M)" } else { "Mute (M)" })
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(42.0), sense);
+    let hovered = response.hovered() && enabled;
+    let fill = if !enabled {
+        Color32::from_rgb(44, 44, 50)
+    } else if hovered {
+        Color32::from_rgb(210, 255, 90)
+    } else {
+        LIME
+    };
+    ui.painter().circle_filled(rect.center(), 21.0, fill);
+    // The triangle sits a little right of center so it looks centered.
+    let offset = if icon == Icon::Play {
+        Vec2::new(1.0, 0.0)
+    } else {
+        Vec2::ZERO
+    };
+    kit::draw_icon(
+        ui.painter(),
+        rect.center() + offset,
+        icon,
+        Color32::BLACK,
+        1.1,
+    );
+    response
+        .on_hover_text(tooltip)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// `1`, `0.5`, `1.25`: a speed without trailing zeros.
@@ -1217,5 +1079,60 @@ mod tests {
         let (mut playback, _) = opened(10.0, 3);
         playback.select_audio(2);
         assert_eq!(playback.audio_track, 2);
+    }
+
+    #[test]
+    fn the_player_draws_windowed_and_fullscreen_at_any_size_without_panicking() {
+        let (mut playback, context) = opened(125.0, 3);
+        let context_ref = &context;
+        let draw = |playback: &mut Playback, size: (f32, f32), fullscreen: bool| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::vec2(size.0, size.1),
+                )),
+                ..Default::default()
+            };
+            let _ = context_ref.run(input, |context| {
+                crate::kit::apply_theme(context);
+                egui::CentralPanel::default().show(context, |ui| {
+                    if fullscreen {
+                        playback.show_fullscreen(ui);
+                    } else {
+                        playback.show(ui);
+                    }
+                });
+            });
+        };
+        let sizes = [
+            (1.0, 1.0),
+            (100.0, 60.0),
+            (400.0, 300.0),
+            (1280.0, 720.0),
+            (6000.0, 4000.0),
+        ];
+        for size in sizes {
+            // No picture yet, then with one, then paused, with an error, and at the end.
+            draw(&mut playback, size, false);
+            draw(&mut playback, size, true);
+            playback.apply(
+                frame(64, 36, 64 * 36 * 4, Tick::from_seconds_f64(3.0)),
+                &context,
+            );
+            draw(&mut playback, size, false);
+            draw(&mut playback, size, true);
+            playback.playing = false;
+            draw(&mut playback, size, true);
+            playback.position = Tick::from_seconds_f64(1e9);
+            draw(&mut playback, size, false);
+            playback.error = Some("A problem".to_owned());
+            draw(&mut playback, size, false);
+            draw(&mut playback, size, true);
+            playback.error = None;
+            playback.playing = true;
+        }
+        // A clip with a zero or tiny duration must not divide by zero in the seek bar.
+        playback.info.as_mut().expect("info").duration = Tick::ZERO;
+        draw(&mut playback, (800.0, 600.0), false);
     }
 }
