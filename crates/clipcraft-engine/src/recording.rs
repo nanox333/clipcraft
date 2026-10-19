@@ -78,6 +78,53 @@ impl Container {
     }
 }
 
+/// The video compression format inside the file.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VideoCodec {
+    /// H.264 (AVC), written by FilmCraft's pure-Rust encoder.
+    #[default]
+    H264,
+    /// H.265 (HEVC): smaller files at the same quality.
+    H265,
+}
+
+impl VideoCodec {
+    /// Every codec, in menu order.
+    pub const ALL: [VideoCodec; 2] = [VideoCodec::H264, VideoCodec::H265];
+
+    /// The name shown to people.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::H264 => "H.264",
+            Self::H265 => "H.265",
+        }
+    }
+
+    /// A short description.
+    pub fn detail(self) -> &'static str {
+        match self {
+            Self::H264 => "Works everywhere and encodes fast.",
+            Self::H265 => "About a third smaller at the same quality.",
+        }
+    }
+
+    /// Why this codec cannot be written yet, or `None` when it can.
+    pub fn unavailable_reason(self) -> Option<&'static str> {
+        match self {
+            Self::H264 => None,
+            Self::H265 => Some(
+                "H.265 needs a hardware encoder (NVIDIA, Apple, or Intel/AMD); there is no software encoder yet.",
+            ),
+        }
+    }
+
+    /// True when ClipCraft can write this codec today.
+    pub fn is_available(self) -> bool {
+        self.unavailable_reason().is_none()
+    }
+}
+
 /// What part of the machine is recorded.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -311,6 +358,8 @@ pub struct Reframe {
 pub struct RecordingSettings {
     /// File format.
     pub container: Container,
+    /// Video compression format.
+    pub codec: VideoCodec,
     /// What is captured.
     pub source: CaptureSource,
     /// The shape of the clip's frame.
@@ -335,6 +384,7 @@ impl Default for RecordingSettings {
     fn default() -> Self {
         Self {
             container: Container::Mp4,
+            codec: VideoCodec::H264,
             source: CaptureSource::Game,
             shape: OutputShape::Source,
             framing: Framing::Original,
@@ -364,6 +414,9 @@ impl RecordingSettings {
     pub fn sanitized(mut self) -> Self {
         if !self.container.is_available() {
             self.container = Container::Mp4;
+        }
+        if !self.codec.is_available() {
+            self.codec = VideoCodec::H264;
         }
         self.height = self.height.clamp(MIN_OUTPUT_EDGE, 4_320);
         self.frames_per_second = self.frames_per_second.clamp(1, 240);
@@ -669,6 +722,17 @@ mod tests {
             let kbps = QualityPreset::Ultra.video_kbps(height, 1_000);
             assert!((MIN_VIDEO_KBPS..=MAX_VIDEO_KBPS).contains(&kbps));
         }
+    }
+
+    #[test]
+    fn h265_is_unavailable_and_falls_back_to_h264() {
+        assert!(VideoCodec::H264.is_available());
+        let settings = RecordingSettings {
+            codec: VideoCodec::H265,
+            ..RecordingSettings::default()
+        }
+        .sanitized();
+        assert_eq!(settings.codec, VideoCodec::H264);
     }
 
     #[test]

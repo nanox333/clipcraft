@@ -176,7 +176,6 @@ pub enum Icon {
     Library,
     Gear,
     Import,
-    Camera,
 }
 
 /// Draws `icon` centered on `c`, about 18 px across at `scale` 1.0.
@@ -343,16 +342,6 @@ pub fn draw_icon(painter: &Painter, c: Pos2, icon: Icon, color: Color32, scale: 
             line(&[at(-8.0, 2.0), at(-8.0, 7.0), at(8.0, 7.0), at(8.0, 2.0)]);
             line(&[at(0.0, -8.0), at(0.0, 3.0)]);
             line(&[at(-4.0, -1.0), at(0.0, 3.5), at(4.0, -1.0)]);
-        }
-        Icon::Camera => {
-            painter.rect_stroke(
-                Rect::from_center_size(at(-1.5, 0.0), Vec2::new(14.0, 12.0) * scale),
-                3.0 * scale,
-                stroke,
-                egui::StrokeKind::Inside,
-            );
-            line(&[at(5.5, -2.0), at(10.0, -4.5), at(10.0, 4.5), at(5.5, 2.0)]);
-            painter.circle_stroke(at(-1.5, 0.0), 2.4 * scale, stroke);
         }
     }
 }
