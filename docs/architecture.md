@@ -33,8 +33,9 @@ are consumed as pinned git dependencies ([ADR 0004](adr/0004-filmcraft-crates.md
   bounded feed. The device callback (`clipcraft-audio-out`, the only crate that talks to the OS
   audio system) drains it and counts only frames it really delivered; that count is the playback
   clock, so the picture follows the sound and an underrun pauses the picture instead of desyncing
-  it. With no device, or after a device error, playback keeps time with the wall clock, and the app
-  restarts a failed device a few times.
+  it. With no device, after a device error, or when a device stalls silently, playback keeps time
+  with the wall clock, and the app restarts a failed device a few times. Speed changes use a small
+  WSOLA time-stretcher (`clipcraft-player::stretch`) so pitch is kept; 1× bypasses it.
 - **Thumbnails:** `clipcraft-player::thumbnail` decodes a frame about a tenth into the clip, reduces it
   in the decoder's native format before converting to RGBA, and stores a 320 px JPEG in a bounded,
   atomically written cache. The app creates textures only for visible cards, a few per frame.

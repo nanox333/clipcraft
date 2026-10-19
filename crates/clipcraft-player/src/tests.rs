@@ -26,10 +26,19 @@ fn make_clip_with_sound() -> Vec<u8> {
     build_clip(true)
 }
 
+/// The same clip with one second of sound per entry: a sine tone at each pitch, as separate audio tracks.
+fn make_clip_with_tracks(tones: &[f64]) -> Vec<u8> {
+    build_clip_with(tones)
+}
+
 const SOUND_RATE: u32 = 48_000;
 const TONE_HZ: f64 = 440.0;
 
 fn build_clip(sound: bool) -> Vec<u8> {
+    build_clip_with(if sound { &[TONE_HZ] } else { &[] })
+}
+
+fn build_clip_with(tones: &[f64]) -> Vec<u8> {
     let mut config = EncoderConfig::new(WIDTH, HEIGHT, FPS, 1);
     config.rate = RateControl::Crf(10.0);
     config.bframes = 0;
@@ -48,19 +57,22 @@ fn build_clip(sound: bool) -> Vec<u8> {
     let track = writer
         .add_track(TrackConfig::new(entry, FPS))
         .expect("track");
-    let sound_track = sound.then(|| {
-        let pcm = filmcraft_isobmff::PcmConfig {
-            bits: 16,
-            float: false,
-            big_endian: false,
-            signed: true,
-            channels: 1,
-            sample_rate: f64::from(SOUND_RATE),
-        };
-        writer
-            .add_track(TrackConfig::new(SampleEntry::pcm(pcm), SOUND_RATE))
-            .expect("sound track")
-    });
+    let sound_tracks: Vec<usize> = tones
+        .iter()
+        .map(|_| {
+            let pcm = filmcraft_isobmff::PcmConfig {
+                bits: 16,
+                float: false,
+                big_endian: false,
+                signed: true,
+                channels: 1,
+                sample_rate: f64::from(SOUND_RATE),
+            };
+            writer
+                .add_track(TrackConfig::new(SampleEntry::pcm(pcm), SOUND_RATE))
+                .expect("sound track")
+        })
+        .collect();
 
     let mut write = |packets: Vec<filmcraft_h264enc::Packet>| {
         for packet in packets {
@@ -90,14 +102,14 @@ fn build_clip(sound: bool) -> Vec<u8> {
         write(encoder.encode(&frame, i64::from(index)).expect("encode"));
     }
     write(encoder.flush());
-    if let Some(sound_track) = sound_track {
+    for (&sound_track, &tone) in sound_tracks.iter().zip(tones) {
         // One second of tone in 0.1 s chunks.
         for chunk in 0..10_u32 {
             let bytes: Vec<u8> = (0..SOUND_RATE / 10)
                 .flat_map(|n| {
                     let index = f64::from(chunk * (SOUND_RATE / 10) + n);
                     let value =
-                        (index * TONE_HZ * std::f64::consts::TAU / f64::from(SOUND_RATE)).sin();
+                        (index * tone * std::f64::consts::TAU / f64::from(SOUND_RATE)).sin();
                     ((value * 12_000.0) as i16).to_le_bytes()
                 })
                 .collect();
@@ -659,6 +671,304 @@ mod sound {
         assert!(
             clock > 0.3,
             "sound clock {clock} did not join the running playback"
+        );
+    }
+}
+
+mod controls {
+    use super::*;
+    use crate::audio::AudioFeed;
+    use std::sync::atomic::AtomicBool;
+
+    /// Opens the clip and waits until both `Opened` and the first picture have arrived, so a
+    /// test starts from a known, quiet state (paused on the first picture, nothing pending).
+    fn open_player(scratch: &Scratch, clip: &[u8]) -> (Player, ClipInfoSummary) {
+        let player = Player::start(scratch.file("clip.mp4", clip), || {});
+        let events = collect(&player, |events| {
+            events.iter().any(|e| matches!(e, PlayerEvent::Opened(_))) && !frames(events).is_empty()
+        });
+        let info = events
+            .into_iter()
+            .find_map(|event| match event {
+                PlayerEvent::Opened(info) => Some(info),
+                _ => None,
+            })
+            .expect("clip did not open");
+        (player, info)
+    }
+
+    /// Waits for the next picture after `skip` already collected ones and returns its time.
+    fn next_pts(player: &Player) -> Tick {
+        let events = collect(player, |events| !frames(events).is_empty());
+        frames(&events)[0].pts
+    }
+
+    /// A stand-in sound card (same as in the sound tests) that records what it was given.
+    fn record(feed: Arc<AudioFeed>) -> (Arc<AtomicBool>, thread::JoinHandle<Vec<f32>>) {
+        assert!(feed.configure_output(SOUND_RATE, 2));
+        feed.set_output_active(true);
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let handle = thread::spawn(move || {
+            let mut heard = Vec::new();
+            let mut buffer = vec![0.0_f32; 480 * 2];
+            let mut next = Instant::now();
+            while !flag.load(Ordering::SeqCst) {
+                feed.fill(&mut buffer);
+                heard.extend_from_slice(&buffer);
+                next += Duration::from_millis(10);
+                thread::sleep(next.saturating_duration_since(Instant::now()));
+            }
+            heard
+        });
+        (stop, handle)
+    }
+
+    fn pitch_of_audible(stereo: &[f32]) -> f64 {
+        let loud: Vec<f32> = stereo
+            .chunks_exact(2)
+            .map(|f| f[0])
+            .skip_while(|s| s.abs() < 0.05)
+            .collect();
+        // Trim the ends, which carry silence and window ramps.
+        let trim = (SOUND_RATE / 20) as usize;
+        let body: Vec<f32> = loud.iter().copied().filter(|s| s.abs() >= 0.0).collect();
+        let body = &body[trim.min(body.len())..body.len().saturating_sub(trim)];
+        let crossings = body
+            .windows(2)
+            .filter(|w| w[0] <= 0.0 && w[1] > 0.0)
+            .count();
+        crossings as f64 / (body.len() as f64 / f64::from(SOUND_RATE))
+    }
+
+    #[test]
+    fn frame_stepping_lands_exactly_on_picture_boundaries_and_clamps() {
+        let scratch = Scratch::new();
+        let (player, info) = open_player(&scratch, &make_clip());
+        let rate = info.frame_rate();
+        player.step(1);
+        assert_eq!(next_pts(&player), rate.tick_of(1));
+        player.step(3);
+        assert_eq!(next_pts(&player), rate.tick_of(4));
+        player.step(-2);
+        assert_eq!(next_pts(&player), rate.tick_of(2));
+        player.step(-100);
+        assert_eq!(
+            next_pts(&player),
+            Tick::ZERO,
+            "stepping back stops at the first picture"
+        );
+        player.step(10_000);
+        let last = next_pts(&player);
+        assert_eq!(
+            last,
+            rate.tick_of(i64::from(FRAMES) - 1),
+            "stepping forward stops at the last picture"
+        );
+        // Stepping leaves playback paused: nothing else arrives by itself.
+        thread::sleep(Duration::from_millis(300));
+        assert!(frames(&player.poll()).is_empty());
+    }
+
+    #[test]
+    fn stepping_while_playing_pauses_on_the_next_picture() {
+        let scratch = Scratch::new();
+        let (player, _) = open_player(&scratch, &make_clip());
+        player.play();
+        collect(&player, |events| frames(events).len() >= 3);
+        player.step(1);
+        thread::sleep(Duration::from_millis(300));
+        let after = player.poll();
+        // Pictures already in flight may arrive, but playback then stops.
+        thread::sleep(Duration::from_millis(300));
+        assert!(
+            frames(&player.poll()).is_empty(),
+            "still playing after a step: {after:?}"
+        );
+    }
+
+    #[test]
+    fn double_speed_finishes_in_about_half_the_time_and_slow_motion_takes_longer() {
+        let scratch = Scratch::new();
+        let (player, _) = open_player(&scratch, &make_clip());
+
+        player.set_speed(2.0);
+        let started = Instant::now();
+        player.play();
+        collect(&player, |events| events.contains(&PlayerEvent::Ended));
+        let fast = started.elapsed().as_secs_f64();
+        assert!(fast > 0.3 && fast < 0.9, "2x took {fast} s for a 1 s clip");
+
+        player.set_speed(0.5);
+        let started = Instant::now();
+        player.play();
+        collect(&player, |events| events.contains(&PlayerEvent::Ended));
+        let slow = started.elapsed().as_secs_f64();
+        assert!(
+            slow > 1.5 && slow < 3.0,
+            "0.5x took {slow} s for a 1 s clip"
+        );
+    }
+
+    #[test]
+    fn changing_speed_mid_play_does_not_jump_the_position() {
+        let scratch = Scratch::new();
+        let (player, _) = open_player(&scratch, &make_clip());
+        player.set_speed(0.25);
+        player.play();
+        let before = collect(&player, |events| frames(events).len() >= 2);
+        let at = frames(&before).last().expect("frame").pts;
+        player.set_speed(4.0);
+        let after = collect(&player, |events| frames(events).len() >= 2);
+        let resumed = frames(&after)[0].pts;
+        assert!(
+            resumed >= at,
+            "position went backwards: {at:?} then {resumed:?}"
+        );
+        assert!(
+            resumed.seconds() - at.seconds() < 0.3,
+            "position jumped from {} to {}",
+            at.seconds(),
+            resumed.seconds()
+        );
+    }
+
+    #[test]
+    fn looping_restarts_instead_of_ending_and_turning_it_off_ends_normally() {
+        let scratch = Scratch::new();
+        let (player, _) = open_player(&scratch, &make_clip());
+        player.set_loop(true);
+        player.play();
+
+        // A 1 s clip played for 2.6 s must wrap at least twice, and never report the end.
+        let started = Instant::now();
+        let mut pts = Vec::new();
+        let mut ended = false;
+        while started.elapsed() < Duration::from_millis(2600) {
+            for event in player.poll() {
+                match event {
+                    PlayerEvent::Frame(frame) => pts.push(frame.pts),
+                    PlayerEvent::Ended => ended = true,
+                    _ => {}
+                }
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!ended, "a looping clip must not end");
+        let wraps = pts.windows(2).filter(|pair| pair[1] < pair[0]).count();
+        assert!(wraps >= 2, "expected at least two wraps, saw {wraps}");
+
+        player.set_loop(false);
+        let events = collect(&player, |events| events.contains(&PlayerEvent::Ended));
+        assert!(
+            events.contains(&PlayerEvent::Ended),
+            "with looping off it ends at the end"
+        );
+    }
+
+    #[test]
+    fn faster_and_slower_speeds_keep_the_pitch_through_the_whole_player() {
+        for (speed, seconds) in [(2.0, 0.5), (0.5, 2.0)] {
+            let scratch = Scratch::new();
+            let (player, _) = open_player(&scratch, &make_clip_with_sound());
+            let feed = player.audio_feed().expect("feed");
+            let (stop, device) = record(feed.clone());
+            player.set_speed(speed);
+            player.play();
+            collect(&player, |events| events.contains(&PlayerEvent::Ended));
+            stop.store(true, Ordering::SeqCst);
+            let heard = device.join().expect("device");
+
+            let audible = heard.chunks_exact(2).filter(|f| f[0].abs() > 0.02).count();
+            let audible_seconds = audible as f64 / f64::from(SOUND_RATE);
+            assert!(
+                (audible_seconds - seconds).abs() < 0.3,
+                "{speed}x: {audible_seconds} s of sound, expected about {seconds}"
+            );
+            let measured = pitch_of_audible(&heard);
+            assert!(
+                (measured - TONE_HZ).abs() < 25.0,
+                "{speed}x changed the pitch to {measured} Hz"
+            );
+        }
+    }
+
+    #[test]
+    fn selecting_an_audio_track_switches_what_is_heard() {
+        let scratch = Scratch::new();
+        let (player, info) = open_player(&scratch, &make_clip_with_tracks(&[440.0, 880.0]));
+        assert_eq!(
+            info.audio_tracks.len(),
+            2,
+            "labels: {:?}",
+            info.audio_tracks
+        );
+        assert!(info.audio_tracks[0].contains("Track 1"));
+        let feed = player.audio_feed().expect("feed");
+
+        let (stop, device) = record(feed.clone());
+        player.select_audio(1);
+        player.play();
+        collect(&player, |events| events.contains(&PlayerEvent::Ended));
+        stop.store(true, Ordering::SeqCst);
+        let heard = device.join().expect("device");
+        let measured = pitch_of_audible(&heard);
+        assert!(
+            (measured - 880.0).abs() < 25.0,
+            "track 2 should sound at 880 Hz, got {measured}"
+        );
+
+        // An out-of-range track is ignored rather than breaking playback.
+        player.select_audio(99);
+        player.play();
+        let events = collect(&player, |events| events.contains(&PlayerEvent::Ended));
+        assert!(events.contains(&PlayerEvent::Ended));
+    }
+
+    #[test]
+    fn a_device_that_stops_pulling_without_an_error_does_not_freeze_playback() {
+        let scratch = Scratch::new();
+        let (player, _) = open_player(&scratch, &make_clip_with_sound());
+        let feed = player.audio_feed().expect("feed");
+        // "Active" but nobody ever calls fill: a stalled driver or a suspended machine.
+        assert!(feed.configure_output(SOUND_RATE, 2));
+        feed.set_output_active(true);
+
+        let started = Instant::now();
+        player.play();
+        let events = collect(&player, |events| events.contains(&PlayerEvent::Ended));
+        assert!(
+            events.contains(&PlayerEvent::Ended),
+            "playback froze behind a dead sound clock"
+        );
+        let took = started.elapsed().as_secs_f64();
+        // About 1.5 s of stall detection plus the clip itself; far less than the 10 s timeout.
+        assert!(took > 1.0 && took < 6.0, "took {took} s");
+    }
+
+    #[test]
+    fn a_stalled_device_that_wakes_up_gets_the_sound_back_in_sync() {
+        let scratch = Scratch::new();
+        let (player, _) = open_player(&scratch, &make_clip_with_sound());
+        player.set_loop(true);
+        let feed = player.audio_feed().expect("feed");
+        assert!(feed.configure_output(SOUND_RATE, 2));
+        feed.set_output_active(true);
+        player.play();
+        // Let the stall be detected and playback continue on the wall clock.
+        collect(&player, |events| frames(events).len() >= 3);
+        thread::sleep(Duration::from_millis(1800));
+
+        // The device comes back and starts pulling.
+        let (stop, device) = record(feed.clone());
+        thread::sleep(Duration::from_millis(600));
+        stop.store(true, Ordering::SeqCst);
+        let heard = device.join().expect("device");
+        feed.set_output_active(false);
+        let audible = heard.chunks_exact(2).filter(|f| f[0].abs() > 0.05).count();
+        assert!(
+            audible > 5_000,
+            "only {audible} audible frames after the device woke up"
         );
     }
 }

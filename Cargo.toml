@@ -52,6 +52,10 @@ all = { level = "warn", priority = -1 }
 [profile.dev.package."*"]
 opt-level = 2
 
+# Our own audio and video hot loops (decode glue, time stretch) also need optimising in dev builds.
+[profile.dev.package.clipcraft-player]
+opt-level = 3
+
 [profile.dev.package.filmcraft-h264]
 opt-level = 3
 

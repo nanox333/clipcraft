@@ -62,6 +62,10 @@ struct ClipCraftApp {
     thumbs: thumbs::Thumbnails,
     /// The clip open in the detail view, if any.
     playback: Option<playback::Playback>,
+    /// Volume, mute, and loop, carried from clip to clip.
+    playback_prefs: playback::Prefs,
+    /// Whether the window is currently fullscreen because of the open clip.
+    window_fullscreen: bool,
     /// Probe results from this session not yet saved to the index.
     unsaved_probes: Vec<(String, MediaProbe)>,
     /// Paths already probed or tried this session, so unsupported files are not retried.
@@ -107,6 +111,23 @@ impl eframe::App for ClipCraftApp {
         self.poll_thumbnails();
         self.thumbs.begin_frame();
         self.sync_playback(context);
+        // Fullscreen playback hides all chrome: the picture owns the whole window.
+        let fullscreen = self
+            .playback
+            .as_ref()
+            .is_some_and(playback::Playback::fullscreen);
+        if fullscreen {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().fill(Color32::BLACK))
+                .show(context, |ui| {
+                    if let Some(open) = self.playback.as_mut() {
+                        open.show_fullscreen(ui);
+                    }
+                });
+            self.thumbs.end_frame();
+            return;
+        }
+
         self.top_bar(context);
         self.navigation(context);
 
@@ -207,16 +228,41 @@ impl ClipCraftApp {
         }
     }
 
+    /// Keeps the volume, mute, and loop choices of the clip being closed for the next one.
+    fn remember_playback_prefs(&mut self) {
+        if let Some(open) = self.playback.take() {
+            self.playback_prefs = open.prefs();
+        }
+    }
+
     /// Keeps exactly one player alive for the clip open in the detail view.
     fn sync_playback(&mut self, context: &egui::Context) {
-        match self.selected.as_ref().map(|entry| entry.path.as_str()) {
+        let wanted_path = self.selected.as_ref().map(|entry| entry.path.clone());
+        match wanted_path {
             Some(path)
                 if self
                     .playback
                     .as_ref()
                     .is_some_and(|open| open.path() == path) => {}
-            Some(path) => self.playback = Some(playback::Playback::start(path, context)),
-            None => self.playback = None,
+            Some(path) => {
+                self.remember_playback_prefs();
+                self.playback = Some(playback::Playback::start(
+                    &path,
+                    context,
+                    self.playback_prefs,
+                ));
+            }
+            None => self.remember_playback_prefs(),
+        }
+        // The window follows the player: fullscreen turns on and off with the open clip, including
+        // when the clip is closed while fullscreen.
+        let wanted = self
+            .playback
+            .as_ref()
+            .is_some_and(playback::Playback::fullscreen);
+        if wanted != self.window_fullscreen {
+            self.window_fullscreen = wanted;
+            context.send_viewport_cmd(egui::ViewportCommand::Fullscreen(wanted));
         }
         if let Some(open) = self.playback.as_mut() {
             open.poll(context);

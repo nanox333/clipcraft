@@ -7,6 +7,7 @@
 //! picture and sound together and makes an underrun pause the picture instead of desyncing it.
 //! This module has no operating-system code; `clipcraft-audio-out` connects a device.
 
+use crate::stretch::{self, Stretcher};
 use clipcraft_frame::{BoundedQueue, Overflow};
 use clipcraft_time::Tick;
 use filmcraft_media::SharedSource;
@@ -39,6 +40,9 @@ struct FeedState {
     start: Tick,
     /// Incremented by every seek so the decoder drops chunks it decoded for an older position.
     generation: u64,
+    /// Playback speed (1.0 = normal) and which audio stream of the file is played.
+    speed: f64,
+    stream: usize,
 }
 
 /// Decoded sound waiting for an output device, and the clock derived from it.
@@ -47,6 +51,10 @@ pub struct AudioFeed {
     wake: Condvar,
     playing: AtomicBool,
     muted: AtomicBool,
+    /// Output gain, 0.0 to 1.0, as `f32` bits.
+    volume: AtomicU32,
+    /// Playback speed as `f64` bits, mirrored here so the clock can read it without the lock.
+    speed: AtomicU64,
     output_active: AtomicBool,
     failed: AtomicBool,
     closed: AtomicBool,
@@ -68,10 +76,14 @@ impl AudioFeed {
                 buffered_frames: 0,
                 start: Tick::ZERO,
                 generation: 0,
+                speed: 1.0,
+                stream: 0,
             }),
             wake: Condvar::new(),
             playing: AtomicBool::new(false),
             muted: AtomicBool::new(false),
+            volume: AtomicU32::new(1.0_f32.to_bits()),
+            speed: AtomicU64::new(1.0_f64.to_bits()),
             output_active: AtomicBool::new(false),
             failed: AtomicBool::new(false),
             closed: AtomicBool::new(false),
@@ -138,6 +150,55 @@ impl AudioFeed {
         self.muted.load(Ordering::SeqCst)
     }
 
+    /// Sets the output volume, 0.0 (silent) to 1.0 (full). Out-of-range and non-finite values are
+    /// clamped.
+    pub fn set_volume(&self, volume: f32) {
+        let volume = if volume.is_finite() {
+            volume.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        self.volume.store(volume.to_bits(), Ordering::SeqCst);
+    }
+
+    /// The output volume, 0.0 to 1.0.
+    pub fn volume(&self) -> f32 {
+        f32::from_bits(self.volume.load(Ordering::SeqCst))
+    }
+
+    /// Plays at `speed` from `position`, keeping pitch. Clamped to the supported range.
+    pub fn set_speed(&self, speed: f64, position: Tick) {
+        let speed = if speed.is_finite() {
+            speed.clamp(stretch::MIN_SPEED, stretch::MAX_SPEED)
+        } else {
+            1.0
+        };
+        let mut state = self.lock();
+        state.speed = speed;
+        self.speed.store(speed.to_bits(), Ordering::SeqCst);
+        Self::restart(&mut state, position);
+        self.base_ticks.store(position.0, Ordering::SeqCst);
+        self.played_frames.store(0, Ordering::SeqCst);
+        drop(state);
+        self.wake.notify_all();
+    }
+
+    /// The playback speed, 1.0 being normal.
+    pub fn speed(&self) -> f64 {
+        f64::from_bits(self.speed.load(Ordering::SeqCst))
+    }
+
+    /// Switches to audio stream `stream` of the file, continuing from `position`.
+    pub fn set_stream(&self, stream: usize, position: Tick) {
+        let mut state = self.lock();
+        state.stream = stream;
+        Self::restart(&mut state, position);
+        self.base_ticks.store(position.0, Ordering::SeqCst);
+        self.played_frames.store(0, Ordering::SeqCst);
+        drop(state);
+        self.wake.notify_all();
+    }
+
     /// Jumps to `position`: drops queued sound, restarts decoding there, and restarts the clock.
     pub fn seek(&self, position: Tick) {
         let mut state = self.lock();
@@ -157,6 +218,11 @@ impl AudioFeed {
         state.generation = state.generation.wrapping_add(1);
     }
 
+    /// Frames the device has taken since the last seek. Stays at zero for a stalled device.
+    pub fn delivered_frames(&self) -> u64 {
+        self.played_frames.load(Ordering::SeqCst)
+    }
+
     /// The clip position: the last seek target plus the sound delivered since.
     pub fn position(&self) -> Tick {
         let base = Tick(self.base_ticks.load(Ordering::SeqCst));
@@ -165,7 +231,14 @@ impl AudioFeed {
         if rate == 0 {
             return base;
         }
-        base + Tick::from_units(played, rate)
+        let elapsed = Tick::from_units(played, rate);
+        let speed = f64::from_bits(self.speed.load(Ordering::SeqCst));
+        if (speed - 1.0).abs() < 1e-9 {
+            base + elapsed
+        } else {
+            // Each output frame consumed `speed` source frames.
+            base + Tick::from_seconds_f64(elapsed.seconds() * speed)
+        }
     }
 
     /// Fills `out` (interleaved, in the configured channel count) for the device. Silence is
@@ -186,7 +259,7 @@ impl AudioFeed {
         let gain = if self.muted.load(Ordering::SeqCst) {
             0.0
         } else {
-            1.0
+            f32::from_bits(self.volume.load(Ordering::SeqCst))
         };
         let mut written = 0;
         while written < out.len() {
@@ -279,18 +352,33 @@ pub(crate) fn start_feed(source: SharedSource) -> Arc<AudioFeed> {
     feed
 }
 
+/// How the decoder is reading the clip right now.
+enum Cursor {
+    /// Normal speed: consecutive source chunks, passed through untouched.
+    Direct { next_sample: i64 },
+    /// Any other speed: time-stretched so pitch is kept.
+    Stretch(Box<Stretcher>),
+}
+
 fn decode_loop(feed: &AudioFeed, source: &SharedSource) {
     let mut seen_generation = u64::MAX;
-    let mut next_sample = 0_i64;
+    let mut cursor = Cursor::Direct { next_sample: 0 };
+    let mut stream = 0;
     let mut finished = false;
     let duration = source.info().duration.max(Tick::ZERO);
 
     while !feed.closed.load(Ordering::SeqCst) {
         let rate = feed.rate.load(Ordering::SeqCst);
         let channels = feed.channels.load(Ordering::SeqCst) as usize;
-        let (generation, start, buffered) = {
+        let (generation, start, buffered, speed, wanted_stream) = {
             let state = feed.lock();
-            (state.generation, state.start, state.buffered_frames)
+            (
+                state.generation,
+                state.start,
+                state.buffered_frames,
+                state.speed,
+                state.stream,
+            )
         };
         if rate == 0 || channels == 0 {
             wait(feed);
@@ -298,34 +386,60 @@ fn decode_loop(feed: &AudioFeed, source: &SharedSource) {
         }
         if generation != seen_generation {
             seen_generation = generation;
-            next_sample = start.to_units_floor(i64::from(rate));
+            stream = wanted_stream;
             finished = false;
+            let first_sample = start.to_units_floor(i64::from(rate));
+            cursor = if (speed - 1.0).abs() < 1e-9 {
+                Cursor::Direct {
+                    next_sample: first_sample,
+                }
+            } else {
+                let end = duration.to_units_floor(i64::from(rate));
+                Cursor::Stretch(Box::new(Stretcher::new(rate, speed, first_sample, end)))
+            };
         }
         let target_frames = rate as usize * BUFFER_MILLISECONDS / 1000;
         if finished || buffered >= target_frames {
             wait(feed);
             continue;
         }
-        if Tick::from_units(next_sample, i64::from(rate)) >= duration {
-            finished = true;
-            continue;
-        }
 
-        match source.audio(next_sample, CHUNK_FRAMES, rate) {
-            Ok(buffer) => {
-                let frames = buffer.frames();
-                let samples = interleave(&buffer.channels, frames, channels);
-                next_sample = next_sample.saturating_add(CHUNK_FRAMES as i64);
-                if !feed.push(generation, samples, channels) {
-                    // Either a seek made this chunk stale (the next loop restarts) or the queue
-                    // is full; give the device time to drain before trying again.
-                    wait(feed);
+        let samples = match &mut cursor {
+            Cursor::Direct { next_sample } => {
+                if Tick::from_units(*next_sample, i64::from(rate)) >= duration {
+                    finished = true;
+                    continue;
                 }
+                let Ok(buffer) = source.audio_stream(stream, *next_sample, CHUNK_FRAMES, rate)
+                else {
+                    feed.failed.store(true, Ordering::SeqCst);
+                    return;
+                };
+                *next_sample = next_sample.saturating_add(CHUNK_FRAMES as i64);
+                interleave(&buffer.channels, buffer.frames(), channels)
             }
-            Err(_) => {
-                feed.failed.store(true, Ordering::SeqCst);
-                return;
+            Cursor::Stretch(stretcher) => {
+                if stretcher.finished() {
+                    finished = true;
+                    continue;
+                }
+                let mut fetch = |from: i64, frames: usize| {
+                    source
+                        .audio_stream(stream, from, frames, rate)
+                        .ok()
+                        .map(|buffer| buffer.channels)
+                };
+                let Some(block) = stretcher.next_block(&mut fetch) else {
+                    feed.failed.store(true, Ordering::SeqCst);
+                    return;
+                };
+                interleave(&block, stretcher.hop(), channels)
             }
+        };
+        if !feed.push(generation, samples, channels) {
+            // Either a seek made this chunk stale (the next loop restarts) or the queue is full;
+            // give the device time to drain before trying again.
+            wait(feed);
         }
     }
 }
@@ -507,5 +621,62 @@ mod tests {
         feed.fill(&mut [0.0; 4]);
         feed.seek(Tick::ZERO);
         assert_eq!(feed.position(), Tick::ZERO);
+    }
+
+    #[test]
+    fn volume_scales_the_output_and_is_clamped() {
+        let feed = feed(1_000, 1);
+        feed.set_playing(true);
+        assert_eq!(feed.volume(), 1.0);
+        feed.set_volume(0.5);
+        feed.push_for_test(vec![0.8; 10]);
+        let mut out = [0.0; 10];
+        feed.fill(&mut out);
+        assert!(out.iter().all(|s| (*s - 0.4).abs() < 1e-6));
+
+        feed.set_volume(7.0);
+        assert_eq!(feed.volume(), 1.0);
+        feed.set_volume(-1.0);
+        assert_eq!(feed.volume(), 0.0);
+        feed.set_volume(f32::NAN);
+        assert_eq!(feed.volume(), 1.0, "a non-finite volume falls back to full");
+    }
+
+    #[test]
+    fn the_clock_runs_at_the_playback_speed() {
+        let feed = feed(1_000, 1);
+        feed.set_playing(true);
+        feed.set_speed(2.0, Tick::from_seconds_f64(1.0));
+        assert_eq!(feed.speed(), 2.0);
+        feed.push_for_test(vec![0.1; 500]);
+        feed.fill(&mut [0.0; 500]);
+        // 500 output frames at 1 kHz is half a second of output, which covered one second of media.
+        assert!(
+            (feed.position().seconds() - 2.0).abs() < 1e-6,
+            "{}",
+            feed.position().seconds()
+        );
+
+        // Hostile speeds are clamped.
+        feed.set_speed(1e9, Tick::ZERO);
+        assert_eq!(feed.speed(), stretch::MAX_SPEED);
+        feed.set_speed(f64::NAN, Tick::ZERO);
+        assert_eq!(feed.speed(), 1.0);
+        feed.set_speed(0.0, Tick::ZERO);
+        assert_eq!(feed.speed(), stretch::MIN_SPEED);
+    }
+
+    #[test]
+    fn changing_speed_or_track_drops_queued_sound_and_moves_the_clock_base() {
+        let feed = feed(1_000, 1);
+        feed.set_playing(true);
+        feed.push_for_test(vec![0.5; 100]);
+        feed.set_stream(1, Tick::from_seconds_f64(3.0));
+        assert_eq!(feed.buffered_frames(), 0);
+        assert_eq!(feed.position(), Tick::from_seconds_f64(3.0));
+        feed.push_for_test(vec![0.5; 100]);
+        feed.set_speed(0.5, Tick::from_seconds_f64(4.0));
+        assert_eq!(feed.buffered_frames(), 0);
+        assert_eq!(feed.position(), Tick::from_seconds_f64(4.0));
     }
 }

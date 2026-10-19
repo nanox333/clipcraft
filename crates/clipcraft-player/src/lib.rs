@@ -22,6 +22,8 @@ use std::time::{Duration, Instant};
 const MAX_WHOLE_FILE_BYTES: u64 = 64 * 1024 * 1024;
 /// Frame period assumed when a file does not state a usable frame rate.
 const FALLBACK_FRAME_PERIOD: Duration = Duration::from_millis(33);
+/// How long the sound clock may stand still while playing before the picture stops waiting for it.
+const AUDIO_STALL: Duration = Duration::from_millis(1500);
 /// Longest wait between wake-ups, so a shutdown request is always noticed promptly.
 const MAX_IDLE_WAIT: Duration = Duration::from_millis(250);
 
@@ -36,8 +38,10 @@ pub struct ClipInfo {
     pub height: u32,
     /// Average frame rate.
     pub frame_rate: FrameRate,
-    /// Whether the file has an audio stream (not yet played back).
+    /// Whether the file has an audio stream.
     pub has_audio: bool,
+    /// One label per audio stream, for a track picker.
+    pub audio_tracks: Vec<String>,
 }
 
 /// One decoded picture, ready to upload as a texture.
@@ -93,7 +97,7 @@ pub enum PlayerEvent {
 }
 
 /// [`ClipInfo`] in an `Eq`-friendly form for events: duration in ticks and rate numerator/denominator.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClipInfoSummary {
     /// Total duration.
     pub duration: Tick,
@@ -107,6 +111,8 @@ pub struct ClipInfoSummary {
     pub rate_denominator: i64,
     /// Whether the file has an audio stream.
     pub has_audio: bool,
+    /// One label per audio stream, for a track picker.
+    pub audio_tracks: Vec<String>,
 }
 
 impl From<&ClipInfo> for ClipInfoSummary {
@@ -118,6 +124,7 @@ impl From<&ClipInfo> for ClipInfoSummary {
             rate_numerator: info.frame_rate.num,
             rate_denominator: info.frame_rate.den,
             has_audio: info.has_audio,
+            audio_tracks: info.audio_tracks.clone(),
         }
     }
 }
@@ -133,6 +140,10 @@ enum Command {
     Play,
     Pause,
     Seek(Tick),
+    SetSpeed(f64),
+    SetLoop(bool),
+    Step(i64),
+    SelectAudio(usize),
     Shutdown,
 }
 
@@ -191,6 +202,26 @@ impl Player {
     /// Jumps to `position` and shows that picture. Playback state is kept.
     pub fn seek(&self, position: Tick) {
         let _ = self.commands.send(Command::Seek(position));
+    }
+
+    /// Plays at `speed` (0.25 to 4, pitch kept). Takes effect from the current position.
+    pub fn set_speed(&self, speed: f64) {
+        let _ = self.commands.send(Command::SetSpeed(speed));
+    }
+
+    /// When on, playback restarts from the beginning instead of stopping at the end.
+    pub fn set_loop(&self, looping: bool) {
+        let _ = self.commands.send(Command::SetLoop(looping));
+    }
+
+    /// Pauses and moves by `frames` pictures (negative goes back), showing the new picture.
+    pub fn step(&self, frames: i64) {
+        let _ = self.commands.send(Command::Step(frames));
+    }
+
+    /// Plays audio stream `index` (the order of [`ClipInfoSummary::audio_tracks`]).
+    pub fn select_audio(&self, index: usize) {
+        let _ = self.commands.send(Command::SelectAudio(index));
     }
 
     /// The clip's sound feed, available once the clip has opened and only when it has audio.
@@ -256,6 +287,20 @@ fn clip_info(source: &SharedSource) -> Result<ClipInfo, PlayerError> {
         height: video.height,
         frame_rate: video.frame_rate.sane(),
         has_audio: info.has_audio(),
+        audio_tracks: info
+            .audio_streams
+            .iter()
+            .enumerate()
+            .map(|(index, stream)| {
+                format!(
+                    "Track {} · {} · {} ch · {:.1} kHz",
+                    index + 1,
+                    stream.codec.to_uppercase(),
+                    stream.channels,
+                    f64::from(stream.sample_rate) / 1000.0
+                )
+            })
+            .collect(),
     })
 }
 
@@ -301,8 +346,9 @@ fn frame_period(rate: FrameRate) -> Duration {
     }
 }
 
-fn ticks_from(elapsed: Duration) -> Tick {
-    Tick::from_seconds_f64(elapsed.as_secs_f64())
+/// Media time covered by `elapsed` wall time at `speed`.
+fn ticks_from(elapsed: Duration, speed: f64) -> Tick {
+    Tick::from_seconds_f64(elapsed.as_secs_f64() * speed)
 }
 
 fn run(
@@ -348,6 +394,11 @@ fn run(
         ended: false,
         next_tick: Instant::now(),
         audio_synced: false,
+        speed: 1.0,
+        looping: false,
+        audio_stream: 0,
+        audio_stalled: false,
+        audio_watch: None,
     };
 
     loop {
@@ -394,9 +445,21 @@ fn run(
         }
 
         state.sync_audio(feed.as_deref());
+        state.watch_audio(feed.as_deref());
 
         if state.playing && !state.show && Instant::now() >= state.next_tick {
             let target = state.clock_position(feed.as_deref());
+            if target + info.frame_rate.frame_duration() >= info.duration && state.looping {
+                // Loop: start over from the first picture without ever stopping.
+                state.position = Tick::ZERO;
+                state.clock_base = Tick::ZERO;
+                state.clock_start = Instant::now();
+                state.show = true;
+                if let Some(feed) = &feed {
+                    feed.seek(Tick::ZERO);
+                }
+                continue;
+            }
             if target + info.frame_rate.frame_duration() >= info.duration {
                 // Stop on the true last picture so playing again restarts from the beginning.
                 state.playing = false;
@@ -429,6 +492,14 @@ struct State {
     next_tick: Instant,
     /// The sound feed has been given the current position and is the clock.
     audio_synced: bool,
+    speed: f64,
+    looping: bool,
+    audio_stream: usize,
+    /// The sound device is marked active but has stopped taking sound; the wall clock is in use
+    /// until it delivers again.
+    audio_stalled: bool,
+    /// The sound clock reading and when it last changed, for stall detection.
+    audio_watch: Option<(Tick, Instant)>,
 }
 
 impl State {
@@ -473,15 +544,98 @@ impl State {
                     feed.seek(self.position);
                 }
             }
+            Command::SetSpeed(speed) => {
+                let speed = if speed.is_finite() {
+                    speed.clamp(stretch::MIN_SPEED, stretch::MAX_SPEED)
+                } else {
+                    1.0
+                };
+                // Re-anchor both clocks at the current position so the change takes effect from
+                // here and the position does not jump.
+                let now = self.current_position(feed);
+                self.speed = speed;
+                self.position = now;
+                self.clock_base = now;
+                self.clock_start = Instant::now();
+                if let Some(feed) = feed {
+                    feed.set_speed(speed, now);
+                }
+            }
+            Command::SetLoop(looping) => self.looping = looping,
+            Command::Step(frames) => {
+                // Stepping is a paused operation: stop, then land exactly on a frame boundary.
+                self.playing = false;
+                let last = info
+                    .frame_rate
+                    .frame_at((info.duration - info.frame_rate.frame_duration()).max(Tick::ZERO));
+                let frame = info
+                    .frame_rate
+                    .frame_at(self.position)
+                    .saturating_add(frames)
+                    .clamp(0, last.max(0));
+                self.position = info.frame_rate.tick_of(frame);
+                self.clock_base = self.position;
+                self.clock_start = Instant::now();
+                self.show = true;
+                if let Some(feed) = feed {
+                    feed.set_playing(false);
+                    feed.seek(self.position);
+                }
+            }
+            Command::SelectAudio(index) => {
+                if index < info.audio_tracks.len() {
+                    self.audio_stream = index;
+                    let now = self.current_position(feed);
+                    if let Some(feed) = feed {
+                        feed.set_stream(index, now);
+                    }
+                }
+            }
         }
         false
+    }
+
+    /// The position right now: where playback is while playing, the shown picture while paused.
+    fn current_position(&self, feed: Option<&audio::AudioFeed>) -> Tick {
+        if self.playing {
+            self.clock_position(feed)
+        } else {
+            self.position
+        }
     }
 
     /// The playback position now: the sound clock while a device drives it, else the wall clock.
     fn clock_position(&self, feed: Option<&audio::AudioFeed>) -> Tick {
         match feed {
-            Some(feed) if self.audio_synced && feed.driving() => feed.position(),
-            _ => self.clock_base + ticks_from(self.clock_start.elapsed()),
+            Some(feed) if self.audio_synced && !self.audio_stalled && feed.driving() => {
+                feed.position()
+            }
+            _ => self.clock_base + ticks_from(self.clock_start.elapsed(), self.speed),
+        }
+    }
+
+    /// Notices a sound device that is marked active but has stopped taking sound, so the picture
+    /// does not freeze with it. Called every loop while playing.
+    fn watch_audio(&mut self, feed: Option<&audio::AudioFeed>) {
+        let Some(feed) = feed else {
+            return;
+        };
+        if !(self.playing && self.audio_synced && !self.audio_stalled && feed.driving()) {
+            self.audio_watch = None;
+            return;
+        }
+        let position = feed.position();
+        match self.audio_watch {
+            Some((seen, since)) if seen == position => {
+                if since.elapsed() >= AUDIO_STALL {
+                    // Carry on from where the sound got to, on the wall clock.
+                    self.clock_base = position;
+                    self.clock_start = Instant::now();
+                    self.audio_stalled = true;
+                    self.audio_watch = None;
+                }
+            }
+            _ => self.audio_watch = Some((position, Instant::now())),
         }
     }
 
@@ -491,14 +645,28 @@ impl State {
         let Some(feed) = feed else {
             return;
         };
+        if self.audio_stalled {
+            // Wait for proof of life: a device that delivers again, or one that went away.
+            if !feed.driving() || feed.delivered_frames() > 0 {
+                self.audio_stalled = false;
+                self.audio_synced = false;
+                self.audio_watch = None;
+            } else {
+                return;
+            }
+        }
         if feed.driving() {
             if !self.audio_synced {
                 let now = if self.playing {
-                    self.clock_base + ticks_from(self.clock_start.elapsed())
+                    self.clock_base + ticks_from(self.clock_start.elapsed(), self.speed)
                 } else {
                     self.position
                 };
-                feed.seek(now);
+                // Give the late device the current speed, track, and position.
+                feed.set_speed(self.speed, now);
+                if self.audio_stream != 0 {
+                    feed.set_stream(self.audio_stream, now);
+                }
                 feed.set_playing(self.playing);
                 self.audio_synced = true;
             }
@@ -521,6 +689,7 @@ impl Drop for CloseFeed {
 }
 
 pub mod audio;
+pub mod stretch;
 pub mod thumbnail;
 
 #[cfg(test)]
