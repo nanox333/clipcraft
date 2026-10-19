@@ -14,8 +14,9 @@ mod recording;
 pub use clipcraft_media::MediaProbe;
 
 pub use recording::{
-    CaptureSource, Container, FRAME_RATES, Framing, HEIGHTS, OutputShape, PixelRect,
-    REPLAY_SECONDS, RecordingSettings, Reframe, default_settings_path, reframe,
+    AUDIO_KBPS, CaptureSource, Container, FRAME_RATES, Framing, HEIGHTS, OutputShape, PixelRect,
+    QualityPreset, REPLAY_SECONDS, RateControl, RecordingSettings, Reframe, VIDEO_KBPS,
+    default_settings_path, reframe,
 };
 
 pub use index::{
