@@ -133,7 +133,7 @@ impl ClipCraftApp {
             )
         });
         ui.horizontal(|ui| {
-            if toolbar_button(ui, "⤓  Import").clicked() {
+            if toolbar_button(ui, "⬇  Import").clicked() {
                 self.choose_library_folder();
             }
             let _ = ui.add_enabled(false, toolbar_widget("▣  New Edit"));
@@ -387,7 +387,7 @@ impl ClipCraftApp {
             });
             settings_header(
                 ui,
-                "🎙",
+                "🎤",
                 "Audio",
                 "Game audio and microphone capture will be configured here once capture exists.",
             );
@@ -621,7 +621,7 @@ fn clip_card(ui: &mut egui::Ui, entry: &MediaEntry, width: f32) -> Option<ClipCa
             ui.painter().text(
                 footer.left_center() + Vec2::new(14.0, 0.0),
                 egui::Align2::LEFT_CENTER,
-                "⧉  Copy File Path",
+                "📋  Copy File Path",
                 FontId::proportional(14.0),
                 TEXT,
             );
