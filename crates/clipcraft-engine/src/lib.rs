@@ -10,6 +10,7 @@ use std::time::UNIX_EPOCH;
 
 mod hotkeys;
 mod index;
+mod library_meta;
 mod recording;
 mod startup;
 mod storage;
@@ -17,6 +18,10 @@ mod storage;
 pub use clipcraft_media::MediaProbe;
 
 pub use hotkeys::{HotkeyAction, Hotkeys, normalize_hotkey};
+pub use library_meta::{
+    GameGroup, MAX_COLLECTIONS, MAX_COLLECTIONS_PER_CLIP, MAX_NAME_CHARS, MetaEdit, apply_edit,
+    clean_name, game_of, games, guess_game_from_file_name,
+};
 pub use recording::{
     AUDIO_KBPS, CaptureSource, Container, EncoderPreset, FRAME_RATES, Framing, HEIGHTS,
     KEYFRAME_SECONDS, OutputShape, PixelRect, QualityMode, REPLAY_SECONDS, RateControl,
@@ -69,6 +74,12 @@ pub enum Command {
         path: PathBuf,
         settings: Box<RecordingSettings>,
     },
+    /// Changes a favorite, game, or collection and saves it in the local index.
+    EditLibraryMeta {
+        index_path: PathBuf,
+        directory: String,
+        edit: MetaEdit,
+    },
     StoreProbes {
         index_path: PathBuf,
         directory: String,
@@ -90,6 +101,7 @@ impl Command {
             Self::ProbeClip { .. } => "library.probe",
             Self::EnsureThumbnail { .. } => "library.thumbnail",
             Self::StoreProbes { .. } => "library.store_probes",
+            Self::EditLibraryMeta { .. } => "library.edit",
             Self::LoadRecordingSettings { .. } => "recording.load_settings",
             Self::StorageUsage { .. } => "storage.usage",
             Self::SetLaunchAtStartup { .. } => "app.launch_at_startup",
@@ -107,6 +119,8 @@ pub struct LibraryScanResult {
     pub entries: Vec<MediaEntry>,
     /// Whether these entries are saved in the local index (false for a plain scan or a failed save).
     pub persisted: bool,
+    /// Names of the person's collections, including empty ones.
+    pub collections: Vec<String>,
 }
 
 /// Local metadata that can be shown in a library card.
@@ -131,6 +145,12 @@ pub struct MediaEntry {
     /// User tags, kept across rescans.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// The game the person assigned, overriding the guess from folder and file name.
+    #[serde(default)]
+    pub game: Option<String>,
+    /// Collections this clip is in.
+    #[serde(default)]
+    pub collections: Vec<String>,
     /// Duration, size, and codec facts. Reused across rescans while the file is unchanged.
     #[serde(default)]
     pub probe: Option<MediaProbe>,
@@ -208,6 +228,12 @@ pub enum EngineError {
     SettingsSaveFailed,
     /// Launching at sign-in could not be changed.
     StartupFailed,
+    /// A collection or game name is empty, too long, or does not exist.
+    NameInvalid,
+    /// A collection with that name already exists.
+    NameTaken,
+    /// There are too many collections.
+    CollectionLimit,
 }
 
 impl fmt::Display for EngineError {
@@ -248,6 +274,13 @@ impl fmt::Display for EngineError {
             Self::SettingsSaveFailed => {
                 formatter.write_str("The recording settings could not be saved. Check free disk space.")
             }
+            Self::NameInvalid => formatter.write_str(
+                "Use a name of 1 to 40 characters, and pick a collection that exists.",
+            ),
+            Self::NameTaken => formatter.write_str("A collection with that name already exists."),
+            Self::CollectionLimit => formatter.write_str(
+                "That is the most collections, or the most collections for one clip, ClipCraft keeps.",
+            ),
             Self::StartupFailed => formatter
                 .write_str("Launching at sign-in could not be changed on this computer."),
             Self::IndexMissing => formatter.write_str("No saved library was found."),
@@ -343,6 +376,11 @@ pub fn execute(command: Command) -> Result<CommandOutput, EngineError> {
             directory,
             probes,
         } => index::store_probes(&index_path, &directory, probes).map(CommandOutput::LibraryScan),
+        Command::EditLibraryMeta {
+            index_path,
+            directory,
+            edit,
+        } => index::edit_meta(&index_path, &directory, &edit).map(CommandOutput::LibraryScan),
         Command::LoadLibrary { index_path } => {
             index::load_library(&index_path).map(CommandOutput::LibraryScan)
         }
@@ -495,6 +533,8 @@ fn scan_library_directory_with_limit(
             offline: false,
             favorite: false,
             tags: Vec::new(),
+            game: None,
+            collections: Vec::new(),
             probe: None,
         });
     }
@@ -510,6 +550,7 @@ fn scan_library_directory_with_limit(
         directory: directory.to_string_lossy().into_owned(),
         entries: media,
         persisted: false,
+        collections: Vec::new(),
     })
 }
 
@@ -524,6 +565,7 @@ pub const fn command_ids() -> &'static [&'static str] {
         "library.probe",
         "library.thumbnail",
         "library.store_probes",
+        "library.edit",
         "recording.load_settings",
         "storage.usage",
         "app.launch_at_startup",

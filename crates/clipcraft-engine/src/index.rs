@@ -4,7 +4,10 @@
 //! launches. It is disposable: ordinary video files stay the source of truth, and deleting or
 //! corrupting the index only costs a rescan.
 
-use crate::{EngineError, LibraryScanResult, MAX_LIBRARY_RESULTS, MediaEntry};
+use crate::{
+    EngineError, LibraryScanResult, MAX_LIBRARY_RESULTS, MAX_NAME_CHARS, MediaEntry, MetaEdit,
+    apply_edit,
+};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
@@ -27,6 +30,8 @@ const MAX_PATH_BYTES: usize = 4096;
 pub(crate) struct LibraryIndex {
     version: u32,
     folders: Vec<FolderIndex>,
+    #[serde(default)]
+    collections: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -70,6 +75,7 @@ pub(crate) fn load_library(index_path: &Path) -> Result<LibraryScanResult, Engin
         directory: folder.directory,
         entries: folder.entries,
         persisted: true,
+        collections: index.collections,
     })
 }
 
@@ -118,6 +124,7 @@ pub(crate) fn refresh_library(
         directory: scan.directory,
         entries,
         persisted,
+        collections: index.collections,
     })
 }
 
@@ -138,6 +145,8 @@ pub(crate) fn merge_entries(
             if let Some(old) = previous.iter().find(|old| old.path == entry.path) {
                 entry.favorite = old.favorite;
                 entry.tags = old.tags.clone();
+                entry.game = old.game.clone();
+                entry.collections = old.collections.clone();
                 // A probe stays valid only while the file looks unchanged.
                 if old.size_bytes == entry.size_bytes
                     && old.modified_unix_seconds == entry.modified_unix_seconds
@@ -189,11 +198,52 @@ pub(crate) fn store_probes(
         directory: folder.directory.clone(),
         entries: folder.entries.clone(),
         persisted: false,
+        collections: index.collections.clone(),
     };
     let persisted = write_index(index_path, &index).is_ok();
     Ok(LibraryScanResult {
         persisted,
         ..result
+    })
+}
+
+/// Applies a favorite, game, or collection change to the saved index and returns the folder.
+pub(crate) fn edit_meta(
+    index_path: &Path,
+    directory: &str,
+    edit: &MetaEdit,
+) -> Result<LibraryScanResult, EngineError> {
+    let mut index = read_index(index_path)?;
+    let position = index
+        .folders
+        .iter()
+        .position(|folder| folder.directory == directory)
+        .ok_or(EngineError::IndexMissing)?;
+    // Work on copies so a refused edit leaves the index untouched.
+    let mut collections = index.collections.clone();
+    let mut entries = index.folders[position].entries.clone();
+    apply_edit(&mut entries, &mut collections, edit)?;
+    // Renaming or deleting a collection also reaches the clips of every other remembered folder.
+    if matches!(
+        edit,
+        MetaEdit::RenameCollection { .. } | MetaEdit::DeleteCollection { .. }
+    ) {
+        for (other, folder) in index.folders.iter_mut().enumerate() {
+            if other != position {
+                let mut scratch = collections.clone();
+                apply_edit(&mut folder.entries, &mut scratch, edit).ok();
+            }
+        }
+    }
+    index.folders[position].entries = entries;
+    index.collections = collections;
+    let persisted = write_index(index_path, &index).is_ok();
+    let folder = &index.folders[position];
+    Ok(LibraryScanResult {
+        directory: folder.directory.clone(),
+        entries: folder.entries.clone(),
+        persisted,
+        collections: index.collections.clone(),
     })
 }
 
@@ -221,7 +271,13 @@ fn validate(index: &LibraryIndex) -> Result<(), EngineError> {
     if index.version != INDEX_VERSION {
         return Err(EngineError::IndexInvalid);
     }
-    if index.folders.len() > MAX_INDEXED_FOLDERS {
+    if index.folders.len() > MAX_INDEXED_FOLDERS || index.collections.len() > crate::MAX_COLLECTIONS
+    {
+        return Err(EngineError::IndexInvalid);
+    }
+    // Names are counted in characters by the editor, so allow four bytes each.
+    let name_ok = |name: &String| name.len() <= MAX_NAME_CHARS * 4;
+    if !index.collections.iter().all(name_ok) {
         return Err(EngineError::IndexInvalid);
     }
     for folder in &index.folders {
@@ -232,7 +288,14 @@ fn validate(index: &LibraryIndex) -> Result<(), EngineError> {
         for entry in &folder.entries {
             let tags_ok = entry.tags.len() <= MAX_TAGS_PER_CLIP
                 && entry.tags.iter().all(|tag| tag.len() <= MAX_TAG_BYTES);
-            if entry.path.len() > MAX_PATH_BYTES || entry.title.len() > MAX_PATH_BYTES || !tags_ok {
+            let meta_ok = entry.collections.len() <= crate::MAX_COLLECTIONS_PER_CLIP
+                && entry.collections.iter().all(name_ok)
+                && entry.game.as_ref().is_none_or(name_ok);
+            if entry.path.len() > MAX_PATH_BYTES
+                || entry.title.len() > MAX_PATH_BYTES
+                || !tags_ok
+                || !meta_ok
+            {
                 return Err(EngineError::IndexInvalid);
             }
         }
@@ -309,6 +372,8 @@ mod tests {
             offline: false,
             favorite: false,
             tags: Vec::new(),
+            game: None,
+            collections: Vec::new(),
             probe: None,
         }
     }
@@ -318,7 +383,114 @@ mod tests {
             directory: directory.to_owned(),
             entries: paths.iter().map(|path| clip(path)).collect(),
             persisted: false,
+            collections: Vec::new(),
         }
+    }
+
+    #[test]
+    fn favorites_games_and_collections_survive_a_restart_and_a_rescan() {
+        let scratch = Scratch::new();
+        let index = scratch.index();
+        refresh_library(scan("/clips", &["/clips/a.mp4", "/clips/b.mp4"]), &index).unwrap();
+        let edits = [
+            MetaEdit::SetFavorite {
+                path: "/clips/a.mp4".into(),
+                favorite: true,
+            },
+            MetaEdit::SetGame {
+                path: "/clips/a.mp4".into(),
+                game: Some("Hades".into()),
+            },
+            MetaEdit::CreateCollection {
+                name: "Best".into(),
+            },
+            MetaEdit::AddToCollection {
+                path: "/clips/b.mp4".into(),
+                name: "Best".into(),
+            },
+        ];
+        for edit in &edits {
+            let result = edit_meta(&index, "/clips", edit).unwrap();
+            assert!(result.persisted);
+        }
+        let loaded = load_library(&index).unwrap();
+        assert_eq!(loaded.collections, ["Best"]);
+        assert!(loaded.entries[0].favorite);
+        assert_eq!(loaded.entries[0].game.as_deref(), Some("Hades"));
+        assert_eq!(loaded.entries[1].collections, ["Best"]);
+        let rescanned =
+            refresh_library(scan("/clips", &["/clips/a.mp4", "/clips/b.mp4"]), &index).unwrap();
+        assert!(rescanned.entries[0].favorite);
+        assert_eq!(rescanned.entries[1].collections, ["Best"]);
+        assert_eq!(rescanned.collections, ["Best"]);
+    }
+
+    #[test]
+    fn a_refused_edit_changes_nothing_and_an_unknown_folder_is_missing() {
+        let scratch = Scratch::new();
+        let index = scratch.index();
+        refresh_library(scan("/clips", &["/clips/a.mp4"]), &index).unwrap();
+        let bad = MetaEdit::AddToCollection {
+            path: "/clips/a.mp4".into(),
+            name: "Nope".into(),
+        };
+        assert_eq!(
+            edit_meta(&index, "/clips", &bad),
+            Err(EngineError::NameInvalid)
+        );
+        assert!(
+            load_library(&index).unwrap().entries[0]
+                .collections
+                .is_empty()
+        );
+        let fav = MetaEdit::SetFavorite {
+            path: "/clips/a.mp4".into(),
+            favorite: true,
+        };
+        assert_eq!(
+            edit_meta(&index, "/elsewhere", &fav),
+            Err(EngineError::IndexMissing)
+        );
+    }
+
+    #[test]
+    fn deleting_a_collection_reaches_clips_in_other_remembered_folders() {
+        let scratch = Scratch::new();
+        let index = scratch.index();
+        refresh_library(scan("/one", &["/one/a.mp4"]), &index).unwrap();
+        refresh_library(scan("/two", &["/two/b.mp4"]), &index).unwrap();
+        edit_meta(
+            &index,
+            "/two",
+            &MetaEdit::CreateCollection { name: "X".into() },
+        )
+        .unwrap();
+        edit_meta(
+            &index,
+            "/two",
+            &MetaEdit::AddToCollection {
+                path: "/two/b.mp4".into(),
+                name: "X".into(),
+            },
+        )
+        .unwrap();
+        let mut raw = read_index(&index).unwrap();
+        raw.folders[1].entries[0].collections = vec!["X".into()];
+        write_index(&index, &raw).unwrap();
+        edit_meta(
+            &index,
+            "/two",
+            &MetaEdit::DeleteCollection { name: "X".into() },
+        )
+        .unwrap();
+        let after = read_index(&index).unwrap();
+        assert!(after.collections.is_empty());
+        assert!(
+            after
+                .folders
+                .iter()
+                .all(|f| f.entries.iter().all(|e| e.collections.is_empty()))
+        );
     }
 
     #[test]
@@ -410,6 +582,7 @@ mod tests {
                 directory: "/clips".to_owned(),
                 entries: vec![entry],
             }],
+            collections: Vec::new(),
         };
         write_index(&scratch.index(), &index).expect("write");
         assert_eq!(

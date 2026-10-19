@@ -176,6 +176,7 @@ pub enum Icon {
     Library,
     Gear,
     Import,
+    Heart,
 }
 
 /// Draws `icon` centered on `c`, about 18 px across at `scale` 1.0.
@@ -343,6 +344,7 @@ pub fn draw_icon(painter: &Painter, c: Pos2, icon: Icon, color: Color32, scale: 
             line(&[at(0.0, -8.0), at(0.0, 3.0)]);
             line(&[at(-4.0, -1.0), at(0.0, 3.5), at(4.0, -1.0)]);
         }
+        Icon::Heart => draw_heart(painter, c, color, false, scale),
     }
 }
 
@@ -597,4 +599,36 @@ pub fn test_context() -> egui::Context {
     // Fonts take effect at the start of the next frame.
     let _ = context.run(egui::RawInput::default(), |_| {});
     context
+}
+
+/// A heart about 18 px across at `scale` 1.0, outlined or filled.
+pub fn draw_heart(painter: &Painter, c: Pos2, color: Color32, filled: bool, scale: f32) {
+    if filled {
+        // Two round lobes and a point: simple shapes that need no concave fill.
+        painter.circle_filled(c + Vec2::new(-4.0, -2.5) * scale, 4.7 * scale, color);
+        painter.circle_filled(c + Vec2::new(4.0, -2.5) * scale, 4.7 * scale, color);
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                c + Vec2::new(-8.4, -0.8) * scale,
+                c + Vec2::new(8.4, -0.8) * scale,
+                c + Vec2::new(0.0, 8.6) * scale,
+            ],
+            color,
+            Stroke::NONE,
+        ));
+        return;
+    }
+    let points: Vec<Pos2> = (0..=40)
+        .map(|step| {
+            let t = step as f32 / 40.0 * std::f32::consts::TAU;
+            let x = 16.0 * t.sin().powi(3);
+            let y =
+                13.0 * t.cos() - 5.0 * (2.0 * t).cos() - 2.0 * (3.0 * t).cos() - (4.0 * t).cos();
+            c + Vec2::new(x, -y) * (0.5 * scale) + Vec2::new(0.0, 0.5 * scale)
+        })
+        .collect();
+    painter.add(egui::Shape::line(
+        points,
+        Stroke::new(1.7_f32 * scale.max(0.6), color),
+    ));
 }

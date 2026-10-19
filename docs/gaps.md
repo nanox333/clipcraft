@@ -35,3 +35,8 @@ workflow and required failure cases. Do not publish percentages until a repeatab
 - Storage: capture folder, usage and free space, a storage limit, and a delete-oldest or stop policy. The cleanup plan is tested; nothing is deleted until recording exists.
 - Capture: cursor, force window capture, HDR compatibility. Aspect ratio (game, stretch, black bars, crop to 16:9) moved to Advanced.
 - General: launch at sign-in (Linux autostart entry, macOS launch agent, Windows Run key) and start minimized. Only the Linux path can be exercised in this container.
+
+### Library organisation
+
+- **Done:** favorites (heart on a card or in the clip view, right-click menu), collections (create, rename, delete from the sidebar; add or remove from a card's right-click menu or the clip view), and games (guessed from a sub-folder of the library or a recorder-style file name such as `Valorant 2024.03.01 - 21.04.mp4`; set by hand in the clip view). The sidebar lists All clips, Favorites, collections, and games with counts. All of it is saved in the local index, kept across rescans, and exposed as the `library.edit` command.
+- **Limits:** the library scan is not recursive, so the sub-folder rule for games only helps once recursive scans exist; today games come from file names or your own choice. A plain file name with no date or ` - ` is not treated as a game. Collections hold clips by path, so a file moved outside ClipCraft leaves its collections.

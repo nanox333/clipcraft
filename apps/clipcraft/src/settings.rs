@@ -42,8 +42,20 @@ impl SettingsState {
     }
 }
 
-/// One option of a row of choices. True when clicked. A disabled option explains itself on hover.
+/// One option of a row of choices. True when a different option is clicked. A disabled option
+/// explains itself on hover.
 pub(crate) fn choice(
+    ui: &mut egui::Ui,
+    label: &str,
+    selected: bool,
+    enabled: bool,
+    hint: &str,
+) -> bool {
+    toggle_chip(ui, label, selected, enabled, hint) && !selected
+}
+
+/// Like [`choice`], but true on every click, so a selected chip can be switched off.
+pub(crate) fn toggle_chip(
     ui: &mut egui::Ui,
     label: &str,
     selected: bool,
@@ -90,7 +102,7 @@ pub(crate) fn choice(
         text,
     );
     let clicked = response.clone().on_hover_text(hint).clicked();
-    clicked && enabled && !selected
+    clicked && enabled
 }
 
 /// A small heading over a group of setting rows.

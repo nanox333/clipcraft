@@ -1,8 +1,9 @@
 use clipcraft_engine::{
-    Command, CommandOutput, EngineError, LibraryScanResult, MediaEntry, MediaProbe,
-    RecordingSettings, default_index_path, default_thumbnail_dir, execute,
+    Command, CommandOutput, EngineError, LibraryScanResult, MediaEntry, MediaProbe, MetaEdit,
+    RecordingSettings, apply_edit, default_index_path, default_thumbnail_dir, execute, game_of,
 };
 mod kit;
+mod organize;
 mod playback;
 mod settings;
 mod thumbs;
@@ -16,6 +17,7 @@ use std::sync::mpsc;
 use kit::{
     BORDER, CANVAS, CARD, CARD_HOVER, DANGER, FAINT, Icon, LIME, MUTED, PANEL, SIDEBAR, TEXT,
 };
+use organize::{CollectionEdit, LibraryFilter, RailAction};
 use settings::{card, setting_row, toggle_row};
 
 fn main() -> eframe::Result<()> {
@@ -94,6 +96,12 @@ struct ClipCraftApp {
     settings_path: Option<PathBuf>,
     settings_tab: SettingsTab,
     settings_state: settings::SettingsState,
+    /// Which clips the library shows: all, favorites, a collection, or a game.
+    filter: LibraryFilter,
+    /// A collection being created or renamed in the sidebar.
+    collection_edit: Option<CollectionEdit>,
+    /// The game name being typed for the open clip: its path and the text.
+    game_draft: Option<(String, String)>,
 }
 
 /// A thumbnail the worker finished: the clip and its cached JPEG.
@@ -561,17 +569,135 @@ impl ClipCraftApp {
     }
 
     fn library_view(&mut self, ui: &mut egui::Ui) {
+        let show_rail = self.library.is_some() && ui.available_width() >= 720.0;
+        let mut rail_actions = Vec::new();
+        if show_rail {
+            let height = ui.available_height().max(0.0);
+            let rail_width = 210.0_f32.min(ui.available_width() * 0.28);
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.allocate_ui_with_layout(
+                    Vec2::new(rail_width, height),
+                    Layout::top_down(Align::Min),
+                    |ui| {
+                        if let Some(result) = self.library.as_ref() {
+                            rail_actions =
+                                organize::rail(ui, result, &self.filter, &mut self.collection_edit);
+                        }
+                    },
+                );
+                ui.add_space(16.0);
+                let width = ui.available_width().max(0.0);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(width, height),
+                    Layout::top_down(Align::Min),
+                    |ui| self.library_content(ui),
+                );
+            });
+        } else {
+            self.library_content(ui);
+        }
+        self.handle_rail(rail_actions);
+    }
+
+    fn handle_rail(&mut self, actions: Vec<RailAction>) {
+        for action in actions {
+            match action {
+                RailAction::Select(filter) => self.filter = filter,
+                RailAction::BeginCreate => self.collection_edit = Some(CollectionEdit::default()),
+                RailAction::BeginRename(name) => {
+                    self.collection_edit = Some(CollectionEdit {
+                        original: Some(name.clone()),
+                        text: name,
+                        focused: false,
+                    });
+                }
+                RailAction::Delete(name) => {
+                    if self.filter == LibraryFilter::Collection(name.clone()) {
+                        self.filter = LibraryFilter::All;
+                    }
+                    self.edit_library(MetaEdit::DeleteCollection { name });
+                }
+                RailAction::Cancel => self.collection_edit = None,
+                RailAction::Commit => {
+                    let Some(edit) = self.collection_edit.take() else {
+                        continue;
+                    };
+                    if edit.text.trim().is_empty() {
+                        continue;
+                    }
+                    match edit.original {
+                        None => self.edit_library(MetaEdit::CreateCollection { name: edit.text }),
+                        Some(from) => {
+                            let to = edit.text.trim().to_owned();
+                            if from != to {
+                                let renamed =
+                                    self.filter == LibraryFilter::Collection(from.clone());
+                                self.edit_library(MetaEdit::RenameCollection {
+                                    from,
+                                    to: to.clone(),
+                                });
+                                if renamed && self.error.is_none() {
+                                    self.filter = LibraryFilter::Collection(to);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Applies a favorite, game, or collection change on screen and saves it in the index.
+    fn edit_library(&mut self, edit: MetaEdit) {
+        self.error = None;
+        let Some(result) = self.library.as_mut() else {
+            return;
+        };
+        if let Err(error) = apply_edit(&mut result.entries, &mut result.collections, &edit) {
+            self.error = Some(error.to_string());
+            return;
+        }
+        if let Some(open) = self.selected.as_mut()
+            && let Some(fresh) = result.entries.iter().find(|entry| entry.path == open.path)
+        {
+            *open = fresh.clone();
+        }
+        let directory = result.directory.clone();
+        if let Some(index_path) = self.index_path.clone()
+            && let Err(error) = execute(Command::EditLibraryMeta {
+                index_path,
+                directory,
+                edit,
+            })
+        {
+            self.error = Some(error.to_string());
+        }
+    }
+
+    fn library_content(&mut self, ui: &mut egui::Ui) {
         let (visible_count, total_count) = self.library.as_ref().map_or((0, 0), |result| {
             (
-                visible_entries(&result.entries, &self.search_text, self.sort_newest).len(),
-                result.entries.len(),
+                filtered_entries(
+                    &result.entries,
+                    &self.filter,
+                    &result.directory,
+                    &self.search_text,
+                    self.sort_newest,
+                )
+                .len(),
+                result
+                    .entries
+                    .iter()
+                    .filter(|entry| self.filter.matches(entry, &result.directory))
+                    .count(),
             )
         });
 
         // Title row.
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new("Clips")
+                RichText::new(self.filter.title())
                     .color(TEXT)
                     .size(26.0)
                     .family(kit::semibold()),
@@ -661,11 +787,26 @@ impl ClipCraftApp {
         match self.library.as_ref() {
             Some(result) if result.entries.is_empty() => self.empty_state(ui),
             Some(result) => {
-                let entries = visible_entries(&result.entries, &self.search_text, self.sort_newest);
-                if entries.is_empty() {
+                let entries = filtered_entries(
+                    &result.entries,
+                    &self.filter,
+                    &result.directory,
+                    &self.search_text,
+                    self.sort_newest,
+                );
+                if entries.is_empty() && self.search_text.trim().is_empty() {
+                    let (headline, help) = self.filter.empty_message();
+                    empty_panel(ui, Icon::Library, headline, help, None);
+                } else if entries.is_empty() {
                     self.no_search_results(ui);
                 } else {
-                    card_action = Self::clip_grid(ui, &entries, &mut self.thumbs);
+                    card_action = Self::clip_grid(
+                        ui,
+                        &entries,
+                        &mut self.thumbs,
+                        &result.directory,
+                        &result.collections,
+                    );
                 }
             }
             None => self.first_scan_state(ui),
@@ -677,6 +818,16 @@ impl ClipCraftApp {
                     self.copy_media_path(ui.ctx(), PathBuf::from(path));
                 }
                 ClipCardAction::Reveal(path) => self.reveal_media(PathBuf::from(path)),
+                ClipCardAction::SetFavorite { path, favorite } => {
+                    self.edit_library(MetaEdit::SetFavorite { path, favorite });
+                }
+                ClipCardAction::SetCollection { path, name, add } => {
+                    self.edit_library(if add {
+                        MetaEdit::AddToCollection { path, name }
+                    } else {
+                        MetaEdit::RemoveFromCollection { path, name }
+                    });
+                }
             }
         }
     }
@@ -740,6 +891,8 @@ impl ClipCraftApp {
         ui: &mut egui::Ui,
         entries: &[&MediaEntry],
         thumbs: &mut thumbs::Thumbnails,
+        directory: &str,
+        collections: &[String],
     ) -> Option<ClipCardAction> {
         let available_width = ui.available_width();
         let columns: usize = if available_width < 560.0 {
@@ -766,7 +919,15 @@ impl ClipCraftApp {
                     let Some(column) = column_uis.get_mut(index % columns) else {
                         continue;
                     };
-                    if let Some(clicked) = clip_card(column, entry, card_width, thumbs) {
+                    let game = game_of(entry, directory);
+                    if let Some(clicked) = clip_card(
+                        column,
+                        entry,
+                        card_width,
+                        thumbs,
+                        game.as_deref(),
+                        collections,
+                    ) {
                         action = Some(clicked);
                     }
                     column.add_space(16.0);
@@ -836,9 +997,164 @@ impl ClipCraftApp {
             ui.allocate_ui_with_layout(
                 Vec2::new(side, height),
                 Layout::top_down(Align::Min),
-                |ui| self.details_card(ui, entry, side),
+                |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            self.organize_card(ui, entry, side);
+                            ui.add_space(12.0);
+                            self.details_card(ui, entry, side);
+                        });
+                },
             );
         });
+    }
+
+    /// Favorite, game, and collections for the open clip.
+    fn organize_card(&mut self, ui: &mut egui::Ui, entry: &MediaEntry, width: f32) {
+        let (directory, collections) = self.library.as_ref().map_or_else(
+            || (String::new(), Vec::new()),
+            |result| (result.directory.clone(), result.collections.clone()),
+        );
+        let detected = game_of(entry, &directory);
+        // The draft follows the open clip; it is reset when another clip opens.
+        if self
+            .game_draft
+            .as_ref()
+            .is_none_or(|(path, _)| *path != entry.path)
+        {
+            self.game_draft = Some((entry.path.clone(), detected.clone().unwrap_or_default()));
+        }
+        let mut favorite = None;
+        let mut game_change = None;
+        let mut collection_change = None;
+        egui::Frame::new()
+            .fill(PANEL)
+            .stroke(Stroke::new(1.0_f32, BORDER))
+            .corner_radius(egui::CornerRadius::same(14))
+            .inner_margin(egui::Margin::same(20))
+            .show(ui, |ui| {
+                ui.set_width((width - 42.0).max(0.0));
+                ui.label(
+                    RichText::new("Organize")
+                        .color(TEXT)
+                        .size(16.0)
+                        .family(kit::semibold()),
+                );
+                ui.add_space(8.0);
+                let label = if entry.favorite {
+                    "Favorited"
+                } else {
+                    "Add to favorites"
+                };
+                let (rect, response) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width().max(0.0), 36.0),
+                    egui::Sense::click(),
+                );
+                ui.painter().rect_filled(
+                    rect,
+                    18.0,
+                    if response.hovered() { CARD_HOVER } else { CARD },
+                );
+                kit::draw_heart(
+                    ui.painter(),
+                    egui::pos2(rect.left() + 22.0, rect.center().y),
+                    if entry.favorite { LIME } else { TEXT },
+                    entry.favorite,
+                    0.8,
+                );
+                ui.painter().text(
+                    egui::pos2(rect.left() + 42.0, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    label,
+                    egui::FontId::new(14.0, kit::medium()),
+                    TEXT,
+                );
+                if response.clicked() {
+                    favorite = Some(!entry.favorite);
+                }
+                ui.add_space(12.0);
+                ui.label(RichText::new("Game").color(MUTED).size(12.5));
+                if let Some((_, text)) = self.game_draft.as_mut() {
+                    let field = egui::Frame::new()
+                        .fill(Color32::from_rgb(13, 13, 15))
+                        .stroke(Stroke::new(1.0_f32, BORDER))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(egui::Margin::symmetric(10, 6))
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(text)
+                                    .frame(false)
+                                    .hint_text("Which game is this?")
+                                    .char_limit(clipcraft_engine::MAX_NAME_CHARS)
+                                    .desired_width(ui.available_width().max(0.0)),
+                            )
+                        })
+                        .inner;
+                    if field.lost_focus() {
+                        let typed = text.trim().to_owned();
+                        if typed != detected.clone().unwrap_or_default() {
+                            game_change = Some(typed);
+                        }
+                    }
+                }
+                ui.label(
+                    RichText::new(if entry.game.is_some() {
+                        "Set by you. Clear the box to use the detected game."
+                    } else {
+                        "Detected from the folder or file name. Type to change it."
+                    })
+                    .color(FAINT)
+                    .size(12.0),
+                );
+                ui.add_space(12.0);
+                ui.label(RichText::new("Collections").color(MUTED).size(12.5));
+                ui.add_space(4.0);
+                if collections.is_empty() {
+                    ui.label(
+                        RichText::new("Make a collection with + in the Library sidebar.")
+                            .color(FAINT)
+                            .size(12.0),
+                    );
+                }
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+                    for name in &collections {
+                        let member = entry.collections.contains(name);
+                        if settings::toggle_chip(ui, name, member, true, "Add or remove") {
+                            collection_change = Some(name.clone());
+                        }
+                    }
+                });
+            });
+        if let Some(favorite) = favorite {
+            self.edit_library(MetaEdit::SetFavorite {
+                path: entry.path.clone(),
+                favorite,
+            });
+        }
+        if let Some(typed) = game_change {
+            self.edit_library(MetaEdit::SetGame {
+                path: entry.path.clone(),
+                game: (!typed.is_empty()).then_some(typed),
+            });
+            // Show what is now in effect, including the guess when the box was cleared.
+            self.game_draft = None;
+        }
+        if let Some(name) = collection_change {
+            let add = !entry.collections.contains(&name);
+            self.edit_library(if add {
+                MetaEdit::AddToCollection {
+                    path: entry.path.clone(),
+                    name,
+                }
+            } else {
+                MetaEdit::RemoveFromCollection {
+                    path: entry.path.clone(),
+                    name,
+                }
+            });
+        }
     }
 
     fn details_card(&mut self, ui: &mut egui::Ui, entry: &MediaEntry, width: f32) {
@@ -1246,6 +1562,15 @@ enum ClipCardAction {
     Open(Box<MediaEntry>),
     CopyPath(String),
     Reveal(String),
+    SetFavorite {
+        path: String,
+        favorite: bool,
+    },
+    SetCollection {
+        path: String,
+        name: String,
+        add: bool,
+    },
 }
 
 /// A sidebar icon button with an active plate and a lime marker. True when clicked.
@@ -1412,6 +1737,8 @@ fn clip_card(
     entry: &MediaEntry,
     width: f32,
     thumbs: &mut thumbs::Thumbnails,
+    game: Option<&str>,
+    collections: &[String],
 ) -> Option<ClipCardAction> {
     const RADIUS: u8 = 12;
     const BODY_HEIGHT: f32 = 66.0;
@@ -1436,7 +1763,12 @@ fn clip_card(
         response.id.with("reveal"),
         egui::Sense::click(),
     );
-    let hovered = response.hovered() || copy.hovered() || reveal.hovered();
+    let heart_area = egui::Rect::from_center_size(
+        egui::pos2(thumbnail.right() - 24.0, thumbnail.top() + 24.0),
+        Vec2::splat(36.0),
+    );
+    let heart = ui.interact(heart_area, response.id.with("heart"), egui::Sense::click());
+    let hovered = response.hovered() || copy.hovered() || reveal.hovered() || heart.hovered();
     if hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
@@ -1469,6 +1801,40 @@ fn clip_card(
             Icon::Play,
             LIME,
             1.15,
+        );
+    }
+
+    // Favorite heart (always shown when set) and the game badge.
+    if entry.favorite || hovered {
+        painter.circle_filled(heart_area.center(), 16.0, Color32::from_black_alpha(150));
+        if entry.favorite {
+            kit::draw_heart(&painter, heart_area.center(), LIME, true, 0.85);
+        } else {
+            kit::draw_heart(
+                &painter,
+                heart_area.center(),
+                if heart.hovered() { LIME } else { TEXT },
+                false,
+                0.85,
+            );
+        }
+    }
+    if let Some(game) = game {
+        let galley = painter.layout_no_wrap(
+            game.to_owned(),
+            egui::FontId::new(12.0, kit::medium()),
+            TEXT,
+        );
+        let badge_width = (galley.size().x + 18.0).min(width - 24.0).max(0.0);
+        let badge = egui::Rect::from_min_size(
+            egui::pos2(thumbnail.left() + 10.0, thumbnail.bottom() - 32.0),
+            Vec2::new(badge_width, 22.0),
+        );
+        painter.rect_filled(badge, 11.0, Color32::from_black_alpha(170));
+        painter.with_clip_rect(badge).galley(
+            egui::pos2(badge.left() + 9.0, badge.center().y - galley.size().y / 2.0),
+            galley,
+            TEXT,
         );
     }
 
@@ -1564,7 +1930,45 @@ fn clip_card(
         Stroke::new(1.0_f32, BORDER),
     );
 
-    if copy.clicked() {
+    let mut menu_action = None;
+    response.context_menu(|ui| {
+        let label = if entry.favorite {
+            "Remove from favorites"
+        } else {
+            "Add to favorites"
+        };
+        if ui.button(label).clicked() {
+            menu_action = Some(ClipCardAction::SetFavorite {
+                path: entry.path.clone(),
+                favorite: !entry.favorite,
+            });
+            ui.close();
+        }
+        ui.menu_button("Add to collection", |ui| {
+            if collections.is_empty() {
+                ui.label(RichText::new("No collections yet").color(MUTED));
+            }
+            for name in collections {
+                let member = entry.collections.contains(name);
+                if ui.selectable_label(member, name.as_str()).clicked() {
+                    menu_action = Some(ClipCardAction::SetCollection {
+                        path: entry.path.clone(),
+                        name: name.clone(),
+                        add: !member,
+                    });
+                    ui.close();
+                }
+            }
+        });
+    });
+    if menu_action.is_some() {
+        menu_action
+    } else if heart.clicked() {
+        Some(ClipCardAction::SetFavorite {
+            path: entry.path.clone(),
+            favorite: !entry.favorite,
+        })
+    } else if copy.clicked() {
         Some(ClipCardAction::CopyPath(entry.path.clone()))
     } else if reveal.clicked() {
         Some(ClipCardAction::Reveal(entry.path.clone()))
@@ -1679,6 +2083,19 @@ fn paint_video_placeholder(
     );
 }
 
+/// The clips of the current view, searched and sorted.
+fn filtered_entries<'a>(
+    entries: &'a [MediaEntry],
+    filter: &LibraryFilter,
+    directory: &str,
+    query: &str,
+    sort_newest: bool,
+) -> Vec<&'a MediaEntry> {
+    let mut visible = visible_entries(entries, query, sort_newest);
+    visible.retain(|entry| filter.matches(entry, directory));
+    visible
+}
+
 fn visible_entries<'a>(
     entries: &'a [MediaEntry],
     query: &str,
@@ -1759,8 +2176,9 @@ fn civil_from_days(unix_days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClipCraftApp, EngineError, MediaProbe, Page, ProbeMessage, RecordingSettings, SettingsTab,
-        format_date, format_duration, kit, probe_paths, visible_entries,
+        ClipCraftApp, EngineError, LibraryFilter, MediaProbe, Page, ProbeMessage,
+        RecordingSettings, SettingsTab, format_date, format_duration, kit, probe_paths,
+        visible_entries,
     };
     use clipcraft_engine::{Container, Framing, LibraryScanResult, MediaEntry, OutputShape};
     use eframe::egui;
@@ -1778,6 +2196,8 @@ mod tests {
             offline: false,
             favorite: false,
             tags: Vec::new(),
+            game: None,
+            collections: Vec::new(),
             probe: None,
         }
     }
@@ -1791,6 +2211,67 @@ mod tests {
         ));
         fs::create_dir(&directory).expect("create temporary test directory");
         directory
+    }
+
+    #[test]
+    fn favorites_and_collections_change_the_view_and_survive_a_relaunch() {
+        use super::filtered_entries;
+        use clipcraft_engine::MetaEdit;
+        let directory = temporary_directory();
+        let clips = directory.join("clips");
+        fs::create_dir(&clips).unwrap();
+        for name in ["Hades 2024.01.01.mp4", "Celeste 2024.01.02.mp4"] {
+            fs::write(clips.join(name), b"not a real video").unwrap();
+        }
+        let index_path = directory.join("library-index.json");
+        let mut app = ClipCraftApp::restored_from(Some(index_path.clone()));
+        app.directory_text = clips.to_string_lossy().into_owned();
+        app.scan_library();
+        let hades = clips
+            .join("Hades 2024.01.01.mp4")
+            .to_string_lossy()
+            .into_owned();
+
+        app.edit_library(MetaEdit::SetFavorite {
+            path: hades.clone(),
+            favorite: true,
+        });
+        app.edit_library(MetaEdit::CreateCollection {
+            name: "Best".to_owned(),
+        });
+        app.edit_library(MetaEdit::AddToCollection {
+            path: hades.clone(),
+            name: "Best".to_owned(),
+        });
+        assert!(app.error.is_none(), "{:?}", app.error);
+
+        let result = app.library.as_ref().unwrap();
+        let count = |filter: &LibraryFilter| {
+            filtered_entries(&result.entries, filter, &result.directory, "", false).len()
+        };
+        assert_eq!(count(&LibraryFilter::All), 2);
+        assert_eq!(count(&LibraryFilter::Favorites), 1);
+        assert_eq!(count(&LibraryFilter::Collection("Best".to_owned())), 1);
+        assert_eq!(count(&LibraryFilter::Game("hades".to_owned())), 1);
+        assert_eq!(count(&LibraryFilter::Game("Nope".to_owned())), 0);
+
+        // A refused edit shows a message and changes nothing.
+        app.edit_library(MetaEdit::CreateCollection {
+            name: "best".to_owned(),
+        });
+        assert!(app.error.is_some());
+        app.error = None;
+
+        let relaunched = ClipCraftApp::restored_from(Some(index_path));
+        let restored = relaunched.library.as_ref().unwrap();
+        assert_eq!(restored.collections, ["Best"]);
+        assert!(
+            restored
+                .entries
+                .iter()
+                .any(|entry| entry.favorite && entry.collections == ["Best"])
+        );
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]
@@ -2115,6 +2596,7 @@ mod tests {
                 directory: "/clips".to_owned(),
                 entries: awkward_entries(),
                 persisted: false,
+                collections: vec!["Clutches".to_owned()],
             });
             app.error = Some("A scan problem".to_owned());
             draw(&mut app, &context, size, 3);
@@ -2129,6 +2611,7 @@ mod tests {
                 directory: "/clips".to_owned(),
                 entries: Vec::new(),
                 persisted: false,
+                collections: vec!["Clutches".to_owned()],
             });
             draw(&mut app, &context, size, 2);
 
@@ -2137,6 +2620,7 @@ mod tests {
                 directory: "/clips".to_owned(),
                 entries: awkward_entries(),
                 persisted: false,
+                collections: vec!["Clutches".to_owned()],
             });
             for entry in awkward_entries() {
                 app.selected = Some(entry);
@@ -2149,6 +2633,27 @@ mod tests {
             draw(&mut app, &context, size, 2);
             app.directory_text = "/a/very/long/path/".repeat(30);
             draw(&mut app, &context, size, 2);
+
+            // Every library view, with a collection being named.
+            app.page = Page::Library;
+            app.library = Some(LibraryScanResult {
+                directory: "/clips".to_owned(),
+                entries: awkward_entries(),
+                persisted: false,
+                collections: vec!["Clutches".to_owned(), "x".repeat(200)],
+            });
+            app.collection_edit = Some(crate::organize::CollectionEdit::default());
+            for filter in [
+                LibraryFilter::Favorites,
+                LibraryFilter::Collection("Clutches".to_owned()),
+                LibraryFilter::Game("short.mp4".to_owned()),
+                LibraryFilter::All,
+            ] {
+                app.filter = filter;
+                draw(&mut app, &context, size, 2);
+            }
+            app.collection_edit = None;
+            app.page = Page::Settings;
 
             // Every settings tab, with the advanced section on and custom quality shown.
             app.recording.show_advanced = true;
