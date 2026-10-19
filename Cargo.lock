@@ -387,10 +387,12 @@ dependencies = [
  "clipcraft-record",
  "clipcraft-time",
  "filmcraft-export",
+ "filmcraft-h264enc",
  "filmcraft-isobmff",
  "filmcraft-platform",
  "filmcraft-time",
  "global-hotkey",
+ "windows 0.62.2",
  "windows-capture",
  "x11rb 0.14.0",
 ]

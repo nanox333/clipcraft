@@ -9,8 +9,12 @@
 
 use clipcraft_capture::{Capabilities, CaptureError, CaptureSource, CaptureTarget};
 
+#[cfg(any(windows, test))]
+mod h264_stream;
 mod hardware;
 mod hotkey;
+#[cfg(windows)]
+mod mf_encoder;
 #[cfg(windows)]
 mod windows;
 #[cfg(all(unix, not(target_os = "macos")))]

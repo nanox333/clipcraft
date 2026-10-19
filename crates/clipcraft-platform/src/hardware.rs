@@ -88,9 +88,10 @@ impl HardwareEncoder for Wrapped {
     }
 }
 
-fn open(request: &HardwareRequest) -> Result<Box<dyn HardwareEncoder>, String> {
+/// FilmCraft's encoders: NVIDIA on Windows and Linux, Apple on macOS.
+fn open_filmcraft(request: &HardwareRequest) -> Result<Box<dyn HardwareEncoder>, String> {
     let Some((name, factory)) = backend() else {
-        return Err("this computer has no supported hardware encoder".to_owned());
+        return Err("this computer has no NVIDIA or Apple hardware encoder code".to_owned());
     };
     let settings = ExportSettings {
         format: Format::H264,
@@ -111,10 +112,7 @@ fn open(request: &HardwareRequest) -> Result<Box<dyn HardwareEncoder>, String> {
         den: 1,
     };
     match factory(Format::H264, request.width, request.height, rate, &settings) {
-        None => Err(
-            "no NVIDIA or Apple hardware encoder accepted this recording (other graphics cards are not supported yet)"
-                .to_owned(),
-        ),
+        None => Err(format!("no {name} encoder accepted this recording")),
         Some(Err(error)) => Err(error.to_string()),
         Some(Ok(encoder)) => Ok(Box::new(Wrapped {
             encoder,
@@ -125,9 +123,27 @@ fn open(request: &HardwareRequest) -> Result<Box<dyn HardwareEncoder>, String> {
     }
 }
 
+/// Tries each hardware encoder this system has, in turn. On Windows that is NVIDIA's (through
+/// FilmCraft) and then whatever hardware H.264 encoder the graphics driver installs for Media
+/// Foundation, which is how AMD and Intel cards are reached.
+fn open(request: &HardwareRequest) -> Result<Box<dyn HardwareEncoder>, String> {
+    let mut reasons = Vec::new();
+    match open_filmcraft(request) {
+        Ok(encoder) => return Ok(encoder),
+        Err(why) => reasons.push(why),
+    }
+    #[cfg(windows)]
+    match crate::mf_encoder::open(request) {
+        Ok(encoder) => return Ok(encoder),
+        Err(why) => reasons.push(why),
+    }
+    Err(reasons.join("; "))
+}
+
 /// Opens hardware encoders for the recorder, or `None` on a system with no hardware encoder code.
 pub fn hardware_provider() -> Option<HardwareProvider> {
-    backend().map(|_| HardwareProvider::new(open))
+    let available = backend().is_some() || cfg!(windows);
+    available.then(|| HardwareProvider::new(open))
 }
 
 /// Tries a small hardware encoder to learn whether the GPU can be used. Returns its name, or the

@@ -70,3 +70,5 @@ How it behaves:
 - **Force window capture** asks the provider for the focused window at the moment recording starts.
 - New dependencies: `filmcraft-platform` and `filmcraft-export` (already allowed by ADR 0004), for
   Windows, 64-bit Linux, and macOS only.
+
+- AMD and Intel graphics on Windows are added by [ADR 0007](0007-media-foundation-encoder.md).

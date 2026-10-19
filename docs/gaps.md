@@ -92,6 +92,13 @@ touches ClipCraft's own clips.
   a missing GPU (software, with the reason in the status), a GPU that fails mid-recording or
   reorders pictures (handed to the software encoder and the buffer restarted). **No real GPU
   encoder has run**: this container has none, so NVENC and VideoToolbox are untested. AMD and
-  Intel graphics have no encoder in FilmCraft yet and fall back to the CPU. H.265 through the GPU
+  Intel graphics are reached through Windows Media Foundation instead (next item). H.265 through the GPU
   is not wired (the file writer is H.264 only). The Quality tab probes the card once at start-up
   and greys out GPU when it cannot be used.
+- **AMD and Intel on Windows** record in hardware through a Media Foundation H.264 encoder
+  ([ADR 0007](adr/0007-media-foundation-encoder.md)), tried after NVIDIA's. The stream handling
+  (Annex B to length-prefixed, the decoder configuration record, RGBA to NV12) is unit tested on
+  Linux; the Windows code compiles but has **never run on a Windows computer or an AMD or Intel
+  encoder**. It is the only `unsafe` in ClipCraft's own code. Linux AMD or Intel encoding
+  (VA-API) is not built. If a driver will not take the request, recording uses the CPU and the
+  status says why.
