@@ -1,7 +1,6 @@
 # ADR 0005: MPL-2.0 exception for the symphonia audio decoders
 
-- **Status:** Accepted, reversible. Needs maintainer confirmation because it relaxes a rule in
-  `AGENTS.md` ("permissively licensed dependencies").
+- **Status:** Accepted. Confirmed by the maintainer on 2026-10-19. Reversible; see Alternatives.
 - **Date:** 2026-10-19
 - **Decision owners:** ClipCraft maintainers
 
