@@ -17,7 +17,7 @@ alone.
 | Keyboard access | Verified here | Tab reaches every control; the focused control gets a visible ring; Enter activates it (checked in the running app). |
 | Screen reader names | Verified here | A test walks the accessibility tree of the library, clip view, and every settings tab and fails on any unnamed control. Open: an actual screen reader (NVDA, Orca, VoiceOver). |
 | Diagnostics | Verified here | `clipcraft-cli diagnose [--json]` and Settings › General › Copy report. |
-| Installer | Partly | `cargo xtask package` is written to build a Linux tarball (not yet run to completion: the release build did not fit in this container's disk) with binaries, desktop entry, licences, and `SHA256SUMS`. Open: Windows installer, macOS bundle, code signing and notarisation (need the maintainers' certificates), an update story (there is none by design). |
+| Installer | Partly | `cargo xtask package` builds a Linux tarball (18 MB; binaries, desktop entry, licences, and `SHA256SUMS`). Run to completion on Linux x86_64: the checksum verifies, the archive unpacks into an empty folder, every shared library the binaries need is present, and `clipcraft-cli diagnose` runs from it. It was not installed on a clean second machine. Open: Windows installer, macOS bundle, code signing and notarisation (need the maintainers' certificates), an update story (there is none by design). |
 | Windows capture | Open | Compiles; never run on Windows. |
 | Hardware encoders | Open | NVENC, VideoToolbox, Media Foundation, and VA-API code is tested against stand-ins only. |
 | Real sound devices | Open | Microphone and speaker capture never run with real hardware. |
