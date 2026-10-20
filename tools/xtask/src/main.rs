@@ -255,29 +255,38 @@ fn package() -> TaskResult<()> {
     let folder = dist.join(&name);
     let _ = fs::remove_dir_all(&folder);
     let fail = |_| TaskError::PackageFailed;
+    let windows = cfg!(windows);
     fs::create_dir_all(folder.join("bin")).map_err(fail)?;
-    fs::create_dir_all(folder.join("share").join("applications")).map_err(fail)?;
     let release = workspace.join("target").join("release");
     for binary in ["clipcraft", "clipcraft-cli"] {
-        fs::copy(release.join(binary), folder.join("bin").join(binary)).map_err(fail)?;
+        let file = format!("{binary}{}", env::consts::EXE_SUFFIX);
+        fs::copy(release.join(&file), folder.join("bin").join(&file)).map_err(fail)?;
     }
-    fs::write(
-        folder.join("share").join("applications").join("clipcraft.desktop"),
-        "[Desktop Entry]\nType=Application\nName=ClipCraft\nComment=Local clip recorder and editor\nExec=clipcraft\nTerminal=false\nCategories=AudioVideo;Video;Recorder;\n",
-    )
-    .map_err(fail)?;
+    if !windows {
+        fs::create_dir_all(folder.join("share").join("applications")).map_err(fail)?;
+        fs::write(
+            folder.join("share").join("applications").join("clipcraft.desktop"),
+            "[Desktop Entry]\nType=Application\nName=ClipCraft\nComment=Local clip recorder and editor\nExec=clipcraft\nTerminal=false\nCategories=AudioVideo;Video;Recorder;\n",
+        )
+        .map_err(fail)?;
+    }
     for document in ["README.md", "ATTRIBUTION.md", "LICENSE-MIT"] {
         fs::copy(workspace.join(document), folder.join(document)).map_err(fail)?;
     }
-    fs::write(
-        folder.join("INSTALL.txt"),
+    let install = if windows {
+        "ClipCraft runs from any folder: start bin\\clipcraft.exe.\n\
+Everything ClipCraft saves stays on this computer.\n\
+This download is not signed, so Windows SmartScreen may say the publisher is unknown: choose\n\
+More info, then Run anyway. Check the zip against SHA256SUMS.txt from the release page first.\n\
+Run `bin\\clipcraft-cli.exe diagnose` if recording does not work.\n"
+    } else {
         "ClipCraft runs from any folder: start bin/clipcraft.\n\
 To install for your user, copy bin/* to ~/.local/bin and share/applications/clipcraft.desktop to\n\
 ~/.local/share/applications. Everything ClipCraft saves stays on this computer.\n\
 This package is not signed. Check it against SHA256SUMS before running it.\n\
-Run `clipcraft-cli diagnose` if recording does not work.\n",
-    )
-    .map_err(fail)?;
+Run `clipcraft-cli diagnose` if recording does not work.\n"
+    };
+    fs::write(folder.join("INSTALL.txt"), install).map_err(fail)?;
     // Every dependency's licence, as the audit sees it.
     let licenses = Command::new("cargo")
         .current_dir(&workspace)
@@ -285,21 +294,31 @@ Run `clipcraft-cli diagnose` if recording does not work.\n",
         .output()
         .map_err(|_| TaskError::CommandUnavailable)?;
     fs::write(folder.join("THIRD-PARTY-LICENSES.txt"), licenses.stdout).map_err(fail)?;
-    let archive = format!("{name}.tar.gz");
+    // Windows 10 and later ship a `tar` that writes zip files.
+    let archive = if windows {
+        format!("{name}.zip")
+    } else {
+        format!("{name}.tar.gz")
+    };
+    let flags: &[&str] = if windows { &["-a", "-cf"] } else { &["-czf"] };
     let status = Command::new("tar")
         .current_dir(&dist)
-        .args(["-czf", &archive, &name])
+        .args(flags)
+        .args([&archive, &name])
         .status()
         .map_err(|_| TaskError::CommandUnavailable)?;
     if !status.success() {
         return Err(TaskError::PackageFailed);
     }
-    let sums = Command::new("sha256sum")
-        .current_dir(&dist)
-        .arg(&archive)
-        .output()
-        .map_err(|_| TaskError::CommandUnavailable)?;
-    fs::write(dist.join("SHA256SUMS"), sums.stdout).map_err(fail)?;
+    // On Windows the release workflow writes the checksums for every file together.
+    if !windows {
+        let sums = Command::new("sha256sum")
+            .current_dir(&dist)
+            .arg(&archive)
+            .output()
+            .map_err(|_| TaskError::CommandUnavailable)?;
+        fs::write(dist.join("SHA256SUMS"), sums.stdout).map_err(fail)?;
+    }
     println!("packed {}", dist.join(archive).display());
     Ok(())
 }

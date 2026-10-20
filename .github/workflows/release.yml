@@ -1,0 +1,97 @@
+name: Release
+
+# Builds the Linux and Windows downloads and puts them on a draft GitHub Release.
+# Start it by pushing a tag such as v0.1.0 (it must match the version in Cargo.toml), or run it by
+# hand from the Actions tab. The downloads are not code-signed; see docs/release-checklist.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Read the version from Cargo.toml
+        run: |
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -n 1)
+          if [ -z "$version" ]; then
+            echo "::error::no version found in Cargo.toml"
+            exit 1
+          fi
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: linux
+          - os: windows-latest
+            name: windows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ALSA headers (Linux sound output)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Rust license checker
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Build the package
+        run: cargo xtask package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.name }}
+          path: |
+            target/dist/*.tar.gz
+            target/dist/*.zip
+          if-no-files-found: error
+
+  release:
+    needs: [version, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: package-*
+          merge-multiple: true
+      - name: Write checksums
+        working-directory: dist
+        run: sha256sum clipcraft-* > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          gh release create "v${VERSION}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "ClipCraft ${VERSION}" \
+            --notes "Downloads for Linux (x86_64) and Windows (x86_64). They are not code-signed: on Windows, choose More info, then Run anyway; check each file against SHA256SUMS.txt. Everything ClipCraft records stays on your computer." \
+            --draft

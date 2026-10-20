@@ -30,3 +30,19 @@ alone.
   (needs ffprobe). It exits non-zero when a budget is broken.
 - Offline: `strace -f -e trace=network -o log clipcraft`, then look for `AF_INET`.
 - Diagnostics: `clipcraft-cli diagnose`.
+
+## Publishing a release on GitHub
+
+`.github/workflows/release.yml` builds the Linux (x86_64) tarball and the Windows (x86_64) zip with
+`cargo xtask package`, writes `SHA256SUMS.txt`, and creates a **draft** GitHub Release for review.
+
+1. Set the version in `Cargo.toml` (`[workspace.package]`) and merge it.
+2. Push a tag that matches it, for example `git tag v0.1.0 && git push origin v0.1.0` (or run the
+   workflow by hand from the Actions tab).
+3. Open the draft release, check the files, and publish it.
+
+The downloads are **not code-signed**, so Windows SmartScreen shows "unknown publisher" until a user
+chooses More info, then Run anyway; `INSTALL.txt` in each download says so. The workflow has **not
+been run yet**: the Linux package is verified locally, the Windows build is only known to compile
+and pass the quality gate on Windows CI, and neither the Windows zip nor the release step has run.
+There is no macOS download (no macOS provider yet).
