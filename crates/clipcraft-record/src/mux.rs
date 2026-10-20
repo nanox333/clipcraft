@@ -71,6 +71,23 @@ pub struct SavedClip {
     pub start_frame: i64,
 }
 
+/// A failure from the MP4 writer. A disk that filled up or a folder that cannot be written to
+/// says so, instead of a vague write failure.
+fn mp4_error(error: filmcraft_isobmff::Error) -> RecordError {
+    match error {
+        filmcraft_isobmff::Error::Io(error) => io_error(&error),
+        _ => RecordError::WriteFailed,
+    }
+}
+
+/// The same for the Matroska writer.
+fn mkv_error(error: filmcraft_matroska::Error) -> RecordError {
+    match error {
+        filmcraft_matroska::Error::Io(error) => io_error(&error),
+        _ => RecordError::WriteFailed,
+    }
+}
+
 fn io_error(error: &std::io::Error) -> RecordError {
     match error.kind() {
         ErrorKind::StorageFull | ErrorKind::QuotaExceeded => RecordError::DiskFull,
@@ -157,8 +174,8 @@ fn write_partial(
     match format {
         ClipFormat::Mp4 => {
             let avc = AvcConfig::parse(&video.avcc).map_err(|_| RecordError::BadStream)?;
-            let mut mp4 = Mp4Writer::new(writer, WriterOptions::new(Brand::Mp4))
-                .map_err(|_| RecordError::WriteFailed)?;
+            let mut mp4 =
+                Mp4Writer::new(writer, WriterOptions::new(Brand::Mp4)).map_err(mp4_error)?;
             let entry = SampleEntry::avc(
                 avc,
                 u16::try_from(video.width).map_err(|_| RecordError::BadStream)?,
@@ -166,7 +183,7 @@ fn write_partial(
             );
             let track = mp4
                 .add_track(TrackConfig::new(entry, video.fps))
-                .map_err(|_| RecordError::WriteFailed)?;
+                .map_err(mp4_error)?;
             // Each sound track: its own timescale (the sample rate) and an edit that skips the
             // decoder's warm-up unit and the part before the first picture.
             let mut sound = Vec::new();
@@ -184,9 +201,7 @@ fn write_partial(
                     info.sample_rate,
                 );
                 config.media_start = Some((from - first.start).max(0));
-                let id = mp4
-                    .add_track(config)
-                    .map_err(|_| RecordError::WriteFailed)?;
+                let id = mp4.add_track(config).map_err(mp4_error)?;
                 sound.push((id, units, info.sample_rate, from));
             }
             // Pictures and sound in time order, so the file is interleaved.
@@ -207,7 +222,7 @@ fn write_partial(
                         is_sync: sample.keyframe,
                     },
                 )
-                .map_err(|_| RecordError::WriteFailed)?;
+                .map_err(mp4_error)?;
                 let picture_end = (sample.pts - origin + i64::from(duration)) as f64
                     / f64::from(video.fps.max(1));
                 for ((id, units, rate, from), cursor) in sound.iter().zip(&mut cursors) {
@@ -225,12 +240,12 @@ fn write_partial(
                                 is_sync: true,
                             },
                         )
-                        .map_err(|_| RecordError::WriteFailed)?;
+                        .map_err(mp4_error)?;
                         *cursor += 1;
                     }
                 }
             }
-            let mut out = mp4.finish().map_err(|_| RecordError::WriteFailed)?;
+            let mut out = mp4.finish().map_err(mp4_error)?;
             std::io::Write::flush(&mut out).map_err(|error| io_error(&error))?;
             out.get_ref().sync_all().map_err(|error| io_error(&error))?;
         }
@@ -265,8 +280,7 @@ fn write_partial(
                 writing_app: "ClipCraft".to_owned(),
                 ..MuxOptions::default()
             };
-            let mut mkv =
-                MkvWriter::new(writer, specs, options).map_err(|_| RecordError::WriteFailed)?;
+            let mut mkv = MkvWriter::new(writer, specs, options).map_err(mkv_error)?;
             let fps = i128::from(video.fps);
             let to_ns = |frames: i64| -> i64 {
                 i64::try_from(i128::from(frames) * 1_000_000_000 / fps).unwrap_or(i64::MAX)
@@ -298,17 +312,17 @@ fn write_partial(
                         .or_else(|| Some(to_ns(1)))
                         .and_then(|ns| u64::try_from(ns).ok());
                     mkv.write_frame(0, time, sample.keyframe, &sample.data, duration)
-                        .map_err(|_| RecordError::WriteFailed)?;
+                        .map_err(mkv_error)?;
                 } else if let Some((_, units, rate, _)) = sound.get(lane) {
                     let Some(unit) = units.get(index) else {
                         continue;
                     };
                     let duration = u64::try_from(sound_ns(AAC_FRAME, *rate)).ok();
                     mkv.write_frame(track, time, true, &unit.data, duration)
-                        .map_err(|_| RecordError::WriteFailed)?;
+                        .map_err(mkv_error)?;
                 }
             }
-            let mut out = mkv.finish().map_err(|_| RecordError::WriteFailed)?;
+            let mut out = mkv.finish().map_err(mkv_error)?;
             std::io::Write::flush(&mut out).map_err(|error| io_error(&error))?;
             out.get_ref().sync_all().map_err(|error| io_error(&error))?;
         }

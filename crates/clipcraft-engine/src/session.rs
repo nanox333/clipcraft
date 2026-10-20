@@ -330,6 +330,18 @@ impl CaptureSession {
                 return Err(EngineError::StorageLimit);
             }
         }
+        // Refuse early, before writing anything, when the disk cannot hold what is buffered.
+        // Skipped when the free space is not known.
+        let buffered = recorder.status().buffered_bytes;
+        let needed = buffered
+            .saturating_add(buffered / 16)
+            .saturating_add(4 * 1024 * 1024);
+        if crate::storage::storage_usage(folder)
+            .free_bytes
+            .is_some_and(|free| free < needed)
+        {
+            return Err(EngineError::Record(RecordError::DiskFull));
+        }
         Ok(SaveJob {
             recorder,
             format,
@@ -914,5 +926,137 @@ mod tests {
         assert_eq!(settings.post_roll_seconds, 30);
         let config = record_config(&settings);
         assert_eq!(config.replay_seconds, settings.replay_seconds + 30);
+    }
+
+    /// A small real disk (a tmpfs) for tests that need one to fill. `None` where mounting is not
+    /// allowed, and the test is skipped there.
+    struct SmallDisk(PathBuf);
+
+    impl SmallDisk {
+        fn new(megabytes: u32) -> Option<Self> {
+            // Each disk gets its own folder: tests run side by side.
+            static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let number = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "clipcraft-smalldisk-{}-{number}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).ok()?;
+            let mounted = std::process::Command::new("mount")
+                .args(["-t", "tmpfs", "-o", &format!("size={megabytes}m"), "tmpfs"])
+                .arg(&path)
+                .output()
+                .ok()
+                .is_some_and(|output| output.status.success());
+            if mounted {
+                Some(Self(path))
+            } else {
+                let _ = fs::remove_dir(&path);
+                None
+            }
+        }
+
+        /// Fills the disk until `leave` bytes are free.
+        fn fill_leaving(&self, leave: u64) {
+            let free = crate::storage::storage_usage(&self.0)
+                .free_bytes
+                .expect("free space is known");
+            let filler = vec![0_u8; usize::try_from(free.saturating_sub(leave)).expect("fits")];
+            fs::write(self.0.join("filler.bin"), filler).expect("filler writes");
+        }
+    }
+
+    impl Drop for SmallDisk {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("umount").arg(&self.0).output();
+            let _ = fs::remove_dir(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_full_disk_refuses_the_save_before_writing_and_keeps_clips_already_saved() {
+        let Some(disk) = SmallDisk::new(16) else {
+            eprintln!("skipped: this environment cannot mount a small disk");
+            return;
+        };
+        let settings = RecordingSettings::default();
+        let mut session = CaptureSession::new();
+        session
+            .start(&settings, Box::new(SyntheticSource::new(160, 90, 30)), None)
+            .unwrap();
+        wait_for_video(&session);
+        let saved = session.save_clip(&settings, &disk.0).unwrap();
+        let before = fs::read(&saved.clip.path).unwrap();
+
+        disk.fill_leaving(200_000);
+        let names = |dir: &Path| {
+            let mut names: Vec<String> = fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        let listing = names(&disk.0);
+        assert_eq!(
+            session.save_clip(&settings, &disk.0).map(|_| ()),
+            Err(EngineError::Record(RecordError::DiskFull))
+        );
+        assert_eq!(
+            names(&disk.0),
+            listing,
+            "a refused save leaves no file behind"
+        );
+        assert_eq!(
+            fs::read(&saved.clip.path).unwrap(),
+            before,
+            "the saved clip is untouched"
+        );
+
+        // The recording itself is fine, and saving elsewhere still works.
+        let elsewhere =
+            std::env::temp_dir().join(format!("clipcraft-elsewhere-{}", std::process::id()));
+        assert!(session.save_clip(&settings, &elsewhere).is_ok());
+        let _ = fs::remove_dir_all(&elsewhere);
+        session.stop();
+    }
+
+    #[test]
+    fn a_save_that_fails_never_deletes_older_clips_to_make_room() {
+        let Some(disk) = SmallDisk::new(16) else {
+            eprintln!("skipped: this environment cannot mount a small disk");
+            return;
+        };
+        let old: Vec<PathBuf> = (1..=3)
+            .map(|n| {
+                disk.0
+                    .join(format!("{CLIP_PREFIX}2026-01-0{n} 10-00-00.mp4"))
+            })
+            .collect();
+        for path in &old {
+            fs::write(path, vec![1_u8; 300_000]).unwrap();
+        }
+        let settings = RecordingSettings {
+            delete_oldest_when_full: true,
+            storage_limit_gb: 1,
+            ..RecordingSettings::default()
+        };
+        let mut session = CaptureSession::new();
+        session
+            .start(&settings, Box::new(SyntheticSource::new(160, 90, 30)), None)
+            .unwrap();
+        wait_for_video(&session);
+        disk.fill_leaving(100_000);
+        // A tiny limit would normally delete the old clips after a save; the save fails first.
+        let job = session.prepare_save_within(&settings, &disk.0, 400_000);
+        assert_eq!(
+            job.map(|_| ()),
+            Err(EngineError::Record(RecordError::DiskFull))
+        );
+        assert!(
+            old.iter().all(|path| path.exists()),
+            "old clips must survive a failed save"
+        );
+        session.stop();
     }
 }

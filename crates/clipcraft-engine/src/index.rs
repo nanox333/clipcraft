@@ -89,7 +89,13 @@ pub(crate) fn refresh_library(
 ) -> Result<LibraryScanResult, EngineError> {
     let mut index = match read_index(index_path) {
         Ok(index) => index,
-        Err(EngineError::IndexMissing | EngineError::IndexInvalid) => LibraryIndex::default(),
+        Err(EngineError::IndexMissing) => LibraryIndex::default(),
+        // A damaged index is kept beside the new one rather than overwritten, so favorites and
+        // collections in it are not destroyed by the rescan that replaces it.
+        Err(EngineError::IndexInvalid) => {
+            crate::recording::set_aside(index_path);
+            LibraryIndex::default()
+        }
         // The index exists but cannot be read right now. Show the scan, but do not overwrite a
         // file that may still be valid once the problem clears.
         Err(_) => {
@@ -526,6 +532,20 @@ mod tests {
         assert!(!second.entries[0].offline);
         assert_eq!(second.entries[1].path, "/clips/b.mp4");
         assert!(second.entries[1].offline);
+    }
+
+    #[test]
+    fn a_damaged_index_is_kept_beside_the_replacement() {
+        let scratch = Scratch::new();
+        fs::create_dir_all(scratch.index().parent().expect("parent")).expect("dir");
+        fs::write(scratch.index(), b"not json at all").expect("fixture");
+        let result = refresh_library(scan("/clips", &["/clips/a.mp4"]), &scratch.index())
+            .expect("refresh replaces it");
+        assert_eq!(result.entries.len(), 1);
+        let mut aside = scratch.index().into_os_string();
+        aside.push(".damaged");
+        assert_eq!(fs::read(aside).expect("kept"), b"not json at all");
+        assert!(load_library(&scratch.index()).is_ok());
     }
 
     #[test]

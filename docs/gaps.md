@@ -79,6 +79,16 @@ touches ClipCraft's own clips.
   at any rate is not sustainable in software. Pixel conversion alone is 4 to 11 ms at 1080p. A
   real gaming computer is faster and the game also competes for it; hardware encoders are the way
   to 1080p60 and are not wired. The top bar shows when more than 5% of pictures are dropped.
+- **Crash and full-disk safety** ([ADR 0011](adr/0011-crash-and-disk-safety.md)). Clips, trims,
+  settings and the library index are written to a temporary file and renamed, so an interruption
+  never damages what exists. On launch ClipCraft removes its own unfinished `.partial` clips
+  (and keeps a cut-off Matroska one that still plays) and says so. A damaged settings or index file
+  is moved to `*.damaged` instead of being overwritten. A save refuses before writing when the disk
+  cannot hold the buffer, and a disk that fills mid-save (tested on a real 2-16 MB tmpfs) reports
+  "disk is full", leaves no partial file, keeps earlier clips, never deletes older clips to make
+  room, and recording carries on. Not covered: the replay buffer itself lives in memory, so a
+  crash loses what had not been saved; interruptions were simulated with cut-off files, not by
+  killing the app mid-write; the disk tests are skipped where mounting is not allowed.
 - **Missing files.** A clip whose file is gone is listed as "File not found" with Remove from library
   (card footer, right-click menu, or the clip view when it fails to open). Find file asks for a
   folder and searches it and the folders inside it (8 deep, links not followed, bounded) for the same

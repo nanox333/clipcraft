@@ -341,3 +341,96 @@ fn a_120_fps_recording_makes_a_valid_clip() {
     assert!(probe.frames > 60, "{} frames", probe.frames);
     decodes_cleanly(&path);
 }
+
+/// A small real disk (a tmpfs). `None` where mounting is not allowed; the test is skipped there.
+struct SmallDisk(PathBuf);
+
+impl SmallDisk {
+    fn new(megabytes: u32) -> Option<Self> {
+        let path =
+            std::env::temp_dir().join(format!("clipcraft-record-disk-{}", std::process::id()));
+        std::fs::create_dir_all(&path).ok()?;
+        let mounted = Command::new("mount")
+            .args(["-t", "tmpfs", "-o", &format!("size={megabytes}m"), "tmpfs"])
+            .arg(&path)
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if mounted {
+            Some(Self(path))
+        } else {
+            let _ = std::fs::remove_dir(&path);
+            None
+        }
+    }
+
+    fn fill_leaving(&self, bytes: usize) {
+        // Fill with files until a write fails, then trim to leave `bytes`.
+        let chunk = vec![0_u8; 64 * 1024];
+        let mut n = 0;
+        while std::fs::write(self.0.join(format!("filler{n}.bin")), &chunk).is_ok() {
+            n += 1;
+        }
+        let mut freed = 0;
+        let mut k = n;
+        while freed < bytes && k > 0 {
+            k -= 1;
+            let _ = std::fs::remove_file(self.0.join(format!("filler{k}.bin")));
+            freed += chunk.len();
+        }
+        // The failed write may have left a partial filler behind; remove it too.
+        let _ = std::fs::remove_file(self.0.join(format!("filler{n}.bin")));
+    }
+}
+
+impl Drop for SmallDisk {
+    fn drop(&mut self) {
+        let _ = Command::new("umount").arg(&self.0).output();
+        let _ = std::fs::remove_dir(&self.0);
+    }
+}
+
+#[test]
+fn a_disk_that_fills_during_a_save_leaves_no_partial_file_and_keeps_earlier_clips() {
+    let Some(disk) = SmallDisk::new(4) else {
+        eprintln!("skipped: this environment cannot mount a small disk");
+        return;
+    };
+    let recorder = Recorder::start(Box::new(SyntheticSource::new(320, 180, 30)), config()).unwrap();
+    wait_for(&recorder, "three seconds", |s| s.buffered_seconds >= 3.0);
+    let first = disk.0.join("first.mp4");
+    recorder.save_clip(3, ClipFormat::Mp4, &first).unwrap();
+    let kept = std::fs::read(&first).unwrap();
+    assert!(!kept.is_empty());
+
+    // Almost no room: the next clip cannot fit.
+    disk.fill_leaving(20_000);
+    for (format, name) in [
+        (ClipFormat::Mp4, "second.mp4"),
+        (ClipFormat::Mkv, "second.mkv"),
+    ] {
+        let target = disk.0.join(name);
+        assert_eq!(
+            recorder.save_clip(3, format, &target),
+            Err(RecordError::DiskFull),
+            "{name}"
+        );
+        assert!(!target.exists(), "{name} must not exist");
+        assert!(
+            !disk.0.join(format!("{name}.partial")).exists(),
+            "{name}.partial must be removed"
+        );
+    }
+    assert_eq!(
+        std::fs::read(&first).unwrap(),
+        kept,
+        "the earlier clip is untouched"
+    );
+    // Recording carries on, and once there is room again the same save works.
+    assert_eq!(recorder.status().state, RecordState::Running);
+    for n in 0..64 {
+        let _ = std::fs::remove_file(disk.0.join(format!("filler{n}.bin")));
+    }
+    recorder
+        .save_clip(3, ClipFormat::Mp4, &disk.0.join("third.mp4"))
+        .unwrap();
+}

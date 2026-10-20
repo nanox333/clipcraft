@@ -12,6 +12,7 @@ mod hotkeys;
 mod index;
 mod library_meta;
 mod recording;
+mod recovery;
 mod relink;
 mod session;
 mod startup;
@@ -32,6 +33,7 @@ pub use recording::{
     POST_ROLL_SECONDS, QualityMode, REPLAY_SECONDS, RateControl, RecordingSettings, SAMPLE_RATES,
     VIDEO_KBPS, VideoCodec, VideoEncoder, default_settings_path, estimated_bytes, format_bytes,
 };
+pub use recovery::{Recovery, recover_interrupted};
 pub use relink::{SearchResult, find_moved_file};
 pub use session::{
     CLIP_PREFIX, CaptureSession, SavedClipReport, clip_format, clip_stem, record_config,

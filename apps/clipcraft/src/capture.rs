@@ -150,6 +150,7 @@ impl ClipCraftApp {
     pub(crate) fn capture_frame(&mut self, context: &egui::Context) {
         if !self.capture.launched {
             self.capture.launched = true;
+            self.recover_after_crash();
             if self.recording.record_on_launch {
                 self.start_capture();
             }
@@ -261,6 +262,35 @@ impl ClipCraftApp {
             .is_some_and(|notice| !notice.error && notice.at.elapsed() > Duration::from_secs(8))
         {
             self.capture.notice = None;
+        }
+    }
+
+    /// After a crash or power cut, clears the unfinished clip files it left in the capture folder
+    /// and the library folder, and says so.
+    fn recover_after_crash(&mut self) {
+        let capture_folder = if self.recording.capture_folder.is_empty() {
+            default_capture_folder()
+        } else {
+            Some(PathBuf::from(&self.recording.capture_folder))
+        };
+        let library_folder = Some(PathBuf::from(self.directory_text.trim()))
+            .filter(|folder| !folder.as_os_str().is_empty());
+        let mut recovery = clipcraft_engine::Recovery::default();
+        let mut seen = Vec::new();
+        for folder in capture_folder.into_iter().chain(library_folder) {
+            if seen.contains(&folder) {
+                continue;
+            }
+            let found = clipcraft_engine::recover_interrupted(&folder);
+            recovery.removed.extend(found.removed);
+            recovery.salvaged.extend(found.salvaged);
+            seen.push(folder);
+        }
+        if let Some(message) = recovery.message() {
+            self.capture.notice = notice(message, false, None);
+            if !recovery.salvaged.is_empty() {
+                self.capture.saved_into = seen.first().cloned();
+            }
         }
     }
 

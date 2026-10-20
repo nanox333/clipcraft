@@ -606,15 +606,31 @@ pub(crate) fn load_settings(path: &Path) -> Result<RecordingSettings, EngineErro
         Err(_) => return Err(EngineError::SettingsUnavailable),
     };
     if metadata.len() > MAX_SETTINGS_BYTES {
+        set_aside(path);
         return Err(EngineError::SettingsInvalid);
     }
     let bytes = fs::read(path).map_err(|_| EngineError::SettingsUnavailable)?;
-    let file: SettingsFile =
-        serde_json::from_slice(&bytes).map_err(|_| EngineError::SettingsInvalid)?;
+    let file: SettingsFile = match serde_json::from_slice(&bytes) {
+        Ok(file) => file,
+        Err(_) => {
+            set_aside(path);
+            return Err(EngineError::SettingsInvalid);
+        }
+    };
     if file.version != SETTINGS_VERSION {
+        set_aside(path);
         return Err(EngineError::SettingsInvalid);
     }
     Ok(file.settings.sanitized())
+}
+
+/// Moves a settings file ClipCraft cannot read next to itself as `<name>.damaged`, so saving the
+/// defaults afterwards does not destroy it (it may be from a newer version, or recoverable by
+/// hand). Best effort.
+pub(crate) fn set_aside(path: &Path) {
+    let mut aside = path.as_os_str().to_owned();
+    aside.push(".damaged");
+    let _ = fs::rename(path, PathBuf::from(aside));
 }
 
 /// Saves settings with a temp file and rename; returns what was stored.
@@ -966,5 +982,37 @@ mod tests {
             settings.estimated_clip_bytes(5_000),
             estimated_bytes(5_000, 320, 35)
         );
+    }
+
+    #[test]
+    fn a_damaged_settings_file_is_set_aside_not_overwritten() {
+        let dir =
+            std::env::temp_dir().join(format!("clipcraft-settings-aside-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("recording-settings.json");
+        fs::write(&path, b"{ half a file").expect("fixture");
+        assert_eq!(load_settings(&path), Err(EngineError::SettingsInvalid));
+        // The damaged bytes are kept, and the defaults can now be saved without losing them.
+        assert_eq!(
+            fs::read(dir.join("recording-settings.json.damaged")).expect("kept"),
+            b"{ half a file"
+        );
+        assert!(!path.exists());
+        assert_eq!(
+            load_settings(&path).expect("defaults"),
+            RecordingSettings::default()
+        );
+        save_settings(&path, RecordingSettings::default()).expect("saved");
+        assert!(dir.join("recording-settings.json.damaged").exists());
+        // A settings file from a newer version is kept too.
+        fs::write(&path, br#"{"version":999,"settings":{}}"#).expect("fixture");
+        assert_eq!(load_settings(&path), Err(EngineError::SettingsInvalid));
+        assert!(
+            fs::read(dir.join("recording-settings.json.damaged"))
+                .expect("kept")
+                .starts_with(b"{\"version\":999")
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

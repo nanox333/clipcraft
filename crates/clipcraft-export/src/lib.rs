@@ -97,6 +97,13 @@ impl std::fmt::Display for ExportError {
 
 impl std::error::Error for ExportError {}
 
+fn mp4_error(error: filmcraft_isobmff::Error) -> ExportError {
+    match error {
+        filmcraft_isobmff::Error::Io(error) => io_error(&error),
+        _ => ExportError::WriteFailed,
+    }
+}
+
 fn io_error(error: &std::io::Error) -> ExportError {
     match error.kind() {
         ErrorKind::StorageFull | ErrorKind::QuotaExceeded => ExportError::DiskFull,
@@ -267,8 +274,8 @@ fn write(
     cancel: &AtomicBool,
 ) -> Result<(u64, usize), ExportError> {
     let file = File::create(partial).map_err(|error| io_error(&error))?;
-    let mut mp4 = Mp4Writer::new(BufWriter::new(file), WriterOptions::new(Brand::Mp4))
-        .map_err(|_| ExportError::WriteFailed)?;
+    let mut mp4 =
+        Mp4Writer::new(BufWriter::new(file), WriterOptions::new(Brand::Mp4)).map_err(mp4_error)?;
     let mut ids = Vec::new();
     let mut chosen: Vec<Chosen> = Vec::new();
     let mut total_bytes = 0_u64;
@@ -327,14 +334,14 @@ fn write(
                 is_sync: sample.sync,
             },
         )
-        .map_err(|_| ExportError::WriteFailed)?;
+        .map_err(mp4_error)?;
         if stream.kind == StreamKind::Video {
             pictures += 1;
         }
         done += u64::from(sample.size);
         progress((done as f64 / total_bytes.max(1) as f64).min(0.99) as f32);
     }
-    let mut out = mp4.finish().map_err(|_| ExportError::WriteFailed)?;
+    let mut out = mp4.finish().map_err(mp4_error)?;
     out.flush().map_err(|error| io_error(&error))?;
     out.get_ref().sync_all().map_err(|error| io_error(&error))?;
     let audio = plans

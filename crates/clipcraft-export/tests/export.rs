@@ -387,3 +387,47 @@ fn a_file_with_reordered_pictures_is_cut_exactly_too() {
         .unwrap();
     assert!(decoded.status.success() && decoded.stderr.is_empty());
 }
+
+#[test]
+fn a_disk_that_fills_during_an_export_says_so_and_leaves_no_partial_file() {
+    if !tools() {
+        return;
+    }
+    let disk = std::env::temp_dir().join(format!("clipcraft-export-disk-{}", std::process::id()));
+    std::fs::create_dir_all(&disk).unwrap();
+    let mounted = Command::new("mount")
+        .args(["-t", "tmpfs", "-o", "size=2m", "tmpfs"])
+        .arg(&disk)
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !mounted {
+        eprintln!("skipped: this environment cannot mount a small disk");
+        let _ = std::fs::remove_dir(&disk);
+        return;
+    }
+    let scratch = Scratch::new("diskfull");
+    let input = scratch.file("full.mp4");
+    record_clip(&input, ClipFormat::Mp4);
+    // Leave far less room than the cut needs.
+    let chunk = vec![0_u8; 32 * 1024];
+    let mut n = 0;
+    while std::fs::write(disk.join(format!("filler{n}")), &chunk).is_ok() {
+        n += 1;
+    }
+    let output = disk.join("cut.mp4");
+    let result = run(&TrimRequest {
+        input: input.clone(),
+        output: output.clone(),
+        start: seconds(0.5),
+        end: seconds(6.0),
+    });
+    let listing: Vec<_> = std::fs::read_dir(&disk)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("cut"))
+        .collect();
+    let _ = Command::new("umount").arg(&disk).output();
+    let _ = std::fs::remove_dir(&disk);
+    assert_eq!(result, Err(ExportError::DiskFull));
+    assert!(listing.is_empty(), "left behind: {listing:?}");
+}
