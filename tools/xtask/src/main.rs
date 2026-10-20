@@ -177,8 +177,10 @@ fn check_assets() -> TaskResult<()> {
             .strip_prefix(&workspace)
             .map_err(|_| TaskError::AssetPath)?;
         let sidecar = PathBuf::from(format!("{}.license.md", path.to_string_lossy()));
-        if !sidecar.is_file() || !attribution.contains(&relative.to_string_lossy().to_string()) {
-            missing.push(relative.to_string_lossy().into_owned());
+        // ATTRIBUTION.md writes paths with `/`, whatever the operating system uses.
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        if !sidecar.is_file() || !attribution.contains(&relative) {
+            missing.push(relative);
         }
     }
     if missing.is_empty() {
