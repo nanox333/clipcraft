@@ -26,6 +26,8 @@ const AUDIO_RETRY_LIMIT: u32 = 5;
 const CONTROLS_HIDE_AFTER: Duration = Duration::from_millis(2500);
 /// Height of the control card (seek bar and buttons), used to size the picture above it.
 const CONTROLS_HEIGHT: f32 = 100.0;
+/// Extra room the trim panel takes under the controls.
+const TRIM_HEIGHT: f32 = 232.0;
 /// Speeds offered by the menu and the `[` / `]` keys.
 pub const SPEEDS: [f64; 10] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 3.0, 4.0];
 const NORMAL_SPEED_INDEX: usize = 3;
@@ -450,7 +452,8 @@ impl Playback {
     pub fn show(&mut self, ui: &mut egui::Ui) {
         self.handle_keys(ui.ctx());
         let width = ui.available_width();
-        let room = (ui.available_height() - CONTROLS_HEIGHT - 12.0).max(220.0);
+        let trim_room = if self.trim.open { TRIM_HEIGHT } else { 0.0 };
+        let room = (ui.available_height() - CONTROLS_HEIGHT - trim_room - 12.0).max(180.0);
         let height = (width * 9.0 / 16.0).min(room);
         self.draw_picture(ui, Vec2::new(width, height), true);
         ui.add_space(12.0);
@@ -646,7 +649,9 @@ impl Playback {
         });
         if !self.fullscreen {
             let (position, input) = (self.position.seconds(), self.path.clone());
-            self.trim.show(ui, position, duration, &input);
+            if let Some(seconds) = self.trim.show(ui, position, duration, &input) {
+                self.seek_to(seconds);
+            }
         }
         // The note would run off the bottom edge over a fullscreen picture; it shows windowed.
         if let Some(note) = self.audio_note.as_ref().filter(|_| !self.fullscreen) {

@@ -6,9 +6,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, mpsc};
 
-use clipcraft_engine::TrimmedClip;
+use clipcraft_engine::{TrimmedClip, format_bytes};
 use eframe::egui;
-use egui::RichText;
+use egui::{Color32, RichText};
 
 use crate::kit::{self, DANGER, Icon, LIME, MUTED, TEXT};
 
@@ -33,6 +33,8 @@ pub struct TrimState {
     message: Option<(String, bool)>,
     /// A file that was just saved, for the library to pick up.
     saved: Option<PathBuf>,
+    /// The size of the clip being trimmed, read once.
+    size_of: Option<(String, Option<u64>)>,
 }
 
 impl TrimState {
@@ -167,17 +169,76 @@ impl TrimState {
         }
     }
 
-    /// The trim row under the controls.
-    pub fn show(&mut self, ui: &mut egui::Ui, position: f64, duration: f64, input: &str) {
+    /// The trim panel under the controls. Returns a time to jump the player to while a handle is
+    /// being dragged, so the picture follows it.
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        position: f64,
+        duration: f64,
+        input: &str,
+    ) -> Option<f64> {
         if !self.open {
-            return;
+            return None;
         }
+        let bytes = self.source_bytes(input);
+        let mut seek = None;
+        ui.add_space(12.0);
+        ui.painter().hline(
+            ui.max_rect().x_range(),
+            ui.cursor().top(),
+            egui::Stroke::new(1.0_f32, kit::BORDER),
+        );
+        ui.add_space(12.0);
+        let idle = self.job.is_none();
+        let (start, end) = self.range(duration);
+        let length = end - start;
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Trim").color(TEXT).size(15.0).strong());
+            ui.add_space(6.0);
+            let size = bytes
+                .filter(|_| duration > 0.0)
+                .map(|bytes| format_bytes((bytes as f64 * length / duration) as u64));
+            let summary = match size {
+                Some(size) => format!("{length:.1} s  \u{00b7}  \u{2248} {size}"),
+                None => format!("{length:.1} s"),
+            };
+            kit::status_pill(ui, LIME, &summary);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if kit::icon_button(ui, Icon::ChevronDown, 28.0, false, idle, "Close trim (T)")
+                    .clicked()
+                {
+                    self.open = false;
+                }
+            });
+        });
         ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(6.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            let idle = self.job.is_none();
+
+        let edit = range_bar(
+            ui,
+            ui.available_width(),
+            position,
+            duration,
+            start,
+            end,
+            idle,
+        );
+        if let Some(seconds) = edit.start {
+            self.set_start(seconds, duration);
+            seek = Some(seconds);
+        }
+        if let Some(seconds) = edit.end {
+            self.set_end(seconds, duration);
+            seek = Some(seconds);
+        }
+        if seek.is_none() {
+            seek = edit.seek;
+        }
+        ui.add_space(10.0);
+
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
             if kit::labelled_button(ui, Icon::StepForward, "Start here", false, idle)
                 .on_hover_text("The new clip starts at the picture on screen (I)")
                 .clicked()
@@ -190,18 +251,19 @@ impl TrimState {
             {
                 self.set_end(position, duration);
             }
-            let (start, end) = self.range(duration);
-            ui.label(
-                RichText::new(format!(
-                    "{} \u{2192} {}  \u{00b7}  {:.1} s",
-                    clock(start),
-                    clock(end),
-                    end - start
-                ))
-                .color(TEXT)
-                .monospace()
-                .size(13.0),
-            );
+            if idle && (self.start.is_some() || self.end.is_some()) {
+                ui.add_space(4.0);
+                if ui
+                    .add(
+                        egui::Label::new(RichText::new("Reset").color(MUTED).size(13.0))
+                            .sense(egui::Sense::click()),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    self.clear();
+                }
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(job) = self.job.as_ref() {
                     if kit::labelled_button(ui, Icon::Stop, "Cancel", false, true).clicked() {
@@ -210,39 +272,234 @@ impl TrimState {
                     let fraction = f32::from_bits(job.progress.load(Ordering::Relaxed));
                     ui.add(
                         egui::ProgressBar::new(fraction.clamp(0.0, 1.0))
-                            .desired_width(140.0)
+                            .desired_width(160.0)
                             .fill(LIME),
                     );
-                } else {
-                    let valid = self.valid(duration);
-                    if kit::labelled_button(ui, Icon::Import, "Save trimmed clip", true, valid)
-                        .on_hover_text(
-                            "Saves a new MP4 next to the original. Nothing is re-encoded.",
-                        )
-                        .clicked()
-                    {
-                        self.save(input, duration, ui.ctx());
-                    }
-                    if kit::labelled_button(ui, Icon::Library, "Reset", false, true).clicked() {
-                        self.clear();
-                    }
+                } else if kit::labelled_button(
+                    ui,
+                    Icon::Scissors,
+                    "Save trimmed clip",
+                    true,
+                    self.valid(duration),
+                )
+                .on_hover_text("Saves a new MP4 next to the original. Nothing is re-encoded.")
+                .clicked()
+                {
+                    self.save(input, duration, ui.ctx());
                 }
             });
         });
-        if let Some((text, error)) = self.message.as_ref() {
-            ui.label(
-                RichText::new(text)
-                    .color(if *error { DANGER } else { MUTED })
-                    .size(12.5),
-            );
-        } else if self.start.is_none() && self.end.is_none() {
-            ui.label(
-                RichText::new("Play to where the clip should begin, press Start here (I), then do the same for the end (O).")
-                    .color(MUTED)
-                    .size(12.5),
-            );
+        let note = match self.message.as_ref() {
+            Some((text, error)) => Some((text.as_str(), if *error { DANGER } else { MUTED })),
+            None if self.start.is_none() && self.end.is_none() => Some((
+                "Drag the handles, or play to a moment and press I or O.",
+                MUTED,
+            )),
+            None => None,
+        };
+        if let Some((text, color)) = note {
+            ui.add_space(6.0);
+            ui.label(RichText::new(text).color(color).size(12.5));
         }
+        seek
     }
+
+    /// The size of the clip being trimmed, read once per clip.
+    fn source_bytes(&mut self, input: &str) -> Option<u64> {
+        if self.size_of.as_ref().is_none_or(|(path, _)| path != input) {
+            let bytes = std::fs::metadata(input).ok().map(|meta| meta.len());
+            self.size_of = Some((input.to_owned(), bytes));
+        }
+        self.size_of.as_ref().and_then(|(_, bytes)| *bytes)
+    }
+}
+
+/// What dragging in the range bar changed.
+#[derive(Default)]
+struct RangeEdit {
+    start: Option<f64>,
+    end: Option<f64>,
+    seek: Option<f64>,
+}
+
+/// The trim bar: the clip as a track, the kept part lit between two handles, the rest dimmed, and
+/// the playhead. Dragging a handle moves that end; clicking the track moves the playhead.
+fn range_bar(
+    ui: &mut egui::Ui,
+    width: f32,
+    position: f64,
+    duration: f64,
+    start: f64,
+    end: f64,
+    enabled: bool,
+) -> RangeEdit {
+    const HANDLE: f32 = 12.0;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width.max(0.0), 62.0), egui::Sense::hover());
+    let track = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + HANDLE, rect.top() + 20.0),
+        egui::pos2(rect.right() - HANDLE, rect.bottom() - 2.0),
+    );
+    let mut edit = RangeEdit::default();
+    if duration <= 0.0 || track.width() <= 1.0 {
+        ui.painter().rect_filled(track, 8.0, kit::CARD);
+        return edit;
+    }
+    let x_of =
+        |seconds: f64| track.left() + track.width() * (seconds / duration).clamp(0.0, 1.0) as f32;
+    let time_at = |x: f32| ((x - track.left()) / track.width()).clamp(0.0, 1.0) as f64 * duration;
+    let (left, right) = (x_of(start), x_of(end));
+
+    // The track, then a click-to-seek area under the handles.
+    let sense = if enabled {
+        egui::Sense::click_and_drag()
+    } else {
+        egui::Sense::hover()
+    };
+    let track_response = ui.interact(track, ui.id().with("trim-track"), sense);
+    if let Some(pointer) = track_response
+        .interact_pointer_pos()
+        .filter(|_| track_response.clicked() || track_response.dragged())
+    {
+        edit.seek = Some(time_at(pointer.x));
+    }
+    let painter = ui.painter();
+    painter.rect_filled(track, 8.0, kit::CARD);
+    painter.rect_stroke(
+        track,
+        8.0,
+        egui::Stroke::new(1.0_f32, kit::BORDER),
+        egui::StrokeKind::Inside,
+    );
+    // Faint ticks every 10 % so the length reads at a glance.
+    for tenth in 1..10 {
+        let x = track.left() + track.width() * tenth as f32 / 10.0;
+        painter.line_segment(
+            [
+                egui::pos2(x, track.center().y - 4.0),
+                egui::pos2(x, track.center().y + 4.0),
+            ],
+            egui::Stroke::new(1.0_f32, kit::BORDER),
+        );
+    }
+    let kept = egui::Rect::from_min_max(
+        egui::pos2(left, track.top()),
+        egui::pos2(right.max(left + 1.0), track.bottom()),
+    );
+    painter.rect_filled(kept, 0.0, LIME.gamma_multiply(0.20));
+    painter.line_segment(
+        [kept.left_top(), kept.right_top()],
+        egui::Stroke::new(2.5_f32, LIME),
+    );
+    painter.line_segment(
+        [kept.left_bottom(), kept.right_bottom()],
+        egui::Stroke::new(2.5_f32, LIME),
+    );
+    let dim = Color32::from_black_alpha(120);
+    painter.rect_filled(
+        egui::Rect::from_min_max(track.left_top(), egui::pos2(left, track.bottom())),
+        8.0,
+        dim,
+    );
+    painter.rect_filled(
+        egui::Rect::from_min_max(egui::pos2(right, track.top()), track.right_bottom()),
+        8.0,
+        dim,
+    );
+
+    // The playhead.
+    let head = x_of(position);
+    painter.line_segment(
+        [
+            egui::pos2(head, track.top() - 3.0),
+            egui::pos2(head, track.bottom() + 1.0),
+        ],
+        egui::Stroke::new(2.0_f32, Color32::WHITE),
+    );
+
+    // The handles, with the time above each.
+    let handle =
+        |ui: &mut egui::Ui, name: &str, edge: f32, left_side: bool, seconds: f64| -> Option<f64> {
+            let body = if left_side {
+                egui::Rect::from_min_max(
+                    egui::pos2(edge - HANDLE, track.top()),
+                    egui::pos2(edge, track.bottom()),
+                )
+            } else {
+                egui::Rect::from_min_max(
+                    egui::pos2(edge, track.top()),
+                    egui::pos2(edge + HANDLE, track.bottom()),
+                )
+            };
+            let response = ui.interact(
+                body.expand2(egui::vec2(6.0, 4.0)),
+                ui.id().with(name),
+                if enabled {
+                    egui::Sense::drag()
+                } else {
+                    egui::Sense::hover()
+                },
+            );
+            let hot = response.hovered() || response.dragged();
+            let rounding = if left_side {
+                egui::CornerRadius {
+                    nw: 8,
+                    sw: 8,
+                    ne: 0,
+                    se: 0,
+                }
+            } else {
+                egui::CornerRadius {
+                    nw: 0,
+                    sw: 0,
+                    ne: 8,
+                    se: 8,
+                }
+            };
+            let painter = ui.painter();
+            painter.rect_filled(body, rounding, if hot { Color32::WHITE } else { LIME });
+            for dx in [-2.0_f32, 2.0] {
+                painter.line_segment(
+                    [
+                        egui::pos2(body.center().x + dx, body.center().y - 7.0),
+                        egui::pos2(body.center().x + dx, body.center().y + 7.0),
+                    ],
+                    egui::Stroke::new(1.5_f32, Color32::from_rgb(40, 50, 10)),
+                );
+            }
+            painter.text(
+                egui::pos2(
+                    body.center()
+                        .x
+                        .clamp(rect.left() + 26.0, rect.right() - 26.0),
+                    rect.top() + 4.0,
+                ),
+                egui::Align2::CENTER_TOP,
+                clock(seconds),
+                egui::FontId::monospace(11.5),
+                if hot { TEXT } else { MUTED },
+            );
+            if hot && enabled {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+            response
+                .dragged()
+                .then(|| response.interact_pointer_pos())
+                .flatten()
+                // The pointer holds the middle of the handle; the mark is at its inner edge.
+                .map(|pointer| {
+                    time_at(
+                        pointer.x
+                            + if left_side {
+                                HANDLE / 2.0
+                            } else {
+                                -HANDLE / 2.0
+                            },
+                    )
+                })
+        };
+    edit.start = handle(ui, "trim-start", left, true, start);
+    edit.end = handle(ui, "trim-end", right, false, end);
+    edit
 }
 
 /// `m:ss.s`, for marks that need to be exact to a tenth of a second.
