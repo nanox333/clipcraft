@@ -35,9 +35,10 @@ device being unplugged, and never grow a queue without bound.
 
 ## Consequences
 
-- System sound is a loopback of an output device on Windows only. Linux needs an input named
-  "Monitor of ..." and macOS has no loopback; both report why. A PulseAudio/PipeWire-native source
-  would fix Linux and needs platform `unsafe` or a pure-Rust client; not done.
+- System sound is a loopback of an output device on Windows, and on Linux the monitor of the
+  default output through libpulse (loaded at run time in `clipcraft-platform::pulse`, the only
+  sound `unsafe`; ALSA "Monitor of ..." inputs remain the fallback). macOS has no loopback and says
+  so. The Linux path follows the default output rather than the chosen one.
 - Linear resampling is adequate for game audio and not for music mastering.
 - Real hardware remains the open evidence: first checks are the Settings microphone test meter,
   then a clip with a spoken word and a clap against the screen.

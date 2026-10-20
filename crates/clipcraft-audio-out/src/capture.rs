@@ -5,15 +5,14 @@
 //! on a thread of its own that owns the stream; the device callback only appends to a bounded
 //! queue, and the recorder drains it.
 
-use clipcraft_record::{AudioError, AudioFormat, AudioSource};
+use clipcraft_record::{AudioError, AudioFormat, AudioSource, SampleQueue};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, SizedSample, Stream, StreamConfig};
-use std::collections::VecDeque;
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -60,69 +59,6 @@ impl fmt::Display for CaptureError {
 }
 
 impl std::error::Error for CaptureError {}
-
-/// Samples waiting to be read, bounded, oldest dropped first.
-#[derive(Debug)]
-pub struct SampleQueue {
-    samples: Mutex<VecDeque<f32>>,
-    capacity: usize,
-    failed: AtomicBool,
-}
-
-impl SampleQueue {
-    /// A queue that holds at most `capacity` samples.
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            samples: Mutex::new(VecDeque::new()),
-            capacity: capacity.max(1),
-            failed: AtomicBool::new(false),
-        }
-    }
-
-    fn lock(&self) -> MutexGuard<'_, VecDeque<f32>> {
-        self.samples.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Appends samples, dropping the oldest ones that no longer fit.
-    pub fn push(&self, incoming: impl ExactSizeIterator<Item = f32>) {
-        let mut samples = self.lock();
-        let incoming_len = incoming.len();
-        if incoming_len >= self.capacity {
-            samples.clear();
-            samples.extend(incoming.skip(incoming_len - self.capacity));
-            return;
-        }
-        let overflow = (samples.len() + incoming_len).saturating_sub(self.capacity);
-        let drop_count = overflow.min(samples.len());
-        samples.drain(..drop_count);
-        samples.extend(incoming);
-    }
-
-    /// Moves everything waiting into `out`.
-    pub fn drain_into(&self, out: &mut Vec<f32>) {
-        out.extend(self.lock().drain(..));
-    }
-
-    /// Marks the device as gone.
-    pub fn fail(&self) {
-        self.failed.store(true, Ordering::SeqCst);
-    }
-
-    /// True once the device reported an error.
-    pub fn failed(&self) -> bool {
-        self.failed.load(Ordering::SeqCst)
-    }
-
-    /// Samples waiting.
-    pub fn len(&self) -> usize {
-        self.lock().len()
-    }
-
-    /// True when nothing is waiting.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
 
 /// A device being recorded. Dropping it closes the device.
 pub struct DeviceCapture {
@@ -380,30 +316,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_queue_is_bounded_and_keeps_the_newest_samples() {
-        let queue = SampleQueue::new(10);
-        queue.push((0..6).map(|n| n as f32));
-        queue.push((6..12).map(|n| n as f32));
-        let mut out = Vec::new();
-        queue.drain_into(&mut out);
-        assert_eq!(out, (2..12).map(|n| n as f32).collect::<Vec<_>>());
-        // A burst bigger than the queue keeps only its tail.
-        queue.push((0..100).map(|n| n as f32));
-        out.clear();
-        queue.drain_into(&mut out);
-        assert_eq!(out, (90..100).map(|n| n as f32).collect::<Vec<_>>());
-        assert!(queue.is_empty());
-    }
-
-    #[test]
-    fn a_failed_device_is_remembered() {
-        let queue = SampleQueue::new(4);
-        assert!(!queue.failed());
-        queue.fail();
-        assert!(queue.failed());
-    }
 
     #[test]
     fn opening_a_missing_device_is_an_error_not_a_crash() {

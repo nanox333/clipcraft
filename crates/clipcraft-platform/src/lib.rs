@@ -18,6 +18,8 @@ mod hotkey;
 #[cfg(windows)]
 mod mf_encoder;
 #[cfg(target_os = "linux")]
+mod pulse;
+#[cfg(target_os = "linux")]
 mod vaapi;
 #[cfg(windows)]
 mod windows;
@@ -26,6 +28,8 @@ mod x11;
 
 pub use hardware::{hardware_provider, probe_hardware_encoder};
 pub use hotkey::{HotkeyBinding, HotkeyEvent, HotkeyListener, parse_shortcut};
+#[cfg(target_os = "linux")]
+pub use pulse::open_system_monitor;
 
 /// What this computer's provider can do.
 /// How a capture should look.

@@ -10,7 +10,8 @@
 mod capture;
 mod input;
 
-pub use capture::{CaptureError, CaptureKind, DeviceCapture, SampleQueue};
+pub use capture::{CaptureError, CaptureKind, DeviceCapture};
+pub use clipcraft_record::SampleQueue;
 
 pub use input::{DeviceNames, MAX_DEVICES, MicMeter, MicTestError, list_devices, peak};
 

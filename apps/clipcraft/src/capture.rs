@@ -29,13 +29,30 @@ fn audio_provider() -> clipcraft_record::AudioProvider {
     use clipcraft_audio_out::{CaptureKind, DeviceCapture};
     use clipcraft_record::AudioKind;
     clipcraft_record::AudioProvider::new(|kind, device| {
+        // On Linux the sound server's own "monitor" records what is playing; the generic device
+        // layer (ALSA) cannot reach it on most systems.
+        #[cfg(target_os = "linux")]
+        let mut pulse_problem = String::new();
+        #[cfg(target_os = "linux")]
+        if kind == AudioKind::SystemOutput {
+            match clipcraft_platform::open_system_monitor(device) {
+                Ok(source) => return Ok(source),
+                Err(why) => pulse_problem = why,
+            }
+        }
         let kind = match kind {
             AudioKind::Microphone => CaptureKind::Microphone,
             AudioKind::SystemOutput => CaptureKind::SystemOutput,
         };
         DeviceCapture::open(kind, device)
             .map(|capture| Box::new(capture) as Box<dyn clipcraft_record::AudioSource>)
-            .map_err(|error| error.to_string())
+            .map_err(|error| {
+                #[cfg(target_os = "linux")]
+                if !pulse_problem.is_empty() {
+                    return format!("{pulse_problem}; {error}");
+                }
+                error.to_string()
+            })
     })
 }
 

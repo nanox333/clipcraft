@@ -66,9 +66,10 @@ touches ClipCraft's own clips.
   1.5 % fast or slow staying in step, a device lost and recovered, bad layouts refused. **Never run
   with a real microphone or speaker** (this container has no sound card), so the device layer
   (`DeviceCapture`, cpal) is untested beyond its queue. Known limits: game/system sound is
-  recorded by loopback on Windows only; on Linux it needs a "Monitor of ..." input to be offered
-  to ALSA (PipeWire and PulseAudio setups often hide it behind the `pulse` device), and macOS has
-  none; resampling is linear; per-application audio is not separated; the screenshot hotkey is
+  recorded by loopback on Windows and, on Linux, through the PulseAudio client library (also
+  answered by PipeWire) from the monitor of the default output, verified here against a real
+  PulseAudio server with a null sink (a tone played into it ends up in a saved clip); it follows
+  the default output, not the output chosen in Settings, and macOS has none; resampling is linear; per-application audio is not separated; the screenshot hotkey is
   saved but not wired; push-to-talk works through the global hotkey only (not when ClipCraft
   has the focus). Sound and picture of a clip can differ by up to a frame at the very end.
 - **Settings not yet applied:** H.265 and WebM.

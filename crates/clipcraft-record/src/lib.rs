@@ -22,7 +22,7 @@ use std::fmt;
 
 pub use audio::{
     AudioConfig, AudioControl, AudioError, AudioFormat, AudioInput, AudioInputStatus, AudioKind,
-    AudioProvider, AudioSetup, AudioSource, ToneSource,
+    AudioProvider, AudioSetup, AudioSource, SampleQueue, ToneSource,
 };
 pub use hardware::{HardwareEncoder, HardwarePacket, HardwareProvider, HardwareRequest};
 pub use mux::{ClipAudio, ClipFormat, SavedClip, VideoInfo, write_clip};

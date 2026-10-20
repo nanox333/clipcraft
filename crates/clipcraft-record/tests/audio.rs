@@ -131,26 +131,26 @@ fn audio_streams(path: &Path) -> Vec<(String, u32, u32, f64, f64)> {
 }
 
 fn video_duration(path: &Path) -> f64 {
-    // Pictures are 30 per second; Matroska has no stream duration, so count them.
+    // The last picture's time plus a frame. Counting pictures would be wrong on a busy computer,
+    // which drops some.
     let output = Command::new("ffprobe")
         .args([
             "-v",
             "error",
             "-select_streams",
             "v:0",
-            "-count_packets",
             "-show_entries",
+            "packet=pts_time",
         ])
-        .arg("stream=nb_read_packets")
         .args(["-of", "csv=p=0"])
         .arg(path)
         .output()
         .unwrap();
-    let frames: f64 = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .unwrap_or(0.0);
-    frames / 30.0
+    let last = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<f64>().ok())
+        .fold(0.0_f64, f64::max);
+    last + 1.0 / 30.0
 }
 
 /// Decodes audio stream `index` to 48 kHz stereo floats.
