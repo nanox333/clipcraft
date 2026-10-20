@@ -79,6 +79,16 @@ touches ClipCraft's own clips.
   at any rate is not sustainable in software. Pixel conversion alone is 4 to 11 ms at 1080p. A
   real gaming computer is faster and the game also competes for it; hardware encoders are the way
   to 1080p60 and are not wired. The top bar shows when more than 5% of pictures are dropped.
+- **Trim and export** ([ADR 0010](adr/0010-trim-export.md)). Any clip in the library can be cut to a
+  range and saved as a new MP4 without re-encoding: from the clip view (scissors, T, I, O) or
+  `clipcraft-cli clip trim IN OUT START END`. Verified with ffprobe and ffmpeg: the first picture is
+  bit-identical to the source picture at the start time, length is right, sound lands within 40 ms,
+  for clips from ClipCraft's own MP4 and MKV and for an ffmpeg file with B-frames; cancelled, bad,
+  and existing-output requests leave nothing behind and the input byte-identical. Limits: players
+  that ignore MP4 edit lists show up to one keyframe interval (2 s by default) of extra picture
+  before the start; Matroska input is H.264 + AAC without B-frames only; output is MP4 only; there
+  is no re-encode, so the cut cannot change size, speed, or format; AVI and WMV files are playable
+  but not probed or cut.
 - **Post-roll.** "Keep recording after the hotkey" (off, 3, 5, 10, 15 s) delays the save and adds the
   recorded seconds to the clip; the top bar counts down. Stopping the recording during the wait
   saves at once with what exists. A second press during the wait is ignored. Tested with the

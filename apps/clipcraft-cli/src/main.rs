@@ -34,6 +34,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), CliError> {
         "library" => run_library(&arguments[1..]),
         "recording" => run_recording(&arguments[1..]),
         "capture" => run_capture(&arguments[1..]),
+        "clip" => run_clip(&arguments[1..]),
         _ => Err(CliError::Usage),
     }
 }
@@ -88,6 +89,34 @@ fn run_library(arguments: &[OsString]) -> Result<(), CliError> {
             }
         }
         _ => Err(CliError::Usage),
+    }
+}
+
+/// `clip trim INPUT OUTPUT START END` cuts INPUT from START to END (seconds) into a new MP4
+/// without re-encoding, and prints what was written.
+fn run_clip(arguments: &[OsString]) -> Result<(), CliError> {
+    if arguments.len() != 5 || arguments[0].to_str() != Some("trim") {
+        return Err(CliError::Usage);
+    }
+    let seconds = |index: usize| -> Result<u64, CliError> {
+        let value: f64 = arguments[index]
+            .to_str()
+            .and_then(|text| text.parse().ok())
+            .ok_or(CliError::Usage)?;
+        if !(0.0..=1.0e9).contains(&value) {
+            return Err(CliError::Usage);
+        }
+        Ok((value * 1000.0).round() as u64)
+    };
+    let command = Command::TrimClip {
+        input: PathBuf::from(&arguments[1]),
+        output: PathBuf::from(&arguments[2]),
+        start_ms: seconds(3)?,
+        end_ms: seconds(4)?,
+    };
+    match execute(command).map_err(CliError::Engine)? {
+        CommandOutput::Trimmed(clip) => write_json(&clip),
+        _ => Err(CliError::UnexpectedOutput),
     }
 }
 
@@ -222,6 +251,7 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli library reveal <file>\n",
         "  clipcraft-cli library probe <file>\n",
         "  clipcraft-cli library thumbnail <file>\n",
+        "  clipcraft-cli clip trim <input> <output.mp4> <start-seconds> <end-seconds>\n",
         "  clipcraft-cli recording settings\n",
         "  clipcraft-cli capture targets\n",
         "  clipcraft-cli capture record --seconds N [--target ID] [--out DIR]\n",

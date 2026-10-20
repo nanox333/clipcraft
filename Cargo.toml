@@ -4,6 +4,7 @@ members = [
     "apps/clipcraft-cli",
     "crates/clipcraft-capture",
     "crates/clipcraft-engine",
+    "crates/clipcraft-export",
     "crates/clipcraft-frame",
     "crates/clipcraft-media",
     "crates/clipcraft-platform",
@@ -25,6 +26,7 @@ publish = false
 [workspace.dependencies]
 clipcraft-capture = { path = "crates/clipcraft-capture" }
 clipcraft-engine = { path = "crates/clipcraft-engine" }
+clipcraft-export = { path = "crates/clipcraft-export" }
 clipcraft-frame = { path = "crates/clipcraft-frame" }
 clipcraft-time = { path = "crates/clipcraft-time" }
 clipcraft-media = { path = "crates/clipcraft-media" }

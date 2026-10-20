@@ -358,6 +358,7 @@ name = "clipcraft-engine"
 version = "0.1.0"
 dependencies = [
  "clipcraft-capture",
+ "clipcraft-export",
  "clipcraft-media",
  "clipcraft-player",
  "clipcraft-record",
@@ -365,6 +366,18 @@ dependencies = [
  "fs4",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "clipcraft-export"
+version = "0.1.0"
+dependencies = [
+ "clipcraft-capture",
+ "clipcraft-media",
+ "clipcraft-record",
+ "clipcraft-time",
+ "filmcraft-isobmff",
+ "filmcraft-matroska",
 ]
 
 [[package]]
@@ -377,6 +390,7 @@ version = "0.1.0"
 dependencies = [
  "clipcraft-time",
  "filmcraft-isobmff",
+ "filmcraft-matroska",
  "serde",
 ]
 

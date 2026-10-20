@@ -93,6 +93,13 @@ pub enum Command {
     },
     /// Shows a local media file in the operating system's file manager.
     RevealInFileManager { path: PathBuf },
+    /// Cuts a clip to a range and saves it as a new MP4 without re-encoding.
+    TrimClip {
+        input: PathBuf,
+        output: PathBuf,
+        start_ms: u64,
+        end_ms: u64,
+    },
 }
 
 impl Command {
@@ -112,6 +119,7 @@ impl Command {
             Self::StorageUsage { .. } => "storage.usage",
             Self::SetLaunchAtStartup { .. } => "app.launch_at_startup",
             Self::SaveRecordingSettings { .. } => "recording.save_settings",
+            Self::TrimClip { .. } => "clip.trim",
         }
     }
 }
@@ -171,6 +179,71 @@ pub struct ThumbnailFile {
     pub created: bool,
 }
 
+/// A clip that was cut and saved.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TrimmedClip {
+    /// The new file.
+    pub path: String,
+    /// Its length in milliseconds.
+    pub duration_ms: u64,
+    /// Pictures written.
+    pub pictures: u64,
+    /// Tracks of sound written.
+    pub audio_tracks: usize,
+    /// File size in bytes.
+    pub bytes: u64,
+}
+
+/// Cuts `input` from `start_ms` to `end_ms` into a new MP4 at `output`, reporting progress from 0
+/// to 1 and stopping when `cancel` is set. Nothing is re-encoded and the input is never changed.
+/// Command id `clip.trim`.
+pub fn trim_clip(
+    input: &std::path::Path,
+    output: &std::path::Path,
+    start_ms: u64,
+    end_ms: u64,
+    progress: &mut dyn FnMut(f32),
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<TrimmedClip, EngineError> {
+    if input.as_os_str().is_empty() || output.as_os_str().is_empty() {
+        return Err(EngineError::EmptyMediaPath);
+    }
+    let to_tick = |ms: u64| {
+        clipcraft_time::Tick::from_units(i64::try_from(ms).unwrap_or(i64::MAX / 4), 1_000)
+    };
+    let request = clipcraft_export::TrimRequest {
+        input: input.to_path_buf(),
+        output: output.to_path_buf(),
+        start: to_tick(start_ms),
+        end: to_tick(end_ms),
+    };
+    let report =
+        clipcraft_export::trim_to_mp4(&request, progress, cancel).map_err(EngineError::Export)?;
+    Ok(TrimmedClip {
+        path: report.path.to_string_lossy().into_owned(),
+        duration_ms: u64::try_from(report.duration.to_units_floor(1_000)).unwrap_or(0),
+        pictures: report.pictures,
+        audio_tracks: report.audio_tracks,
+        bytes: report.bytes,
+    })
+}
+
+/// A file name beside `input` for its trimmed copy (`Name (trimmed).mp4`, then `(trimmed 2)`),
+/// one that does not exist yet.
+pub fn trimmed_path(input: &std::path::Path) -> Option<PathBuf> {
+    let folder = input.parent()?;
+    let stem = input.file_stem()?.to_string_lossy().into_owned();
+    (1..1_000).find_map(|n| {
+        let tag = if n == 1 {
+            "trimmed".to_owned()
+        } else {
+            format!("trimmed {n}")
+        };
+        let candidate = folder.join(format!("{stem} ({tag}).mp4"));
+        (!candidate.exists()).then_some(candidate)
+    })
+}
+
 /// Output produced by a registered engine command.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
@@ -189,6 +262,8 @@ pub enum CommandOutput {
     RecordingSettings(Box<RecordingSettings>),
     /// Folder and disk usage.
     StorageUsage(StorageUsage),
+    /// A clip that was cut and saved.
+    Trimmed(TrimmedClip),
     /// Whether ClipCraft now launches at sign-in.
     LaunchAtStartup { enabled: bool },
 }
@@ -244,6 +319,8 @@ pub enum EngineError {
     NotRecording,
     /// The capture folder is at its storage limit and the setting is to stop saving.
     StorageLimit,
+    /// A clip could not be cut and saved.
+    Export(clipcraft_export::ExportError),
     /// A collection with that name already exists.
     NameTaken,
     /// There are too many collections.
@@ -289,6 +366,7 @@ impl fmt::Display for EngineError {
                 formatter.write_str("The recording settings could not be saved. Check free disk space.")
             }
             Self::Record(error) => std::fmt::Display::fmt(error, formatter),
+            Self::Export(error) => std::fmt::Display::fmt(error, formatter),
             Self::AlreadyRecording => formatter.write_str("A recording is already running."),
             Self::NotRecording => formatter.write_str("Start clipping first."),
             Self::StorageLimit => formatter.write_str(
@@ -346,6 +424,16 @@ pub fn execute(command: Command) -> Result<CommandOutput, EngineError> {
                     clipcraft_media::ProbeError::TooLarge => EngineError::MediaTooLarge,
                     clipcraft_media::ProbeError::Unsupported => EngineError::MediaUnsupported,
                 })
+        }
+        Command::TrimClip {
+            input,
+            output,
+            start_ms,
+            end_ms,
+        } => {
+            let never = std::sync::atomic::AtomicBool::new(false);
+            trim_clip(&input, &output, start_ms, end_ms, &mut |_| {}, &never)
+                .map(CommandOutput::Trimmed)
         }
         Command::LoadRecordingSettings { path } => recording::load_settings(&path)
             .map(|settings| CommandOutput::RecordingSettings(Box::new(settings))),
@@ -593,6 +681,7 @@ pub const fn command_ids() -> &'static [&'static str] {
         "capture.stop",
         "capture.status",
         "capture.save_clip",
+        "clip.trim",
         "capture.toggle_microphone",
         "capture.push_to_talk",
         "recording.save_settings",
@@ -632,6 +721,57 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn trim_command_refuses_bad_input_without_writing_anything() {
+        let directory = TestDirectory::new();
+        let output = directory.path().join("out.mp4");
+        let trim = |input: &str, start_ms: u64, end_ms: u64| {
+            super::execute(Command::TrimClip {
+                input: input.into(),
+                output: output.clone(),
+                start_ms,
+                end_ms,
+            })
+        };
+        assert_eq!(trim("", 0, 1_000), Err(EngineError::EmptyMediaPath));
+        assert_eq!(
+            trim("/definitely/not/here.mp4", 0, 1_000),
+            Err(EngineError::Export(
+                clipcraft_export::ExportError::Unreadable
+            ))
+        );
+        assert_eq!(
+            trim("/definitely/not/here.mp4", 2_000, 1_000),
+            Err(EngineError::Export(clipcraft_export::ExportError::BadRange))
+        );
+        assert!(!output.exists());
+        assert_eq!(
+            Command::TrimClip {
+                input: "a".into(),
+                output: "b".into(),
+                start_ms: 0,
+                end_ms: 1
+            }
+            .id(),
+            "clip.trim"
+        );
+    }
+
+    #[test]
+    fn trimmed_copies_get_free_names_beside_the_original() {
+        let directory = TestDirectory::new();
+        let input = directory.path().join("Run 1.mkv");
+        assert_eq!(
+            super::trimmed_path(&input),
+            Some(directory.path().join("Run 1 (trimmed).mp4"))
+        );
+        fs::write(directory.path().join("Run 1 (trimmed).mp4"), b"x").expect("fixture writes");
+        assert_eq!(
+            super::trimmed_path(&input),
+            Some(directory.path().join("Run 1 (trimmed 2).mp4"))
+        );
     }
 
     #[test]

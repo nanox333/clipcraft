@@ -73,6 +73,8 @@ pub struct Playback {
     last_activity: Instant,
     audio_retry_at: Option<Instant>,
     audio_retries: u32,
+    /// Trimming the clip into a new file.
+    trim: crate::trim::TrimState,
 }
 
 impl Playback {
@@ -100,7 +102,13 @@ impl Playback {
             last_activity: Instant::now(),
             audio_retry_at: None,
             audio_retries: 0,
+            trim: crate::trim::TrimState::default(),
         }
+    }
+
+    /// A trimmed clip saved since the last call, so the library can show it.
+    pub fn take_trimmed(&mut self) -> Option<std::path::PathBuf> {
+        self.trim.take_saved()
     }
 
     /// The file being played.
@@ -120,6 +128,7 @@ impl Playback {
 
     /// Applies everything the worker reported since the last frame.
     pub fn poll(&mut self, context: &egui::Context) {
+        self.trim.poll();
         for event in self.player.poll() {
             self.apply(event, context);
         }
@@ -323,6 +332,18 @@ impl Playback {
         if pressed(egui::Key::L) {
             self.skip(BIG_SKIP_SECONDS);
         }
+        if pressed(egui::Key::T) {
+            self.trim.open = !self.trim.open;
+        }
+        if self.trim.open && !self.trim.busy() {
+            let duration = self.duration().seconds();
+            if pressed(egui::Key::I) {
+                self.trim.set_start(self.position.seconds(), duration);
+            }
+            if pressed(egui::Key::O) {
+                self.trim.set_end(self.position.seconds(), duration);
+            }
+        }
         if pressed(egui::Key::Comma) {
             self.step(-1);
         }
@@ -495,7 +516,8 @@ impl Playback {
 
         // Seek bar.
         let width = ui.available_width();
-        let scrub = seek_bar(ui, width, self.position.seconds(), duration, usable);
+        let marked = self.trim.marked(duration);
+        let scrub = seek_bar(ui, width, self.position.seconds(), duration, usable, marked);
         if scrub.started && self.playing {
             self.resume_after_scrub = true;
             self.player.pause();
@@ -603,6 +625,18 @@ impl Playback {
                 {
                     self.toggle_loop();
                 }
+                if kit::icon_button(
+                    ui,
+                    Icon::Scissors,
+                    36.0,
+                    self.trim.open,
+                    usable,
+                    "Trim this clip into a new file (T)",
+                )
+                .clicked()
+                {
+                    self.trim.open = !self.trim.open;
+                }
                 self.speed_menu(ui);
                 self.track_menu(ui);
                 if self.info.as_ref().is_some_and(|info| info.has_audio) {
@@ -610,6 +644,10 @@ impl Playback {
                 }
             });
         });
+        if !self.fullscreen {
+            let (position, input) = (self.position.seconds(), self.path.clone());
+            self.trim.show(ui, position, duration, &input);
+        }
         // The note would run off the bottom edge over a fullscreen picture; it shows windowed.
         if let Some(note) = self.audio_note.as_ref().filter(|_| !self.fullscreen) {
             ui.label(RichText::new(note).color(MUTED).size(12.0));
@@ -692,7 +730,14 @@ struct Scrub {
 }
 
 /// A scrub bar: filled to the position, draggable, with the time under the pointer on hover.
-fn seek_bar(ui: &mut egui::Ui, width: f32, position: f64, duration: f64, enabled: bool) -> Scrub {
+fn seek_bar(
+    ui: &mut egui::Ui,
+    width: f32,
+    position: f64,
+    duration: f64,
+    enabled: bool,
+    marked: Option<(f64, f64)>,
+) -> Scrub {
     let sense = if enabled {
         Sense::click_and_drag()
     } else {
@@ -708,6 +753,16 @@ fn seek_bar(ui: &mut egui::Ui, width: f32, position: f64, duration: f64, enabled
     let active = response.hovered() || response.dragged();
     let painter = ui.painter();
     painter.rect_filled(track, 2.5, TRACK);
+    if let Some((from, to)) = marked.filter(|_| duration > 0.0) {
+        let at = |seconds: f64| {
+            track.left() + track.width() * (seconds / duration).clamp(0.0, 1.0) as f32
+        };
+        let band = egui::Rect::from_min_max(
+            egui::pos2(at(from), rect.top() + 3.0),
+            egui::pos2(at(to).max(at(from) + 2.0), rect.bottom() - 3.0),
+        );
+        painter.rect_filled(band, 3.0, LIME.gamma_multiply(0.28));
+    }
     let filled = egui::Rect::from_min_max(
         track.min,
         egui::pos2(track.left() + track.width() * fraction, track.bottom()),
@@ -938,6 +993,24 @@ mod tests {
         let tall = fit(Vec2::new(100.0, 400.0), bounds);
         assert!(tall.width() < bounds.width());
         assert_eq!(fit(Vec2::ZERO, bounds), bounds);
+    }
+
+    #[test]
+    fn t_opens_the_trim_row_and_i_and_o_mark_the_range() {
+        let (mut playback, context) = opened(100.0, 1);
+        use egui::Key::*;
+        // Marks are ignored until the trim row is open.
+        press(&mut playback, &context, &[I]);
+        assert_eq!(playback.trim.range(100.0), (0.0, 100.0));
+        press(&mut playback, &context, &[T]);
+        assert!(playback.trim.open);
+        press(&mut playback, &context, &[ArrowRight]);
+        press(&mut playback, &context, &[I]);
+        press(&mut playback, &context, &[L]);
+        press(&mut playback, &context, &[O]);
+        assert_eq!(playback.trim.range(100.0), (5.0, 15.0));
+        press(&mut playback, &context, &[T]);
+        assert!(!playback.trim.open);
     }
 
     #[test]

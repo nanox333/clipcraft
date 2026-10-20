@@ -12,6 +12,7 @@ layer = 4
 
 [dependencies]
 clipcraft-capture.workspace = true
+clipcraft-export.workspace = true
 clipcraft-media.workspace = true
 clipcraft-record.workspace = true
 clipcraft-player.workspace = true

@@ -8,6 +8,7 @@ mod organize;
 mod playback;
 mod settings;
 mod thumbs;
+mod trim;
 
 use eframe::egui;
 use egui::{Align, Color32, Layout, RichText, Stroke, Vec2};
@@ -358,8 +359,14 @@ impl ClipCraftApp {
             self.window_fullscreen = wanted;
             context.send_viewport_cmd(egui::ViewportCommand::Fullscreen(wanted));
         }
+        let mut trimmed = false;
         if let Some(open) = self.playback.as_mut() {
             open.poll(context);
+            trimmed = open.take_trimmed().is_some();
+        }
+        // A trimmed clip lands beside the original, so the library lists it.
+        if trimmed {
+            self.scan_library();
         }
     }
 

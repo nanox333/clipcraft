@@ -2,7 +2,7 @@
 //!
 //! [`probe_file`] reads only a clip's container headers (never its picture or sound data) and
 //! reports duration, size, frame rate and codecs. MP4 and MOV go through FilmCraft's clean-room
-//! ISO BMFF demuxer. Every number comes from an untrusted file, so header sizes are capped before
+//! ISO BMFF demuxer, Matroska and WebM (which ClipCraft writes too) through its Matroska one. Every number comes from an untrusted file, so header sizes are capped before
 //! the demuxer allocates and all arithmetic is checked.
 
 use clipcraft_time::{FrameRate, Tick};
@@ -20,7 +20,7 @@ const MAX_TOP_LEVEL_BOXES: usize = 4_096;
 /// What a probe learned about a clip without decoding it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MediaProbe {
-    /// `mp4` or `mov`.
+    /// `mp4`, `mov`, `mkv` or `webm`.
     pub container: String,
     /// Total duration, or `None` when the file does not state one.
     pub duration: Option<Tick>,
@@ -43,7 +43,7 @@ pub enum ProbeError {
     Unreadable,
     /// A header box is larger than ClipCraft will read.
     TooLarge,
-    /// The file is not an MP4/MOV container, or its headers are damaged.
+    /// The file is not an MP4, MOV, MKV or WebM container, or its headers are damaged.
     Unsupported,
 }
 
@@ -55,7 +55,7 @@ impl fmt::Display for ProbeError {
                 formatter.write_str("The file's headers are too large to read safely.")
             }
             Self::Unsupported => {
-                formatter.write_str("This file is not a readable MP4 or MOV video.")
+                formatter.write_str("This file is not a readable MP4, MOV, MKV or WebM video.")
             }
         }
     }
@@ -63,14 +63,88 @@ impl fmt::Display for ProbeError {
 
 impl std::error::Error for ProbeError {}
 
-/// Probes the MP4/MOV file at `path`.
+/// Probes the MP4, MOV, MKV or WebM file at `path`.
 pub fn probe_file(path: &Path) -> Result<MediaProbe, ProbeError> {
     let file = File::open(path).map_err(|_| ProbeError::Unreadable)?;
     let metadata = file.metadata().map_err(|_| ProbeError::Unreadable)?;
     if !metadata.is_file() {
         return Err(ProbeError::Unreadable);
     }
-    probe_source(file)
+    let mut magic = [0_u8; 4];
+    let is_matroska =
+        filmcraft_isobmff::ByteSource::read_at(&file, 0, &mut magic).is_ok() && magic == EBML_MAGIC;
+    if is_matroska {
+        probe_matroska(&file)
+    } else {
+        probe_source(file)
+    }
+}
+
+/// The first four bytes of every Matroska and WebM file (an EBML header).
+const EBML_MAGIC: [u8; 4] = [0x1a, 0x45, 0xdf, 0xa3];
+
+/// Probes a Matroska or WebM file from its headers only: the clusters are not scanned.
+pub fn probe_matroska<S: filmcraft_matroska::ByteSource>(
+    source: S,
+) -> Result<MediaProbe, ProbeError> {
+    let options = filmcraft_matroska::OpenOptions {
+        index: false,
+        verify_crc: false,
+    };
+    let mkv = filmcraft_matroska::open_with(source, &options).map_err(|error| match error {
+        filmcraft_matroska::Error::Io(_) => ProbeError::Unreadable,
+        _ => ProbeError::Unsupported,
+    })?;
+    let video = mkv
+        .tracks
+        .iter()
+        .find(|track| track.kind == filmcraft_matroska::TrackKind::Video);
+    let picture = video.and_then(|track| track.video.as_ref());
+    let frame_rate = video
+        .and_then(|track| track.default_duration_ns)
+        .filter(|nanos| *nanos > 0)
+        .and_then(|nanos| {
+            let fps = 1_000_000_000.0 / nanos as f64;
+            (fps.is_finite() && fps > 0.0 && fps < 10_000.0).then(|| FrameRate::from_f64(fps))
+        });
+    let duration = mkv
+        .duration_ns()
+        .and_then(|nanos| i64::try_from(nanos).ok())
+        .map(|nanos| Tick::from_rational(nanos, 1, 1_000_000_000));
+    Ok(MediaProbe {
+        container: if mkv.doc_type == "webm" {
+            "webm"
+        } else {
+            "mkv"
+        }
+        .to_owned(),
+        duration,
+        width: picture.map(|p| p.pixel_width).filter(|v| *v > 0),
+        height: picture.map(|p| p.pixel_height).filter(|v| *v > 0),
+        frame_rate,
+        video_codec: video.map(|track| matroska_codec_name(&track.codec_id)),
+        audio_tracks: u32::try_from(
+            mkv.tracks
+                .iter()
+                .filter(|track| track.kind == filmcraft_matroska::TrackKind::Audio)
+                .count(),
+        )
+        .unwrap_or(u32::MAX),
+    })
+}
+
+/// The four-letter sample entry name an MP4 would use for a Matroska codec id, so both
+/// containers report the same codec names.
+fn matroska_codec_name(codec_id: &str) -> String {
+    match codec_id {
+        "V_MPEG4/ISO/AVC" => "avc1",
+        "V_MPEGH/ISO/HEVC" => "hvc1",
+        "V_VP8" => "vp08",
+        "V_VP9" => "vp09",
+        "V_AV1" => "av01",
+        other => other,
+    }
+    .to_owned()
 }
 
 /// Probes an in-memory or file-backed container.
@@ -321,5 +395,86 @@ mod tests {
             probe_file(&std::env::temp_dir()),
             Err(ProbeError::Unreadable)
         );
+    }
+
+    fn make_mkv(doc_type: &str, frames: u32, with_audio: bool) -> Vec<u8> {
+        use filmcraft_matroska::{MkvWriter, MuxOptions, TrackKind, TrackSpec};
+        let mut video = TrackSpec::new(TrackKind::Video, "V_MPEG4/ISO/AVC");
+        video.video_size = Some((640, 360));
+        video.default_duration_ns = Some(1_000_000_000 / 30);
+        let mut specs = vec![video];
+        if with_audio {
+            let mut audio = TrackSpec::new(TrackKind::Audio, "A_AAC");
+            audio.audio = Some((48_000.0, 2, None));
+            specs.push(audio);
+        }
+        let options = MuxOptions {
+            doc_type: doc_type.to_owned(),
+            ..MuxOptions::default()
+        };
+        let mut writer = MkvWriter::new(Cursor::new(Vec::new()), specs, options).expect("writer");
+        for n in 0..frames {
+            writer
+                .write_frame(
+                    0,
+                    i64::from(n) * 33_333_333,
+                    n == 0,
+                    &[0, 0, 0, 2, 0x65, 0],
+                    None,
+                )
+                .expect("frame");
+        }
+        if with_audio {
+            writer
+                .write_frame(1, 0, true, &[1, 2, 3], None)
+                .expect("audio");
+        }
+        writer.finish().expect("finish").into_inner()
+    }
+
+    #[test]
+    fn matroska_and_webm_are_probed_from_their_headers() {
+        let path = std::env::temp_dir().join(format!("clipcraft-probe-{}.mkv", std::process::id()));
+        std::fs::write(&path, make_mkv("matroska", 60, true)).expect("write");
+        let probe = probe_file(&path).expect("mkv probes");
+        assert_eq!(probe.container, "mkv");
+        assert_eq!((probe.width, probe.height), (Some(640), Some(360)));
+        assert_eq!(probe.video_codec.as_deref(), Some("avc1"));
+        assert_eq!(probe.audio_tracks, 1);
+        assert_eq!(probe.frame_rate, Some(FrameRate::from_f64(30.0)));
+        let seconds = probe.duration.expect("duration").seconds();
+        assert!((1.9..2.2).contains(&seconds), "{seconds}");
+        std::fs::write(&path, make_mkv("webm", 10, false)).expect("write");
+        assert_eq!(probe_file(&path).expect("webm probes").container, "webm");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn damaged_matroska_is_an_error_never_a_crash() {
+        let good = make_mkv("matroska", 30, true);
+        let path =
+            std::env::temp_dir().join(format!("clipcraft-probe-bad-{}.mkv", std::process::id()));
+        // Every truncation point, and a file that is only the magic.
+        for cut in (0..good.len()).step_by(7) {
+            std::fs::write(&path, &good[..cut]).expect("write");
+            let _ = probe_file(&path);
+        }
+        std::fs::write(&path, [0x1a, 0x45, 0xdf, 0xa3]).expect("write");
+        assert!(probe_file(&path).is_err());
+        // Flipped bytes through the header.
+        for at in (0..good.len().min(300)).step_by(3) {
+            let mut damaged = good.clone();
+            damaged[at] ^= 0xff;
+            std::fs::write(&path, &damaged).expect("write");
+            let _ = probe_file(&path);
+        }
+        // Hostile sizes: an EBML header claiming a huge body.
+        let mut hostile = vec![
+            0x1a, 0x45, 0xdf, 0xa3, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        ];
+        hostile.extend_from_slice(&[0; 32]);
+        std::fs::write(&path, &hostile).expect("write");
+        assert!(probe_file(&path).is_err());
+        let _ = std::fs::remove_file(&path);
     }
 }

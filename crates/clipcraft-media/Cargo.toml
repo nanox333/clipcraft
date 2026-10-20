@@ -13,6 +13,7 @@ layer = 1
 [dependencies]
 clipcraft-time.workspace = true
 filmcraft-isobmff.workspace = true
+filmcraft-matroska.workspace = true
 serde.workspace = true
 
 [lints]

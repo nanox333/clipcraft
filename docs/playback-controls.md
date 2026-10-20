@@ -17,6 +17,7 @@ tooltips name them.
 | Speed | [ / ] | 0.25×, 0.5×, 0.75×, 1×, 1.25×, 1.5×, 1.75×, 2×, 3×, 4×. Pitch is kept. Starts at 1× for every clip. |
 | Loop | R | Restarts from the first picture instead of stopping. |
 | Audio track | menu | Shown only when the file has more than one audio stream. |
+| Trim | T, scissors button | Opens the trim row. I marks the start and O the end at the picture on screen (or press Start here / End here); the marked part shows on the seek bar. Save trimmed clip writes `Name (trimmed).mp4` beside the original. |
 | Fullscreen | F, double-click | Esc leaves. The controls hide when the pointer rests and return on movement. |
 
 ## How it behaves

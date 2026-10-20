@@ -179,6 +179,7 @@ pub enum Icon {
     Heart,
     Record,
     Stop,
+    Scissors,
 }
 
 /// Draws `icon` centered on `c`, about 18 px across at `scale` 1.0.
@@ -349,6 +350,13 @@ pub fn draw_icon(painter: &Painter, c: Pos2, icon: Icon, color: Color32, scale: 
         Icon::Heart => draw_heart(painter, c, color, false, scale),
         Icon::Record => {
             painter.circle_filled(c, 6.5 * scale, color);
+        }
+        Icon::Scissors => {
+            // Two blades crossing, and two rings for the fingers.
+            line(&[at(-6.0, 6.0), at(7.0, -8.0)]);
+            line(&[at(6.0, 6.0), at(-7.0, -8.0)]);
+            painter.circle_stroke(at(-6.0, 6.5), 2.6 * scale, stroke);
+            painter.circle_stroke(at(6.0, 6.5), 2.6 * scale, stroke);
         }
         Icon::Stop => {
             painter.rect_filled(
