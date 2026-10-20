@@ -1,0 +1,15 @@
+name: Windows probe (temporary)
+on:
+  push:
+    branches: ["claude/**"]
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Tests one at a time
+        run: cargo test -p clipcraft --bin clipcraft -- --test-threads=1 --nocapture
+        continue-on-error: true
