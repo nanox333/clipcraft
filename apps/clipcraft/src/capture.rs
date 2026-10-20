@@ -6,9 +6,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use clipcraft_capture::{CaptureTarget, TargetKind};
-use clipcraft_engine::{
-    CaptureSession, HotkeyAction, RecordingSettings, SavedClipReport, default_capture_folder,
-};
+use clipcraft_engine::{CaptureSession, HotkeyAction, RecordingSettings, SavedClipReport};
 use clipcraft_platform::{CaptureOptions, HotkeyBinding, HotkeyListener};
 use clipcraft_record::{RecordError, RecordState, RecordStatus};
 use eframe::egui;
@@ -268,31 +266,17 @@ impl ClipCraftApp {
         }
     }
 
-    /// After a crash or power cut, clears the unfinished clip files it left in the capture folder
-    /// and the library folder, and says so.
+    /// After a crash or power cut, clears the unfinished clip files it left in the clips folder,
+    /// and says so.
     fn recover_after_crash(&mut self) {
-        let capture_folder = if self.recording.capture_folder.is_empty() {
-            default_capture_folder()
-        } else {
-            Some(PathBuf::from(&self.recording.capture_folder))
+        let Some(folder) = self.clips_folder() else {
+            return;
         };
-        let library_folder = Some(PathBuf::from(self.directory_text.trim()))
-            .filter(|folder| !folder.as_os_str().is_empty());
-        let mut recovery = clipcraft_engine::Recovery::default();
-        let mut seen = Vec::new();
-        for folder in capture_folder.into_iter().chain(library_folder) {
-            if seen.contains(&folder) {
-                continue;
-            }
-            let found = clipcraft_engine::recover_interrupted(&folder);
-            recovery.removed.extend(found.removed);
-            recovery.salvaged.extend(found.salvaged);
-            seen.push(folder);
-        }
+        let recovery = clipcraft_engine::recover_interrupted(&folder);
         if let Some(message) = recovery.message() {
             self.capture.notice = notice(message, false, None);
             if !recovery.salvaged.is_empty() {
-                self.capture.saved_into = seen.first().cloned();
+                self.capture.saved_into = Some(folder);
             }
         }
     }
@@ -535,12 +519,7 @@ impl ClipCraftApp {
         if self.capture.saving.is_some() {
             return;
         }
-        let folder = if self.recording.capture_folder.is_empty() {
-            default_capture_folder()
-        } else {
-            Some(PathBuf::from(&self.recording.capture_folder))
-        };
-        let Some(folder) = folder else {
+        let Some(folder) = self.clips_folder() else {
             self.capture.notice = notice("Choose a capture folder in Settings first.", true, None);
             return;
         };
@@ -600,6 +579,11 @@ impl ClipCraftApp {
                 });
                 if in_library {
                     self.scan_library();
+                } else if self.directory_text.trim().is_empty()
+                    && let Some(folder) = self.capture.saved_into.clone()
+                {
+                    // No library folder yet: the folder clips were saved in becomes it.
+                    self.set_library_folder(Some(folder));
                 }
             }
             Err(message) => self.capture.notice = notice(message, true, None),

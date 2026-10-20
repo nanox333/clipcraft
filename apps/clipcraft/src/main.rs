@@ -4,7 +4,8 @@
 
 use clipcraft_engine::{
     Command, CommandOutput, EngineError, LibraryScanResult, MediaEntry, MediaProbe, MetaEdit,
-    RecordingSettings, apply_edit, default_index_path, default_thumbnail_dir, execute, game_of,
+    RecordingSettings, apply_edit, default_capture_folder, default_index_path,
+    default_thumbnail_dir, execute, game_of,
 };
 mod capture;
 mod kit;
@@ -337,7 +338,39 @@ impl ClipCraftApp {
             Ok(_) | Err(EngineError::IndexMissing) => {}
             Err(error) => app.error = Some(error.to_string()),
         }
+        app.reconcile_clips_folder();
         app
+    }
+
+    /// The one folder clips live in: the library folder, which is also where new clips are saved.
+    /// Before a library folder is chosen it is the folder set in the saved settings, and before
+    /// that the default one.
+    fn clips_folder(&self) -> Option<PathBuf> {
+        let library = self.directory_text.trim();
+        if !library.is_empty() {
+            return Some(PathBuf::from(library));
+        }
+        if !self.recording.capture_folder.is_empty() {
+            return Some(PathBuf::from(&self.recording.capture_folder));
+        }
+        default_capture_folder()
+    }
+
+    /// Makes the library folder and the saved "where clips are saved" setting the same folder.
+    /// Older versions kept them apart: the library folder wins, and a folder that was only a save
+    /// location becomes the library folder.
+    fn reconcile_clips_folder(&mut self) {
+        let library = self.directory_text.trim().to_owned();
+        if library.is_empty() {
+            if self.recording.capture_folder.is_empty() {
+                return;
+            }
+            self.directory_text = self.recording.capture_folder.clone();
+            self.scan_library();
+        } else if self.recording.capture_folder != library {
+            self.recording.capture_folder = library;
+            self.save_recording_settings();
+        }
     }
 
     /// Generates missing thumbnails on a worker thread. A new worker replaces the old one, which
@@ -1532,7 +1565,18 @@ impl ClipCraftApp {
         match tab {
             SettingsTab::General => self.general_settings(ui, &mut working),
             SettingsTab::Storage => {
-                settings::storage_tab(ui, &mut working, &mut self.settings_state)
+                let folder = self.clips_folder();
+                let mut browse = false;
+                settings::storage_tab(
+                    ui,
+                    &mut working,
+                    &mut self.settings_state,
+                    folder,
+                    &mut browse,
+                );
+                if browse {
+                    self.choose_library_folder();
+                }
             }
             SettingsTab::Hotkeys => {
                 settings::hotkeys_tab(ui, &mut working, &mut self.settings_state)
@@ -1582,7 +1626,10 @@ impl ClipCraftApp {
 
     fn general_settings(&mut self, ui: &mut egui::Ui, working: &mut RecordingSettings) {
         let folder = if self.directory_text.trim().is_empty() {
-            "No folder chosen yet".to_owned()
+            match self.clips_folder() {
+                Some(default) => format!("{} (default)", default.to_string_lossy()),
+                None => "No folder chosen yet".to_owned(),
+            }
         } else {
             self.directory_text.clone()
         };
@@ -1591,7 +1638,7 @@ impl ClipCraftApp {
             setting_row(
                 ui,
                 "Clips folder",
-                "ClipCraft scans this folder for videos. Nothing is moved or changed.",
+                "Your clips live here: ClipCraft shows the videos in this folder, and new clips are saved into it. Nothing is moved or changed.",
                 true,
                 |ui| {
                     egui::Frame::new()
@@ -1810,6 +1857,11 @@ impl ClipCraftApp {
         };
         self.directory_text = directory.to_string_lossy().into_owned();
         self.scan_library();
+        // New clips are saved in the folder the library shows.
+        let before = self.recording.clone();
+        let mut working = before.clone();
+        working.capture_folder = self.directory_text.clone();
+        self.apply_recording(before, working);
     }
 }
 
@@ -2637,6 +2689,41 @@ mod tests {
                 .any(|entry| entry.favorite && entry.collections == ["Best"])
         );
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn the_library_folder_is_the_folder_new_clips_are_saved_in() {
+        let directory = temporary_directory();
+        let mut app = ClipCraftApp::default();
+        // Nothing chosen: the default folder is both.
+        assert_eq!(
+            app.clips_folder(),
+            clipcraft_engine::default_capture_folder()
+        );
+        // Choosing a library folder also chooses where clips are saved.
+        app.set_library_folder(Some(directory.clone()));
+        assert_eq!(app.clips_folder(), Some(directory.clone()));
+        assert_eq!(
+            PathBuf::from(&app.recording.capture_folder),
+            PathBuf::from(&app.directory_text)
+        );
+        // An older settings file that names another save folder yields to the library folder.
+        app.recording.capture_folder = "/somewhere/else".to_owned();
+        app.reconcile_clips_folder();
+        assert_eq!(app.recording.capture_folder, app.directory_text);
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn a_folder_that_was_only_a_save_location_becomes_the_library_folder() {
+        let directory = temporary_directory();
+        let mut app = ClipCraftApp::default();
+        app.recording.capture_folder = directory.to_string_lossy().into_owned();
+        assert!(app.directory_text.is_empty());
+        app.reconcile_clips_folder();
+        assert_eq!(PathBuf::from(&app.directory_text), directory);
+        assert_eq!(app.clips_folder(), Some(directory.clone()));
+        let _ = fs::remove_dir_all(&directory);
     }
 
     #[test]

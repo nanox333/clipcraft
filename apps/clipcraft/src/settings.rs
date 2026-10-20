@@ -9,7 +9,7 @@ use clipcraft_engine::{
     AUDIO_KBPS, CaptureSource, Command, CommandOutput, Container, EncoderPreset, FRAME_RATES,
     Framing, HEIGHTS, HotkeyAction, KEYFRAME_SECONDS, OutputShape, POST_ROLL_SECONDS, QualityMode,
     REPLAY_SECONDS, RateControl, RecordingSettings, SAMPLE_RATES, StorageUsage, VIDEO_KBPS,
-    VideoCodec, VideoEncoder, default_capture_folder, execute, format_bytes, normalize_hotkey,
+    VideoCodec, VideoEncoder, execute, format_bytes, normalize_hotkey,
 };
 use eframe::egui;
 use egui::{Color32, RichText, Stroke, Vec2};
@@ -1232,13 +1232,13 @@ fn usage_bar(ui: &mut egui::Ui, fraction: f32, warn: bool) {
         .rect_filled(filled, 5.0, if warn { DANGER } else { LIME });
 }
 
-pub fn storage_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &mut SettingsState) {
-    let default_folder = default_capture_folder();
-    let folder = if settings.capture_folder.is_empty() {
-        default_folder.clone()
-    } else {
-        Some(PathBuf::from(&settings.capture_folder))
-    };
+pub fn storage_tab(
+    ui: &mut egui::Ui,
+    settings: &mut RecordingSettings,
+    state: &mut SettingsState,
+    folder: Option<PathBuf>,
+    browse: &mut bool,
+) {
     if let Some(folder) = folder.clone() {
         request_usage(state, ui.ctx(), folder, false);
     }
@@ -1247,9 +1247,7 @@ pub fn storage_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
     {
         state.usage = Some(usage);
     }
-    let mut browse = false;
-    let mut reset = false;
-    card(ui, "Capture folder", |ui| {
+    card(ui, "Clips folder", |ui| {
         ui.add_space(14.0);
         ui.label(
             RichText::new("Where clips are saved")
@@ -1258,9 +1256,11 @@ pub fn storage_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
                 .family(kit::semibold()),
         );
         ui.label(
-            RichText::new("New clips and recordings go here. Existing clips are not moved.")
-                .color(MUTED)
-                .size(12.5),
+            RichText::new(
+                "New clips go here, and this is the folder your library shows. Existing clips are not moved.",
+            )
+            .color(MUTED)
+            .size(12.5),
         );
         ui.add_space(8.0);
         egui::Frame::new()
@@ -1283,41 +1283,15 @@ pub fn storage_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
                         ui.add_space(6.0);
                         ui.add(egui::Label::new(RichText::new(shown).color(TEXT)).truncate());
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            browse =
+                            *browse =
                                 kit::labelled_button(ui, kit::Icon::Folder, "Browse", false, true)
                                     .clicked();
                         });
                     },
                 );
             });
-        if !settings.capture_folder.is_empty() {
-            ui.add_space(6.0);
-            if ui
-                .add(
-                    egui::Button::new(RichText::new("Use the default folder").color(LIME))
-                        .frame(false),
-                )
-                .clicked()
-            {
-                reset = true;
-            }
-        }
         ui.add_space(14.0);
     });
-    if browse {
-        let mut dialog = rfd::FileDialog::new().set_title("Choose where clips are saved");
-        if let Some(folder) = folder.as_ref().filter(|folder| folder.is_dir()) {
-            dialog = dialog.set_directory(folder);
-        }
-        if let Some(chosen) = dialog.pick_folder() {
-            settings.capture_folder = chosen.to_string_lossy().into_owned();
-            state.usage = None;
-        }
-    }
-    if reset {
-        settings.capture_folder.clear();
-        state.usage = None;
-    }
     card(ui, "Storage used", |ui| {
         ui.add_space(14.0);
         let limit_bytes = u64::from(settings.storage_limit_gb) * 1_000_000_000;
