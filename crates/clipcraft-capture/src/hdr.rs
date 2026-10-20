@@ -81,7 +81,7 @@ pub fn scrgb_to_bgra8(
     let scale = 1.0 / reference_white;
     let mut out = Vec::with_capacity(width as usize * height as usize * 4);
     for row in half_rgba.chunks(stride).take(height as usize) {
-        for pixel in row.get(..row_bytes)?.chunks_exact(8) {
+        for pixel in row.get(..row_bytes)?.as_chunks::<8>().0 {
             let channel = |at: usize| {
                 let bits = u16::from_le_bytes([pixel[at], pixel[at + 1]]);
                 srgb_code(roll_off(half_to_f32(bits) * scale))
@@ -97,8 +97,10 @@ pub fn scrgb_to_bgra8(
 /// exceeds 1.0 is already standard range and is left as it is.
 pub fn reference_white_for(half_rgba: &[u8]) -> f32 {
     let brightest = half_rgba
-        .chunks_exact(2)
-        .map(|pair| half_to_f32(u16::from_le_bytes([pair[0], pair[1]])))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| half_to_f32(u16::from_le_bytes(*pair)))
         .filter(|value| value.is_finite())
         .fold(0.0_f32, f32::max);
     if brightest > 1.05 {

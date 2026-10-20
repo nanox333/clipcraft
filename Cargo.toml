@@ -61,6 +61,9 @@ rust_2018_idioms = { level = "deny", priority = -1 }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+# Newer clippy suggests `as_chunks` for every constant-size `chunks_exact`. The pixel loops read
+# clearly with `chunks_exact`, and rewriting tested hot loops for style is not worth the risk.
+chunks_exact_to_as_chunks = "allow"
 
 # Dependencies are optimised even in dev builds: decoding video unoptimised is far slower than real
 # time. Codec and pixel-conversion hot loops get the highest level, as in FilmCraft's own manifest.
