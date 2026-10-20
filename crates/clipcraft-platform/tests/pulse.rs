@@ -207,3 +207,94 @@ fn a_clip_of_what_the_computer_played_contains_it() {
     assert!(quietest < 0.02, "the clip is never quiet ({quietest})");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn play_to(sink: &str, wav: &std::path::Path) {
+    assert!(
+        Command::new("paplay")
+            .args(["-d", sink])
+            .arg(wav)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}
+
+/// The loudest sample a monitor hears while `play` runs.
+fn heard_during(device: &str, play: impl FnOnce() + Send + 'static) -> f32 {
+    let mut source = clipcraft_platform::open_system_monitor(device).expect("monitor opens");
+    let player = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        play();
+    });
+    let mut heard = Vec::new();
+    let deadline = Instant::now() + Duration::from_millis(3_000);
+    while Instant::now() < deadline {
+        source.read(&mut heard).expect("source stays alive");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    player.join().unwrap();
+    heard.iter().fold(0.0_f32, |m, s| m.max(s.abs()))
+}
+
+#[test]
+fn outputs_are_listed_and_the_chosen_ones_monitor_is_what_gets_recorded() {
+    let _turn = TURN.lock().unwrap_or_else(|e| e.into_inner());
+    if !server_running()
+        || Command::new("ffmpeg").arg("-version").output().is_err()
+        || Command::new("paplay").arg("--version").output().is_err()
+    {
+        // Without a server, listing says so instead of hanging.
+        assert!(clipcraft_platform::list_outputs().is_err() || server_running());
+        return;
+    }
+    let found = clipcraft_platform::list_outputs().expect("the server answers");
+    let names: Vec<&str> = found.outputs.iter().map(|o| o.name.as_str()).collect();
+    if !(names.contains(&"test") && names.contains(&"second")) {
+        eprintln!("skipped: the test server needs outputs named test and second");
+        return;
+    }
+    let second = found.outputs.iter().find(|o| o.name == "second").unwrap();
+    assert_eq!(second.description, "Second");
+    assert!(found.default.is_some());
+
+    let wav = std::env::temp_dir().join(format!("clipcraft-outputs-{}.wav", std::process::id()));
+    assert!(
+        Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=1000:duration=1"
+            ])
+            .args(["-ar", "44100", "-ac", "2"])
+            .arg(&wav)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let tone = |sink: &'static str| {
+        let wav = wav.clone();
+        move || play_to(sink, &wav)
+    };
+    // Playing to "second": its monitor hears it, "first" does not.
+    assert!(heard_during("second", tone("second")) > 0.05);
+    assert!(heard_during("test", tone("second")) < 0.01);
+    // And the other way round.
+    assert!(heard_during("test", tone("test")) > 0.05);
+    assert!(heard_during("second", tone("test")) < 0.01);
+    // A name PulseAudio does not know (saved from another sound system) records the default.
+    let default = found.default.clone().unwrap();
+    let sink = if default == "test" { "test" } else { "second" };
+    assert!(
+        heard_during(
+            "sysdefault:CARD=Nothing",
+            tone(if sink == "test" { "test" } else { "second" })
+        ) > 0.05
+    );
+    let _ = std::fs::remove_file(&wav);
+}

@@ -68,8 +68,10 @@ touches ClipCraft's own clips.
   (`DeviceCapture`, cpal) is untested beyond its queue. Known limits: game/system sound is
   recorded by loopback on Windows and, on Linux, through the PulseAudio client library (also
   answered by PipeWire) from the monitor of the default output, verified here against a real
-  PulseAudio server with a null sink (a tone played into it ends up in a saved clip); it follows
-  the default output, not the output chosen in Settings, and macOS has none; resampling is linear; per-application audio is not separated; the screenshot hotkey is
+  PulseAudio server with a null sink (a tone played into it ends up in a saved clip); the output chosen in
+  Settings › Audio (PulseAudio's outputs are listed by name and recorded through their monitors;
+  verified with two null sinks: a tone played to one is heard only by its monitor) is what is
+  recorded, and macOS has none; resampling is linear; per-application audio is not separated; the screenshot hotkey is
   saved but not wired; push-to-talk works through the global hotkey only (not when ClipCraft
   has the focus). Sound and picture of a clip can differ by up to a frame at the very end.
 - **Settings not yet applied:** H.265 and WebM.
@@ -98,7 +100,7 @@ touches ClipCraft's own clips.
   leaving a frozen stretch in clips; `gap_restart_seconds` sets it. The soak tool measured
   720p30 + sound at +21 to +26 MB memory after warm-up over 3 to 4 minutes; the two-hour run has
   not been done. Tab moves a visible focus ring through every control and Enter activates; the
-  Tab order visits the library before the top bar and navigation rail, which is not ideal.
+   Tab starts at the top bar, then the navigation rail, then the page.
   `clipcraft-cli diagnose` and Settings › General › Copy report list folders, screens, sound, and
   encoders. Screen-reader names are tested through the accessibility tree, not with a real screen
   reader.

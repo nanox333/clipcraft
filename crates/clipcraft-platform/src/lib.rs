@@ -29,7 +29,7 @@ mod x11;
 pub use hardware::{hardware_provider, probe_hardware_encoder};
 pub use hotkey::{HotkeyBinding, HotkeyEvent, HotkeyListener, parse_shortcut};
 #[cfg(target_os = "linux")]
-pub use pulse::open_system_monitor;
+pub use pulse::{Output, Outputs, list_outputs, open_system_monitor};
 
 /// What this computer's provider can do.
 /// How a capture should look.

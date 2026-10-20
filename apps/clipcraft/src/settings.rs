@@ -34,6 +34,9 @@ pub enum GpuProbe {
 #[derive(Default)]
 pub struct SettingsState {
     devices: Option<DeviceNames>,
+    /// Outputs that can be recorded, as (saved name, name shown): PulseAudio's outputs on Linux
+    /// (its monitors are what is recorded), the sound system's own list elsewhere.
+    outputs: Vec<(String, String)>,
     mic: Option<MicMeter>,
     mic_error: Option<String>,
     mic_shown: f32,
@@ -737,7 +740,23 @@ pub fn capture_tab(
 }
 
 fn refresh_devices(state: &mut SettingsState) {
-    state.devices = Some(list_devices());
+    let devices = list_devices();
+    state.outputs = devices
+        .outputs
+        .iter()
+        .map(|name| (name.clone(), name.clone()))
+        .collect();
+    #[cfg(target_os = "linux")]
+    if let Ok(found) = clipcraft_platform::list_outputs()
+        && !found.outputs.is_empty()
+    {
+        state.outputs = found
+            .outputs
+            .into_iter()
+            .map(|output| (output.name, output.description))
+            .collect();
+    }
+    state.devices = Some(devices);
 }
 
 fn device_dropdown(ui: &mut egui::Ui, label: &str, current: &mut String, names: &[String]) {
@@ -758,6 +777,37 @@ fn device_dropdown(ui: &mut egui::Ui, label: &str, current: &mut String, names: 
     }
 }
 
+/// Like [`device_dropdown`], for devices whose saved name differs from the name shown.
+fn output_dropdown(
+    ui: &mut egui::Ui,
+    label: &str,
+    current: &mut String,
+    outputs: &[(String, String)],
+) {
+    let mut options = vec![("System default".to_owned(), true)];
+    options.extend(outputs.iter().map(|(_, shown)| (shown.clone(), true)));
+    let shown = outputs
+        .iter()
+        .find(|(name, _)| name == current)
+        .map_or_else(
+            || {
+                if current.is_empty() {
+                    "System default".to_owned()
+                } else {
+                    current.clone()
+                }
+            },
+            |(_, shown)| shown.clone(),
+        );
+    if let Some(index) = dropdown(ui, label, &shown, &options) {
+        *current = if index == 0 {
+            String::new()
+        } else {
+            outputs[index - 1].0.clone()
+        };
+    }
+}
+
 pub fn audio_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &mut SettingsState) {
     if state.devices.is_none() {
         refresh_devices(state);
@@ -772,11 +822,11 @@ pub fn audio_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &mu
             false,
         );
         ui.add_space(4.0);
-        device_dropdown(
+        output_dropdown(
             ui,
             "Output device to record",
             &mut settings.output_device,
-            &devices.outputs,
+            &state.outputs,
         );
         ui.add_space(4.0);
         percent_row(
