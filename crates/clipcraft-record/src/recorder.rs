@@ -59,6 +59,9 @@ pub struct RecordConfig {
     /// Opens a hardware encoder to use instead of the software one. When it cannot, or fails
     /// later, the software encoder takes over.
     pub hardware: Option<HardwareProvider>,
+    /// A silence in the pictures this long (the computer slept, or the screen went away) starts
+    /// the replay buffer over, instead of leaving a frozen stretch in every clip.
+    pub gap_restart_seconds: u32,
 }
 
 impl RecordConfig {
@@ -68,6 +71,7 @@ impl RecordConfig {
             && (1..=3_600).contains(&self.replay_seconds)
             && (1..=60).contains(&self.keyframe_seconds)
             && self.max_buffer_bytes >= 1_000_000
+            && (1..=3_600).contains(&self.gap_restart_seconds)
             && self.output_height >= 16;
         if ok {
             Ok(())
@@ -731,10 +735,11 @@ fn encode_one(
 ) -> Result<(), RecordError> {
     frame.validate().map_err(|_| RecordError::BadFrame)?;
     let size = (frame.width, frame.height);
-    if active
-        .as_ref()
-        .is_none_or(|current| current.source_size != size)
-    {
+    let gap_frames = i64::from(config.gap_restart_seconds) * i64::from(shared.fps);
+    if active.as_ref().is_none_or(|current| {
+        current.source_size != size
+            || (current.last_pts >= 0 && pts - current.last_pts > gap_frames)
+    }) {
         let restarted = if let Some(mut old) = active.take() {
             flush(shared, &mut old);
             true

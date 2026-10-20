@@ -93,6 +93,15 @@ touches ClipCraft's own clips.
   room, and recording carries on. Not covered: the replay buffer itself lives in memory, so a
   crash loses what had not been saved; interruptions were simulated with cut-off files, not by
   killing the app mid-write; the disk tests are skipped where mounting is not allowed.
+- **Soak, suspend, and diagnostics** (see [release checklist](release-checklist.md)). A freeze of
+  10 s or more in the pictures (the computer slept) starts the replay buffer over rather than
+  leaving a frozen stretch in clips; `gap_restart_seconds` sets it. The soak tool measured
+  720p30 + sound at +21 to +26 MB memory after warm-up over 3 to 4 minutes; the two-hour run has
+  not been done. Tab moves a visible focus ring through every control and Enter activates; the
+  Tab order visits the library before the top bar and navigation rail, which is not ideal.
+  `clipcraft-cli diagnose` and Settings › General › Copy report list folders, screens, sound, and
+  encoders. Screen-reader names are tested through the accessibility tree, not with a real screen
+  reader.
 - **Missing files.** A clip whose file is gone is listed as "File not found" with Remove from library
   (card footer, right-click menu, or the clip view when it fails to open). Find file asks for a
   folder and searches it and the folders inside it (8 deep, links not followed, bounded) for the same

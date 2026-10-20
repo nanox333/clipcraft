@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::UNIX_EPOCH;
 
+mod diagnose;
 mod hotkeys;
 mod index;
 mod library_meta;
@@ -23,6 +24,7 @@ pub use clipcraft_media::MediaProbe;
 pub use clipcraft_capture::reframe::{
     Framing, MAX_OUTPUT_EDGE, MIN_OUTPUT_EDGE, OutputShape, PixelRect, Reframe, reframe,
 };
+pub use diagnose::{Check, Diagnostics};
 pub use hotkeys::{HotkeyAction, Hotkeys, normalize_hotkey};
 pub use library_meta::{
     GameGroup, MAX_COLLECTIONS, MAX_COLLECTIONS_PER_CLIP, MAX_NAME_CHARS, MetaEdit, apply_edit,

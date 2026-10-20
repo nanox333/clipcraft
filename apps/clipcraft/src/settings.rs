@@ -87,6 +87,9 @@ pub(crate) fn toggle_chip(
         egui::Sense::hover()
     };
     let (rect, response) = ui.allocate_exact_size(size, sense);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, selected, label)
+    });
     let (fill, stroke, text) = if !enabled {
         (Color32::from_rgb(20, 20, 23), BORDER, FAINT)
     } else if selected {
@@ -148,6 +151,9 @@ pub(crate) fn toggle_row(ui: &mut egui::Ui, title: &str, help: &str, value: &mut
         });
         ui.add_space(12.0);
         let (rect, response) = ui.allocate_exact_size(Vec2::new(40.0, 22.0), egui::Sense::click());
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *value, title)
+        });
         let fill = if *value {
             LIME
         } else {
@@ -214,6 +220,9 @@ pub(crate) fn percent_row(
 pub(crate) fn radio_row(ui: &mut egui::Ui, title: &str, help: &str, selected: bool) -> bool {
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, title)
+    });
     let center = egui::pos2(rect.left() + 10.0, rect.top() + 14.0);
     ui.painter().circle_stroke(
         center,
@@ -325,6 +334,20 @@ fn quality_tile(
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(width.max(0.0), 104.0), egui::Sense::click());
     let response = response.on_hover_text(mode.detail());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::RadioButton,
+            true,
+            selected,
+            format!(
+                "{}, about {} per {} clip, {}",
+                mode.label(),
+                facts.size,
+                facts.length,
+                facts.picture
+            ),
+        )
+    });
     let fill = if selected {
         Color32::from_rgb(40, 44, 30)
     } else if response.hovered() {

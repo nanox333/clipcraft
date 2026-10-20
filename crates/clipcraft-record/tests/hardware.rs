@@ -138,6 +138,7 @@ fn config(hardware: Option<HardwareProvider>) -> RecordConfig {
         max_buffer_bytes: 64 * 1024 * 1024,
         threads: 2,
         hardware,
+        gap_restart_seconds: 10,
     }
 }
 

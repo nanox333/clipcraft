@@ -30,8 +30,9 @@ fn run(arguments: Vec<OsString>) -> TaskResult<()> {
         "layers" => check_layers(),
         "assets" => check_assets(),
         "licenses" => check_licenses(),
+        "package" => package(),
         "help" | "--help" | "-h" => {
-            println!("ClipCraft Rust tasks: ci, layers, assets, licenses");
+            println!("ClipCraft Rust tasks: ci, layers, assets, licenses, package");
             Ok(())
         }
         _ => Err(TaskError::Usage),
@@ -230,6 +231,79 @@ fn check_licenses() -> TaskResult<()> {
     }
 }
 
+/// Builds the release binaries and packs them, with the licences and a desktop entry, into
+/// `target/dist/clipcraft-<version>-<os>-<arch>.tar.gz` plus a `SHA256SUMS` file.
+///
+/// The package is not signed: signing needs a certificate that only the maintainers hold.
+fn package() -> TaskResult<()> {
+    run_cargo(&[
+        "build",
+        "--release",
+        "-p",
+        "clipcraft",
+        "-p",
+        "clipcraft-cli",
+    ])?;
+    let workspace = workspace_root()?;
+    let name = format!(
+        "clipcraft-{}-{}-{}",
+        env!("CARGO_PKG_VERSION"),
+        env::consts::OS,
+        env::consts::ARCH
+    );
+    let dist = workspace.join("target").join("dist");
+    let folder = dist.join(&name);
+    let _ = fs::remove_dir_all(&folder);
+    let fail = |_| TaskError::PackageFailed;
+    fs::create_dir_all(folder.join("bin")).map_err(fail)?;
+    fs::create_dir_all(folder.join("share").join("applications")).map_err(fail)?;
+    let release = workspace.join("target").join("release");
+    for binary in ["clipcraft", "clipcraft-cli"] {
+        fs::copy(release.join(binary), folder.join("bin").join(binary)).map_err(fail)?;
+    }
+    fs::write(
+        folder.join("share").join("applications").join("clipcraft.desktop"),
+        "[Desktop Entry]\nType=Application\nName=ClipCraft\nComment=Local clip recorder and editor\nExec=clipcraft\nTerminal=false\nCategories=AudioVideo;Video;Recorder;\n",
+    )
+    .map_err(fail)?;
+    for document in ["README.md", "ATTRIBUTION.md", "LICENSE-MIT"] {
+        fs::copy(workspace.join(document), folder.join(document)).map_err(fail)?;
+    }
+    fs::write(
+        folder.join("INSTALL.txt"),
+        "ClipCraft runs from any folder: start bin/clipcraft.\n\
+To install for your user, copy bin/* to ~/.local/bin and share/applications/clipcraft.desktop to\n\
+~/.local/share/applications. Everything ClipCraft saves stays on this computer.\n\
+This package is not signed. Check it against SHA256SUMS before running it.\n\
+Run `clipcraft-cli diagnose` if recording does not work.\n",
+    )
+    .map_err(fail)?;
+    // Every dependency's licence, as the audit sees it.
+    let licenses = Command::new("cargo")
+        .current_dir(&workspace)
+        .args(["deny", "list"])
+        .output()
+        .map_err(|_| TaskError::CommandUnavailable)?;
+    fs::write(folder.join("THIRD-PARTY-LICENSES.txt"), licenses.stdout).map_err(fail)?;
+    let archive = format!("{name}.tar.gz");
+    let status = Command::new("tar")
+        .current_dir(&dist)
+        .args(["-czf", &archive, &name])
+        .status()
+        .map_err(|_| TaskError::CommandUnavailable)?;
+    if !status.success() {
+        return Err(TaskError::PackageFailed);
+    }
+    let sums = Command::new("sha256sum")
+        .current_dir(&dist)
+        .arg(&archive)
+        .output()
+        .map_err(|_| TaskError::CommandUnavailable)?;
+    fs::write(dist.join("SHA256SUMS"), sums.stdout).map_err(fail)?;
+    println!("packed {}", dist.join(archive).display());
+    Ok(())
+}
+
 fn workspace_root() -> TaskResult<PathBuf> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest
@@ -256,12 +330,14 @@ enum TaskError {
     AssetAttributionMissing,
     LicenseAuditFailed,
     WorkspacePath,
+    PackageFailed,
 }
 
 impl fmt::Display for TaskError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
-            Self::Usage => "usage: cargo xtask <ci|layers|assets|licenses>",
+            Self::PackageFailed => "the release package could not be built",
+            Self::Usage => "usage: cargo xtask <ci|layers|assets|licenses|package>",
             Self::CommandUnavailable => "required Rust command could not be started",
             Self::CommandFailed => "a quality-gate command failed",
             Self::MetadataUnavailable => "cargo metadata failed",

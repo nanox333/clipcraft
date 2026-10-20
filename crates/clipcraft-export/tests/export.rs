@@ -62,6 +62,7 @@ fn record_clip(path: &Path, format: ClipFormat) {
         max_buffer_bytes: 64 * 1024 * 1024,
         threads: 2,
         hardware: None,
+        gap_restart_seconds: 10,
     };
     let mut click = ToneSource::new(
         AudioFormat {

@@ -19,6 +19,11 @@ external tools), `cargo test -p clipcraft-frame` for queue limits,
 (library, empty states, details, settings, the player windowed and fullscreen) at window sizes from
 1×1 to 6000×4000 with awkward titles, so a layout that panics fails the gate.
 
+Long-run and release evidence is described in [`release-checklist.md`](release-checklist.md):
+`cargo run --release -p clipcraft-record --example soak -- --minutes N [--freeze-for S]` measures
+memory, processor time, dropped pictures, and clip validity over time, and can freeze the recorder
+to simulate sleep.
+
 ## Required evidence by area
 
 - **Time/library metadata:** property tests for rational conversions and trim algebra; round-trip,

@@ -66,6 +66,10 @@ struct ClipCraftApp {
     error: Option<String>,
     /// A search for a moved clip that is running.
     finding: Option<FindJob>,
+    /// The keyboard moved the focus last, so the focus ring shows.
+    keyboard_focus: bool,
+    /// When the diagnostics report was last copied, to confirm it on the button.
+    diagnostics_copied: Option<std::time::Instant>,
     search_text: String,
     sort_newest: bool,
     page: Page,
@@ -194,10 +198,56 @@ impl eframe::App for ClipCraftApp {
         self.sync_playback(context);
         self.poll_find(context);
         self.draw_screen(context);
+        self.draw_focus_ring(context);
     }
 }
 
 impl ClipCraftApp {
+    /// Shows which control the keyboard is on: a ring around the focused widget, drawn on top of
+    /// everything, only after the keyboard (not the mouse) moved the focus.
+    fn draw_focus_ring(&mut self, context: &egui::Context) {
+        let (navigated, clicked) = context.input(|input| {
+            (
+                input.key_pressed(egui::Key::Tab),
+                input.pointer.any_pressed(),
+            )
+        });
+        if navigated {
+            self.keyboard_focus = true;
+        } else if clicked {
+            self.keyboard_focus = false;
+        }
+        if !self.keyboard_focus {
+            return;
+        }
+        let Some(id) = context.memory(|memory| memory.focused()) else {
+            return;
+        };
+        let Some(response) = context.read_response(id) else {
+            return;
+        };
+        let painter = context.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("focus-ring"),
+        ));
+        let rect = response.rect.expand(3.0);
+        let rounding = egui::CornerRadius::same(10);
+        // A dark halo under a bright ring, so it shows on both light and dark controls.
+        painter.rect_stroke(
+            rect.expand(1.5),
+            rounding,
+            Stroke::new(1.5_f32, Color32::from_black_alpha(200)),
+            egui::StrokeKind::Outside,
+        );
+        painter.rect_stroke(
+            rect,
+            rounding,
+            Stroke::new(2.0_f32, Color32::WHITE),
+            egui::StrokeKind::Outside,
+        );
+        context.request_repaint();
+    }
+
     /// Draws the current screen: the library, the player, or settings, with their chrome.
     fn draw_screen(&mut self, context: &egui::Context) {
         // Fullscreen playback hides all chrome: the picture owns the whole window.
@@ -779,12 +829,13 @@ impl ClipCraftApp {
                 .show(ui, |ui| {
                     let (icon, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
                     kit::draw_icon(ui.painter(), icon.center(), Icon::Search, MUTED, 0.7);
-                    ui.add(
+                    let search = ui.add(
                         egui::TextEdit::singleline(&mut self.search_text)
                             .frame(false)
                             .hint_text("Search clips")
                             .desired_width(230.0),
                     );
+                    kit::name_text_box(&search, "Search clips", &self.search_text);
                 });
             self.sort_menu(ui);
 
@@ -808,6 +859,7 @@ impl ClipCraftApp {
                                         (ui.available_width() - 20.0).clamp(150.0, 340.0),
                                     ),
                             );
+                            kit::name_text_box(&field, "Clips folder", &self.directory_text);
                             if field.lost_focus()
                                 && ui.input(|input| input.key_pressed(egui::Key::Enter))
                             {
@@ -1189,6 +1241,7 @@ impl ClipCraftApp {
                             )
                         })
                         .inner;
+                    kit::name_text_box(&field, "Game", text);
                     if field.lost_focus() {
                         let typed = text.trim().to_owned();
                         if typed != detected.clone().unwrap_or_default() {
@@ -1586,6 +1639,63 @@ impl ClipCraftApp {
             );
         });
         settings::startup_card(ui, working);
+        card(ui, "Help", |ui| {
+            setting_row(
+                ui,
+                "Copy a diagnostics report",
+                "If recording does not work, this copies what ClipCraft can see: your folders, screens, sound devices, and video encoders. Nothing is sent anywhere; paste it where you ask for help.",
+                true,
+                |ui| {
+                    let label = if self
+                        .diagnostics_copied
+                        .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(4))
+                    {
+                        "Copied"
+                    } else {
+                        "Copy report"
+                    };
+                    if kit::labelled_button(ui, Icon::Copy, label, false, true).clicked() {
+                        let text = self.diagnostics_text();
+                        ui.ctx().copy_text(text);
+                        self.diagnostics_copied = Some(std::time::Instant::now());
+                    }
+                },
+            );
+        });
+    }
+
+    /// The diagnostics report as text, from the saved settings and what this computer shows now.
+    fn diagnostics_text(&self) -> String {
+        let settings = &self.recording;
+        let mut report = clipcraft_engine::Diagnostics::collect(settings);
+        let check = |(name, ok, detail): clipcraft_platform::Finding| clipcraft_engine::Check {
+            name,
+            ok,
+            detail,
+        };
+        report.capture = clipcraft_platform::diagnose_capture()
+            .into_iter()
+            .map(check)
+            .collect();
+        report.video = clipcraft_platform::diagnose_video()
+            .into_iter()
+            .map(check)
+            .collect();
+        let devices = clipcraft_audio_out::list_devices();
+        for (kind, names) in [
+            ("Microphones", &devices.inputs),
+            ("Speakers", &devices.outputs),
+        ] {
+            report.audio.push(if names.is_empty() {
+                clipcraft_engine::Check::fail(kind, "none found")
+            } else {
+                clipcraft_engine::Check::pass(kind, names.join(", "))
+            });
+        }
+        report
+            .audio
+            .push(check(clipcraft_platform::diagnose_system_sound()));
+        report.text()
     }
 
     /// Keeps the settings changed on screen: applies start-up changes, then saves.
@@ -1721,6 +1831,9 @@ struct FindJob {
 /// A sidebar icon button with an active plate and a lime marker. True when clicked.
 fn nav_button(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(68.0, 48.0), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
+    });
     let plate = egui::Rect::from_center_size(rect.center(), Vec2::splat(42.0));
     if selected {
         ui.painter().rect_filled(
@@ -1903,16 +2016,53 @@ fn clip_card(
     let reveal_area = egui::Rect::from_min_max(egui::pos2(middle, footer.top()), footer.max);
     // Added after the card so they sit on top of it and take their own clicks.
     let copy = ui.interact(copy_area, response.id.with("copy"), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            format!("Open {}", entry.title),
+        )
+    });
+    copy.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            if entry.offline {
+                format!("Find the file for {}", entry.title)
+            } else {
+                format!("Copy the path of {}", entry.title)
+            },
+        )
+    });
     let reveal = ui.interact(
         reveal_area,
         response.id.with("reveal"),
         egui::Sense::click(),
     );
+    reveal.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            if entry.offline {
+                format!("Remove {} from the library", entry.title)
+            } else {
+                format!("Show {} in the file manager", entry.title)
+            },
+        )
+    });
     let heart_area = egui::Rect::from_center_size(
         egui::pos2(thumbnail.right() - 24.0, thumbnail.top() + 24.0),
         Vec2::splat(36.0),
     );
     let heart = ui.interact(heart_area, response.id.with("heart"), egui::Sense::click());
+    heart.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Checkbox,
+            true,
+            entry.favorite,
+            format!("Favorite {}", entry.title),
+        )
+    });
     let hovered = response.hovered() || copy.hovered() || reveal.hovered() || heart.hovered();
     if hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -2895,5 +3045,106 @@ mod tests {
                 draw(&mut app, &context, size, 3);
             }
         }
+    }
+
+    /// Runs frames of the whole UI with the accessibility tree switched on and returns the
+    /// interactive controls a screen reader would find: role and name.
+    fn controls(
+        app: &mut ClipCraftApp,
+        context: &egui::Context,
+    ) -> Vec<(egui::accesskit::Role, String)> {
+        use egui::accesskit::Role;
+        context.enable_accesskit();
+        let mut found = Vec::new();
+        for _ in 0..3 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::vec2(1440.0, 900.0),
+                )),
+                ..Default::default()
+            };
+            let output = context.run(input, |context| {
+                kit::apply_theme(context);
+                app.thumbs.begin_frame();
+                app.draw_screen(context);
+            });
+            if let Some(update) = output.platform_output.accesskit_update {
+                found.clear();
+                for (_, node) in update.nodes {
+                    if matches!(
+                        node.role(),
+                        Role::Button
+                            | Role::CheckBox
+                            | Role::RadioButton
+                            | Role::Slider
+                            | Role::ComboBox
+                            | Role::TextInput
+                            | Role::SpinButton
+                            | Role::Switch
+                    ) {
+                        let name = node
+                            .label()
+                            .or_else(|| node.value())
+                            .unwrap_or_default()
+                            .to_owned();
+                        found.push((node.role(), name));
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn every_control_on_every_screen_has_a_name_a_screen_reader_can_say() {
+        let context = kit::test_context();
+        let mut app = ClipCraftApp {
+            library: Some(LibraryScanResult {
+                directory: "/clips".to_owned(),
+                entries: awkward_entries(),
+                persisted: false,
+                collections: vec!["Clutches".to_owned()],
+            }),
+            ..ClipCraftApp::default()
+        };
+        let mut unnamed = Vec::new();
+        let mut total = 0;
+        let mut check = |label: &str, controls: Vec<(egui::accesskit::Role, String)>| {
+            total += controls.len();
+            for (role, name) in controls {
+                if name.trim().is_empty() {
+                    unnamed.push(format!("{label}: an unnamed {role:?}"));
+                }
+            }
+        };
+        check("library", controls(&mut app, &context));
+        app.selected = Some(awkward_entries().remove(0));
+        check("clip", controls(&mut app, &context));
+        app.selected = None;
+        app.page = Page::Settings;
+        app.recording.show_advanced = true;
+        app.recording.quality = clipcraft_engine::QualityMode::Custom;
+        for tab in [
+            SettingsTab::General,
+            SettingsTab::Storage,
+            SettingsTab::Hotkeys,
+            SettingsTab::Capture,
+            SettingsTab::Quality,
+            SettingsTab::Audio,
+            SettingsTab::Advanced,
+        ] {
+            app.settings_tab = tab;
+            check(&format!("settings {tab:?}"), controls(&mut app, &context));
+        }
+        assert!(
+            total > 40,
+            "only {total} controls were found; the tree may be empty"
+        );
+        assert!(
+            unnamed.is_empty(),
+            "controls with no name:\n{}",
+            unnamed.join("\n")
+        );
     }
 }

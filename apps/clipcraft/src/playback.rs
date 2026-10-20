@@ -757,6 +757,17 @@ fn seek_bar(
         Sense::hover()
     };
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width.max(0.0), 20.0), sense);
+    response.widget_info(|| {
+        egui::WidgetInfo::slider(
+            enabled,
+            position,
+            format!(
+                "Seek, {} of {}",
+                format_clock(Tick::from_seconds_f64(position)),
+                format_clock(Tick::from_seconds_f64(duration))
+            ),
+        )
+    });
     let track = egui::Rect::from_center_size(rect.center(), Vec2::new(rect.width(), 5.0));
     let fraction = if duration > 0.0 {
         (position / duration).clamp(0.0, 1.0) as f32
@@ -822,6 +833,7 @@ fn play_button(ui: &mut egui::Ui, icon: Icon, enabled: bool, tooltip: &str) -> e
         Sense::hover()
     };
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(42.0), sense);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tooltip));
     let hovered = response.hovered() && enabled;
     let fill = if !enabled {
         Color32::from_rgb(44, 44, 50)

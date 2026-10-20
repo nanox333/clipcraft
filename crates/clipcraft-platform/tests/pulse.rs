@@ -138,6 +138,7 @@ fn a_clip_of_what_the_computer_played_contains_it() {
         max_buffer_bytes: 64 * 1024 * 1024,
         threads: 2,
         hardware: None,
+        gap_restart_seconds: 10,
     };
     let recorder = Recorder::start_with_audio(
         Box::new(SyntheticSource::new(320, 180, 30)),

@@ -25,6 +25,7 @@ fn config() -> RecordConfig {
         max_buffer_bytes: 64 * 1024 * 1024,
         threads: 2,
         hardware: None,
+        gap_restart_seconds: 10,
     }
 }
 
@@ -453,4 +454,74 @@ fn a_finished_mp4_save_leaves_only_the_clip_behind() {
         ["tidy.mkv", "tidy.mp4"],
         "no crash-safe copy or partial may remain"
     );
+}
+
+/// A screen that goes quiet once, as when a laptop sleeps.
+struct Sleepy {
+    inner: SyntheticSource,
+    frames: u32,
+    sleep_after: u32,
+    sleep: Duration,
+}
+
+impl clipcraft_capture::CaptureSource for Sleepy {
+    fn target(&self) -> &clipcraft_capture::CaptureTarget {
+        self.inner.target()
+    }
+
+    fn capture(&mut self) -> Result<clipcraft_capture::CaptureFrame, CaptureError> {
+        self.frames += 1;
+        if self.frames == self.sleep_after {
+            std::thread::sleep(self.sleep);
+        }
+        self.inner.capture()
+    }
+}
+
+#[test]
+fn a_long_silence_in_the_pictures_starts_the_buffer_over_instead_of_freezing_every_clip() {
+    if !tool("ffprobe") {
+        return;
+    }
+    use clipcraft_capture::CaptureSource as _;
+    let scratch = Scratch::new("sleep");
+    let mut quick = config();
+    quick.gap_restart_seconds = 1;
+    let source = Sleepy {
+        inner: SyntheticSource::new(160, 90, 30),
+        frames: 0,
+        sleep_after: 60,
+        sleep: Duration::from_millis(2_500),
+    };
+    assert!(!source.target().name.is_empty());
+    let recorder = Recorder::start(Box::new(source), quick).unwrap();
+    wait_for(&recorder, "the sleep", |s| s.restarts >= 1);
+    // A few seconds of fresh pictures after waking.
+    wait_for(&recorder, "pictures after waking", |s| {
+        s.buffered_seconds >= 2.0
+    });
+    let path = scratch.file("woke.mp4");
+    recorder.save_clip(10, ClipFormat::Mp4, &path).unwrap();
+    let packets = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "packet=pts_time",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(&path)
+        .output()
+        .unwrap();
+    let times: Vec<f64> = String::from_utf8_lossy(&packets.stdout)
+        .lines()
+        .filter_map(|l| l.trim().parse().ok())
+        .collect();
+    assert!(times.len() > 30, "{} pictures", times.len());
+    let widest = times.windows(2).map(|w| w[1] - w[0]).fold(0.0, f64::max);
+    assert!(widest < 0.5, "a {widest} s freeze is still in the clip");
+    decodes_cleanly(&path);
 }

@@ -48,6 +48,7 @@ pub fn record_config(settings: &RecordingSettings) -> RecordConfig {
             .unwrap_or(64 * 1024 * 1024),
         threads: 0,
         hardware: None,
+        gap_restart_seconds: 10,
     }
 }
 

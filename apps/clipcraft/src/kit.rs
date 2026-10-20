@@ -402,6 +402,7 @@ pub fn icon_button(
         Sense::hover()
     };
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), sense);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tooltip));
     if response.hovered() && enabled {
         ui.painter()
             .rect_filled(rect, 8.0, Color32::from_white_alpha(14));
@@ -449,6 +450,7 @@ pub fn labelled_button_sized(
         Sense::hover()
     };
     let (rect, response) = ui.allocate_exact_size(size, sense);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
     let hovered = response.hovered() && enabled;
     let (fill, content) = match (primary, enabled, hovered) {
         (_, false, _) => (CARD, FAINT),
@@ -501,6 +503,7 @@ pub fn slim_slider(
         Sense::hover()
     };
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width.max(0.0), 22.0), sense);
+    response.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(value * 100.0), tooltip));
     let track = Rect::from_center_size(rect.center(), Vec2::new(rect.width() - 10.0, 4.0));
     let value = value.clamp(0.0, 1.0);
     let painter = ui.painter();
@@ -556,6 +559,7 @@ pub fn pill_menu(
         .layout_no_wrap(label.to_owned(), font.clone(), Color32::PLACEHOLDER);
     let size = Vec2::new(galley.size().x + 44.0, 32.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, label));
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
     let fill = if open || response.hovered() {
         CARD_HOVER
@@ -660,4 +664,13 @@ pub fn draw_heart(painter: &Painter, c: Pos2, color: Color32, filled: bool, scal
         points,
         Stroke::new(1.7_f32 * scale.max(0.6), color),
     ));
+}
+
+/// Names a text box for a screen reader (its hint is not enough) and gives its current text.
+pub fn name_text_box(response: &egui::Response, name: &str, text: &str) {
+    response.widget_info(|| {
+        let mut info = egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, name);
+        info.current_text_value = Some(text.to_owned());
+        info
+    });
 }

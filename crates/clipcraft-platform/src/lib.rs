@@ -136,3 +136,93 @@ pub fn active_window() -> Result<Option<CaptureTarget>, CaptureError> {
 pub fn active_window_on(display: &str) -> Result<Option<CaptureTarget>, CaptureError> {
     x11::active_window(Some(display))
 }
+
+/// One line of a diagnostics report: what was checked, whether it is fine, and the details.
+pub type Finding = (String, bool, String);
+
+/// What screen capture can do on this computer, and what it can see right now. Meant for a
+/// diagnostics report; nothing is started.
+pub fn diagnose_capture() -> Vec<Finding> {
+    let mut findings = Vec::new();
+    let capabilities = capabilities();
+    findings.push((
+        "Capabilities".to_owned(),
+        true,
+        format!(
+            "windows {}, cursor {}, exclusive full screen {}, HDR conversion {}",
+            capabilities.windows,
+            capabilities.cursor,
+            capabilities.exclusive_fullscreen,
+            capabilities.hdr
+        ),
+    ));
+    findings.push(match list_targets() {
+        Ok(targets) => {
+            let screens = targets
+                .iter()
+                .filter(|target| target.kind == clipcraft_capture::TargetKind::Display)
+                .count();
+            let windows = targets.len() - screens;
+            (
+                "Screens and windows".to_owned(),
+                screens > 0,
+                format!("{screens} screen(s) and {windows} window(s) can be captured"),
+            )
+        }
+        Err(error) => ("Screens and windows".to_owned(), false, error.to_string()),
+    });
+    findings
+}
+
+/// Which video encoders work here, by trying the hardware one briefly.
+pub fn diagnose_video() -> Vec<Finding> {
+    let mut findings = vec![(
+        "Processor encoder".to_owned(),
+        true,
+        "built in (H.264), always available".to_owned(),
+    )];
+    findings.push(match probe_hardware_encoder() {
+        Ok(name) => (
+            "Graphics card encoder".to_owned(),
+            true,
+            format!("{name} works"),
+        ),
+        Err(why) => (
+            "Graphics card encoder".to_owned(),
+            true,
+            format!("not available ({why}); recording uses the processor"),
+        ),
+    });
+    findings
+}
+
+/// Whether what the computer is playing can be recorded, by opening that source for a moment.
+pub fn diagnose_system_sound() -> Finding {
+    #[cfg(target_os = "linux")]
+    {
+        match open_system_monitor("") {
+            Ok(_) => (
+                "Game and system sound".to_owned(),
+                true,
+                "the PulseAudio/PipeWire monitor of the default output can be recorded".to_owned(),
+            ),
+            Err(why) => ("Game and system sound".to_owned(), false, why),
+        }
+    }
+    #[cfg(windows)]
+    {
+        (
+            "Game and system sound".to_owned(),
+            true,
+            "recorded by loopback of the default output device".to_owned(),
+        )
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        (
+            "Game and system sound".to_owned(),
+            false,
+            "this system cannot record what it is playing".to_owned(),
+        )
+    }
+}

@@ -273,6 +273,7 @@ fn edit_row(ui: &mut egui::Ui, edit: &mut Option<CollectionEdit>, actions: &mut 
                     .char_limit(clipcraft_engine::MAX_NAME_CHARS)
                     .desired_width((ui.available_width() - 4.0).max(0.0)),
             );
+            crate::kit::name_text_box(&field, "Collection name", &state.text);
             if !state.focused {
                 field.request_focus();
                 state.focused = true;

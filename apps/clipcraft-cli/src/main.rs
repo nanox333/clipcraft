@@ -35,6 +35,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), CliError> {
         "recording" => run_recording(&arguments[1..]),
         "capture" => run_capture(&arguments[1..]),
         "clip" => run_clip(&arguments[1..]),
+        "diagnose" => run_diagnose(&arguments[1..]),
         _ => Err(CliError::Usage),
     }
 }
@@ -117,6 +118,77 @@ fn run_clip(arguments: &[OsString]) -> Result<(), CliError> {
     match execute(command).map_err(CliError::Engine)? {
         CommandOutput::Trimmed(clip) => write_json(&clip),
         _ => Err(CliError::UnexpectedOutput),
+    }
+}
+
+/// `diagnose [--json]` checks the folders, screens, sound, and encoders and says what works. It
+/// exits with failure when something that recording needs is wrong.
+fn run_diagnose(arguments: &[OsString]) -> Result<(), CliError> {
+    let json = match arguments {
+        [] => false,
+        [flag] if flag.to_str() == Some("--json") => true,
+        _ => return Err(CliError::Usage),
+    };
+    let settings = clipcraft_engine::default_settings_path()
+        .and_then(
+            |path| match execute(Command::LoadRecordingSettings { path }) {
+                Ok(CommandOutput::RecordingSettings(settings)) => Some(*settings),
+                _ => None,
+            },
+        )
+        .unwrap_or_default();
+    let mut report = clipcraft_engine::Diagnostics::collect(&settings);
+    let check = |(name, ok, detail): clipcraft_platform::Finding| clipcraft_engine::Check {
+        name,
+        ok,
+        detail,
+    };
+    report.capture = clipcraft_platform::diagnose_capture()
+        .into_iter()
+        .map(check)
+        .collect();
+    report.video = clipcraft_platform::diagnose_video()
+        .into_iter()
+        .map(check)
+        .collect();
+    let devices = clipcraft_audio_out::list_devices();
+    // A missing device only counts as a problem when the settings ask for it.
+    let named = |kind: &str, names: &[String], needed: bool| {
+        if names.is_empty() && needed {
+            clipcraft_engine::Check::fail(kind, "none found")
+        } else if names.is_empty() {
+            clipcraft_engine::Check::pass(kind, "none found (not needed with the current settings)")
+        } else {
+            clipcraft_engine::Check::pass(kind, names.join(", "))
+        }
+    };
+    report.audio.push(named(
+        "Microphones",
+        &devices.inputs,
+        settings.capture_microphone,
+    ));
+    report.audio.push(named(
+        "Speakers",
+        &devices.outputs,
+        settings.capture_game_audio,
+    ));
+    let mut system = check(clipcraft_platform::diagnose_system_sound());
+    if !system.ok && !settings.capture_game_audio {
+        system.ok = true;
+        system.detail = format!("{} (not needed with the current settings)", system.detail);
+    }
+    report.audio.push(system);
+    if json {
+        write_json(&report)?;
+    } else {
+        write_stdout(report.text().as_bytes())?;
+    }
+    if report.healthy() {
+        Ok(())
+    } else {
+        Err(CliError::Capture(
+            "something recording needs is not working; see the lines marked !!".to_owned(),
+        ))
     }
 }
 
@@ -252,6 +324,7 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli library probe <file>\n",
         "  clipcraft-cli library thumbnail <file>\n",
         "  clipcraft-cli clip trim <input> <output.mp4> <start-seconds> <end-seconds>\n",
+        "  clipcraft-cli diagnose [--json]\n",
         "  clipcraft-cli recording settings\n",
         "  clipcraft-cli capture targets\n",
         "  clipcraft-cli capture record --seconds N [--target ID] [--out DIR]\n",
@@ -325,6 +398,17 @@ mod tests {
     fn unknown_command_is_a_usage_error() {
         let error = run(vec![OsString::from("record")]).expect_err("unknown command must fail");
         assert!(matches!(error, CliError::Usage));
+    }
+
+    #[test]
+    fn diagnose_takes_only_the_json_flag() {
+        for bad in [
+            vec!["diagnose", "--bogus"],
+            vec!["diagnose", "--json", "extra"],
+        ] {
+            let error = run(bad.into_iter().map(OsString::from).collect()).expect_err("must fail");
+            assert!(matches!(error, CliError::Usage));
+        }
     }
 
     #[test]

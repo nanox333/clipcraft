@@ -12,6 +12,7 @@ layer = 6
 
 [dependencies]
 clipcraft-capture.workspace = true
+clipcraft-audio-out.workspace = true
 clipcraft-engine.workspace = true
 clipcraft-platform.workspace = true
 serde.workspace = true
