@@ -2928,6 +2928,17 @@ mod tests {
 
     /// Runs `frames` frames of the whole UI at `size` points.
     fn draw(app: &mut ClipCraftApp, context: &egui::Context, size: (f32, f32), frames: usize) {
+        {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static CALLS: AtomicUsize = AtomicUsize::new(0);
+            eprintln!(
+                "DRAWCALL {} size {size:?} page {:?} selected {:?} filter {:?}",
+                CALLS.fetch_add(1, Ordering::Relaxed),
+                app.page,
+                app.selected.as_ref().map(|entry| entry.path.clone()),
+                app.filter
+            );
+        }
         for _ in 0..frames {
             let input = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
