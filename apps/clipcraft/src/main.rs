@@ -141,6 +141,7 @@ enum SettingsTab {
     Quality,
     Audio,
     Advanced,
+    About,
 }
 
 impl SettingsTab {
@@ -153,6 +154,7 @@ impl SettingsTab {
             Self::Quality => "Quality",
             Self::Audio => "Audio",
             Self::Advanced => "Advanced",
+            Self::About => "About",
         }
     }
 
@@ -168,6 +170,9 @@ impl SettingsTab {
             Self::Audio => "What sound is recorded and how well.",
             Self::Advanced => {
                 "Fine control over the picture, encoder and audio. The defaults suit most people."
+            }
+            Self::About => {
+                "What ClipCraft is, which version you have, and where to find the project."
             }
         }
     }
@@ -1432,6 +1437,7 @@ impl ClipCraftApp {
                     SettingsTab::General,
                     SettingsTab::Storage,
                     SettingsTab::Hotkeys,
+                    SettingsTab::About,
                 ],
             ),
             (
@@ -1543,6 +1549,7 @@ impl ClipCraftApp {
             SettingsTab::Quality => settings::quality_tab(ui, &mut working, &self.capture.gpu),
             SettingsTab::Audio => settings::audio_tab(ui, &mut working, &mut self.settings_state),
             SettingsTab::Advanced => settings::advanced_tab(ui, &mut working),
+            SettingsTab::About => settings::about_tab(ui),
         }
         if matches!(
             tab,
@@ -3040,6 +3047,7 @@ mod tests {
                 SettingsTab::Quality,
                 SettingsTab::Audio,
                 SettingsTab::Advanced,
+                SettingsTab::About,
             ] {
                 app.settings_tab = tab;
                 draw(&mut app, &context, size, 3);
@@ -3133,6 +3141,7 @@ mod tests {
             SettingsTab::Quality,
             SettingsTab::Audio,
             SettingsTab::Advanced,
+            SettingsTab::About,
         ] {
             app.settings_tab = tab;
             check(&format!("settings {tab:?}"), controls(&mut app, &context));

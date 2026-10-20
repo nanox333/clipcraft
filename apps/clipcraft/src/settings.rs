@@ -1437,6 +1437,66 @@ pub fn storage_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
     });
 }
 
+/// The About tab: what ClipCraft is, which version this is, and where to find the project.
+pub fn about_tab(ui: &mut egui::Ui) {
+    card(ui, "ClipCraft", |ui| {
+        ui.add_space(10.0);
+        ui.label(
+            RichText::new(
+                "ClipCraft records your screen and keeps the last moments ready to save. Press \
+                 a hotkey and the last seconds become a clip. Then find, play, trim and keep your \
+                 clips from one library.",
+            )
+            .color(TEXT)
+            .size(14.5),
+        );
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(
+                "Everything happens on this computer. ClipCraft has no account, no upload, no \
+                 sharing service and no tracking, and it works without a network connection.",
+            )
+            .color(MUTED)
+            .size(13.5),
+        );
+        ui.add_space(14.0);
+    });
+    card(ui, "Details", |ui| {
+        let version = format!(
+            "{} ({} {})",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
+        for (title, value) in [
+            ("Version", version.as_str()),
+            ("License", "MIT or Apache-2.0, open source"),
+        ] {
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new(title)
+                    .color(TEXT)
+                    .size(14.5)
+                    .family(kit::semibold()),
+            );
+            ui.label(RichText::new(value).color(MUTED).size(12.5));
+        }
+        ui.add_space(6.0);
+    });
+    card(ui, "Project", |ui| {
+        let url = "https://github.com/nanox333/clipcraft";
+        ui.add_space(8.0);
+        ui.add(egui::Hyperlink::from_label_and_url(
+            RichText::new("Source code and issues")
+                .color(kit::LIME)
+                .size(14.0),
+            url,
+        ));
+        ui.label(RichText::new(url).color(FAINT).size(12.0));
+        ui.add_space(8.0);
+    });
+}
+
 pub fn advanced_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
     card(ui, "Video aspect ratio", |ui| {
         ui.add_space(8.0);
