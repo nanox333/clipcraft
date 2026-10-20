@@ -12,6 +12,7 @@ mod hotkeys;
 mod index;
 mod library_meta;
 mod recording;
+mod relink;
 mod session;
 mod startup;
 mod storage;
@@ -31,6 +32,7 @@ pub use recording::{
     POST_ROLL_SECONDS, QualityMode, REPLAY_SECONDS, RateControl, RecordingSettings, SAMPLE_RATES,
     VIDEO_KBPS, VideoCodec, VideoEncoder, default_settings_path, estimated_bytes, format_bytes,
 };
+pub use relink::{SearchResult, find_moved_file};
 pub use session::{
     CLIP_PREFIX, CaptureSession, SavedClipReport, clip_format, clip_stem, record_config,
 };
@@ -93,6 +95,12 @@ pub enum Command {
     },
     /// Shows a local media file in the operating system's file manager.
     RevealInFileManager { path: PathBuf },
+    /// Looks for a moved clip by name and size in a folder and the folders inside it.
+    FindMovedFile {
+        name: String,
+        size_bytes: u64,
+        folder: PathBuf,
+    },
     /// Cuts a clip to a range and saves it as a new MP4 without re-encoding.
     TrimClip {
         input: PathBuf,
@@ -120,6 +128,7 @@ impl Command {
             Self::SetLaunchAtStartup { .. } => "app.launch_at_startup",
             Self::SaveRecordingSettings { .. } => "recording.save_settings",
             Self::TrimClip { .. } => "clip.trim",
+            Self::FindMovedFile { .. } => "library.find_file",
         }
     }
 }
@@ -264,6 +273,11 @@ pub enum CommandOutput {
     StorageUsage(StorageUsage),
     /// A clip that was cut and saved.
     Trimmed(TrimmedClip),
+    /// Where a moved clip was found, if it was.
+    FoundFile {
+        path: Option<String>,
+        folders_searched: usize,
+    },
     /// Whether ClipCraft now launches at sign-in.
     LaunchAtStartup { enabled: bool },
 }
@@ -283,6 +297,8 @@ pub enum EngineError {
     EmptyMediaPath,
     /// The media file no longer exists or cannot be read.
     FileUnavailable,
+    /// The file is still on disk, so it cannot be removed from the library.
+    FileStillExists,
     /// The system file manager could not be started.
     FileManagerUnavailable,
     /// No saved library index exists yet.
@@ -343,6 +359,9 @@ impl fmt::Display for EngineError {
             Self::EmptyMediaPath => formatter.write_str("Choose a local media file first."),
             Self::FileUnavailable => formatter.write_str(
                 "This file could not be found. It may have been moved or deleted.",
+            ),
+            Self::FileStillExists => formatter.write_str(
+                "This file is still on your computer. Delete or move it first, then remove it from the library.",
             ),
             Self::MediaTooLarge => {
                 formatter.write_str("This video's headers are too large to read safely.")
@@ -434,6 +453,17 @@ pub fn execute(command: Command) -> Result<CommandOutput, EngineError> {
             let never = std::sync::atomic::AtomicBool::new(false);
             trim_clip(&input, &output, start_ms, end_ms, &mut |_| {}, &never)
                 .map(CommandOutput::Trimmed)
+        }
+        Command::FindMovedFile {
+            name,
+            size_bytes,
+            folder,
+        } => {
+            let result = find_moved_file(&name, size_bytes, &folder);
+            Ok(CommandOutput::FoundFile {
+                path: result.found.map(|path| path.to_string_lossy().into_owned()),
+                folders_searched: result.folders_searched,
+            })
         }
         Command::LoadRecordingSettings { path } => recording::load_settings(&path)
             .map(|settings| CommandOutput::RecordingSettings(Box::new(settings))),
@@ -682,6 +712,7 @@ pub const fn command_ids() -> &'static [&'static str] {
         "capture.status",
         "capture.save_clip",
         "clip.trim",
+        "library.find_file",
         "capture.toggle_microphone",
         "capture.push_to_talk",
         "recording.save_settings",

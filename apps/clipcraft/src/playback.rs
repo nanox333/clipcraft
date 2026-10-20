@@ -113,6 +113,11 @@ impl Playback {
         self.trim.take_saved()
     }
 
+    /// True when the clip failed to open and its file is no longer on disk.
+    pub fn file_missing(&self) -> bool {
+        self.error.is_some() && !std::path::Path::new(&self.path).exists()
+    }
+
     /// The file being played.
     pub fn path(&self) -> &str {
         &self.path
@@ -425,6 +430,9 @@ impl Playback {
                     }))
                     .paint_at(ui, fitted);
                 None
+            }
+            (None, Some(_)) if self.file_missing() => {
+                Some("This file was moved, renamed or deleted.")
             }
             (None, Some(message)) => Some(message.as_str()),
             (None, None) => Some("Loading…"),
@@ -998,6 +1006,22 @@ mod tests {
         let tall = fit(Vec2::new(100.0, 400.0), bounds);
         assert!(tall.width() < bounds.width());
         assert_eq!(fit(Vec2::ZERO, bounds), bounds);
+    }
+
+    #[test]
+    fn a_clip_whose_file_is_gone_is_reported_as_missing_only_after_it_failed() {
+        let (mut playback, _context) = opened(10.0, 1);
+        assert!(
+            !playback.file_missing(),
+            "a clip that is playing is not missing"
+        );
+        playback.error = Some("The video could not be read.".to_owned());
+        assert!(playback.file_missing(), "the path does not exist");
+        playback.path = std::env::temp_dir().to_string_lossy().into_owned();
+        assert!(
+            !playback.file_missing(),
+            "an existing file that fails is damaged, not missing"
+        );
     }
 
     #[test]

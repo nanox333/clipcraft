@@ -79,6 +79,13 @@ touches ClipCraft's own clips.
   at any rate is not sustainable in software. Pixel conversion alone is 4 to 11 ms at 1080p. A
   real gaming computer is faster and the game also competes for it; hardware encoders are the way
   to 1080p60 and are not wired. The top bar shows when more than 5% of pictures are dropped.
+- **Missing files.** A clip whose file is gone is listed as "File not found" with Remove from library
+  (card footer, right-click menu, or the clip view when it fails to open). Find file asks for a
+  folder and searches it and the folders inside it (8 deep, links not followed, bounded) for the same
+  name and size, then relinks the clip, keeping its favorite, game and collections; a relinked clip
+  outside the scanned folder stays online. The folder-choosing dialog could not be driven in the
+  headless test display, so only the search, relink, and rescan are tested, not the dialog. Removal only forgets the
+  library entry, refuses while the file still exists, and survives rescans and restarts.
 - **Trim and export** ([ADR 0010](adr/0010-trim-export.md)). Any clip in the library can be cut to a
   range and saved as a new MP4 without re-encoding: from the clip view (scissors, T, I, O) or
   `clipcraft-cli clip trim IN OUT START END`. Verified with ffprobe and ffmpeg: the first picture is

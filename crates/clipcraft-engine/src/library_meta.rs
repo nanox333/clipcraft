@@ -26,6 +26,12 @@ pub enum MetaEdit {
     AddToCollection { path: String, name: String },
     /// Takes a clip out of a collection.
     RemoveFromCollection { path: String, name: String },
+    /// Forgets a clip whose file is gone. Refused while the file is still on disk, so nothing
+    /// that exists can vanish from view; the file itself is never touched.
+    RemoveFromLibrary { path: String },
+    /// Points a clip whose file moved at its new place, keeping its favorite, game, and
+    /// collections.
+    RelinkFile { from: String, to: String },
 }
 
 /// A name with spaces trimmed, or `None` when it is empty, too long, or has control characters.
@@ -53,7 +59,7 @@ fn entry_mut<'a>(
 
 /// Applies `edit` to the clips and the collection list. Nothing changes when it is refused.
 pub fn apply_edit(
-    entries: &mut [MediaEntry],
+    entries: &mut Vec<MediaEntry>,
     collections: &mut Vec<String>,
     edit: &MetaEdit,
 ) -> Result<(), EngineError> {
@@ -114,6 +120,46 @@ pub fn apply_edit(
                 }
                 entry.collections.push(name.clone());
             }
+        }
+        MetaEdit::RemoveFromLibrary { path } => {
+            let position = entries
+                .iter()
+                .position(|entry| entry.path == *path)
+                .ok_or(EngineError::FileUnavailable)?;
+            if std::path::Path::new(path).exists() {
+                return Err(EngineError::FileStillExists);
+            }
+            entries.remove(position);
+        }
+        MetaEdit::RelinkFile { from, to } => {
+            let metadata = std::fs::metadata(to)
+                .ok()
+                .filter(|metadata| metadata.is_file())
+                .ok_or(EngineError::FileUnavailable)?;
+            if std::path::Path::new(from).exists() {
+                return Err(EngineError::FileStillExists);
+            }
+            if entries.iter().any(|entry| entry.path == *to) {
+                return Err(EngineError::NameTaken);
+            }
+            let target = std::path::Path::new(to);
+            let entry = entry_mut(entries, from)?;
+            entry.path = to.clone();
+            if let Some(name) = target.file_name() {
+                entry.title = name.to_string_lossy().into_owned();
+            }
+            if let Some(extension) = target.extension() {
+                entry.extension = extension.to_string_lossy().to_lowercase();
+            }
+            entry.size_bytes = metadata.len();
+            entry.modified_unix_seconds = metadata
+                .modified()
+                .ok()
+                .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|since| since.as_secs());
+            entry.offline = false;
+            // The file may differ in details; probe it again.
+            entry.probe = None;
         }
         MetaEdit::RemoveFromCollection { path, name } => {
             entry_mut(entries, path)?
@@ -476,5 +522,91 @@ mod tests {
         assert_eq!(clean_name(""), None);
         assert_eq!(clean_name("a\nb"), None);
         assert_eq!(clean_name(&"x".repeat(MAX_NAME_CHARS + 1)), None);
+    }
+
+    #[test]
+    fn a_clip_whose_file_is_gone_can_be_forgotten_but_an_existing_one_cannot() {
+        let present =
+            std::env::temp_dir().join(format!("clipcraft-forget-{}.mp4", std::process::id()));
+        std::fs::write(&present, b"x").expect("fixture writes");
+        let gone = "/definitely/not/here/gone.mp4".to_owned();
+        let mut entries = vec![entry(&gone), entry(&present.to_string_lossy())];
+        let mut collections = Vec::new();
+
+        let forget = |path: &str| MetaEdit::RemoveFromLibrary {
+            path: path.to_owned(),
+        };
+        assert_eq!(
+            apply_edit(
+                &mut entries,
+                &mut collections,
+                &forget(&present.to_string_lossy())
+            ),
+            Err(EngineError::FileStillExists)
+        );
+        assert_eq!(entries.len(), 2, "an existing file stays listed");
+        assert_eq!(
+            apply_edit(
+                &mut entries,
+                &mut collections,
+                &forget("/not/in/the/library.mp4")
+            ),
+            Err(EngineError::FileUnavailable)
+        );
+        apply_edit(&mut entries, &mut collections, &forget(&gone)).expect("forgotten");
+        assert_eq!(entries.len(), 1);
+        assert!(present.exists(), "the file itself is never touched");
+        let _ = std::fs::remove_file(&present);
+    }
+
+    #[test]
+    fn a_moved_file_can_be_relinked_and_keeps_its_favorite_and_collections() {
+        let dir =
+            std::env::temp_dir().join(format!("clipcraft-relink-edit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let new_home = dir.join("Clutch.mp4");
+        std::fs::write(&new_home, b"12345").expect("file");
+        let new_path = new_home.to_string_lossy().into_owned();
+        let mut old = entry("/definitely/not/here/Clutch.mp4");
+        old.favorite = true;
+        old.collections = vec!["Best".to_owned()];
+        old.offline = true;
+        let mut entries = vec![old];
+        let mut collections = vec!["Best".to_owned()];
+        let relink = |from: &str, to: &str| MetaEdit::RelinkFile {
+            from: from.to_owned(),
+            to: to.to_owned(),
+        };
+
+        // The target must exist, and the old file must really be gone.
+        assert_eq!(
+            apply_edit(
+                &mut entries,
+                &mut collections,
+                &relink("/definitely/not/here/Clutch.mp4", "/nope/x.mp4")
+            ),
+            Err(EngineError::FileUnavailable)
+        );
+        assert_eq!(
+            apply_edit(
+                &mut entries,
+                &mut collections,
+                &relink(&new_path, &new_path)
+            ),
+            Err(EngineError::FileStillExists)
+        );
+        apply_edit(
+            &mut entries,
+            &mut collections,
+            &relink("/definitely/not/here/Clutch.mp4", &new_path),
+        )
+        .expect("relinked");
+        assert_eq!(entries[0].path, new_path);
+        assert_eq!(entries[0].size_bytes, 5);
+        assert!(!entries[0].offline && entries[0].favorite);
+        assert_eq!(entries[0].collections, ["Best"]);
+        assert!(entries[0].probe.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

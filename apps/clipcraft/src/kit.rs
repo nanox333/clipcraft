@@ -180,6 +180,7 @@ pub enum Icon {
     Record,
     Stop,
     Scissors,
+    Trash,
 }
 
 /// Draws `icon` centered on `c`, about 18 px across at `scale` 1.0.
@@ -350,6 +351,14 @@ pub fn draw_icon(painter: &Painter, c: Pos2, icon: Icon, color: Color32, scale: 
         Icon::Heart => draw_heart(painter, c, color, false, scale),
         Icon::Record => {
             painter.circle_filled(c, 6.5 * scale, color);
+        }
+        Icon::Trash => {
+            // A bin: lid, handle, and a body with two slats.
+            line(&[at(-8.0, -5.0), at(8.0, -5.0)]);
+            line(&[at(-3.0, -5.0), at(-3.0, -8.0), at(3.0, -8.0), at(3.0, -5.0)]);
+            line(&[at(-6.0, -5.0), at(-5.0, 8.0), at(5.0, 8.0), at(6.0, -5.0)]);
+            line(&[at(-2.0, -1.0), at(-2.0, 5.0)]);
+            line(&[at(2.0, -1.0), at(2.0, 5.0)]);
         }
         Icon::Scissors => {
             // Two blades crossing, and two rings for the fingers.

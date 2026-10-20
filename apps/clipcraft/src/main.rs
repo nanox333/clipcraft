@@ -64,6 +64,8 @@ struct ClipCraftApp {
     library: Option<LibraryScanResult>,
     selected: Option<MediaEntry>,
     error: Option<String>,
+    /// A search for a moved clip that is running.
+    finding: Option<FindJob>,
     search_text: String,
     sort_newest: bool,
     page: Page,
@@ -190,6 +192,7 @@ impl eframe::App for ClipCraftApp {
         self.thumbs.begin_frame();
         self.capture_frame(context);
         self.sync_playback(context);
+        self.poll_find(context);
         self.draw_screen(context);
     }
 }
@@ -635,6 +638,69 @@ impl ClipCraftApp {
     }
 
     /// Applies a favorite, game, or collection change on screen and saves it in the index.
+    /// Asks for a folder and looks in it, and below it, for a clip that was moved.
+    fn start_find(&mut self, from: String, name: String, size: u64) {
+        if self.finding.is_some() {
+            return;
+        }
+        let mut dialog = rfd::FileDialog::new().set_title(format!("Where might {name} be now?"));
+        let library = self.directory_text.trim();
+        if !library.is_empty() && PathBuf::from(library).is_dir() {
+            dialog = dialog.set_directory(library);
+        }
+        let Some(folder) = dialog.pick_folder() else {
+            return;
+        };
+        self.error = None;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let wanted = name.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(clipcraft_engine::find_moved_file(&wanted, size, &folder));
+        });
+        self.finding = Some(FindJob {
+            from,
+            name,
+            receiver,
+        });
+    }
+
+    /// Collects a finished search: relinks the clip when it was found, says so when it was not.
+    fn poll_find(&mut self, context: &egui::Context) {
+        let Some(job) = self.finding.as_ref() else {
+            return;
+        };
+        let result = match job.receiver.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                context.request_repaint_after(std::time::Duration::from_millis(200));
+                return;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.finding = None;
+                return;
+            }
+        };
+        let Some(job) = self.finding.take() else {
+            return;
+        };
+        match result.found {
+            Some(path) => {
+                self.edit_library(MetaEdit::RelinkFile {
+                    from: job.from,
+                    to: path.to_string_lossy().into_owned(),
+                });
+                // The clip view of a missing file now has a file to open.
+                self.selected = None;
+            }
+            None => {
+                self.error = Some(format!(
+                    "Could not find {} in that folder (looked in {} folders). Choose another folder to try again.",
+                    job.name, result.folders_searched
+                ));
+            }
+        }
+    }
+
     fn edit_library(&mut self, edit: MetaEdit) {
         self.error = None;
         let Some(result) = self.library.as_mut() else {
@@ -753,6 +819,14 @@ impl ClipCraftApp {
         });
         ui.add_space(10.0);
 
+        if let Some(job) = self.finding.as_ref() {
+            ui.label(
+                RichText::new(format!("Looking for {}\u{2026}", job.name))
+                    .color(MUTED)
+                    .size(13.0),
+            );
+            ui.add_space(8.0);
+        }
         if let Some(error) = self.error.as_deref() {
             egui::Frame::new()
                 .fill(Color32::from_rgba_unmultiplied(255, 112, 112, 24))
@@ -806,6 +880,10 @@ impl ClipCraftApp {
                 ClipCardAction::Reveal(path) => self.reveal_media(PathBuf::from(path)),
                 ClipCardAction::SetFavorite { path, favorite } => {
                     self.edit_library(MetaEdit::SetFavorite { path, favorite });
+                }
+                ClipCardAction::FindFile(path, name, size) => self.start_find(path, name, size),
+                ClipCardAction::RemoveFromLibrary(path) => {
+                    self.edit_library(MetaEdit::RemoveFromLibrary { path });
                 }
                 ClipCardAction::SetCollection { path, name, add } => {
                     self.edit_library(if add {
@@ -975,8 +1053,42 @@ impl ClipCraftApp {
                 Vec2::new(main, height),
                 Layout::top_down(Align::Min),
                 |ui| {
+                    let mut forget = None;
+                    let mut find = None;
                     if let Some(open) = self.playback.as_mut() {
                         open.show(ui);
+                        if open.file_missing() {
+                            ui.add_space(12.0);
+                            ui.horizontal(|ui| {
+                                if kit::labelled_button(ui, Icon::Search, "Find file", true, true)
+                                    .on_hover_text("Search a folder for this clip")
+                                    .clicked()
+                                {
+                                    find = Some(open.path().to_owned());
+                                }
+                                if kit::labelled_button(
+                                    ui,
+                                    Icon::Trash,
+                                    "Remove from library",
+                                    false,
+                                    true,
+                                )
+                                .on_hover_text("Forget this clip. Nothing on your disk is changed.")
+                                .clicked()
+                                {
+                                    forget = Some(open.path().to_owned());
+                                }
+                            });
+                        }
+                    }
+                    if let Some(path) = find {
+                        let name = entry.title.clone();
+                        self.start_find(path, name, entry.size_bytes);
+                    }
+                    if let Some(path) = forget {
+                        self.edit_library(MetaEdit::RemoveFromLibrary { path });
+                        // The clip is gone from the list, so go back to it.
+                        self.selected = None;
                     }
                 },
             );
@@ -1593,6 +1705,17 @@ enum ClipCardAction {
         name: String,
         add: bool,
     },
+    /// Forget a clip whose file is gone.
+    RemoveFromLibrary(String),
+    /// Look for a clip whose file moved: its path, name and size.
+    FindFile(String, String, u64),
+}
+
+/// Looking for a clip that was moved, on another thread.
+struct FindJob {
+    from: String,
+    name: String,
+    receiver: std::sync::mpsc::Receiver<clipcraft_engine::SearchResult>,
 }
 
 /// A sidebar icon button with an active plate and a lime marker. True when clicked.
@@ -1815,7 +1938,7 @@ fn clip_card(
     let visible = ui.is_rect_visible(thumbnail);
     let texture = thumbs.texture(ui.ctx(), &entry.path, visible);
     paint_video_placeholder(ui, thumbnail.shrink(1.0), entry, texture, RADIUS - 1);
-    if hovered {
+    if hovered && !entry.offline {
         painter.circle_filled(thumbnail.center(), 26.0, Color32::from_black_alpha(165));
         kit::draw_icon(
             &painter,
@@ -1823,6 +1946,23 @@ fn clip_card(
             Icon::Play,
             LIME,
             1.15,
+        );
+    }
+
+    if entry.offline {
+        painter.text(
+            thumbnail.center() + Vec2::new(0.0, -8.0),
+            egui::Align2::CENTER_CENTER,
+            "File not found",
+            egui::FontId::new(15.0, kit::medium()),
+            TEXT,
+        );
+        painter.text(
+            thumbnail.center() + Vec2::new(0.0, 14.0),
+            egui::Align2::CENTER_CENTER,
+            "It was moved, renamed or deleted.",
+            egui::FontId::proportional(12.0),
+            MUTED,
         );
     }
 
@@ -1883,7 +2023,7 @@ fn clip_card(
         format_date(entry.modified_unix_seconds)
     );
     if entry.offline {
-        details = format!("Offline  ·  {details}");
+        details = format!("File not found  \u{00b7}  {details}");
     }
     painter.text(
         egui::pos2(text_left, thumbnail.bottom() + 38.0),
@@ -1910,14 +2050,23 @@ fn clip_card(
         sw: 0,
         se: RADIUS,
     };
+    // A clip whose file is gone cannot be shown in the file manager; it can be forgotten.
+    let ((first_icon, first_label), (second_icon, second_label)) = if entry.offline {
+        ((Icon::Search, "Find file"), (Icon::Trash, "Remove"))
+    } else {
+        (
+            (Icon::Copy, "Copy path"),
+            (Icon::Folder, open_in_file_manager_label()),
+        )
+    };
     for (area, rounding, response, icon, label) in [
-        (copy_area, bottom_left, &copy, Icon::Copy, "Copy path"),
+        (copy_area, bottom_left, &copy, first_icon, first_label),
         (
             reveal_area,
             bottom_right,
             &reveal,
-            Icon::Folder,
-            open_in_file_manager_label(),
+            second_icon,
+            second_label,
         ),
     ] {
         let hot = response.hovered();
@@ -1928,7 +2077,14 @@ fn clip_card(
                 Color32::from_white_alpha(14),
             );
         }
-        let color = if hot { LIME } else { MUTED };
+        let danger = entry.offline && icon == Icon::Trash;
+        let color = if danger {
+            DANGER
+        } else if hot {
+            LIME
+        } else {
+            MUTED
+        };
         kit::draw_icon(
             &painter,
             egui::pos2(area.left() + 24.0, area.center().y),
@@ -1941,7 +2097,13 @@ fn clip_card(
             egui::Align2::LEFT_CENTER,
             label,
             egui::FontId::proportional(13.0),
-            if hot { TEXT } else { MUTED },
+            if danger {
+                DANGER
+            } else if hot {
+                TEXT
+            } else {
+                MUTED
+            },
         );
     }
     painter.line_segment(
@@ -1964,6 +2126,18 @@ fn clip_card(
                 path: entry.path.clone(),
                 favorite: !entry.favorite,
             });
+            ui.close();
+        }
+        if entry.offline && ui.button("Find file\u{2026}").clicked() {
+            menu_action = Some(ClipCardAction::FindFile(
+                entry.path.clone(),
+                entry.title.clone(),
+                entry.size_bytes,
+            ));
+            ui.close();
+        }
+        if entry.offline && ui.button("Remove from library").clicked() {
+            menu_action = Some(ClipCardAction::RemoveFromLibrary(entry.path.clone()));
             ui.close();
         }
         ui.menu_button("Add to collection", |ui| {
@@ -1991,10 +2165,18 @@ fn clip_card(
             favorite: !entry.favorite,
         })
     } else if copy.clicked() {
-        Some(ClipCardAction::CopyPath(entry.path.clone()))
+        Some(if entry.offline {
+            ClipCardAction::FindFile(entry.path.clone(), entry.title.clone(), entry.size_bytes)
+        } else {
+            ClipCardAction::CopyPath(entry.path.clone())
+        })
     } else if reveal.clicked() {
-        Some(ClipCardAction::Reveal(entry.path.clone()))
-    } else if response.clicked() {
+        Some(if entry.offline {
+            ClipCardAction::RemoveFromLibrary(entry.path.clone())
+        } else {
+            ClipCardAction::Reveal(entry.path.clone())
+        })
+    } else if response.clicked() && !entry.offline {
         Some(ClipCardAction::Open(Box::new(entry.clone())))
     } else {
         None

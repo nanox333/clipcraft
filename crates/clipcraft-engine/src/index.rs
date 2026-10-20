@@ -162,9 +162,10 @@ pub(crate) fn merge_entries(
             break;
         }
         if !merged.iter().any(|entry| entry.path == old.path) {
-            let mut offline = old.clone();
-            offline.offline = true;
-            merged.push(offline);
+            // A clip that was relinked to a place outside the scanned folder is still there.
+            let mut remembered = old.clone();
+            remembered.offline = !Path::new(&old.path).exists();
+            merged.push(remembered);
         }
     }
     merged
@@ -525,6 +526,74 @@ mod tests {
         assert!(!second.entries[0].offline);
         assert_eq!(second.entries[1].path, "/clips/b.mp4");
         assert!(second.entries[1].offline);
+    }
+
+    #[test]
+    fn a_forgotten_clip_stays_forgotten_after_a_rescan_and_a_restart() {
+        let scratch = Scratch::new();
+        refresh_library(
+            scan("/clips", &["/clips/a.mp4", "/clips/b.mp4"]),
+            &scratch.index(),
+        )
+        .expect("first refresh");
+        // b.mp4 is deleted: it shows as offline, then the person removes it.
+        let offline = refresh_library(scan("/clips", &["/clips/a.mp4"]), &scratch.index())
+            .expect("second refresh");
+        assert!(offline.entries.iter().any(|entry| entry.offline));
+        let after = edit_meta(
+            &scratch.index(),
+            "/clips",
+            &MetaEdit::RemoveFromLibrary {
+                path: "/clips/b.mp4".to_owned(),
+            },
+        )
+        .expect("forgotten");
+        assert_eq!(after.entries.len(), 1);
+        let rescanned = refresh_library(scan("/clips", &["/clips/a.mp4"]), &scratch.index())
+            .expect("third refresh");
+        assert_eq!(rescanned.entries.len(), 1);
+        assert_eq!(
+            load_library(&scratch.index())
+                .expect("restart")
+                .entries
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_relinked_clip_outside_the_scanned_folder_stays_online_after_a_rescan() {
+        let scratch = Scratch::new();
+        let moved =
+            std::env::temp_dir().join(format!("clipcraft-moved-{}.mp4", std::process::id()));
+        std::fs::write(&moved, b"12345").expect("fixture writes");
+        refresh_library(
+            scan("/clips", &["/clips/a.mp4", "/clips/b.mp4"]),
+            &scratch.index(),
+        )
+        .expect("first refresh");
+        // b.mp4 was moved out of the folder; the person finds it and relinks it.
+        refresh_library(scan("/clips", &["/clips/a.mp4"]), &scratch.index())
+            .expect("second refresh");
+        edit_meta(
+            &scratch.index(),
+            "/clips",
+            &MetaEdit::RelinkFile {
+                from: "/clips/b.mp4".to_owned(),
+                to: moved.to_string_lossy().into_owned(),
+            },
+        )
+        .expect("relinked");
+        // The scan does not list it (it is elsewhere), but it exists, so it is not offline.
+        let rescanned = refresh_library(scan("/clips", &["/clips/a.mp4"]), &scratch.index())
+            .expect("third refresh");
+        let entry = rescanned
+            .entries
+            .iter()
+            .find(|entry| entry.path == moved.to_string_lossy())
+            .expect("still listed");
+        assert!(!entry.offline);
+        let _ = std::fs::remove_file(&moved);
     }
 
     #[test]
