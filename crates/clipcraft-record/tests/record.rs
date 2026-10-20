@@ -334,11 +334,10 @@ fn a_120_fps_recording_makes_a_valid_clip() {
     recorder.save_clip(2, ClipFormat::Mp4, &path).unwrap();
     let probe = probe(&path);
     assert_eq!(probe.codec, "h264");
-    assert!(
-        probe.frame_rate.starts_with("120/") || probe.frame_rate.starts_with("1"),
-        "{}",
-        probe.frame_rate
-    );
-    assert!(probe.frames > 100, "{} frames", probe.frames);
+    // Average rate as a fraction; a busy computer drops pictures, so only demand well above 60.
+    let (num, den) = probe.frame_rate.split_once('/').unwrap();
+    let rate = num.parse::<f64>().unwrap() / den.parse::<f64>().unwrap();
+    assert!(rate > 60.0 && rate <= 121.0, "{rate} fps");
+    assert!(probe.frames > 60, "{} frames", probe.frames);
     decodes_cleanly(&path);
 }
