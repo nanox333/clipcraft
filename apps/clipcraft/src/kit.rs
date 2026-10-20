@@ -698,3 +698,52 @@ pub fn name_text_box(response: &egui::Response, name: &str, text: &str) {
         info
     });
 }
+
+/// The window and taskbar icon: the lime diamond from the top bar, on a transparent square.
+pub fn app_icon() -> egui::IconData {
+    const SIZE: u32 = 256;
+    let centre = (SIZE as f32 - 1.0) / 2.0;
+    // The diamond reaches almost to the edge of the square.
+    let reach = centre - 6.0;
+    let mut rgba = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let distance = (x as f32 - centre).abs() + (y as f32 - centre).abs();
+            // One pixel of soft edge, measured across the slanted side.
+            let coverage = ((reach - distance) / std::f32::consts::SQRT_2 + 0.5).clamp(0.0, 1.0);
+            rgba.extend_from_slice(&[
+                LIME.r(),
+                LIME.g(),
+                LIME.b(),
+                (coverage * 255.0).round() as u8,
+            ]);
+        }
+    }
+    egui::IconData {
+        rgba,
+        width: SIZE,
+        height: SIZE,
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+
+    #[test]
+    fn the_app_icon_is_a_lime_diamond_on_a_transparent_square() {
+        let icon = app_icon();
+        assert_eq!(icon.rgba.len(), (icon.width * icon.height * 4) as usize);
+        let at = |x: u32, y: u32| {
+            let start = ((y * icon.width + x) * 4) as usize;
+            icon.rgba[start..start + 4].to_vec()
+        };
+        // The middle is solid lime; the corners, outside the diamond, are clear.
+        assert_eq!(at(128, 128), vec![LIME.r(), LIME.g(), LIME.b(), 255]);
+        for corner in [(0, 0), (255, 0), (0, 255), (255, 255)] {
+            assert_eq!(at(corner.0, corner.1)[3], 0);
+        }
+        // The points of the diamond are inside it.
+        assert_eq!(at(128, 12)[3], 255);
+    }
+}

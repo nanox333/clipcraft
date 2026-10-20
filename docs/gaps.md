@@ -52,6 +52,15 @@ touches ClipCraft's own clips.
 
 **Not verified or not built:**
 
+- **Built-in title bar, screenshots, sound effects.** The window has no system frame: the top bar
+  draws minimize, maximize/restore and close, drags the window, maximizes on a double click, and
+  resizes from a thin band along each edge. Checked on Linux under a virtual display only (no
+  window manager), so dragging, maximizing and edge resizing have **not** been seen working on any
+  desktop. On Windows a window without a system frame may cover the taskbar when maximized and
+  loses snap layouts; untested. Screenshots (F11 while clipping) save a full-size PNG next to the
+  clips; verified with a real recording. Sound effects are generated tones (no sound files), played
+  through the default output; heard by nobody here (no sound device), only their waveforms are
+  tested. With "Record game and system sound" on, a cue may be picked up by the recording.
 - **Game performance while clipping** (measured on a 4-core Linux machine, not on a gaming PC).
   The software encoder at 1080p60 used two full cores and still dropped 73 % of the frames, so on
   a real machine it competes with the game for processor time. What is done about it: the

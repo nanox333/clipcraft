@@ -1,6 +1,7 @@
 //! Recording from the app: starting and stopping the replay buffer, saving a clip, the hotkeys
 //! that do both, and the controls in the top bar.
 
+use clipcraft_audio_out::Cue;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -11,6 +12,7 @@ use clipcraft_platform::{CaptureOptions, HotkeyBinding, HotkeyListener};
 use clipcraft_record::{RecordError, RecordState, RecordStatus};
 use eframe::egui;
 use egui::RichText;
+use egui::{Color32, Stroke, Vec2};
 
 use crate::ClipCraftApp;
 use crate::kit::{self, DANGER, FAINT, Icon, LIME, MUTED, TEXT};
@@ -21,6 +23,7 @@ const SAVE_ID: u32 = 1;
 const TOGGLE_ID: u32 = 2;
 const MICROPHONE_ID: u32 = 3;
 const TALK_ID: u32 = 4;
+const SCREENSHOT_ID: u32 = 5;
 
 /// Opens microphones and the computer's own sound for the recorder.
 fn audio_provider() -> clipcraft_record::AudioProvider {
@@ -70,6 +73,8 @@ pub struct CaptureState {
     pub status: Option<RecordStatus>,
     pub notice: Option<Notice>,
     saving: Option<mpsc::Receiver<Result<SavedClipReport, String>>>,
+    /// A screenshot being taken and written, and the file it made.
+    shooting: Option<mpsc::Receiver<Result<PathBuf, String>>>,
     /// A screen share being set up while the desktop's own chooser is open.
     opening: Option<mpsc::Receiver<Result<Box<dyn clipcraft_capture::CaptureSource>, String>>>,
     /// When the clip being saved will be written, if it is waiting for the post-roll.
@@ -172,6 +177,7 @@ impl ClipCraftApp {
                         SAVE_ID => actions.push(HotkeyAction::SaveClip),
                         TOGGLE_ID => actions.push(HotkeyAction::ToggleRecording),
                         MICROPHONE_ID => actions.push(HotkeyAction::ToggleMicrophone),
+                        SCREENSHOT_ID => actions.push(HotkeyAction::Screenshot),
                         _ => {}
                     }
                 }
@@ -193,6 +199,7 @@ impl ClipCraftApp {
                 HotkeyAction::SaveClip,
                 HotkeyAction::ToggleRecording,
                 HotkeyAction::ToggleMicrophone,
+                HotkeyAction::Screenshot,
             ] {
                 if self.recording.hotkeys.get(action) == pressed {
                     actions.push(action);
@@ -212,8 +219,14 @@ impl ClipCraftApp {
                 HotkeyAction::SaveClip => self.save_clip(),
                 HotkeyAction::ToggleRecording => self.toggle_capture(),
                 HotkeyAction::ToggleMicrophone if self.capture.session.has_microphone() => {
-                    self.capture.session.toggle_microphone();
+                    let muted = self.capture.session.toggle_microphone();
+                    self.cue(if muted {
+                        Cue::MicrophoneOff
+                    } else {
+                        Cue::MicrophoneOn
+                    });
                 }
+                HotkeyAction::Screenshot => self.take_screenshot(),
                 _ => {}
             }
         }
@@ -234,8 +247,10 @@ impl ClipCraftApp {
                 true,
                 None,
             );
+            self.cue(Cue::Problem);
         }
         self.poll_save();
+        self.poll_screenshot();
         // While the post-roll runs, count down in the notice.
         if self.capture.saving.is_some()
             && let Some(at) = self.capture.saving_at
@@ -319,6 +334,7 @@ impl ClipCraftApp {
             (TOGGLE_ID, HotkeyAction::ToggleRecording),
             (MICROPHONE_ID, HotkeyAction::ToggleMicrophone),
             (TALK_ID, HotkeyAction::PushToTalk),
+            (SCREENSHOT_ID, HotkeyAction::Screenshot),
         ]
         .into_iter()
         .filter_map(|(id, action)| {
@@ -467,6 +483,7 @@ impl ClipCraftApp {
             Some(audio_provider()),
         ) {
             Ok(()) => {
+                self.cue(Cue::ClippingStarted);
                 self.capture.started_with = Some(self.recording.clone());
                 self.capture.status = self.capture.session.status();
                 let warnings = self.capture.session.warnings().join(" ");
@@ -514,7 +531,11 @@ impl ClipCraftApp {
     pub(crate) fn stop_capture(&mut self) {
         // Cancelling while the chooser is open: the share is dropped when it arrives.
         self.capture.opening = None;
+        let was_clipping = self.capture.session.is_active();
         self.capture.session.stop();
+        if was_clipping {
+            self.cue(Cue::ClippingStopped);
+        }
         self.capture.started_with = None;
         self.capture.status = None;
     }
@@ -586,6 +607,7 @@ impl ClipCraftApp {
                     false,
                     Some(report.clip.path.clone()),
                 );
+                self.cue(Cue::ClipSaved);
                 // A saved clip belongs in the library when its folder is the one being browsed.
                 let in_library = self.capture.saved_into.as_ref().is_some_and(|folder| {
                     folder.as_path() == std::path::Path::new(self.directory_text.trim())
@@ -599,7 +621,74 @@ impl ClipCraftApp {
                     self.set_library_folder(Some(folder));
                 }
             }
-            Err(message) => self.capture.notice = notice(message, true, None),
+            Err(message) => {
+                self.capture.notice = notice(message, true, None);
+                self.cue(Cue::Problem);
+            }
+        }
+    }
+
+    /// Plays a sound effect, when they are switched on.
+    pub(crate) fn cue(&self, cue: Cue) {
+        if self.recording.sound_effects {
+            clipcraft_audio_out::play_cue(
+                cue,
+                u8::try_from(self.recording.sound_effects_percent.min(100)).unwrap_or(100),
+            );
+        }
+    }
+
+    /// Saves a picture of the screen being clipped, on another thread.
+    pub(crate) fn take_screenshot(&mut self) {
+        if self.capture.shooting.is_some() {
+            return;
+        }
+        let Some(folder) = self.clips_folder() else {
+            self.capture.notice = notice("Choose a clips folder in Settings first.", true, None);
+            return;
+        };
+        let job = match self.capture.session.screenshot_job(&folder) {
+            Ok(job) => job,
+            Err(_) => {
+                self.capture.notice =
+                    notice("Start clipping first, then take a screenshot.", true, None);
+                self.cue(Cue::Problem);
+                return;
+            }
+        };
+        let (sender, receiver) = mpsc::channel();
+        self.capture.shooting = Some(receiver);
+        std::thread::spawn(move || {
+            let _ = sender.send(job.run().map_err(|error| error.to_string()));
+        });
+    }
+
+    /// Picks up a screenshot that has been written.
+    fn poll_screenshot(&mut self) {
+        let Some(receiver) = self.capture.shooting.as_ref() else {
+            return;
+        };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err("The screenshot could not be taken.".to_owned())
+            }
+        };
+        self.capture.shooting = None;
+        match result {
+            Ok(path) => {
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.capture.notice = notice(format!("Saved {name}"), false, Some(path));
+                self.cue(Cue::Screenshot);
+            }
+            Err(message) => {
+                self.capture.notice = notice(message, true, None);
+                self.cue(Cue::Problem);
+            }
         }
     }
 
@@ -729,26 +818,90 @@ impl ClipCraftApp {
                 );
             }
         }
-        let shown = self
+    }
+
+    /// The latest message as a small card under the top bar, so a long one is never squeezed into
+    /// the bar itself. A message with a file offers to show it; any can be dismissed.
+    pub(crate) fn notice_toast(&mut self, context: &egui::Context) {
+        let Some((text, error, path)) = self
             .capture
             .notice
             .as_ref()
-            .map(|current| (current.text.clone(), current.error, current.path.clone()));
-        if let Some((text, error, path)) = shown {
-            ui.add_space(10.0);
-            ui.add(
-                egui::Label::new(
-                    RichText::new(text)
-                        .color(if error { DANGER } else { TEXT })
-                        .size(13.0),
-                )
-                .truncate(),
-            );
-            if let Some(path) = path
-                && kit::labelled_button(ui, Icon::Folder, "Show", false, true).clicked()
-            {
-                self.reveal_media(path);
-            }
+            .map(|current| (current.text.clone(), current.error, current.path.clone()))
+        else {
+            return;
+        };
+        let mut show = false;
+        let mut dismiss = false;
+        egui::Area::new(egui::Id::new("notice-toast"))
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 62.0))
+            .order(egui::Order::Foreground)
+            .show(context, |ui| {
+                egui::Frame::new()
+                    .fill(kit::PANEL)
+                    .stroke(Stroke::new(
+                        1.0_f32,
+                        if error {
+                            Color32::from_rgba_unmultiplied(255, 112, 112, 150)
+                        } else {
+                            kit::BORDER
+                        },
+                    ))
+                    .corner_radius(egui::CornerRadius::same(12))
+                    .inner_margin(egui::Margin::symmetric(14, 10))
+                    .shadow(egui::Shadow {
+                        offset: [0, 4],
+                        blur: 16,
+                        spread: 0,
+                        color: Color32::from_black_alpha(120),
+                    })
+                    .show(ui, |ui| {
+                        ui.set_max_width(420.0);
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&text)
+                                        .color(if error { DANGER } else { TEXT })
+                                        .size(13.0),
+                                )
+                                .wrap(),
+                            );
+                            ui.add_space(6.0);
+                            if path.is_some()
+                                && kit::labelled_button(ui, Icon::Folder, "Show", false, true)
+                                    .clicked()
+                            {
+                                show = true;
+                            }
+                            let (rect, response) =
+                                ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::click());
+                            response.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    "Dismiss message",
+                                )
+                            });
+                            let ink = if response.hovered() { TEXT } else { MUTED };
+                            let stroke = Stroke::new(1.4_f32, ink);
+                            let c = rect.center();
+                            ui.painter().line_segment(
+                                [c + Vec2::new(-4.0, -4.0), c + Vec2::new(4.0, 4.0)],
+                                stroke,
+                            );
+                            ui.painter().line_segment(
+                                [c + Vec2::new(4.0, -4.0), c + Vec2::new(-4.0, 4.0)],
+                                stroke,
+                            );
+                            dismiss = response.on_hover_text("Dismiss").clicked();
+                        });
+                    });
+            });
+        if show && let Some(path) = path {
+            self.reveal_media(path);
+        }
+        if dismiss {
+            self.capture.notice = None;
         }
     }
 }

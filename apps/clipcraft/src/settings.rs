@@ -577,7 +577,7 @@ pub fn quality_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, gpu: &Gp
             ui,
             "Bitrate mode",
             settings.rate_control.detail(),
-            true,
+            false,
             |ui| {
                 for mode in RateControl::ALL {
                     if choice(
@@ -592,7 +592,51 @@ pub fn quality_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, gpu: &Gp
                 }
             },
         );
+        setting_row(
+            ui,
+            "Video encoder",
+            &encoder_help(settings.video_encoder, gpu),
+            true,
+            |ui| {
+                for encoder in [VideoEncoder::Gpu, VideoEncoder::Cpu] {
+                    let hint = match encoder {
+                        VideoEncoder::Gpu => {
+                            "The graphics card encodes the video. The processor stays free for your game."
+                        }
+                        VideoEncoder::Cpu => {
+                            "The processor encodes the video. Works everywhere, but takes processor time from your game."
+                        }
+                    };
+                    if choice(
+                        ui,
+                        encoder.label(),
+                        settings.video_encoder == encoder,
+                        true,
+                        hint,
+                    ) {
+                        settings.video_encoder = encoder;
+                    }
+                }
+            },
+        );
     });
+}
+
+/// What the chosen video encoder means on this computer.
+fn encoder_help(chosen: VideoEncoder, gpu: &GpuProbe) -> String {
+    match (chosen, gpu) {
+        (VideoEncoder::Cpu, _) => {
+            "The processor encodes the video. This works everywhere, but takes processor time from your game."
+                .to_owned()
+        }
+        (VideoEncoder::Gpu, GpuProbe::Ready(name)) => {
+            format!("{name} encodes the video, which leaves your processor free for the game.")
+        }
+        (VideoEncoder::Gpu, GpuProbe::Unavailable(why)) => {
+            format!("This computer has no usable graphics-card encoder ({why}), so the processor is used.")
+        }
+        (VideoEncoder::Gpu, _) => "Checking the graphics card\u{2026}".to_owned(),
+    }
 }
 
 pub fn capture_tab(
@@ -888,6 +932,44 @@ pub fn audio_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &mu
             );
         }
         ui.add_space(8.0);
+    });
+    card(ui, "Sound effects", |ui| {
+        toggle_row(
+            ui,
+            "Play sound effects",
+            "A short sound when you start or stop clipping, save a clip, take a screenshot, or switch your microphone.",
+            &mut settings.sound_effects,
+            false,
+        );
+        percent_row(
+            ui,
+            "Effects volume",
+            "How loud the sound effects are.",
+            &mut settings.sound_effects_percent,
+            settings.sound_effects,
+        );
+        setting_row(
+            ui,
+            "Hear a sample",
+            "Plays the sound you get when a clip is saved.",
+            true,
+            |ui| {
+                if kit::labelled_button(
+                    ui,
+                    kit::Icon::Speaker,
+                    "Play sample",
+                    false,
+                    settings.sound_effects,
+                )
+                .clicked()
+                {
+                    clipcraft_audio_out::play_cue(
+                        clipcraft_audio_out::Cue::ClipSaved,
+                        settings.sound_effects_percent.min(100) as u8,
+                    );
+                }
+            },
+        );
     });
     card(ui, "Tracks", |ui| {
         toggle_row(

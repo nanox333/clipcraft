@@ -649,6 +649,7 @@ dependencies = [
  "clipcraft-record",
  "clipcraft-time",
  "fs4",
+ "image",
  "serde",
  "serde_json",
 ]

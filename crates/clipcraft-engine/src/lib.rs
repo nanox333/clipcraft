@@ -15,6 +15,7 @@ mod library_meta;
 mod recording;
 mod recovery;
 mod relink;
+mod screenshot;
 mod session;
 mod startup;
 mod storage;
@@ -37,6 +38,7 @@ pub use recording::{
 };
 pub use recovery::{Recovery, recover_interrupted};
 pub use relink::{SearchResult, find_moved_file};
+pub use screenshot::{ScreenshotJob, screenshot_name};
 pub use session::{
     CLIP_PREFIX, CaptureSession, SavedClipReport, clip_format, clip_stem, record_config,
 };
@@ -341,6 +343,8 @@ pub enum EngineError {
     StorageLimit,
     /// A clip could not be cut and saved.
     Export(clipcraft_export::ExportError),
+    /// A screenshot could not be taken or saved.
+    ScreenshotFailed,
     /// A collection with that name already exists.
     NameTaken,
     /// There are too many collections.
@@ -397,6 +401,9 @@ impl fmt::Display for EngineError {
             ),
             Self::NameInvalid => formatter.write_str(
                 "Use a name of 1 to 40 characters, and pick a collection that exists.",
+            ),
+            Self::ScreenshotFailed => formatter.write_str(
+                "The screenshot could not be taken or saved. Check free disk space and that clipping is running.",
             ),
             Self::NameTaken => formatter.write_str("A collection with that name already exists."),
             Self::CollectionLimit => formatter.write_str(

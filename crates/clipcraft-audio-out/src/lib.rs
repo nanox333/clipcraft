@@ -8,10 +8,12 @@
 //! hands the playback clock back to the wall clock in the meantime.
 
 mod capture;
+mod cue;
 mod input;
 
 pub use capture::{CaptureError, CaptureKind, DeviceCapture};
 pub use clipcraft_record::SampleQueue;
+pub use cue::{Cue, play_cue};
 
 pub use input::{DeviceNames, MAX_DEVICES, MicMeter, MicTestError, list_devices, peak};
 

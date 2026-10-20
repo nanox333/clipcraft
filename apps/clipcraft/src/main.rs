@@ -42,6 +42,9 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("ClipCraft")
+            // The title bar is drawn by the app itself (see `top_bar`).
+            .with_decorations(false)
+            .with_icon(kit::app_icon())
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([960.0, 640.0]),
         ..Default::default()
@@ -209,6 +212,7 @@ impl eframe::App for ClipCraftApp {
         self.poll_find(context);
         self.draw_screen(context);
         self.draw_focus_ring(context);
+        resize_from_the_edges(context);
     }
 }
 
@@ -279,6 +283,7 @@ impl ClipCraftApp {
 
         self.top_bar(context);
         self.navigation(context);
+        self.notice_toast(context);
 
         egui::CentralPanel::default()
             .frame(
@@ -585,6 +590,23 @@ impl ClipCraftApp {
                     .stroke(Stroke::new(1.0_f32, BORDER)),
             )
             .show(context, |ui| {
+                // The whole strip drags the window and a double click maximises it; the buttons
+                // drawn after this sit on top and take their own clicks.
+                let strip = ui.max_rect();
+                let drag = ui.interact(
+                    strip,
+                    ui.id().with("title-drag"),
+                    egui::Sense::click_and_drag(),
+                );
+                if drag.drag_started_by(egui::PointerButton::Primary) {
+                    context.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                if drag.double_clicked() {
+                    let maximised = context.input(|input| input.viewport().maximized);
+                    context.send_viewport_cmd(egui::ViewportCommand::Maximized(
+                        !maximised.unwrap_or(false),
+                    ));
+                }
                 ui.horizontal_centered(|ui| {
                     ui.add_space(20.0);
                     let (logo, _) = ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::hover());
@@ -607,10 +629,36 @@ impl ClipCraftApp {
                     );
                     ui.add_space(22.0);
 
-                    self.capture_controls(ui);
+                    // Leave the right of the bar for the size label and window buttons, so a long
+                    // message is cut short instead of running underneath them.
+                    let room = (ui.available_width() - 300.0).max(220.0);
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(room, ui.available_height()),
+                        Layout::left_to_right(Align::Center),
+                        |ui| self.capture_controls(ui),
+                    );
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.add_space(20.0);
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        // Window buttons at the very right edge, rightmost first.
+                        let maximised = context
+                            .input(|input| input.viewport().maximized)
+                            .unwrap_or(false);
+                        if window_button(ui, WindowButton::Close) {
+                            context.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        let toggle = if maximised {
+                            WindowButton::Restore
+                        } else {
+                            WindowButton::Maximize
+                        };
+                        if window_button(ui, toggle) {
+                            context.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximised));
+                        }
+                        if window_button(ui, WindowButton::Minimize) {
+                            context.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+                        ui.add_space(18.0);
                         ui.label(
                             RichText::new(format!(
                                 "{}p  ·  {} FPS",
@@ -641,6 +689,10 @@ impl ClipCraftApp {
                         self.page = Page::Library;
                         self.selected = None;
                     }
+                });
+                // Settings sits at the bottom of the rail.
+                ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
+                    ui.add_space(18.0);
                     if nav_button(ui, Icon::Gear, "Settings", self.page == Page::Settings) {
                         self.page = Page::Settings;
                         self.selected = None;
@@ -1900,6 +1952,122 @@ struct FindJob {
 }
 
 /// A sidebar icon button with an active plate and a lime marker. True when clicked.
+/// The three buttons at the right of the title bar.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WindowButton {
+    Minimize,
+    Maximize,
+    Restore,
+    Close,
+}
+
+/// One title-bar button: a quiet square that lights up under the pointer, red for close. True
+/// when it is clicked.
+fn window_button(ui: &mut egui::Ui, button: WindowButton) -> bool {
+    let label = match button {
+        WindowButton::Minimize => "Minimize",
+        WindowButton::Maximize => "Maximize",
+        WindowButton::Restore => "Restore",
+        WindowButton::Close => "Close",
+    };
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(48.0, ui.available_height().max(40.0)),
+        egui::Sense::click(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let hovered = response.hovered();
+    if hovered {
+        let fill = if button == WindowButton::Close {
+            Color32::from_rgb(214, 48, 56)
+        } else {
+            Color32::from_white_alpha(18)
+        };
+        ui.painter().rect_filled(rect, 0.0, fill);
+    }
+    let ink = if hovered && button == WindowButton::Close {
+        Color32::WHITE
+    } else if hovered {
+        TEXT
+    } else {
+        MUTED
+    };
+    let stroke = Stroke::new(1.4_f32, ink);
+    let c = rect.center();
+    let painter = ui.painter();
+    match button {
+        WindowButton::Minimize => {
+            painter.line_segment([c + Vec2::new(-5.5, 3.0), c + Vec2::new(5.5, 3.0)], stroke);
+        }
+        WindowButton::Maximize => {
+            painter.rect_stroke(
+                egui::Rect::from_center_size(c, Vec2::splat(11.0)),
+                1.0,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+        WindowButton::Restore => {
+            painter.rect_stroke(
+                egui::Rect::from_center_size(c + Vec2::new(-1.5, 1.5), Vec2::splat(9.0)),
+                1.0,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+            painter.line_segment(
+                [c + Vec2::new(-0.5, -5.5), c + Vec2::new(5.5, -5.5)],
+                stroke,
+            );
+            painter.line_segment([c + Vec2::new(5.5, -5.5), c + Vec2::new(5.5, 0.5)], stroke);
+        }
+        WindowButton::Close => {
+            painter.line_segment([c + Vec2::new(-5.0, -5.0), c + Vec2::new(5.0, 5.0)], stroke);
+            painter.line_segment([c + Vec2::new(5.0, -5.0), c + Vec2::new(-5.0, 5.0)], stroke);
+        }
+    }
+    response.on_hover_text(label).clicked()
+}
+
+/// Without the system frame there is nothing to grab to resize the window, so a thin band along
+/// each edge does it: the pointer changes shape there and a press starts a resize.
+fn resize_from_the_edges(context: &egui::Context) {
+    const GRIP: f32 = 5.0;
+    let (window, position, pressed, maximised, fullscreen) = context.input(|input| {
+        (
+            input.content_rect(),
+            input.pointer.hover_pos(),
+            input.pointer.primary_pressed(),
+            input.viewport().maximized.unwrap_or(false),
+            input.viewport().fullscreen.unwrap_or(false),
+        )
+    });
+    if maximised || fullscreen {
+        return;
+    }
+    let Some(position) = position else {
+        return;
+    };
+    let left = position.x - window.left() < GRIP;
+    let right = window.right() - position.x < GRIP;
+    let top = position.y - window.top() < GRIP;
+    let bottom = window.bottom() - position.y < GRIP;
+    use egui::{CursorIcon, ResizeDirection};
+    let (direction, cursor) = match (left, right, top, bottom) {
+        (true, _, true, _) => (ResizeDirection::NorthWest, CursorIcon::ResizeNorthWest),
+        (_, true, true, _) => (ResizeDirection::NorthEast, CursorIcon::ResizeNorthEast),
+        (true, _, _, true) => (ResizeDirection::SouthWest, CursorIcon::ResizeSouthWest),
+        (_, true, _, true) => (ResizeDirection::SouthEast, CursorIcon::ResizeSouthEast),
+        (true, ..) => (ResizeDirection::West, CursorIcon::ResizeWest),
+        (_, true, ..) => (ResizeDirection::East, CursorIcon::ResizeEast),
+        (_, _, true, _) => (ResizeDirection::North, CursorIcon::ResizeNorth),
+        (_, _, _, true) => (ResizeDirection::South, CursorIcon::ResizeSouth),
+        _ => return,
+    };
+    context.set_cursor_icon(cursor);
+    if pressed {
+        context.send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
+    }
+}
+
 fn nav_button(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(68.0, 48.0), egui::Sense::click());
     response.widget_info(|| {

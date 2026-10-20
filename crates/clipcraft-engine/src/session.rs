@@ -302,6 +302,18 @@ impl CaptureSession {
         self.prepare_save(settings, folder)?.run()
     }
 
+    /// A screenshot of the screen being recorded, to be taken on any thread.
+    pub fn screenshot_job(
+        &self,
+        folder: &Path,
+    ) -> Result<crate::screenshot::ScreenshotJob, EngineError> {
+        let recorder = self.recorder.clone().ok_or(EngineError::NotRecording)?;
+        Ok(crate::screenshot::ScreenshotJob {
+            recorder,
+            folder: folder.to_path_buf(),
+        })
+    }
+
     /// Checks the storage limit and picks the file name, without writing anything.
     pub fn prepare_save(
         &self,

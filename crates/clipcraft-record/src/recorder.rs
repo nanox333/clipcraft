@@ -188,6 +188,10 @@ struct Shared {
     state: Mutex<RecordState>,
     mailbox: Mutex<Mailbox>,
     wake: Condvar,
+    /// A request for the next captured picture, for a screenshot, and where it is left.
+    screenshot_wanted: AtomicBool,
+    screenshot: Mutex<Option<CaptureFrame>>,
+    screenshot_ready: Condvar,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -263,6 +267,9 @@ impl Recorder {
             state: Mutex::new(RecordState::Running),
             mailbox: Mutex::new(Mailbox::default()),
             wake: Condvar::new(),
+            screenshot_wanted: AtomicBool::new(false),
+            screenshot: Mutex::new(None),
+            screenshot_ready: Condvar::new(),
         });
         let encode_shared = shared.clone();
         let encode_config = config.clone();
@@ -417,6 +424,31 @@ impl Recorder {
         Ok((samples, video, audio))
     }
 
+    /// The next picture captured, full size and unscaled, waiting up to `wait` for it. `None` when
+    /// recording stopped or no picture came in time.
+    pub fn screenshot(&self, wait: Duration) -> Option<CaptureFrame> {
+        let mut slot = lock(&self.shared.screenshot);
+        *slot = None;
+        self.shared.screenshot_wanted.store(true, Ordering::SeqCst);
+        let deadline = Instant::now() + wait;
+        loop {
+            if let Some(frame) = slot.take() {
+                return Some(frame);
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() || self.shared.stop.load(Ordering::SeqCst) {
+                self.shared.screenshot_wanted.store(false, Ordering::SeqCst);
+                return None;
+            }
+            slot = self
+                .shared
+                .screenshot_ready
+                .wait_timeout(slot, left.min(Duration::from_millis(100)))
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+
     /// Asks the threads to stop without waiting for them. Saving still works until the recorder is
     /// dropped. Used when another thread may still be saving a clip.
     pub fn halt(&self) {
@@ -482,6 +514,10 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
                     i64::try_from(start.elapsed().as_nanos() * u128::from(fps) / nanos_per_second)
                         .unwrap_or(i64::MAX);
                 lock(&shared.stats).captured += 1;
+                if shared.screenshot_wanted.swap(false, Ordering::SeqCst) {
+                    *lock(&shared.screenshot) = Some(frame.clone());
+                    shared.screenshot_ready.notify_all();
+                }
                 let mut mailbox = lock(&shared.mailbox);
                 if mailbox.slot.replace(Queued { frame, pts }).is_some() {
                     lock(&shared.stats).dropped += 1;

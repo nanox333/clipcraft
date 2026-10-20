@@ -386,6 +386,11 @@ pub struct RecordingSettings {
     pub game_audio_percent: u32,
     /// Microphone level, 0 to 100 percent.
     pub microphone_percent: u32,
+    /// Play a short sound when clipping starts or stops, a clip or screenshot is saved, the
+    /// microphone is switched, or something goes wrong.
+    pub sound_effects: bool,
+    /// How loud those sounds are, 0 to 100 percent.
+    pub sound_effects_percent: u32,
     /// How many seconds of play before the hotkey are kept.
     pub replay_seconds: u32,
     /// Seconds ClipCraft keeps recording after the save hotkey, so the clip includes what
@@ -434,6 +439,8 @@ impl Default for RecordingSettings {
             launch_at_startup: false,
             game_audio_percent: 100,
             microphone_percent: 100,
+            sound_effects: true,
+            sound_effects_percent: 60,
             replay_seconds: 30,
             post_roll_seconds: 0,
         }
@@ -549,6 +556,7 @@ impl RecordingSettings {
         self.audio_channels = self.audio_channels.clamp(1, 2);
         self.game_audio_percent = self.game_audio_percent.min(100);
         self.microphone_percent = self.microphone_percent.min(100);
+        self.sound_effects_percent = self.sound_effects_percent.min(100);
         self.replay_seconds = self.replay_seconds.clamp(5, 600);
         self.post_roll_seconds = self.post_roll_seconds.min(30);
         if let Some((height, frames_per_second, video_kbps)) = self.quality.values() {
