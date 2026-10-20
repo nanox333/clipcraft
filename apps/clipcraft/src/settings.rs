@@ -636,7 +636,7 @@ pub fn capture_tab(
         divider(ui);
         toggle_row(
             ui,
-            "Record when ClipCraft opens",
+            "Start clipping when ClipCraft opens",
             "Starts filling the replay buffer as soon as the app starts.",
             &mut settings.record_on_launch,
             false,
@@ -652,7 +652,7 @@ pub fn capture_tab(
             ui,
             "Force window capture",
             if capabilities.windows {
-                "Record the window that has the focus (your game) even when you picked a whole screen, and never the screen around it. Start recording with its hotkey while the game is in front. Try this if a game records black."
+                "Record the window that has the focus (your game) even when you picked a whole screen, and never the screen around it. Start clipping with its hotkey while the game is in front. Try this if a game records black."
             } else {
                 "Window capture is not available on this computer."
             },

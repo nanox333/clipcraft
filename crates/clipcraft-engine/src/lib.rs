@@ -290,7 +290,7 @@ impl fmt::Display for EngineError {
             }
             Self::Record(error) => std::fmt::Display::fmt(error, formatter),
             Self::AlreadyRecording => formatter.write_str("A recording is already running."),
-            Self::NotRecording => formatter.write_str("Start recording first."),
+            Self::NotRecording => formatter.write_str("Start clipping first."),
             Self::StorageLimit => formatter.write_str(
                 "The capture folder is at its storage limit, so the clip was not saved. Raise the limit or delete clips.",
             ),

@@ -225,7 +225,7 @@ impl ClipCraftApp {
                 .is_none_or(|current| !current.error)
         {
             self.capture.notice = notice(
-                format!("Recording stopped: {}", RecordErrorText(*error)),
+                format!("Clipping stopped: {}", RecordErrorText(*error)),
                 true,
                 None,
             );
@@ -240,7 +240,7 @@ impl ClipCraftApp {
                 .as_secs_f32()
                 .ceil() as u32;
             let text = if left > 0 {
-                format!("Saving in {left} s, still recording\u{2026}")
+                format!("Saving in {left} s, still clipping\u{2026}")
             } else {
                 "Saving clip\u{2026}".to_owned()
             };
@@ -347,7 +347,7 @@ impl ClipCraftApp {
             return match clipcraft_platform::active_window() {
                 Ok(Some(window)) if !is_own_window(&window) => Ok(window.id),
                 _ => Err(
-                    "Force window capture records the window in front. Start recording with its hotkey while your game has the focus, or choose the window in Settings \u{203a} Capture."
+                    "Force window capture records the window in front. Start clipping with its hotkey while your game has the focus, or choose the window in Settings \u{203a} Capture."
                         .to_owned(),
                 ),
             };
@@ -425,7 +425,7 @@ impl ClipCraftApp {
                 let warnings = self.capture.session.warnings().join(" ");
                 if !warnings.is_empty() {
                     self.capture.notice = notice(
-                        format!("Recording without some sound. {warnings}"),
+                        format!("Clipping without some sound. {warnings}"),
                         true,
                         None,
                     );
@@ -541,26 +541,26 @@ impl ClipCraftApp {
                             )
                         })
                         .unwrap_or_default();
-                    (LIME, format!("Recording{tag}"))
+                    (LIME, format!("Clipping{tag}"))
                 }
                 RecordState::Failed(_) => (DANGER, "Capture stopped".to_owned()),
-                RecordState::Stopped => (FAINT, "Not recording".to_owned()),
+                RecordState::Stopped => (FAINT, "Not clipping".to_owned()),
             },
-            None => (FAINT, "Not recording".to_owned()),
+            None => (FAINT, "Not clipping".to_owned()),
         };
         kit::status_pill(ui, dot, &text);
         ui.add_space(8.0);
 
         let (icon, label) = if active {
-            (Icon::Stop, "Stop")
+            (Icon::Stop, "Stop clipping")
         } else {
-            (Icon::Record, "Record")
+            (Icon::Record, "Start clipping")
         };
         if kit::labelled_button(ui, icon, label, !active, true)
             .on_hover_text(if active {
-                "Stop recording and forget the replay buffer"
+                "Stop clipping and forget the replay buffer"
             } else {
-                "Start filling the replay buffer from your screen"
+                "Start clipping: fill the replay buffer from your screen so you can save the last moments"
             })
             .clicked()
         {

@@ -31,7 +31,7 @@ impl HotkeyAction {
     pub fn label(self) -> &'static str {
         match self {
             Self::SaveClip => "Save clip",
-            Self::ToggleRecording => "Start or stop recording",
+            Self::ToggleRecording => "Start or stop clipping",
             Self::ToggleMicrophone => "Mute or unmute microphone",
             Self::PushToTalk => "Push to talk",
             Self::Screenshot => "Take screenshot",
@@ -42,7 +42,9 @@ impl HotkeyAction {
     pub fn detail(self) -> &'static str {
         match self {
             Self::SaveClip => "Keeps the last moments of play as a clip.",
-            Self::ToggleRecording => "Starts or stops the replay buffer that clips are saved from.",
+            Self::ToggleRecording => {
+                "Starts or stops clipping: the replay buffer that clips are saved from."
+            }
             Self::ToggleMicrophone => "Switches your microphone on or off in clips.",
             Self::PushToTalk => "Your microphone is only recorded while you hold this key.",
             Self::Screenshot => "Saves the current frame as a picture.",

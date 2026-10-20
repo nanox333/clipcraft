@@ -1330,9 +1330,9 @@ impl ClipCraftApp {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(
-                            RichText::new("Recording is using the earlier settings.").color(TEXT),
+                            RichText::new("Clipping is using the earlier settings.").color(TEXT),
                         );
-                        if kit::labelled_button(ui, Icon::Record, "Restart recording", true, true)
+                        if kit::labelled_button(ui, Icon::Record, "Restart clipping", true, true)
                             .clicked()
                         {
                             self.stop_capture();
