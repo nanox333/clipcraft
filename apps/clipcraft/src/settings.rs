@@ -635,13 +635,13 @@ pub fn capture_tab(
                 format!("{} (not open)", settings.capture_target_name)
             }
             None if want_window => "Choose a window".to_owned(),
-            None => "First screen".to_owned(),
+            None => "Main monitor".to_owned(),
         };
         let mut options = vec![(
             if want_window {
                 "None chosen".to_owned()
             } else {
-                "First screen".to_owned()
+                "Main monitor".to_owned()
             },
             true,
         )];
@@ -655,7 +655,11 @@ pub fn capture_tab(
         ui.horizontal(|ui| {
             if let Some(index) = dropdown(
                 ui,
-                if want_window { "Game window" } else { "Screen" },
+                if want_window {
+                    "Game window"
+                } else {
+                    "Monitor"
+                },
                 &current,
                 &options,
             ) {
@@ -706,7 +710,7 @@ pub fn capture_tab(
             ui,
             "Force window capture",
             if capabilities.windows {
-                "Record the window that has the focus (your game) even when you picked a whole screen, and never the screen around it. Start clipping with its hotkey while the game is in front. Try this if a game records black."
+                "Record the window that has the focus (your game) even when you picked a whole monitor, and never the monitor around it. Start clipping with its hotkey while the game is in front. Try this if a game records black."
             } else {
                 "Window capture is not available on this computer."
             },
@@ -717,9 +721,9 @@ pub fn capture_tab(
             ui,
             "HDR compatibility",
             if capabilities.hdr {
-                "Convert an HDR screen to standard colours, with highlights rolled off instead of clipped, so clips are not washed out when shared. Does nothing on a standard screen."
+                "Convert an HDR monitor to standard colours, with highlights rolled off instead of clipped, so clips are not washed out when shared. Does nothing on a standard monitor."
             } else {
-                "This computer's screen capture does not report HDR, so this has no effect here."
+                "This computer's capture does not report HDR, so this has no effect here."
             },
             &mut settings.hdr_compatibility,
             true,
@@ -1405,7 +1409,7 @@ pub fn about_tab(ui: &mut egui::Ui) {
         ui.add_space(10.0);
         ui.label(
             RichText::new(
-                "ClipCraft records your screen and keeps the last moments ready to save. Press \
+                "ClipCraft records your monitor or game window and keeps the last moments ready to save. Press \
                  a hotkey and the last seconds become a clip. Then find, play, trim and keep your \
                  clips from one library.",
             )

@@ -166,7 +166,7 @@ impl SettingsTab {
     fn help(self) -> &'static str {
         match self {
             Self::General => {
-                "Where your clips live, how playback behaves, and when ClipCraft starts."
+                "Where your clips live, which settings are shown, and when ClipCraft starts."
             }
             Self::Storage => "Where clips are saved, how much space they use, and a limit.",
             Self::Hotkeys => "Keyboard shortcuts for recording.",
@@ -1620,19 +1620,6 @@ impl ClipCraftApp {
             SettingsTab::Advanced => settings::advanced_tab(ui, &mut working),
             SettingsTab::About => settings::about_tab(ui),
         }
-        if matches!(
-            tab,
-            SettingsTab::Capture | SettingsTab::Quality | SettingsTab::Audio
-        ) {
-            settings::divider(ui);
-            toggle_row(
-                ui,
-                "Show advanced settings",
-                "Adds an Advanced section with picture, encoder and audio details.",
-                &mut working.show_advanced,
-                true,
-            );
-        }
         self.apply_recording(before, working);
         ui.add_space(6.0);
         ui.label(
@@ -1708,13 +1695,13 @@ impl ClipCraftApp {
         if browse {
             self.choose_library_folder();
         }
-        card(ui, "Playback", |ui| {
-            setting_row(
+        card(ui, "Advanced", |ui| {
+            toggle_row(
                 ui,
-                "Sound and controls",
-                "Volume, mute, and loop are remembered between clips. Hover any player control to see its key.",
+                "Show advanced settings",
+                "Adds an Advanced section with picture, encoder and audio details.",
+                &mut working.show_advanced,
                 true,
-                |_| {},
             );
         });
         settings::startup_card(ui, working);
@@ -1722,7 +1709,7 @@ impl ClipCraftApp {
             setting_row(
                 ui,
                 "Copy a diagnostics report",
-                "If recording does not work, this copies what ClipCraft can see: your folders, screens, sound devices, and video encoders. Nothing is sent anywhere; paste it where you ask for help.",
+                "If recording does not work, this copies what ClipCraft can see: your folders, monitors, sound devices, and video encoders. Nothing is sent anywhere; paste it where you ask for help.",
                 true,
                 |ui| {
                     let label = if self

@@ -167,7 +167,7 @@ impl Diagnostics {
         let mut out = format!("ClipCraft {} on {}\n", self.version, self.system);
         for (title, checks) in [
             ("Storage", &self.storage),
-            ("Screen capture", &self.capture),
+            ("Monitor capture", &self.capture),
             ("Sound", &self.audio),
             ("Video encoder", &self.video),
         ] {
@@ -247,11 +247,11 @@ mod tests {
             system: "linux x86_64".to_owned(),
             ..Diagnostics::default()
         };
-        report.capture.push(Check::pass("Screens", "1 found"));
+        report.capture.push(Check::pass("Monitors", "1 found"));
         report.audio.push(Check::fail("Microphone", "none found"));
         let text = report.text();
         assert!(text.starts_with("ClipCraft 1.2.3 on linux x86_64"));
-        assert!(text.contains("[ok] Screens: 1 found"));
+        assert!(text.contains("[ok] Monitors: 1 found"));
         assert!(text.contains("[!!] Microphone: none found"));
         assert!(
             !text.contains("Video encoder"),

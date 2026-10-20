@@ -111,11 +111,11 @@ impl fmt::Display for CaptureError {
         formatter.write_str(match self {
             Self::NoProvider => "Capturing is not supported on this computer yet.",
             Self::TargetGone => {
-                "The screen or window being recorded went away. Pick it again to keep recording."
+                "The monitor or window being recorded went away. Pick it again to keep recording."
             }
-            Self::Denied => "The system did not allow ClipCraft to capture the screen.",
-            Self::BadFrame => "The screen capture returned a damaged picture.",
-            Self::Failed => "Screen capture stopped working.",
+            Self::Denied => "The system did not allow ClipCraft to capture the monitor.",
+            Self::BadFrame => "The capture returned a damaged picture.",
+            Self::Failed => "Capturing stopped working.",
         })
     }
 }

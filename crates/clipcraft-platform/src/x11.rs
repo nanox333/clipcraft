@@ -120,7 +120,7 @@ pub fn list_targets(display: Option<&str>) -> Result<Vec<CaptureTarget>, Capture
                 "monitor:0,0,{},{}",
                 screen.width_in_pixels, screen.height_in_pixels
             ),
-            name: "Screen".to_owned(),
+            name: "Monitor".to_owned(),
             kind: TargetKind::Display,
             width: u32::from(screen.width_in_pixels),
             height: u32::from(screen.height_in_pixels),

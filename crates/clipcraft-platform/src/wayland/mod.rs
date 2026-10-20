@@ -32,7 +32,7 @@ pub fn available() -> bool {
 
 /// What is missing for Wayland capture, for a diagnostics report.
 pub fn diagnose() -> (String, bool, String) {
-    let name = "Wayland screen sharing".to_owned();
+    let name = "Wayland capture".to_owned();
     if !pipewire::available() {
         return (
             name,
@@ -67,7 +67,7 @@ pub fn capabilities() -> Capabilities {
 pub fn list_targets() -> Vec<CaptureTarget> {
     vec![CaptureTarget {
         id: PORTAL_TARGET.to_owned(),
-        name: "Screen or window (your desktop will ask)".to_owned(),
+        name: "Monitor or window (your desktop will ask)".to_owned(),
         kind: TargetKind::Display,
         width: 0,
         height: 0,
@@ -99,7 +99,7 @@ fn open_on(
     Ok(Box::new(WaylandSource {
         target: CaptureTarget {
             id: PORTAL_TARGET.to_owned(),
-            name: share.name.clone().unwrap_or_else(|| "Screen".to_owned()),
+            name: share.name.clone().unwrap_or_else(|| "Monitor".to_owned()),
             kind: TargetKind::Display,
             width,
             height,

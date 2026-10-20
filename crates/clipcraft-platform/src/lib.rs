@@ -197,18 +197,18 @@ pub fn diagnose_capture() -> Vec<Finding> {
     }
     findings.push(match list_targets() {
         Ok(targets) => {
-            let screens = targets
+            let monitors = targets
                 .iter()
                 .filter(|target| target.kind == clipcraft_capture::TargetKind::Display)
                 .count();
-            let windows = targets.len() - screens;
+            let windows = targets.len() - monitors;
             (
-                "Screens and windows".to_owned(),
-                screens > 0,
-                format!("{screens} screen(s) and {windows} window(s) can be captured"),
+                "Monitors and windows".to_owned(),
+                monitors > 0,
+                format!("{monitors} monitor(s) and {windows} window(s) can be captured"),
             )
         }
-        Err(error) => ("Screens and windows".to_owned(), false, error.to_string()),
+        Err(error) => ("Monitors and windows".to_owned(), false, error.to_string()),
     });
     findings
 }

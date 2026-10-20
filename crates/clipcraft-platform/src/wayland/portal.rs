@@ -207,7 +207,7 @@ pub fn start(connection: Connection, show_cursor: bool) -> Result<Share, Capture
             Some((u32::try_from(width).ok()?, u32::try_from(height).ok()?))
         });
     let name = text(&properties, "source_type")
-        .map(|kind| if kind == "2" { "Window" } else { "Screen" }.to_owned());
+        .map(|kind| if kind == "2" { "Window" } else { "Monitor" }.to_owned());
 
     let remote: zbus::zvariant::OwnedFd = screen_cast
         .call(

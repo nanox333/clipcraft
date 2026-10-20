@@ -411,7 +411,7 @@ impl ClipCraftApp {
                 "Choose the game window to record in Settings \u{203a} Capture, or switch to Desktop."
                     .to_owned(),
             ),
-            None => Err("No screen was found to record.".to_owned()),
+            None => Err("No monitor was found to record.".to_owned()),
         }
     }
 
@@ -438,7 +438,7 @@ impl ClipCraftApp {
             let (sender, receiver) = mpsc::channel();
             self.capture.opening = Some(receiver);
             self.capture.notice = notice(
-                "Choose the screen or window to clip in the window your desktop shows.",
+                "Choose the monitor or window to clip in the window your desktop shows.",
                 false,
                 None,
             );
