@@ -99,6 +99,14 @@ touches ClipCraft's own clips.
   ([ADR 0007](adr/0007-media-foundation-encoder.md)), tried after NVIDIA's. The stream handling
   (Annex B to length-prefixed, the decoder configuration record, RGBA to NV12) is unit tested on
   Linux; the Windows code compiles but has **never run on a Windows computer or an AMD or Intel
-  encoder**. It is the only `unsafe` in ClipCraft's own code. Linux AMD or Intel encoding
-  (VA-API) is not built. If a driver will not take the request, recording uses the CPU and the
-  status says why.
+  encoder**. If a driver will not take the request, recording uses the CPU and the status says
+  why.
+- **AMD and Intel on Linux** record in hardware through VA-API
+  ([ADR 0008](adr/0008-vaapi-encoder.md)), tried after NVIDIA's. libva is loaded at run time, so a
+  computer without it just uses the CPU. Verified here: every libva structure's size and field
+  offsets against the real C headers, the SPS and PPS the code writes against FilmCraft's parser,
+  and the encoder's call order, parameter buffers, pixel upload, key-frame cadence, and clean-up
+  after a failure at each step against a stand-in libva. **Never run against a real Mesa or
+  Intel driver**: this container has no GPU. Driver differences (packed headers, slice headers,
+  entry points) are the likely first failures; the status line names the reason and recording
+  continues on the CPU.

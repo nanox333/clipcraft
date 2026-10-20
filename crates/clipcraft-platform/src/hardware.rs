@@ -1,6 +1,6 @@
 //! Hardware H.264 encoding, through FilmCraft's platform crate: NVIDIA NVENC on Windows and
-//! 64-bit Linux, VideoToolbox on macOS. Other graphics cards have no encoder yet; the recorder
-//! then uses the software encoder and says why.
+//! 64-bit Linux, VideoToolbox on macOS; AMD and Intel through Media Foundation on Windows and
+//! VA-API on Linux. When none works, the recorder uses the software encoder and says why.
 //!
 //! FilmCraft's encoders take the export pipeline's types, so this module translates: it builds
 //! the export settings a recording needs, hands each picture over as RGBA, and turns the packets
@@ -125,7 +125,8 @@ fn open_filmcraft(request: &HardwareRequest) -> Result<Box<dyn HardwareEncoder>,
 
 /// Tries each hardware encoder this system has, in turn. On Windows that is NVIDIA's (through
 /// FilmCraft) and then whatever hardware H.264 encoder the graphics driver installs for Media
-/// Foundation, which is how AMD and Intel cards are reached.
+/// Foundation, which is how AMD and Intel cards are reached. On Linux it is NVIDIA's and then
+/// VA-API, which is how AMD (Mesa) and Intel cards are reached.
 fn open(request: &HardwareRequest) -> Result<Box<dyn HardwareEncoder>, String> {
     let mut reasons = Vec::new();
     match open_filmcraft(request) {
@@ -137,12 +138,17 @@ fn open(request: &HardwareRequest) -> Result<Box<dyn HardwareEncoder>, String> {
         Ok(encoder) => return Ok(encoder),
         Err(why) => reasons.push(why),
     }
+    #[cfg(target_os = "linux")]
+    match crate::vaapi::encoder::open(request) {
+        Ok(encoder) => return Ok(encoder),
+        Err(why) => reasons.push(why),
+    }
     Err(reasons.join("; "))
 }
 
 /// Opens hardware encoders for the recorder, or `None` on a system with no hardware encoder code.
 pub fn hardware_provider() -> Option<HardwareProvider> {
-    let available = backend().is_some() || cfg!(windows);
+    let available = backend().is_some() || cfg!(windows) || cfg!(target_os = "linux");
     available.then(|| HardwareProvider::new(open))
 }
 

@@ -38,6 +38,7 @@ filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "6c3948
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 filmcraft-codecs = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-media = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
+filmcraft-h264 = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-h264enc = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-matroska = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-platform = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
@@ -47,6 +48,7 @@ eframe = { version = "0.33", default-features = false, features = ["default_font
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 fs4 = "1.1"
+libloading = "0.8"
 rfd = { version = "0.17.2", default-features = true }
 
 [workspace.lints.rust]
