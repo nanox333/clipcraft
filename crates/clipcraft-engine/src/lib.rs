@@ -29,7 +29,7 @@ pub use library_meta::{
 pub use recording::{
     AUDIO_KBPS, CaptureSource, Container, EncoderPreset, FRAME_RATES, HEIGHTS, KEYFRAME_SECONDS,
     POST_ROLL_SECONDS, QualityMode, REPLAY_SECONDS, RateControl, RecordingSettings, SAMPLE_RATES,
-    VIDEO_KBPS, VideoCodec, VideoEncoder, default_settings_path,
+    VIDEO_KBPS, VideoCodec, VideoEncoder, default_settings_path, estimated_bytes, format_bytes,
 };
 pub use session::{
     CLIP_PREFIX, CaptureSession, SavedClipReport, clip_format, clip_stem, record_config,

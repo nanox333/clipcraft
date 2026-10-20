@@ -83,6 +83,10 @@ touches ClipCraft's own clips.
   recorded seconds to the clip; the top bar counts down. Stopping the recording during the wait
   saves at once with what exists. A second press during the wait is ignored. Tested with the
   synthetic screen (engine tests); not yet run against a real game.
+- **Clipping keeps no full recording.** Only the last replay seconds (plus post-roll) live in memory;
+  disk is written only when a clip is saved. The Quality tab says so and shows an estimated size per
+  clip and per minute (video plus sound bitrate, +2 % container). Variable bitrate can come out
+  smaller; the estimate is the target, not a measurement of real clips.
 - **Clip length** can be up to one keyframe interval longer than the replay setting, and a clip
   from a struggling computer is variable frame rate.
 - **Saved clips are named in UTC** (`ClipCraft 2026-10-19 21-04-55.mp4`).

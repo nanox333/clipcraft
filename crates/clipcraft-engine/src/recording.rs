@@ -439,6 +439,61 @@ impl Default for RecordingSettings {
     }
 }
 
+/// Container overhead on top of the encoded streams (sample tables, headers).
+const CONTAINER_OVERHEAD_PERCENT: u64 = 2;
+
+/// About how many bytes `seconds` of video at `video_kbps` plus sound at `audio_kbps` take in a
+/// file. The bitrate is a target: a still picture in variable-bitrate mode takes less.
+pub fn estimated_bytes(video_kbps: u32, audio_kbps: u32, seconds: u32) -> u64 {
+    let bits_per_second = (u64::from(video_kbps) + u64::from(audio_kbps)) * 1_000;
+    (bits_per_second / 8)
+        .saturating_mul(u64::from(seconds))
+        .saturating_mul(100 + CONTAINER_OVERHEAD_PERCENT)
+        / 100
+}
+
+/// A size for people: `850 KB`, `42 MB`, `1.3 GB`.
+pub fn format_bytes(bytes: u64) -> String {
+    const KB: f64 = 1_000.0;
+    let value = bytes as f64;
+    if value < KB * KB {
+        format!("{:.0} KB", (value / KB).max(1.0))
+    } else if value < KB * KB * KB {
+        let megabytes = value / (KB * KB);
+        if megabytes < 10.0 {
+            format!("{megabytes:.1} MB")
+        } else {
+            format!("{megabytes:.0} MB")
+        }
+    } else {
+        format!("{:.1} GB", value / (KB * KB * KB))
+    }
+}
+
+impl RecordingSettings {
+    /// Seconds one saved clip lasts: the replay before the hotkey and the post-roll after it.
+    pub fn clip_seconds(&self) -> u32 {
+        self.replay_seconds + self.post_roll_seconds
+    }
+
+    /// Kilobits per second of sound in a clip: every track at the audio bitrate, or none when no
+    /// sound is recorded.
+    pub fn audio_total_kbps(&self) -> u32 {
+        let sources = u32::from(self.capture_game_audio) + u32::from(self.capture_microphone);
+        let tracks = if self.separate_audio_tracks {
+            sources
+        } else {
+            sources.min(1)
+        };
+        self.audio_kbps * tracks
+    }
+
+    /// About how big one saved clip is at the given video bitrate.
+    pub fn estimated_clip_bytes(&self, video_kbps: u32) -> u64 {
+        estimated_bytes(video_kbps, self.audio_total_kbps(), self.clip_seconds())
+    }
+}
+
 /// Heights offered in the UI.
 pub const HEIGHTS: [u32; 6] = [360, 480, 720, 1080, 1440, 2160];
 /// Frame rates offered in the UI.
@@ -865,5 +920,51 @@ mod tests {
         .unwrap();
         assert_eq!(load_settings(&path).unwrap().height, 720);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sizes_follow_the_bitrates_and_the_clip_length() {
+        // 10 Mbit/s video for 30 s is 37.5 MB, plus 2 % for the container.
+        assert_eq!(estimated_bytes(10_000, 0, 30), 38_250_000);
+        // Sound adds its own bitrate.
+        assert_eq!(
+            estimated_bytes(10_000, 160, 30),
+            38_250_000 + 160 * 125 * 30 * 102 / 100
+        );
+        assert_eq!(estimated_bytes(0, 0, 30), 0);
+        assert!(estimated_bytes(u32::MAX, u32::MAX, u32::MAX) > 0);
+        for (bytes, text) in [
+            (0, "1 KB"),
+            (850_000, "850 KB"),
+            (4_200_000, "4.2 MB"),
+            (38_250_000, "38 MB"),
+            (1_300_000_000, "1.3 GB"),
+        ] {
+            assert_eq!(format_bytes(bytes), text);
+        }
+    }
+
+    #[test]
+    fn a_clip_estimate_counts_the_post_roll_and_only_the_sound_that_is_recorded() {
+        let mut settings = RecordingSettings {
+            replay_seconds: 30,
+            post_roll_seconds: 5,
+            audio_kbps: 160,
+            capture_game_audio: false,
+            capture_microphone: false,
+            ..RecordingSettings::default()
+        };
+        assert_eq!(settings.clip_seconds(), 35);
+        assert_eq!(settings.audio_total_kbps(), 0);
+        settings.capture_game_audio = true;
+        assert_eq!(settings.audio_total_kbps(), 160);
+        settings.capture_microphone = true;
+        assert_eq!(settings.audio_total_kbps(), 160, "mixed into one track");
+        settings.separate_audio_tracks = true;
+        assert_eq!(settings.audio_total_kbps(), 320);
+        assert_eq!(
+            settings.estimated_clip_bytes(5_000),
+            estimated_bytes(5_000, 320, 35)
+        );
     }
 }

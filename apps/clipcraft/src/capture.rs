@@ -560,7 +560,7 @@ impl ClipCraftApp {
             .on_hover_text(if active {
                 "Stop clipping and forget the replay buffer"
             } else {
-                "Start clipping: fill the replay buffer from your screen so you can save the last moments"
+                "Start clipping: keep the last moments in memory so you can save them as a clip. Nothing is written to disk until you save one."
             })
             .clicked()
         {
