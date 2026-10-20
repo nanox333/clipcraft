@@ -71,6 +71,9 @@ fn api() -> Result<&'static Api, String> {
     API.get_or_init(load_api).as_ref().map_err(Clone::clone)
 }
 
+// Each function pointer is cast to the type of the `Api` field it fills, which is how the
+// signature is checked; spelling the type again at every `transmute` adds nothing.
+#[allow(clippy::missing_transmute_annotations)]
 fn load_api() -> Result<Api, String> {
     // SAFETY: `LoadLibraryW` is given a valid, NUL-terminated wide string literal.
     let module = unsafe { LoadLibraryW(w!("mfplat.dll")) }
@@ -238,8 +241,8 @@ fn friendly_name(activate: &IMFActivate) -> String {
 
 fn media_type(api: &Api) -> Result<IMFMediaType, String> {
     let mut raw: *mut c_void = std::ptr::null_mut();
-    // SAFETY: `create_media_type` is `MFCreateMediaType` with a valid out-pointer.
     hr(
+        // SAFETY: `create_media_type` is `MFCreateMediaType` with a valid out-pointer.
         unsafe { (api.create_media_type)(&mut raw) },
         "creating a media type",
     )?;
@@ -284,14 +287,14 @@ impl MfEncoder {
         let mut events = None;
         // SAFETY: attribute reads and writes on a live transform.
         unsafe {
-            if let Ok(attributes) = transform.GetAttributes() {
-                if attributes.GetUINT32(&MF_TRANSFORM_ASYNC).unwrap_or(0) == 1 {
-                    check(
-                        attributes.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1),
-                        "unlocking the encoder",
-                    )?;
-                    events = transform.cast::<IMFMediaEventGenerator>().ok();
-                }
+            if let Ok(attributes) = transform.GetAttributes()
+                && attributes.GetUINT32(&MF_TRANSFORM_ASYNC).unwrap_or(0) == 1
+            {
+                check(
+                    attributes.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1),
+                    "unlocking the encoder",
+                )?;
+                events = transform.cast::<IMFMediaEventGenerator>().ok();
             }
         }
 
@@ -463,8 +466,8 @@ impl MfEncoder {
 
     fn make_sample(&self, index: u64) -> Result<IMFSample, String> {
         let mut raw: *mut c_void = std::ptr::null_mut();
-        // SAFETY: `create_sample` is `MFCreateSample` with a valid out-pointer.
         hr(
+            // SAFETY: `create_sample` is `MFCreateSample` with a valid out-pointer.
             unsafe { (self.api.create_sample)(&mut raw) },
             "creating a sample",
         )?;
@@ -476,8 +479,8 @@ impl MfEncoder {
         let length =
             u32::try_from(self.nv12.len()).map_err(|_| "the picture is too large".to_owned())?;
         let mut buffer_raw: *mut c_void = std::ptr::null_mut();
-        // SAFETY: `create_memory_buffer` is `MFCreateMemoryBuffer` with a valid out-pointer.
         hr(
+            // SAFETY: `create_memory_buffer` is `MFCreateMemoryBuffer` with a valid out-pointer.
             unsafe { (self.api.create_memory_buffer)(length, &mut buffer_raw) },
             "creating a buffer",
         )?;
@@ -579,8 +582,8 @@ impl MfEncoder {
 
     fn empty_sample(&self) -> Result<IMFSample, String> {
         let mut raw: *mut c_void = std::ptr::null_mut();
-        // SAFETY: valid out-pointer for `MFCreateSample`.
         hr(
+            // SAFETY: valid out-pointer for `MFCreateSample`.
             unsafe { (self.api.create_sample)(&mut raw) },
             "creating an output sample",
         )?;
@@ -590,8 +593,8 @@ impl MfEncoder {
         // SAFETY: owned `IMFSample` pointer on success.
         let sample = unsafe { IMFSample::from_raw(raw) };
         let mut buffer_raw: *mut c_void = std::ptr::null_mut();
-        // SAFETY: valid out-pointer for `MFCreateMemoryBuffer`.
         hr(
+            // SAFETY: valid out-pointer for `MFCreateMemoryBuffer`.
             unsafe { (self.api.create_memory_buffer)(self.output_size, &mut buffer_raw) },
             "creating an output buffer",
         )?;
@@ -600,8 +603,8 @@ impl MfEncoder {
         }
         // SAFETY: owned `IMFMediaBuffer` pointer on success.
         let buffer = unsafe { IMFMediaBuffer::from_raw(buffer_raw) };
-        // SAFETY: adding a buffer to a sample we own.
         check(
+            // SAFETY: adding a buffer to a sample we own.
             unsafe { sample.AddBuffer(&buffer) },
             "adding an output buffer",
         )?;
@@ -635,15 +638,15 @@ impl MfEncoder {
                 let mut waiting = Some(sample);
                 loop {
                     self.drain_events(&events, out)?;
-                    if self.input_credit > 0 {
-                        if let Some(sample) = waiting.take() {
+                    if self.input_credit > 0
+                        && let Some(sample) = waiting.take()
+                    {
+                        check(
                             // SAFETY: the encoder asked for input; the sample is a complete picture.
-                            check(
-                                unsafe { self.transform.ProcessInput(0, &sample, 0) },
-                                "sending a picture",
-                            )?;
-                            self.input_credit -= 1;
-                        }
+                            unsafe { self.transform.ProcessInput(0, &sample, 0) },
+                            "sending a picture",
+                        )?;
+                        self.input_credit -= 1;
                     }
                     if waiting.is_none() {
                         // Give output that is already waiting a chance to come out now.
@@ -665,8 +668,8 @@ impl MfEncoder {
                         return Err(format!("{}: sending a picture failed: {error}", self.name));
                     }
                     while self.process_output(out)? {}
-                    // SAFETY: as above, after making room.
                     check(
+                        // SAFETY: as above, after making room.
                         unsafe { self.transform.ProcessInput(0, &sample, 0) },
                         "sending a picture",
                     )?;
@@ -736,8 +739,8 @@ impl HardwareEncoder for MfEncoder {
 
     fn flush(&mut self) -> Result<Vec<HardwarePacket>, String> {
         let mut out = Vec::new();
-        // SAFETY: a drain request to a live transform.
         check(
+            // SAFETY: a drain request to a live transform.
             unsafe { self.transform.ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0) },
             "draining the encoder",
         )?;
