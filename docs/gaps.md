@@ -52,6 +52,15 @@ touches ClipCraft's own clips.
 
 **Not verified or not built:**
 
+- **Game performance while clipping** (measured on a 4-core Linux machine, not on a gaming PC).
+  The software encoder at 1080p60 used two full cores and still dropped 73 % of the frames, so on
+  a real machine it competes with the game for processor time. What is done about it: the
+  graphics-card encoder is the default (it falls back to the processor), the software encoder is
+  capped at four threads, and on Windows the program runs a little below normal priority while
+  clipping. **Not measured:** the effect on a game's frame rate on any machine. **Still costly:**
+  every picture is copied from the graphics card to memory before it is encoded, and the
+  hardware encoder has never run on a real graphics card. A zero-copy path from the capture
+  texture to the encoder is the real fix and is not built.
 - **Windows.** The Graphics Capture provider and the Windows hotkeys compile
   (`cargo check --target x86_64-pc-windows-gnu`) but have never run. Exclusive-full-screen games,
   the cursor option, protected content, and elevated windows are all untested.

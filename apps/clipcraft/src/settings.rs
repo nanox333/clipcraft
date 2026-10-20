@@ -554,18 +554,6 @@ pub fn quality_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, gpu: &Gp
                 _ => ("Checking the graphics card\u{2026}".to_owned(), FAINT),
             };
             ui.label(RichText::new(note).color(color).size(12.0));
-            if settings.video_encoder == VideoEncoder::Gpu
-                && matches!(gpu, GpuProbe::Unavailable(_))
-            {
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(
-                        "GPU is selected but cannot be used here, so the CPU will be used.",
-                    )
-                    .color(DANGER)
-                    .size(12.0),
-                );
-            }
         }
         ui.add_space(14.0);
     });

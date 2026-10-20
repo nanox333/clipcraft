@@ -54,7 +54,8 @@ pub struct RecordConfig {
     pub replay_seconds: u32,
     /// Most encoded video the buffer holds, in bytes.
     pub max_buffer_bytes: usize,
-    /// Threads the encoder and the pixel conversion may use (0 chooses half the processors).
+    /// Threads the encoder and the pixel conversion may use (0 chooses half the processors, and
+    /// never more than four, so a game keeps the rest).
     pub threads: usize,
     /// Opens a hardware encoder to use instead of the software one. When it cannot, or fails
     /// later, the software encoder takes over.
@@ -62,6 +63,15 @@ pub struct RecordConfig {
     /// A silence in the pictures this long (the computer slept, or the screen went away) starts
     /// the replay buffer over, instead of leaving a frozen stretch in every clip.
     pub gap_restart_seconds: u32,
+}
+
+/// Most threads the software encoder takes when the number is left to the recorder.
+const MAX_AUTO_THREADS: usize = 4;
+
+/// Half the processors, but never more than [`MAX_AUTO_THREADS`]: on a big machine the rest stay
+/// free for the game.
+fn auto_threads(cores: usize) -> usize {
+    (cores / 2).clamp(1, MAX_AUTO_THREADS)
 }
 
 impl RecordConfig {
@@ -84,8 +94,7 @@ impl RecordConfig {
         if self.threads > 0 {
             return self.threads.min(32);
         }
-        let cores = std::thread::available_parallelism().map_or(2, usize::from);
-        (cores / 2).clamp(1, 16)
+        auto_threads(std::thread::available_parallelism().map_or(2, usize::from))
     }
 }
 
@@ -833,4 +842,18 @@ fn encode_hardware(
         store_packet(shared, packet.data, packet.keyframe, time);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::auto_threads;
+
+    #[test]
+    fn the_software_encoder_leaves_most_of_a_big_machine_to_the_game() {
+        assert_eq!(auto_threads(1), 1);
+        assert_eq!(auto_threads(4), 2);
+        assert_eq!(auto_threads(8), 4);
+        assert_eq!(auto_threads(16), 4);
+        assert_eq!(auto_threads(128), 4);
+    }
 }

@@ -278,11 +278,12 @@ impl QualityMode {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VideoEncoder {
-    /// The processor. Works on every computer.
-    #[default]
+    /// The processor. Works on every computer, but takes processor time from the game.
     Cpu,
     /// The graphics card's encoder, which leaves the processor free for the game. Whether this
-    /// computer has one is found out when recording starts; without one the CPU is used.
+    /// computer has one is found out when recording starts; without one the CPU is used. This is
+    /// the default for that reason.
+    #[default]
     Gpu,
 }
 
@@ -397,7 +398,7 @@ impl Default for RecordingSettings {
         Self {
             container: Container::Mp4,
             quality: QualityMode::High,
-            video_encoder: VideoEncoder::Cpu,
+            video_encoder: VideoEncoder::Gpu,
             codec: VideoCodec::H264,
             source: CaptureSource::Game,
             shape: OutputShape::Source,
@@ -668,6 +669,17 @@ pub(crate) fn save_settings(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_graphics_card_encoder_is_the_default_and_falls_back_to_the_processor() {
+        // Software encoding takes processor time from the game, so it is a choice, not the
+        // default; a computer without a hardware encoder uses the CPU anyway.
+        assert_eq!(
+            RecordingSettings::default().video_encoder,
+            VideoEncoder::Gpu
+        );
+        assert_eq!(VideoEncoder::default(), VideoEncoder::Gpu);
+    }
+
     use super::*;
     use clipcraft_capture::reframe::PixelRect;
 

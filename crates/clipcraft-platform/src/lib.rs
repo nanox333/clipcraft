@@ -19,6 +19,7 @@ mod hardware;
 mod hotkey;
 #[cfg(windows)]
 mod mf_encoder;
+mod priority;
 #[cfg(target_os = "linux")]
 mod pulse;
 #[cfg(target_os = "linux")]
@@ -32,6 +33,7 @@ mod x11;
 
 pub use hardware::{hardware_provider, probe_hardware_encoder};
 pub use hotkey::{HotkeyBinding, HotkeyEvent, HotkeyListener, parse_shortcut};
+pub use priority::set_background_priority;
 #[cfg(target_os = "linux")]
 pub use pulse::{Output, Outputs, list_outputs, open_system_monitor};
 #[cfg(target_os = "linux")]

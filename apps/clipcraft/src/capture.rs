@@ -82,6 +82,8 @@ pub struct CaptureState {
     pub gpu: GpuProbe,
     gpu_receiver: Option<mpsc::Receiver<Result<String, String>>>,
     launched: bool,
+    /// Whether the program is running at the lower priority used while clipping.
+    background_priority: bool,
     last_hotkey: Option<(HotkeyAction, Instant)>,
     /// Set after a clip was saved into the library folder, so the library is rescanned.
     pub saved_into: Option<PathBuf>,
@@ -157,6 +159,7 @@ impl ClipCraftApp {
         }
         self.poll_gpu_probe();
         self.poll_opening();
+        self.yield_to_the_game();
         self.sync_hotkeys();
         let mut actions = Vec::new();
         let mut talking = None;
@@ -476,6 +479,16 @@ impl ClipCraftApp {
                 }
             }
             Err(error) => self.capture.notice = notice(error.to_string(), true, None),
+        }
+    }
+
+    /// While clipping the program runs a little below normal priority, so a game that wants the
+    /// processor gets it before the encoder does; back to normal when clipping stops.
+    fn yield_to_the_game(&mut self) {
+        let clipping = self.capture.session.is_active();
+        if clipping != self.capture.background_priority {
+            clipcraft_platform::set_background_priority(clipping);
+            self.capture.background_priority = clipping;
         }
     }
 
