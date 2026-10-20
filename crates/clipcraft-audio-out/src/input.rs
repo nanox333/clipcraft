@@ -20,7 +20,7 @@ pub struct DeviceNames {
 
 /// Lists the sound devices. A host that cannot enumerate gives empty lists.
 pub fn list_devices() -> DeviceNames {
-    let host = cpal::default_host();
+    let host = crate::host();
     let collect = |devices: Option<Box<dyn Iterator<Item = cpal::Device>>>| -> Vec<String> {
         let mut names: Vec<String> = devices
             .into_iter()
@@ -100,7 +100,7 @@ pub struct MicMeter {
 impl MicMeter {
     /// Opens the named microphone (or the default when `name` is empty) and starts measuring.
     pub fn start(name: &str) -> Result<Self, MicTestError> {
-        let host = cpal::default_host();
+        let host = crate::host();
         let device = if name.is_empty() {
             host.default_input_device()
         } else {

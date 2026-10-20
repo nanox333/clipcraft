@@ -173,7 +173,7 @@ impl AudioSource for DeviceCapture {
 
 /// Finds the device to record.
 fn find_device(kind: CaptureKind, name: &str) -> Result<cpal::Device, CaptureError> {
-    let host = cpal::default_host();
+    let host = crate::host();
     let by_name = |mut devices: Box<dyn Iterator<Item = cpal::Device>>| -> Option<cpal::Device> {
         devices.find(|device| name.is_empty() || device.name().is_ok_and(|n| n == name))
     };

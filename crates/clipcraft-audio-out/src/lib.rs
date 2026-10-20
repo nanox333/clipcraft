@@ -15,6 +15,48 @@ pub use clipcraft_record::SampleQueue;
 
 pub use input::{DeviceNames, MAX_DEVICES, MicMeter, MicTestError, list_devices, peak};
 
+/// The sound system, ready to use from any thread.
+///
+/// On Windows, cpal keeps one shared device enumerator that belongs to whichever thread first asks
+/// for devices. When that thread ends, its COM apartment goes with it and the next use from
+/// another thread is an access violation. So the first request is always made by a thread that
+/// never ends, whoever asks first.
+pub(crate) fn host() -> cpal::Host {
+    keep_sound_system_alive();
+    cpal::default_host()
+}
+
+#[cfg(windows)]
+fn keep_sound_system_alive() {
+    use std::sync::OnceLock;
+    use std::sync::mpsc;
+    use std::time::Duration;
+    static KEEPER: OnceLock<()> = OnceLock::new();
+    KEEPER.get_or_init(|| {
+        let (ready, wait) = mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("clipcraft-sound-system".to_owned())
+            .spawn(move || {
+                let host = cpal::default_host();
+                // Either call creates the shared enumerator.
+                let _ = catch_unwind(AssertUnwindSafe(|| {
+                    let _ = host.default_output_device();
+                    let _ = host.default_input_device();
+                }));
+                let _ = ready.send(());
+                loop {
+                    std::thread::park();
+                }
+            });
+        if spawned.is_ok() {
+            let _ = wait.recv_timeout(Duration::from_secs(10));
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn keep_sound_system_alive() {}
+
 use clipcraft_player::audio::AudioFeed;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, SizedSample, Stream, StreamConfig};
@@ -64,7 +106,7 @@ pub struct AudioOutput {
 impl AudioOutput {
     /// Opens the default output device and starts pulling from `feed`.
     pub fn start(feed: Arc<AudioFeed>) -> Result<Self, AudioOutputError> {
-        let host = cpal::default_host();
+        let host = host();
         let device = host
             .default_output_device()
             .ok_or(AudioOutputError::NoDevice)?;
@@ -149,4 +191,24 @@ where
             None,
         )
         .map_err(|_| AudioOutputError::StartFailed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The first request for devices comes from a thread that ends right away, as when a
+    /// recording's audio thread is the first to touch the sound system; a later request from
+    /// another thread must still work. On Windows this crashed the whole process.
+    #[test]
+    fn devices_can_be_listed_after_the_thread_that_asked_first_has_ended() {
+        let first = std::thread::spawn(|| list_devices().inputs.len());
+        let _ = first.join();
+        let second = std::thread::spawn(|| list_devices().inputs.len());
+        assert!(second.join().is_ok());
+        let third = std::thread::spawn(|| {
+            let _ = host().default_output_device();
+        });
+        assert!(third.join().is_ok());
+    }
 }
