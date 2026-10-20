@@ -79,6 +79,10 @@ touches ClipCraft's own clips.
   at any rate is not sustainable in software. Pixel conversion alone is 4 to 11 ms at 1080p. A
   real gaming computer is faster and the game also competes for it; hardware encoders are the way
   to 1080p60 and are not wired. The top bar shows when more than 5% of pictures are dropped.
+- **Post-roll.** "Keep recording after the hotkey" (off, 3, 5, 10, 15 s) delays the save and adds the
+  recorded seconds to the clip; the top bar counts down. Stopping the recording during the wait
+  saves at once with what exists. A second press during the wait is ignored. Tested with the
+  synthetic screen (engine tests); not yet run against a real game.
 - **Clip length** can be up to one keyframe interval longer than the replay setting, and a clip
   from a struggling computer is variable frame rate.
 - **Saved clips are named in UTC** (`ClipCraft 2026-10-19 21-04-55.mp4`).

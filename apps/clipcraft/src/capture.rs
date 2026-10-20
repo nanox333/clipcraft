@@ -72,6 +72,8 @@ pub struct CaptureState {
     pub status: Option<RecordStatus>,
     pub notice: Option<Notice>,
     saving: Option<mpsc::Receiver<Result<SavedClipReport, String>>>,
+    /// When the clip being saved will be written, if it is waiting for the post-roll.
+    saving_at: Option<Instant>,
     listener: Option<HotkeyListener>,
     listened_for: Vec<(u32, String)>,
     pub targets: Vec<CaptureTarget>,
@@ -100,6 +102,7 @@ impl CaptureState {
                 || started.shape != current.shape
                 || started.framing != current.framing
                 || started.replay_seconds != current.replay_seconds
+                || started.post_roll_seconds != current.post_roll_seconds
                 || started.rate_control != current.rate_control
                 || started.encoder_preset != current.encoder_preset
                 || started.keyframe_seconds != current.keyframe_seconds
@@ -228,8 +231,28 @@ impl ClipCraftApp {
             );
         }
         self.poll_save();
+        // While the post-roll runs, count down in the notice.
+        if self.capture.saving.is_some()
+            && let Some(at) = self.capture.saving_at
+        {
+            let left = at
+                .saturating_duration_since(Instant::now())
+                .as_secs_f32()
+                .ceil() as u32;
+            let text = if left > 0 {
+                format!("Saving in {left} s, still recording\u{2026}")
+            } else {
+                "Saving clip\u{2026}".to_owned()
+            };
+            self.capture.notice = notice(text, false, None);
+        }
         if self.capture.is_active() || self.capture.saving.is_some() {
-            context.request_repaint_after(Duration::from_millis(500));
+            let tick = if self.capture.saving_at.is_some() {
+                200
+            } else {
+                500
+            };
+            context.request_repaint_after(Duration::from_millis(tick));
         }
         if self
             .capture
@@ -447,6 +470,8 @@ impl ClipCraftApp {
                 return;
             }
         };
+        let wait = job.post_roll();
+        self.capture.saving_at = (!wait.is_zero()).then(|| Instant::now() + wait);
         self.capture.notice = notice("Saving clip\u{2026}", false, None);
         let (sender, receiver) = mpsc::channel();
         self.capture.saving = Some(receiver);
@@ -466,6 +491,7 @@ impl ClipCraftApp {
             Err(mpsc::TryRecvError::Disconnected) => Err("Saving the clip stopped.".to_owned()),
         };
         self.capture.saving = None;
+        self.capture.saving_at = None;
         match result {
             Ok(report) => {
                 let name = report

@@ -387,6 +387,9 @@ pub struct RecordingSettings {
     pub microphone_percent: u32,
     /// How many seconds of play before the hotkey are kept.
     pub replay_seconds: u32,
+    /// Seconds ClipCraft keeps recording after the save hotkey, so the clip includes what
+    /// happens next. 0 saves immediately.
+    pub post_roll_seconds: u32,
 }
 
 impl Default for RecordingSettings {
@@ -431,6 +434,7 @@ impl Default for RecordingSettings {
             game_audio_percent: 100,
             microphone_percent: 100,
             replay_seconds: 30,
+            post_roll_seconds: 0,
         }
     }
 }
@@ -441,6 +445,8 @@ pub const HEIGHTS: [u32; 6] = [360, 480, 720, 1080, 1440, 2160];
 pub const FRAME_RATES: [u32; 3] = [24, 30, 60];
 /// Replay lengths offered in the UI.
 pub const REPLAY_SECONDS: [u32; 5] = [15, 30, 60, 120, 300];
+/// Seconds recorded after the save hotkey that the UI offers.
+pub const POST_ROLL_SECONDS: [u32; 5] = [0, 3, 5, 10, 15];
 /// Video bitrates offered in the UI, in kilobits per second.
 pub const VIDEO_KBPS: [u32; 9] = [
     1_000, 2_500, 5_000, 8_000, 10_000, 16_000, 25_000, 40_000, 60_000,
@@ -488,6 +494,7 @@ impl RecordingSettings {
         self.game_audio_percent = self.game_audio_percent.min(100);
         self.microphone_percent = self.microphone_percent.min(100);
         self.replay_seconds = self.replay_seconds.clamp(5, 600);
+        self.post_roll_seconds = self.post_roll_seconds.min(30);
         if let Some((height, frames_per_second, video_kbps)) = self.quality.values() {
             self.height = height;
             self.frames_per_second = frames_per_second;

@@ -4,12 +4,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clipcraft_capture::CaptureSource;
 use clipcraft_record::{
     AudioConfig, AudioControl, AudioInput, AudioKind, AudioProvider, AudioSetup, ClipFormat,
-    EncoderSpeed, HardwareProvider, RecordConfig, RecordError, RecordStatus, Recorder, SavedClip,
+    EncoderSpeed, HardwareProvider, RecordConfig, RecordError, RecordState, RecordStatus, Recorder,
+    SavedClip,
 };
 
 use crate::storage::{StoredClip, cleanup_plan, list_clips};
@@ -23,7 +24,9 @@ pub fn record_config(settings: &RecordingSettings) -> RecordConfig {
     let bytes_per_second = u64::from(settings.video_kbps) * 1000 / 8;
     // Room for the replay window at twice the average rate (bursts), plus a fixed margin.
     let wanted = bytes_per_second
-        .saturating_mul(u64::from(settings.replay_seconds))
+        .saturating_mul(u64::from(
+            settings.replay_seconds + settings.post_roll_seconds,
+        ))
         .saturating_mul(2)
         .saturating_add(32 * 1024 * 1024);
     RecordConfig {
@@ -39,7 +42,8 @@ pub fn record_config(settings: &RecordingSettings) -> RecordConfig {
             EncoderPreset::Quality => EncoderSpeed::Quality,
         },
         keyframe_seconds: settings.keyframe_seconds,
-        replay_seconds: settings.replay_seconds,
+        // The buffer holds the replay and the post-roll that follows the hotkey.
+        replay_seconds: settings.replay_seconds + settings.post_roll_seconds,
         max_buffer_bytes: usize::try_from(wanted.clamp(64 * 1024 * 1024, 2 * 1024 * 1024 * 1024))
             .unwrap_or(64 * 1024 * 1024),
         threads: 0,
@@ -329,7 +333,8 @@ impl CaptureSession {
         Ok(SaveJob {
             recorder,
             format,
-            seconds: settings.replay_seconds,
+            seconds: settings.replay_seconds + settings.post_roll_seconds,
+            post_roll: Duration::from_secs(u64::from(settings.post_roll_seconds)),
             path: free_clip_path(folder, format, unix_now())?,
             folder: folder.to_path_buf(),
             trim_to: (limit > 0 && settings.delete_oldest_when_full).then_some(limit),
@@ -342,6 +347,7 @@ pub struct SaveJob {
     recorder: Arc<Recorder>,
     format: ClipFormat,
     seconds: u32,
+    post_roll: Duration,
     path: PathBuf,
     folder: PathBuf,
     trim_to: Option<u64>,
@@ -353,8 +359,20 @@ impl SaveJob {
         &self.path
     }
 
-    /// Writes the clip, then removes the oldest ClipCraft clips if the folder is over its limit.
+    /// How long [`SaveJob::run`] keeps recording before it writes the clip.
+    pub fn post_roll(&self) -> Duration {
+        self.post_roll
+    }
+
+    /// Waits for the post-roll, then writes the clip and removes the oldest ClipCraft clips if
+    /// the folder is over its limit. If recording stops or fails while waiting, the clip is
+    /// written at once with what there is.
     pub fn run(self) -> Result<SavedClipReport, EngineError> {
+        let until = Instant::now() + self.post_roll;
+        while Instant::now() < until && self.recorder.status().state == RecordState::Running {
+            let left = until.saturating_duration_since(Instant::now());
+            std::thread::sleep(left.min(Duration::from_millis(50)));
+        }
         let clip = self
             .recorder
             .save_clip(self.seconds, self.format, &self.path)
@@ -823,5 +841,78 @@ mod tests {
         session.set_levels(&settings);
         session.stop();
         assert!(!session.has_microphone());
+    }
+
+    #[test]
+    fn post_roll_keeps_recording_after_the_hotkey_and_the_clip_includes_it() {
+        let dir = std::env::temp_dir().join(format!("clipcraft-postroll-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let settings = RecordingSettings {
+            replay_seconds: 15,
+            post_roll_seconds: 3,
+            ..RecordingSettings::default()
+        };
+        let mut session = CaptureSession::new();
+        session
+            .start(&settings, Box::new(SyntheticSource::new(160, 90, 30)), None)
+            .unwrap();
+        wait_for_video(&session);
+        // About 1.2 s is buffered when the key is pressed.
+        let job = session.prepare_save(&settings, &dir).unwrap();
+        assert_eq!(job.post_roll(), Duration::from_secs(3));
+        let pressed = Instant::now();
+        let report = job.run().unwrap();
+        assert!(pressed.elapsed() >= Duration::from_secs(3));
+        let seconds = report.clip.duration_frames as f64 / 30.0;
+        assert!(seconds >= 3.8, "the clip is only {seconds} s");
+
+        // With no post-roll the same press saves what is there at once.
+        let now = RecordingSettings {
+            post_roll_seconds: 0,
+            ..settings.clone()
+        };
+        let pressed = Instant::now();
+        let quick = session.prepare_save(&now, &dir).unwrap().run().unwrap();
+        assert!(pressed.elapsed() < Duration::from_secs(2));
+        assert!(quick.clip.duration_frames > 0);
+        session.stop();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stopping_during_the_post_roll_saves_at_once_with_what_was_recorded() {
+        let dir =
+            std::env::temp_dir().join(format!("clipcraft-postroll-stop-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let settings = RecordingSettings {
+            post_roll_seconds: 15,
+            ..RecordingSettings::default()
+        };
+        let mut session = CaptureSession::new();
+        session
+            .start(&settings, Box::new(SyntheticSource::new(160, 90, 30)), None)
+            .unwrap();
+        wait_for_video(&session);
+        let job = session.prepare_save(&settings, &dir).unwrap();
+        let worker = std::thread::spawn(move || job.run());
+        std::thread::sleep(Duration::from_millis(300));
+        let started = Instant::now();
+        session.stop();
+        let report = worker.join().unwrap().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(report.clip.path.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn post_roll_is_bounded_and_widens_the_buffer() {
+        let settings = RecordingSettings {
+            post_roll_seconds: 9_999,
+            ..RecordingSettings::default()
+        }
+        .sanitized();
+        assert_eq!(settings.post_roll_seconds, 30);
+        let config = record_config(&settings);
+        assert_eq!(config.replay_seconds, settings.replay_seconds + 30);
     }
 }

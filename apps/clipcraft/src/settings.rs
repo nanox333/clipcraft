@@ -7,9 +7,9 @@ use std::time::Duration;
 use clipcraft_audio_out::{DeviceNames, MicMeter, list_devices};
 use clipcraft_engine::{
     AUDIO_KBPS, CaptureSource, Command, CommandOutput, Container, EncoderPreset, FRAME_RATES,
-    Framing, HEIGHTS, HotkeyAction, KEYFRAME_SECONDS, OutputShape, QualityMode, REPLAY_SECONDS,
-    RateControl, RecordingSettings, SAMPLE_RATES, StorageUsage, VIDEO_KBPS, VideoCodec,
-    VideoEncoder, default_capture_folder, execute, normalize_hotkey,
+    Framing, HEIGHTS, HotkeyAction, KEYFRAME_SECONDS, OutputShape, POST_ROLL_SECONDS, QualityMode,
+    REPLAY_SECONDS, RateControl, RecordingSettings, SAMPLE_RATES, StorageUsage, VIDEO_KBPS,
+    VideoCodec, VideoEncoder, default_capture_folder, execute, normalize_hotkey,
 };
 use eframe::egui;
 use egui::{Color32, RichText, Stroke, Vec2};
@@ -833,6 +833,30 @@ pub fn audio_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &mu
                         "Replay length",
                     ) {
                         settings.replay_seconds = seconds;
+                    }
+                }
+            },
+        );
+        setting_row(
+            ui,
+            "Keep recording after the hotkey",
+            "Adds the moments after you press the key, such as the reaction. The clip is saved once they have been recorded.",
+            true,
+            |ui| {
+                for seconds in POST_ROLL_SECONDS {
+                    let label = if seconds == 0 {
+                        "Off".to_owned()
+                    } else {
+                        format!("{seconds} sec")
+                    };
+                    if choice(
+                        ui,
+                        &label,
+                        settings.post_roll_seconds == seconds,
+                        true,
+                        "Post-roll length",
+                    ) {
+                        settings.post_roll_seconds = seconds;
                     }
                 }
             },
