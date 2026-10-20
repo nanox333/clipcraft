@@ -2,7 +2,9 @@
 //! interface (layer 5).
 //!
 //! * Linux (X11): screens and windows through the core protocol. Verified here under a virtual
-//!   display. Wayland-only sessions have no provider yet (they need the desktop portal).
+//!   display.
+//! * Linux (Wayland): the desktop's ScreenCast portal chooses the screen or window and PipeWire
+//!   carries the pictures. See `wayland` and `docs/wayland.md`.
 //! * Windows: Windows Graphics Capture. See the `windows` module; it compiles for Windows but has
 //!   not been run on real hardware.
 //! * macOS: no provider yet.
@@ -21,6 +23,8 @@ mod mf_encoder;
 mod pulse;
 #[cfg(target_os = "linux")]
 mod vaapi;
+#[cfg(target_os = "linux")]
+mod wayland;
 #[cfg(windows)]
 mod windows;
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -30,6 +34,8 @@ pub use hardware::{hardware_provider, probe_hardware_encoder};
 pub use hotkey::{HotkeyBinding, HotkeyEvent, HotkeyListener, parse_shortcut};
 #[cfg(target_os = "linux")]
 pub use pulse::{Output, Outputs, list_outputs, open_system_monitor};
+#[cfg(target_os = "linux")]
+pub use wayland::PORTAL_TARGET;
 
 /// What this computer's provider can do.
 /// How a capture should look.
@@ -51,6 +57,10 @@ impl Default for CaptureOptions {
 }
 
 pub fn capabilities() -> Capabilities {
+    #[cfg(target_os = "linux")]
+    if wayland::available() {
+        return wayland::capabilities();
+    }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         x11::capabilities()
@@ -67,6 +77,10 @@ pub fn capabilities() -> Capabilities {
 
 /// The monitors and windows that can be captured right now.
 pub fn list_targets() -> Result<Vec<CaptureTarget>, CaptureError> {
+    #[cfg(target_os = "linux")]
+    if wayland::available() {
+        return Ok(wayland::list_targets());
+    }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         x11::list_targets(None)
@@ -86,6 +100,10 @@ pub fn open(
     target_id: &str,
     options: &CaptureOptions,
 ) -> Result<Box<dyn CaptureSource>, CaptureError> {
+    #[cfg(target_os = "linux")]
+    if target_id == wayland::PORTAL_TARGET {
+        return wayland::open(options.show_cursor);
+    }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         let _ = options;
@@ -114,9 +132,24 @@ pub fn open_on(display: &str, target_id: &str) -> Result<Box<dyn CaptureSource>,
     x11::open(Some(display), target_id)
 }
 
+/// Like [`open`] for a Wayland screen share, with the portal on the session bus at `address`.
+/// For tests, which stand in a fake desktop.
+#[cfg(target_os = "linux")]
+pub fn open_wayland_on(
+    address: &str,
+    options: &CaptureOptions,
+) -> Result<Box<dyn CaptureSource>, CaptureError> {
+    wayland::open_at(address, options.show_cursor)
+}
+
 /// The window that has the focus right now, or `None` when there is none or it cannot be
 /// captured. Used by "force window capture" to find the game.
 pub fn active_window() -> Result<Option<CaptureTarget>, CaptureError> {
+    // Wayland does not tell other programs which window has the focus.
+    #[cfg(target_os = "linux")]
+    if wayland::available() {
+        return Ok(None);
+    }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         x11::active_window(None)
@@ -156,6 +189,10 @@ pub fn diagnose_capture() -> Vec<Finding> {
             capabilities.hdr
         ),
     ));
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WAYLAND_DISPLAY").is_some_and(|name| !name.is_empty()) {
+        findings.push(wayland::diagnose());
+    }
     findings.push(match list_targets() {
         Ok(targets) => {
             let screens = targets

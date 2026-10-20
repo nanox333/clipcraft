@@ -72,6 +72,8 @@ pub struct CaptureState {
     pub status: Option<RecordStatus>,
     pub notice: Option<Notice>,
     saving: Option<mpsc::Receiver<Result<SavedClipReport, String>>>,
+    /// A screen share being set up while the desktop's own chooser is open.
+    opening: Option<mpsc::Receiver<Result<Box<dyn clipcraft_capture::CaptureSource>, String>>>,
     /// When the clip being saved will be written, if it is waiting for the post-roll.
     saving_at: Option<Instant>,
     listener: Option<HotkeyListener>,
@@ -90,7 +92,7 @@ pub struct CaptureState {
 impl CaptureState {
     /// True while recording runs (or has failed but can still save what it has).
     pub fn is_active(&self) -> bool {
-        self.session.is_active()
+        self.session.is_active() || self.opening.is_some()
     }
 
     /// True when the open recording was started with different settings than the current ones.
@@ -156,6 +158,7 @@ impl ClipCraftApp {
             }
         }
         self.poll_gpu_probe();
+        self.poll_opening();
         self.sync_hotkeys();
         let mut actions = Vec::new();
         let mut talking = None;
@@ -370,6 +373,16 @@ impl ClipCraftApp {
         if !self.capture.targets_loaded() {
             self.capture.refresh_targets();
         }
+        // On Wayland the desktop asks what to share; there is nothing to pick here.
+        #[cfg(target_os = "linux")]
+        if self
+            .capture
+            .targets
+            .iter()
+            .any(|target| target.id == clipcraft_platform::PORTAL_TARGET)
+        {
+            return Ok(clipcraft_platform::PORTAL_TARGET.to_owned());
+        }
         let chosen = self.recording.capture_target.clone();
         let want_window = self.recording.source == clipcraft_engine::CaptureSource::Game;
         // Forcing window capture follows the window in front, unless a game window was chosen.
@@ -432,14 +445,31 @@ impl ClipCraftApp {
             show_cursor: self.recording.capture_cursor,
             hdr_to_sdr: self.recording.hdr_compatibility,
         };
-        let source: Box<dyn clipcraft_capture::CaptureSource> =
-            match clipcraft_platform::open(&id, &options) {
-                Ok(source) => source,
-                Err(error) => {
-                    self.capture.notice = notice(error.to_string(), true, None);
-                    return;
-                }
-            };
+        // The desktop's chooser can stay open for minutes, so it is waited for off the window.
+        #[cfg(target_os = "linux")]
+        if id == clipcraft_platform::PORTAL_TARGET {
+            let (sender, receiver) = mpsc::channel();
+            self.capture.opening = Some(receiver);
+            self.capture.notice = notice(
+                "Choose the screen or window to clip in the window your desktop shows.",
+                false,
+                None,
+            );
+            std::thread::spawn(move || {
+                let _ = sender.send(
+                    clipcraft_platform::open(&id, &options).map_err(|error| error.to_string()),
+                );
+            });
+            return;
+        }
+        match clipcraft_platform::open(&id, &options) {
+            Ok(source) => self.begin_session(source),
+            Err(error) => self.capture.notice = notice(error.to_string(), true, None),
+        }
+    }
+
+    /// Finishes starting once a screen is being captured.
+    fn begin_session(&mut self, source: Box<dyn clipcraft_capture::CaptureSource>) {
         let hardware = (self.recording.video_encoder == clipcraft_engine::VideoEncoder::Gpu)
             .then(clipcraft_platform::hardware_provider)
             .flatten();
@@ -465,7 +495,28 @@ impl ClipCraftApp {
         }
     }
 
+    /// Picks up a screen share the desktop's chooser has finished setting up.
+    fn poll_opening(&mut self) {
+        let Some(receiver) = &self.capture.opening else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(result) => {
+                self.capture.opening = None;
+                self.capture.notice = None;
+                match result {
+                    Ok(source) => self.begin_session(source),
+                    Err(message) => self.capture.notice = notice(message, true, None),
+                }
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => self.capture.opening = None,
+        }
+    }
+
     pub(crate) fn stop_capture(&mut self) {
+        // Cancelling while the chooser is open: the share is dropped when it arrives.
+        self.capture.opening = None;
         self.capture.session.stop();
         self.capture.started_with = None;
         self.capture.status = None;

@@ -31,6 +31,11 @@ to simulate sleep.
 - **Replay/capture:** deterministic fake-provider tests for ring eviction, limits, timestamps,
   post-roll, dropped frames, save races, start/stop, device loss, and full disk. Real capture tests
   run on platform hardware and state their OS/device matrix.
+- **Wayland:** a stand-in desktop on a private D-Bus session bus answers the ScreenCast portal;
+  a real PipeWire server carries a real video node (GStreamer test source); format pods are
+  compared with PipeWire's own builder; C structure layouts are asserted against the headers.
+  Tests skip, saying why, without those tools. Tests against a real portal backend are
+  `#[ignore]`d. See [wayland.md](wayland.md).
 - **Audio:** generated clocked sources verify sync drift, mute/gain, resampling, microphone loss,
   and recovery over long runs.
 - **Export:** generated clips verify cut/trim boundaries, audio sync, container/codec metadata,

@@ -28,7 +28,7 @@ The complete feature proposal and acceptance details are in [`PLAN.md`](PLAN.md)
 | M3 | 🟡 In progress | Microphone and system audio as AAC tracks, mixed or separate, mute/level/push-to-talk, sync against the picture clock, device-loss recovery: done and tested with generated sources; Linux system sound (PulseAudio/PipeWire) and post-roll are done too; real-device runs and macOS system sound are open |
 | M4 | 🟡 Partial | The clip-first library is in place: search, sorting, persistence, thumbnails, favorites, collections, and games. A basic trim is built (see M1); a re-encoding editor, resize and format choices are not |
 | M5 | 🟡 Software done; real-hardware evidence open | Crash and full-disk safety, a soak tool with resource budgets, simulated suspend/resume (stale buffer dropped), keyboard focus ring and named controls for screen readers, `clipcraft-cli diagnose` and a Copy report button, and a Linux release package are built and tested; see the [release checklist](docs/release-checklist.md) for what is still open (signed Windows/macOS installers, two-hour run, real screen reader, real devices) |
-| M6 | ⬜ Planned | macOS and Linux local capture/audio providers |
+| M6 | 🟡 Linux started | Linux: X11 capture, VA-API encoding, PulseAudio/PipeWire sound, and Wayland capture through the portal and PipeWire (ADR 0012; pieces tested, no real desktop chooser seen yet). macOS: not started |
 
 Issue-level tasks require a problem statement, explicit limitations, measurable acceptance criteria,
 and test evidence. See the [`initial backlog`](docs/backlog.md) and

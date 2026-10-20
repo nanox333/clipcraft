@@ -55,8 +55,12 @@ touches ClipCraft's own clips.
 - **Windows.** The Graphics Capture provider and the Windows hotkeys compile
   (`cargo check --target x86_64-pc-windows-gnu`) but have never run. Exclusive-full-screen games,
   the cursor option, protected content, and elevated windows are all untested.
-- **Wayland and macOS** have no provider (Wayland needs the desktop portal; macOS needs
-  ScreenCaptureKit).
+- **macOS** has no provider (it needs ScreenCaptureKit).
+- **Wayland** ([ADR 0012](adr/0012-wayland-capture.md), [docs/wayland.md](wayland.md)): the desktop
+  portal and PipeWire are used. The portal conversation (against a stand-in desktop) and the PipeWire
+  receiver (against a real PipeWire server with a real video node) are tested; **no real portal
+  backend has delivered a picture** (xdg-desktop-portal-wlr refused on headless sway). GNOME and KDE
+  choosers, window sharing, several monitors, and remembering the choice are untested or not built.
 - **Sound** ([ADR 0009](adr/0009-audio-recording.md)). The microphone and the computer's sound
   are recorded as AAC next to the video, as one mixed track or two separate ones, with live level,
   mute (shortcut), push-to-talk, mono microphone, and recovery after a device is lost. Verified

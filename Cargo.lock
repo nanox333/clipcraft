@@ -697,6 +697,7 @@ dependencies = [
  "windows 0.62.2",
  "windows-capture",
  "x11rb 0.14.0",
+ "zbus",
 ]
 
 [[package]]

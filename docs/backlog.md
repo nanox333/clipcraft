@@ -237,3 +237,7 @@ return a clear error; no remote capture service.
 
 **Acceptance:** end-to-end proof names distro, desktop, portal versions, permission flows, audio
 devices, and recovery cases.
+
+**Status:** X11 capture, VA-API, and PulseAudio/PipeWire sound are done; Wayland (portal + PipeWire)
+is built and partly verified, see [docs/wayland.md](wayland.md). Open: a run on GNOME, KDE and a GPU
+wlroots desktop, restoring the chooser's choice, and DMA-BUF buffers.
