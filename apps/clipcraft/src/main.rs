@@ -2640,12 +2640,15 @@ mod tests {
         let mut app = ClipCraftApp::default();
         app.recording.force_window_capture = true;
         app.recording.source = clipcraft_engine::CaptureSource::Desktop;
-        // There is no focused game window in a test, so the person is told what to do.
-        let message = app.capture_target_id().unwrap_err();
-        assert!(
-            message.contains("hotkey") && message.contains("focus"),
-            "{message}"
-        );
+        // With no window in front the person is told what to do; a machine that has one (a CI
+        // runner's desktop) records it, which is what the option is for.
+        match app.capture_target_id() {
+            Err(message) => assert!(
+                message.contains("hotkey") && message.contains("focus"),
+                "{message}"
+            ),
+            Ok(id) => assert!(id.starts_with("window:"), "{id}"),
+        }
         // Without the option, the desktop is simply the first screen (or nothing, with no display).
         app.recording.force_window_capture = false;
         if let Err(message) = app.capture_target_id() {
