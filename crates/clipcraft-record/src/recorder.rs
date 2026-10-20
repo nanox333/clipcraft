@@ -14,9 +14,10 @@ use filmcraft_h264enc::{
 };
 
 use crate::RecordError;
+use crate::audio::{AudioBuffer, AudioEngine, AudioInputStatus, AudioSetup, AudioTrackInfo};
 use crate::convert::{I420, convert, convert_rgba};
 use crate::hardware::{HardwareEncoder, HardwareProvider, HardwareRequest};
-use crate::mux::{ClipFormat, SavedClip, VideoInfo, write_clip};
+use crate::mux::{ClipAudio, ClipFormat, SavedClip, VideoInfo, write_clip};
 use crate::replay::{EncodedSample, ReplayBuffer};
 
 /// How hard the encoder works.
@@ -136,6 +137,8 @@ pub struct RecordStatus {
     pub target_fps: u32,
     /// Which encoder is working, and why when it is not the one asked for.
     pub encoder: String,
+    /// How each sound source is doing; empty when no sound is recorded.
+    pub audio: Vec<AudioInputStatus>,
 }
 
 #[derive(Default)]
@@ -165,6 +168,9 @@ struct Shared {
     buffer: Mutex<ReplayBuffer>,
     video: Mutex<Option<VideoInfo>>,
     encoder: Mutex<String>,
+    audio_buffer: Mutex<AudioBuffer>,
+    audio_tracks: Vec<AudioTrackInfo>,
+    audio_status: Mutex<Vec<AudioInputStatus>>,
     stats: Mutex<Stats>,
     state: Mutex<RecordState>,
     mailbox: Mutex<Mailbox>,
@@ -189,6 +195,7 @@ pub struct Recorder {
     shared: Arc<Shared>,
     capture: Option<JoinHandle<()>>,
     encode: Option<JoinHandle<()>>,
+    audio: Option<JoinHandle<()>>,
 }
 
 impl Recorder {
@@ -197,7 +204,33 @@ impl Recorder {
         source: Box<dyn CaptureSource>,
         config: RecordConfig,
     ) -> Result<Self, RecordError> {
+        Self::start_with_audio(source, config, None)
+    }
+
+    /// Starts capturing `source`, and the sound sources in `audio`, into a replay buffer.
+    pub fn start_with_audio(
+        source: Box<dyn CaptureSource>,
+        config: RecordConfig,
+        audio: Option<AudioSetup>,
+    ) -> Result<Self, RecordError> {
         config.validate()?;
+        let epoch = Instant::now();
+        let (engine, audio_rate, track_count) = match audio {
+            Some(setup) => {
+                let rate = setup.config.sample_rate;
+                let tracks = setup.config.tracks.len();
+                let kbps = setup.config.kbps;
+                let engine = AudioEngine::new(setup).map_err(|_| RecordError::AudioFailed)?;
+                (Some((engine, kbps)), rate, tracks)
+            }
+            None => (None, 48_000, 0),
+        };
+        let audio_tracks = engine.as_ref().map_or_else(Vec::new, |(e, _)| e.tracks());
+        let seconds_kept =
+            i64::from(config.replay_seconds) + i64::from(config.keyframe_seconds) + 3;
+        let audio_bytes = engine.as_ref().map_or(0, |(_, kbps)| {
+            (u64::from(*kbps) * 125 * seconds_kept as u64).saturating_mul(track_count as u64)
+        });
         let window_frames = i64::from(config.replay_seconds) * i64::from(config.fps);
         let shared = Arc::new(Shared {
             stop: AtomicBool::new(false),
@@ -206,6 +239,13 @@ impl Recorder {
             buffer: Mutex::new(ReplayBuffer::new(window_frames, config.max_buffer_bytes)),
             video: Mutex::new(None),
             encoder: Mutex::new(String::from("Starting")),
+            audio_buffer: Mutex::new(AudioBuffer::new(
+                track_count,
+                seconds_kept * i64::from(audio_rate),
+                usize::try_from(audio_bytes.saturating_mul(2).max(1 << 20)).unwrap_or(usize::MAX),
+            )),
+            audio_tracks,
+            audio_status: Mutex::new(Vec::new()),
             stats: Mutex::new(Stats::default()),
             state: Mutex::new(RecordState::Running),
             mailbox: Mutex::new(Mailbox::default()),
@@ -221,15 +261,30 @@ impl Recorder {
         let fps = config.fps;
         let capture = std::thread::Builder::new()
             .name("clipcraft-capture".to_owned())
-            .spawn(move || capture_loop(&capture_shared, source, fps))
+            .spawn(move || capture_loop(&capture_shared, source, fps, epoch))
             .map_err(|_| {
                 shared.stop.store(true, Ordering::SeqCst);
                 RecordError::ThreadFailed
             })?;
+        let sound = match engine {
+            Some((engine, _)) => {
+                let audio_shared = shared.clone();
+                let handle = std::thread::Builder::new()
+                    .name("clipcraft-audio".to_owned())
+                    .spawn(move || audio_loop(&audio_shared, engine, epoch))
+                    .map_err(|_| {
+                        shared.stop.store(true, Ordering::SeqCst);
+                        RecordError::ThreadFailed
+                    })?;
+                Some(handle)
+            }
+            None => None,
+        };
         Ok(Self {
             shared,
             capture: Some(capture),
             encode: Some(encode),
+            audio: sound,
         })
     }
 
@@ -266,6 +321,7 @@ impl Recorder {
             average_encode_ms,
             target_fps: self.shared.fps,
             encoder: lock(&self.shared.encoder).clone(),
+            audio: lock(&self.shared.audio_status).clone(),
         }
     }
 
@@ -281,7 +337,49 @@ impl Recorder {
         let video = lock(&self.shared.video)
             .clone()
             .ok_or(RecordError::NothingBuffered)?;
-        write_clip(&samples, &video, format, path)
+        let mut samples = samples;
+        let first_pts = samples.first().map_or(0, |sample| sample.pts);
+        let audio: Vec<ClipAudio> = {
+            let buffer = lock(&self.shared.audio_buffer);
+            self.shared
+                .audio_tracks
+                .iter()
+                .enumerate()
+                .map(|(index, info)| {
+                    let from = i64::try_from(
+                        i128::from(first_pts) * i128::from(info.sample_rate)
+                            / i128::from(self.shared.fps.max(1)),
+                    )
+                    .unwrap_or(0);
+                    ClipAudio {
+                        info: info.clone(),
+                        packets: buffer.snapshot(index, from),
+                    }
+                })
+                .collect()
+        };
+        // Sound is mixed a moment behind the clock; end the picture where the sound ends so the
+        // two are the same length.
+        let sound_ends = audio
+            .iter()
+            .filter_map(|track| {
+                let last = track.packets.last()?;
+                let end = last.start + crate::audio::AAC_FRAME;
+                Some(
+                    i128::from(end) * i128::from(self.shared.fps)
+                        / i128::from(track.info.sample_rate),
+                )
+            })
+            .min();
+        if let Some(end_frame) = sound_ends {
+            let end_frame = i64::try_from(end_frame).unwrap_or(i64::MAX);
+            let keep = samples
+                .iter()
+                .rposition(|sample| sample.pts < end_frame)
+                .map_or(1, |index| index + 1);
+            samples.truncate(keep.max(1));
+        }
+        write_clip(&samples, &video, &audio, format, path)
     }
 
     /// Asks the threads to stop without waiting for them. Saving still works until the recorder is
@@ -308,7 +406,7 @@ impl Recorder {
     fn shutdown(&mut self) {
         self.shared.stop.store(true, Ordering::SeqCst);
         self.shared.wake.notify_all();
-        for handle in [self.capture.take(), self.encode.take()]
+        for handle in [self.capture.take(), self.encode.take(), self.audio.take()]
             .into_iter()
             .flatten()
         {
@@ -329,8 +427,7 @@ impl Drop for Recorder {
     }
 }
 
-fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32) {
-    let start = Instant::now();
+fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, start: Instant) {
     let nanos_per_second = 1_000_000_000_u128;
     let mut next: u64 = 0;
     while !shared.stop.load(Ordering::SeqCst) {
@@ -367,6 +464,20 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32) {
     }
     lock(&shared.mailbox).capture_done = true;
     shared.wake.notify_all();
+}
+
+fn audio_loop(shared: &Shared, mut engine: AudioEngine, epoch: Instant) {
+    while !shared.stop.load(Ordering::SeqCst) {
+        let packets = engine.tick(epoch.elapsed());
+        if !packets.is_empty() {
+            let mut buffer = lock(&shared.audio_buffer);
+            for (track, packet) in packets {
+                buffer.push(track, packet);
+            }
+        }
+        *lock(&shared.audio_status) = engine.status();
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 enum Stage {

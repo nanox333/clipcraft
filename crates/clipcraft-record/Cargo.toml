@@ -13,6 +13,7 @@ layer = 3
 [dependencies]
 clipcraft-capture.workspace = true
 clipcraft-time.workspace = true
+filmcraft-aac.workspace = true
 filmcraft-h264enc.workspace = true
 filmcraft-isobmff.workspace = true
 filmcraft-matroska.workspace = true

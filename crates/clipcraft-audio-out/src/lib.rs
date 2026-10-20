@@ -7,7 +7,10 @@
 //! (unplugged, or a driver error) sets [`AudioOutput::failed`] so the caller can restart it, and
 //! hands the playback clock back to the wall clock in the meantime.
 
+mod capture;
 mod input;
+
+pub use capture::{CaptureError, CaptureKind, DeviceCapture, SampleQueue};
 
 pub use input::{DeviceNames, MAX_DEVICES, MicMeter, MicTestError, list_devices, peak};
 

@@ -40,6 +40,7 @@ filmcraft-codecs = { git = "https://github.com/storytold/filmcraft", rev = "6c39
 filmcraft-media = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-h264 = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-h264enc = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
+filmcraft-aac = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-matroska = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-platform = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-export = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }

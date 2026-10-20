@@ -330,6 +330,7 @@ name = "clipcraft-audio-out"
 version = "0.1.0"
 dependencies = [
  "clipcraft-player",
+ "clipcraft-record",
  "cpal",
 ]
 
@@ -418,6 +419,7 @@ version = "0.1.0"
 dependencies = [
  "clipcraft-capture",
  "clipcraft-time",
+ "filmcraft-aac",
  "filmcraft-h264enc",
  "filmcraft-isobmff",
  "filmcraft-matroska",

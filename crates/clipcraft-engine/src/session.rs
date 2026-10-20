@@ -8,8 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clipcraft_capture::CaptureSource;
 use clipcraft_record::{
-    ClipFormat, EncoderSpeed, HardwareProvider, RecordConfig, RecordError, RecordStatus, Recorder,
-    SavedClip,
+    AudioConfig, AudioControl, AudioInput, AudioKind, AudioProvider, AudioSetup, ClipFormat,
+    EncoderSpeed, HardwareProvider, RecordConfig, RecordError, RecordStatus, Recorder, SavedClip,
 };
 
 use crate::storage::{StoredClip, cleanup_plan, list_clips};
@@ -64,10 +64,96 @@ pub struct SavedClipReport {
     pub deleted: Vec<PathBuf>,
 }
 
+/// Handles to the live mute and level of each recorded sound source.
+#[derive(Clone, Debug, Default)]
+struct SoundControls {
+    system: Option<AudioControl>,
+    microphone: Option<AudioControl>,
+}
+
+/// The sound sources the settings ask for, opened through `provider`, and what went wrong with
+/// the ones that could not be.
+fn audio_setup(
+    settings: &RecordingSettings,
+    provider: &AudioProvider,
+) -> (Option<AudioSetup>, SoundControls, Vec<String>) {
+    let mut warnings = Vec::new();
+    let mut controls = SoundControls::default();
+    let mut sources = Vec::new();
+    if settings.capture_game_audio {
+        match provider.open(AudioKind::SystemOutput, &settings.output_device) {
+            Ok(source) => {
+                let control = AudioControl::default();
+                control.set_gain_percent(settings.game_audio_percent);
+                controls.system = Some(control.clone());
+                sources.push((AudioKind::SystemOutput, source, control));
+            }
+            Err(why) => warnings.push(why),
+        }
+    }
+    if settings.capture_microphone {
+        match provider.open(AudioKind::Microphone, &settings.microphone_device) {
+            Ok(source) => {
+                let control = AudioControl::default();
+                control.set_gain_percent(settings.microphone_percent);
+                controls.microphone = Some(control.clone());
+                sources.push((AudioKind::Microphone, source, control));
+            }
+            Err(why) => warnings.push(format!("The microphone could not be recorded: {why}")),
+        }
+    }
+    if sources.is_empty() {
+        return (None, controls, warnings);
+    }
+    let separate = settings.separate_audio_tracks && sources.len() > 1;
+    let tracks: Vec<String> = if separate {
+        sources
+            .iter()
+            .map(|(kind, ..)| match kind {
+                AudioKind::SystemOutput => "Game and system".to_owned(),
+                AudioKind::Microphone => "Microphone".to_owned(),
+            })
+            .collect()
+    } else {
+        vec!["Audio".to_owned()]
+    };
+    let channels = if settings.audio_channels == 1 { 1 } else { 2 };
+    let sample_rate = settings.audio_sample_rate;
+    let inputs = sources
+        .into_iter()
+        .enumerate()
+        .map(|(index, (kind, source, control))| {
+            let mut input = AudioInput::new(source, control, if separate { index } else { 0 });
+            input.mono = kind == AudioKind::Microphone && settings.microphone_mono;
+            input
+        })
+        .collect();
+    let mut config = AudioConfig {
+        sample_rate,
+        channels,
+        kbps: if channels == 1 {
+            settings.audio_kbps.min(192)
+        } else {
+            settings.audio_kbps
+        },
+        tracks,
+    };
+    if !config.valid() {
+        config.sample_rate = 48_000;
+        config.kbps = 160;
+    }
+    (Some(AudioSetup { config, inputs }), controls, warnings)
+}
+
 /// The recording in progress, if any. Owned by whoever drives the app.
 #[derive(Default)]
 pub struct CaptureSession {
     recorder: Option<Arc<Recorder>>,
+    sound: SoundControls,
+    warnings: Vec<String>,
+    microphone_off: bool,
+    push_to_talk: bool,
+    talking: bool,
 }
 
 impl CaptureSession {
@@ -90,6 +176,19 @@ impl CaptureSession {
         source: Box<dyn CaptureSource>,
         hardware: Option<HardwareProvider>,
     ) -> Result<(), EngineError> {
+        self.start_with_audio(settings, source, hardware, None)
+    }
+
+    /// As [`CaptureSession::start`], and records the sound the settings ask for from `audio`.
+    /// Sources that cannot be opened are skipped and listed by [`CaptureSession::warnings`]; the
+    /// video is recorded regardless.
+    pub fn start_with_audio(
+        &mut self,
+        settings: &RecordingSettings,
+        source: Box<dyn CaptureSource>,
+        hardware: Option<HardwareProvider>,
+        audio: Option<AudioProvider>,
+    ) -> Result<(), EngineError> {
         if self.recorder.is_some() {
             return Err(EngineError::AlreadyRecording);
         }
@@ -102,14 +201,77 @@ impl CaptureSession {
                 })
             }));
         }
-        let recorder = Recorder::start(source, config).map_err(EngineError::Record)?;
+        let (setup, controls, warnings) = match audio.as_ref() {
+            Some(provider) if settings.capture_game_audio || settings.capture_microphone => {
+                audio_setup(&settings, provider)
+            }
+            _ => (None, SoundControls::default(), Vec::new()),
+        };
+        let recorder =
+            Recorder::start_with_audio(source, config, setup).map_err(EngineError::Record)?;
         self.recorder = Some(Arc::new(recorder));
+        self.sound = controls;
+        self.warnings = warnings;
+        self.microphone_off = false;
+        self.push_to_talk = settings.push_to_talk;
+        self.talking = false;
+        self.apply_microphone();
         Ok(())
+    }
+
+    /// Sound sources that could not be recorded, and why. Empty when all is well.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+
+    /// Whether the microphone is being recorded at all (opened, and not muted for good).
+    pub fn has_microphone(&self) -> bool {
+        self.sound.microphone.is_some()
+    }
+
+    /// Whether the microphone is silenced right now: muted, or waiting for push-to-talk.
+    pub fn microphone_muted(&self) -> bool {
+        self.microphone_off || (self.push_to_talk && !self.talking)
+    }
+
+    fn apply_microphone(&self) {
+        if let Some(control) = self.sound.microphone.as_ref() {
+            control.set_muted(self.microphone_muted());
+        }
+    }
+
+    /// Mutes or unmutes the microphone. Command id `capture.toggle_microphone`.
+    pub fn set_microphone_off(&mut self, off: bool) {
+        self.microphone_off = off;
+        self.apply_microphone();
+    }
+
+    /// Flips the microphone mute and returns whether it is now muted.
+    pub fn toggle_microphone(&mut self) -> bool {
+        self.set_microphone_off(!self.microphone_off);
+        self.microphone_off
+    }
+
+    /// Tells the session whether the push-to-talk key is held.
+    pub fn set_talking(&mut self, held: bool) {
+        self.talking = held;
+        self.apply_microphone();
+    }
+
+    /// Applies the sound levels of `settings` to the running recording.
+    pub fn set_levels(&self, settings: &RecordingSettings) {
+        if let Some(control) = self.sound.system.as_ref() {
+            control.set_gain_percent(settings.game_audio_percent);
+        }
+        if let Some(control) = self.sound.microphone.as_ref() {
+            control.set_gain_percent(settings.microphone_percent);
+        }
     }
 
     /// Stops recording and drops the buffer. Command id `capture.stop`.
     pub fn stop(&mut self) -> Option<RecordStatus> {
         let recorder = self.recorder.take()?;
+        self.sound = SoundControls::default();
         recorder.halt();
         let mut status = recorder.status();
         if status.state == clipcraft_record::RecordState::Running {
@@ -509,5 +671,157 @@ mod tests {
             .unwrap();
         wait_for_video(&plain);
         assert_eq!(plain.status().unwrap().encoder, "CPU");
+    }
+
+    fn tone_provider(microphone_works: bool) -> AudioProvider {
+        use clipcraft_record::{AudioFormat, ToneSource};
+        AudioProvider::new(move |kind, _device| match kind {
+            AudioKind::SystemOutput => Ok(Box::new(ToneSource::new(
+                AudioFormat {
+                    sample_rate: 44_100,
+                    channels: 2,
+                },
+                440.0,
+                0.3,
+            ))),
+            AudioKind::Microphone if microphone_works => Ok(Box::new(ToneSource::new(
+                AudioFormat {
+                    sample_rate: 48_000,
+                    channels: 1,
+                },
+                880.0,
+                0.3,
+            ))),
+            AudioKind::Microphone => Err("no microphone is plugged in".to_owned()),
+        })
+    }
+
+    fn sound_settings(separate: bool) -> RecordingSettings {
+        RecordingSettings {
+            capture_game_audio: true,
+            capture_microphone: true,
+            separate_audio_tracks: separate,
+            ..RecordingSettings::default()
+        }
+    }
+
+    #[test]
+    fn the_settings_choose_one_mixed_track_or_separate_ones() {
+        for (separate, tracks) in [(false, 1), (true, 2)] {
+            let dir = std::env::temp_dir()
+                .join(format!("clipcraft-sound-{}-{separate}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            let settings = sound_settings(separate);
+            let mut session = CaptureSession::new();
+            session
+                .start_with_audio(
+                    &settings,
+                    Box::new(SyntheticSource::new(160, 90, 30)),
+                    None,
+                    Some(tone_provider(true)),
+                )
+                .unwrap();
+            assert!(session.warnings().is_empty());
+            wait_for_video(&session);
+            let report = session.save_clip(&settings, &dir).unwrap();
+            assert_eq!(report.clip.audio_tracks, tracks);
+            assert_eq!(session.status().unwrap().audio.len(), 2);
+            session.stop();
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn a_microphone_that_cannot_open_is_reported_and_the_clip_still_has_game_sound() {
+        let dir = std::env::temp_dir().join(format!("clipcraft-nomic-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let settings = sound_settings(true);
+        let mut session = CaptureSession::new();
+        session
+            .start_with_audio(
+                &settings,
+                Box::new(SyntheticSource::new(160, 90, 30)),
+                None,
+                Some(tone_provider(false)),
+            )
+            .unwrap();
+        assert_eq!(session.warnings().len(), 1);
+        assert!(session.warnings()[0].contains("microphone"));
+        assert!(!session.has_microphone());
+        wait_for_video(&session);
+        assert_eq!(
+            session
+                .save_clip(&settings, &dir)
+                .unwrap()
+                .clip
+                .audio_tracks,
+            1
+        );
+        // With nothing to record, video still records.
+        session.stop();
+        let mut silent = CaptureSession::new();
+        silent
+            .start_with_audio(
+                &sound_settings(false),
+                Box::new(SyntheticSource::new(160, 90, 30)),
+                None,
+                Some(AudioProvider::new(|_, _| Err("no devices".to_owned()))),
+            )
+            .unwrap();
+        assert_eq!(silent.warnings().len(), 2);
+        wait_for_video(&silent);
+        assert_eq!(
+            silent
+                .save_clip(&sound_settings(false), &dir)
+                .unwrap()
+                .clip
+                .audio_tracks,
+            0
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mute_toggle_and_push_to_talk_decide_whether_the_microphone_is_heard() {
+        let mut settings = sound_settings(false);
+        let mut session = CaptureSession::new();
+        session
+            .start_with_audio(
+                &settings,
+                Box::new(SyntheticSource::new(160, 90, 30)),
+                None,
+                Some(tone_provider(true)),
+            )
+            .unwrap();
+        assert!(session.has_microphone() && !session.microphone_muted());
+        assert!(session.toggle_microphone());
+        assert!(session.microphone_muted());
+        assert!(!session.toggle_microphone());
+        session.stop();
+
+        settings.push_to_talk = true;
+        session
+            .start_with_audio(
+                &settings,
+                Box::new(SyntheticSource::new(160, 90, 30)),
+                None,
+                Some(tone_provider(true)),
+            )
+            .unwrap();
+        // Silent until the key is held.
+        assert!(session.microphone_muted());
+        session.set_talking(true);
+        assert!(!session.microphone_muted());
+        // A muted microphone stays muted while the key is held.
+        session.set_microphone_off(true);
+        assert!(session.microphone_muted());
+        session.set_microphone_off(false);
+        session.set_talking(false);
+        assert!(session.microphone_muted());
+        // Levels change live.
+        settings.microphone_percent = 30;
+        session.set_levels(&settings);
+        session.stop();
+        assert!(!session.has_microphone());
     }
 }

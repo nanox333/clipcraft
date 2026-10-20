@@ -12,6 +12,7 @@ layer = 5
 
 [dependencies]
 clipcraft-player.workspace = true
+clipcraft-record.workspace = true
 cpal.workspace = true
 
 [lints]

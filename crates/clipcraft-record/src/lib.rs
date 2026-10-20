@@ -8,8 +8,10 @@
 //! bytes, and the time spent waiting. Pictures the encoder cannot keep up with are dropped and
 //! counted, never queued without limit.
 //!
-//! Sound is not recorded here yet; that is milestone M3.
+//! Sound comes from [`AudioSource`]s (microphone, system output), is mixed against the same clock
+//! the pictures use, encoded as AAC, and buffered next to the video.
 
+pub mod audio;
 pub mod convert;
 pub mod hardware;
 pub mod mux;
@@ -18,8 +20,12 @@ pub mod replay;
 
 use std::fmt;
 
+pub use audio::{
+    AudioConfig, AudioControl, AudioError, AudioFormat, AudioInput, AudioInputStatus, AudioKind,
+    AudioProvider, AudioSetup, AudioSource, ToneSource,
+};
 pub use hardware::{HardwareEncoder, HardwarePacket, HardwareProvider, HardwareRequest};
-pub use mux::{ClipFormat, SavedClip, VideoInfo, write_clip};
+pub use mux::{ClipAudio, ClipFormat, SavedClip, VideoInfo, write_clip};
 pub use recorder::{EncoderSpeed, RecordConfig, RecordState, RecordStatus, Recorder, output_size};
 
 /// Why recording or saving failed.
@@ -49,6 +55,8 @@ pub enum RecordError {
     BadConfig,
     /// A recording thread could not be started.
     ThreadFailed,
+    /// The sound could not be set up.
+    AudioFailed,
 }
 
 impl fmt::Display for RecordError {
@@ -73,6 +81,7 @@ impl fmt::Display for RecordError {
             Self::WriteFailed => formatter.write_str("The clip could not be written."),
             Self::BadConfig => formatter.write_str("These recording settings cannot be used."),
             Self::ThreadFailed => formatter.write_str("Recording could not be started."),
+            Self::AudioFailed => formatter.write_str("The sound could not be set up."),
         }
     }
 }

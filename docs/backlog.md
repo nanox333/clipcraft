@@ -109,6 +109,8 @@ behavior, repeated start/stop, and no loss of already-saved clips.
 
 ### M3.1 — Game/system audio and microphone tracks
 
+**Status:** implemented and verified with generated sources (see `docs/gaps.md` and ADR 0009); real-device runs are open.
+
 **Requirements:** capture synchronized audio tracks, select/mute/gain sources, provide a mic test,
 and recover when a device disconnects.
 

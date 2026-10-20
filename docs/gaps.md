@@ -57,10 +57,21 @@ touches ClipCraft's own clips.
   the cursor option, protected content, and elevated windows are all untested.
 - **Wayland and macOS** have no provider (Wayland needs the desktop portal; macOS needs
   ScreenCaptureKit).
-- **Sound.** Nothing records audio yet (M3). The microphone, push-to-talk, separate-tracks, and
-  game-audio settings are saved and shown but do nothing. The mute and screenshot hotkeys are
-  saved but not wired.
-- **Settings not yet applied:** H.265, WebM, and the audio details.
+- **Sound** ([ADR 0009](adr/0009-audio-recording.md)). The microphone and the computer's sound
+  are recorded as AAC next to the video, as one mixed track or two separate ones, with live level,
+  mute (shortcut), push-to-talk, mono microphone, and recovery after a device is lost. Verified
+  here with generated tones through the whole recorder, with ffprobe and ffmpeg as judges: tones
+  at the right pitch and level on the right track in MP4 and MKV, mixing, mute and gain, sound
+  length equal to picture length, a click lining up with its picture within 40 ms, a device clock
+  1.5 % fast or slow staying in step, a device lost and recovered, bad layouts refused. **Never run
+  with a real microphone or speaker** (this container has no sound card), so the device layer
+  (`DeviceCapture`, cpal) is untested beyond its queue. Known limits: game/system sound is
+  recorded by loopback on Windows only; on Linux it needs a "Monitor of ..." input to be offered
+  to ALSA (PipeWire and PulseAudio setups often hide it behind the `pulse` device), and macOS has
+  none; resampling is linear; per-application audio is not separated; the screenshot hotkey is
+  saved but not wired; push-to-talk works through the global hotkey only (not when ClipCraft
+  has the focus). Sound and picture of a clip can differ by up to a frame at the very end.
+- **Settings not yet applied:** H.265 and WebM.
 - **Speed.** Measured on a shared 4-core container with a software-rendered video playing on the
   same screen, using the Fast preset: 360p30 keeps up (10 ms per picture); 720p30 keeps up (25 ms;
   241 of 241 pictures); 720p60 encodes about two of every three pictures (it drops a third); 1080p

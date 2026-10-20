@@ -21,6 +21,23 @@ use crate::settings::GpuProbe;
 /// Hotkey ids handed to the platform listener.
 const SAVE_ID: u32 = 1;
 const TOGGLE_ID: u32 = 2;
+const MICROPHONE_ID: u32 = 3;
+const TALK_ID: u32 = 4;
+
+/// Opens microphones and the computer's own sound for the recorder.
+fn audio_provider() -> clipcraft_record::AudioProvider {
+    use clipcraft_audio_out::{CaptureKind, DeviceCapture};
+    use clipcraft_record::AudioKind;
+    clipcraft_record::AudioProvider::new(|kind, device| {
+        let kind = match kind {
+            AudioKind::Microphone => CaptureKind::Microphone,
+            AudioKind::SystemOutput => CaptureKind::SystemOutput,
+        };
+        DeviceCapture::open(kind, device)
+            .map(|capture| Box::new(capture) as Box<dyn clipcraft_record::AudioSource>)
+            .map_err(|error| error.to_string())
+    })
+}
 
 /// A short message shown in the top bar.
 pub struct Notice {
@@ -75,6 +92,16 @@ impl CaptureState {
                 || started.force_window_capture != current.force_window_capture
                 || started.hdr_compatibility != current.hdr_compatibility
                 || started.capture_cursor != current.capture_cursor
+                || started.capture_game_audio != current.capture_game_audio
+                || started.capture_microphone != current.capture_microphone
+                || started.microphone_device != current.microphone_device
+                || started.output_device != current.output_device
+                || started.separate_audio_tracks != current.separate_audio_tracks
+                || started.push_to_talk != current.push_to_talk
+                || started.microphone_mono != current.microphone_mono
+                || started.audio_sample_rate != current.audio_sample_rate
+                || started.audio_channels != current.audio_channels
+                || started.audio_kbps != current.audio_kbps
         })
     }
 
@@ -110,16 +137,26 @@ impl ClipCraftApp {
         self.poll_gpu_probe();
         self.sync_hotkeys();
         let mut actions = Vec::new();
+        let mut talking = None;
         if let Some(listener) = self.capture.listener.as_ref() {
             while let Some(event) = listener.try_next() {
-                if event.pressed {
+                if event.id == TALK_ID {
+                    talking = Some(event.pressed);
+                } else if event.pressed {
                     match event.id {
                         SAVE_ID => actions.push(HotkeyAction::SaveClip),
                         TOGGLE_ID => actions.push(HotkeyAction::ToggleRecording),
+                        MICROPHONE_ID => actions.push(HotkeyAction::ToggleMicrophone),
                         _ => {}
                     }
                 }
             }
+        }
+        if let Some(held) = talking {
+            self.capture.session.set_talking(held);
+        }
+        if self.capture.is_active() {
+            self.capture.session.set_levels(&self.recording);
         }
         // Shortcuts pressed while ClipCraft has the focus, when no text box is being typed in.
         let typing = context.memory(|memory| memory.focused().is_some());
@@ -127,7 +164,11 @@ impl ClipCraftApp {
             && self.settings_state.capturing.is_none()
             && let Some(pressed) = context.input(crate::settings::pressed_shortcut_in)
         {
-            for action in [HotkeyAction::SaveClip, HotkeyAction::ToggleRecording] {
+            for action in [
+                HotkeyAction::SaveClip,
+                HotkeyAction::ToggleRecording,
+                HotkeyAction::ToggleMicrophone,
+            ] {
                 if self.recording.hotkeys.get(action) == pressed {
                     actions.push(action);
                 }
@@ -145,6 +186,9 @@ impl ClipCraftApp {
             match action {
                 HotkeyAction::SaveClip => self.save_clip(),
                 HotkeyAction::ToggleRecording => self.toggle_capture(),
+                HotkeyAction::ToggleMicrophone if self.capture.session.has_microphone() => {
+                    self.capture.session.toggle_microphone();
+                }
                 _ => {}
             }
         }
@@ -213,6 +257,8 @@ impl ClipCraftApp {
         let wanted: Vec<(u32, String)> = [
             (SAVE_ID, HotkeyAction::SaveClip),
             (TOGGLE_ID, HotkeyAction::ToggleRecording),
+            (MICROPHONE_ID, HotkeyAction::ToggleMicrophone),
+            (TALK_ID, HotkeyAction::PushToTalk),
         ]
         .into_iter()
         .filter_map(|(id, action)| {
@@ -327,14 +373,23 @@ impl ClipCraftApp {
         let hardware = (self.recording.video_encoder == clipcraft_engine::VideoEncoder::Gpu)
             .then(clipcraft_platform::hardware_provider)
             .flatten();
-        match self
-            .capture
-            .session
-            .start(&self.recording, source, hardware)
-        {
+        match self.capture.session.start_with_audio(
+            &self.recording,
+            source,
+            hardware,
+            Some(audio_provider()),
+        ) {
             Ok(()) => {
                 self.capture.started_with = Some(self.recording.clone());
                 self.capture.status = self.capture.session.status();
+                let warnings = self.capture.session.warnings().join(" ");
+                if !warnings.is_empty() {
+                    self.capture.notice = notice(
+                        format!("Recording without some sound. {warnings}"),
+                        true,
+                        None,
+                    );
+                }
             }
             Err(error) => self.capture.notice = notice(error.to_string(), true, None),
         }
@@ -516,6 +571,32 @@ impl ClipCraftApp {
                     .size(12.5),
             )
             .on_hover_text(format!("Encoder: {}", status.encoder));
+            let lost: Vec<&str> = status
+                .audio
+                .iter()
+                .filter(|input| input.lost)
+                .map(|input| input.name.as_str())
+                .collect();
+            if !lost.is_empty() {
+                ui.label(
+                    RichText::new(format!("\u{00b7} sound lost: {}", lost.join(", ")))
+                        .color(DANGER)
+                        .size(12.5),
+                )
+                .on_hover_text("ClipCraft keeps trying to bring the device back.");
+            } else if self.capture.session.has_microphone() {
+                let muted = self.capture.session.microphone_muted();
+                ui.label(
+                    RichText::new(if muted {
+                        "\u{00b7} mic off"
+                    } else {
+                        "\u{00b7} mic on"
+                    })
+                    .color(if muted { FAINT } else { MUTED })
+                    .size(12.5),
+                )
+                .on_hover_text("Mute or unmute with the microphone shortcut in Settings.");
+            }
             if behind {
                 ui.label(
                     RichText::new(format!("\u{00b7} dropping {dropped:.0}% of frames"))

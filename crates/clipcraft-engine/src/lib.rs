@@ -593,6 +593,8 @@ pub const fn command_ids() -> &'static [&'static str] {
         "capture.stop",
         "capture.status",
         "capture.save_clip",
+        "capture.toggle_microphone",
+        "capture.push_to_talk",
         "recording.save_settings",
     ]
 }
