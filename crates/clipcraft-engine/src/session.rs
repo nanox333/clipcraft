@@ -567,6 +567,43 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn trimming_leaves_unfinished_files_and_non_videos_alone_and_counts_sub_folders() {
+        let dir = std::env::temp_dir().join(format!("clipcraft-trim-edge-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("Games")).unwrap();
+        let make = |relative: &str, size: usize, age: u64| {
+            let path = dir.join(relative);
+            fs::write(&path, vec![0_u8; size]).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(SystemTime::now() - Duration::from_secs(age))
+                .unwrap();
+            path
+        };
+        // Files that are being written or are not clips must survive any limit.
+        let partial = make("ClipCraft 2019-01-01 00-00-00.mp4.partial", 500, 9_000);
+        let recovery = make("ClipCraft 2019-01-01 00-00-01.mp4.recovery", 500, 9_000);
+        let notes = make("ClipCraft notes.txt", 500, 9_000);
+        // A clip the person filed away in a sub-folder is still one of ours, and is the oldest.
+        let filed = make("Games/ClipCraft 2020-01-01 00-00-00.mp4", 100, 3_000);
+        let newer = make("ClipCraft 2021-01-01 00-00-00.mp4", 100, 2_000);
+        let fresh = make("ClipCraft 2022-01-01 00-00-00.mp4", 100, 0);
+        // 300 bytes of clips against a 250 byte limit: only the oldest goes, from its sub-folder.
+        let deleted = trim_to_limit(&dir, &fresh, 250);
+        assert_eq!(deleted, vec![filed.clone()]);
+        assert!(newer.exists() && fresh.exists());
+        for kept in [&partial, &recovery, &notes] {
+            assert!(kept.exists(), "{kept:?} must not be touched");
+        }
+        // A folder that is already under the limit loses nothing, and a missing one is fine.
+        assert!(trim_to_limit(&dir, &fresh, 10_000).is_empty());
+        assert!(trim_to_limit(&dir.join("absent"), &fresh, 0).is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     fn wait_for_video(session: &CaptureSession) {
         let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
