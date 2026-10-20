@@ -497,7 +497,7 @@ impl RecordingSettings {
 /// Heights offered in the UI.
 pub const HEIGHTS: [u32; 6] = [360, 480, 720, 1080, 1440, 2160];
 /// Frame rates offered in the UI.
-pub const FRAME_RATES: [u32; 3] = [24, 30, 60];
+pub const FRAME_RATES: [u32; 4] = [24, 30, 60, 120];
 /// Replay lengths offered in the UI.
 pub const REPLAY_SECONDS: [u32; 5] = [15, 30, 60, 120, 300];
 /// Seconds recorded after the save hotkey that the UI offers.

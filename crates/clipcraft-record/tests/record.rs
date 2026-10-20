@@ -316,3 +316,29 @@ fn an_unwritable_folder_is_reported_and_leaves_no_partial_file() {
     let result = recorder.save_clip(5, ClipFormat::Mp4, &blocker.join("clip.mp4"));
     assert!(result.is_err());
 }
+
+#[test]
+fn a_120_fps_recording_makes_a_valid_clip() {
+    if !tool("ffprobe") {
+        return;
+    }
+    let scratch = Scratch::new("fps120");
+    let mut fast = config();
+    fast.fps = 120;
+    fast.output_height = 90;
+    let recorder = Recorder::start(Box::new(SyntheticSource::new(160, 90, 120)), fast).unwrap();
+    wait_for(&recorder, "two seconds of video", |s| {
+        s.buffered_seconds >= 2.0
+    });
+    let path = scratch.file("fast.mp4");
+    recorder.save_clip(2, ClipFormat::Mp4, &path).unwrap();
+    let probe = probe(&path);
+    assert_eq!(probe.codec, "h264");
+    assert!(
+        probe.frame_rate.starts_with("120/") || probe.frame_rate.starts_with("1"),
+        "{}",
+        probe.frame_rate
+    );
+    assert!(probe.frames > 100, "{} frames", probe.frames);
+    decodes_cleanly(&path);
+}
