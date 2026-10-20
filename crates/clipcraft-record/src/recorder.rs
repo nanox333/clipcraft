@@ -332,6 +332,28 @@ impl Recorder {
         format: ClipFormat,
         path: &Path,
     ) -> Result<SavedClip, RecordError> {
+        let (samples, video, audio) = self.clip_parts(seconds)?;
+        write_clip(&samples, &video, &audio, format, path)
+    }
+
+    /// Writes the first `fragments` fragments of the clip's crash-safe copy to `path` and stops,
+    /// as if the program had died there. For tests of recovery only.
+    #[doc(hidden)]
+    pub fn save_clip_interrupted(
+        &self,
+        seconds: u32,
+        path: &Path,
+        fragments: usize,
+    ) -> Result<(), RecordError> {
+        let (samples, video, audio) = self.clip_parts(seconds)?;
+        crate::mux::write_clip_interrupted(&samples, &video, &audio, path, fragments)
+    }
+
+    /// The pictures, stream description, and sound that make up the newest `seconds`.
+    fn clip_parts(
+        &self,
+        seconds: u32,
+    ) -> Result<(Vec<EncodedSample>, VideoInfo, Vec<ClipAudio>), RecordError> {
         let frames = i64::from(seconds.max(1)) * i64::from(self.shared.fps);
         let samples = lock(&self.shared.buffer).snapshot(frames);
         let video = lock(&self.shared.video)
@@ -379,7 +401,7 @@ impl Recorder {
                 .map_or(1, |index| index + 1);
             samples.truncate(keep.max(1));
         }
-        write_clip(&samples, &video, &audio, format, path)
+        Ok((samples, video, audio))
     }
 
     /// Asks the threads to stop without waiting for them. Saving still works until the recorder is

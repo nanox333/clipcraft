@@ -74,7 +74,14 @@ fn recover_interrupted_after(folder: &Path, settle: Duration) -> Recovery {
     let Ok(listing) = fs::read_dir(folder) else {
         return recovery;
     };
-    for entry in listing.filter_map(Result::ok).take(MAX_ENTRIES) {
+    // Unfinished files first, crash-safe copies after: a finished-but-unrenamed clip is kept as
+    // it is, and its copy is then just left over.
+    let mut entries: Vec<fs::DirEntry> = listing.filter_map(Result::ok).take(MAX_ENTRIES).collect();
+    entries.sort_by_key(|entry| {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        (name.ends_with(".recovery"), name)
+    });
+    for entry in entries {
         let path = entry.path();
         let Some(name) = path
             .file_name()
@@ -82,10 +89,14 @@ fn recover_interrupted_after(folder: &Path, settle: Duration) -> Recovery {
         else {
             continue;
         };
-        let Some(base) = name.strip_suffix(".partial") else {
+        let recovery_copy = name.ends_with(".recovery");
+        let Some(base) = name
+            .strip_suffix(".partial")
+            .or_else(|| name.strip_suffix(".recovery"))
+        else {
             continue;
         };
-        if !is_ours(base) {
+        if !is_ours(base) || (recovery_copy && !base.ends_with(".mp4")) {
             continue;
         }
         let Ok(metadata) = entry.metadata() else {
@@ -101,15 +112,21 @@ fn recover_interrupted_after(folder: &Path, settle: Duration) -> Recovery {
         if age.is_none_or(|age| age < settle) {
             continue;
         }
-        if base.ends_with(".mkv")
-            && clipcraft_media::probe_file(&path)
-                .is_ok_and(|probe| probe.width.is_some() && probe.height.is_some())
+        if recovery_copy {
+            remake_from_recovery_copy(folder, base, &path, &mut recovery);
+            continue;
+        }
+        // A cut-off Matroska file, or an MP4 that was finished but not yet renamed, may still play.
+        if clipcraft_media::probe_file(&path)
+            .is_ok_and(|probe| probe.width.is_some() && probe.height.is_some())
             && let Some(target) = free_name(folder, base)
             && fs::rename(&path, &target).is_ok()
         {
             recovery.salvaged.push(target);
             continue;
         }
+        // An MP4 with no index is unusable, but its crash-safe copy may be there; the copy is
+        // handled when its own turn comes, and an unusable half-written file is removed.
         if fs::remove_file(&path).is_ok() {
             recovery.removed.push(path);
         }
@@ -117,6 +134,92 @@ fn recover_interrupted_after(folder: &Path, settle: Duration) -> Recovery {
     recovery.removed.sort();
     recovery.salvaged.sort();
     recovery
+}
+
+/// Turns the crash-safe copy of a clip (a fragmented MP4, playable up to its last complete
+/// fragment) back into an ordinary clip.
+fn remake_from_recovery_copy(folder: &Path, base: &str, copy: &Path, recovery: &mut Recovery) {
+    let target = folder.join(base);
+    // The clip was finished (or already recovered from its other file); the copy is just left over.
+    if target.exists() {
+        let _ = fs::remove_file(copy);
+        return;
+    }
+    let remade = complete_prefix(copy)
+        .and_then(|keep| {
+            let file = fs::OpenOptions::new().write(true).open(copy).ok()?;
+            file.set_len(keep).ok()
+        })
+        .and_then(|()| {
+            let never = std::sync::atomic::AtomicBool::new(false);
+            clipcraft_export::trim_to_mp4(
+                &clipcraft_export::TrimRequest {
+                    input: copy.to_path_buf(),
+                    output: target.clone(),
+                    start: clipcraft_time::Tick::ZERO,
+                    end: clipcraft_time::Tick::from_seconds_f64(7.0 * 24.0 * 3600.0),
+                },
+                &mut |_| {},
+                &never,
+            )
+            .ok()
+        })
+        .is_some();
+    if remade {
+        recovery.salvaged.push(target);
+    } else {
+        recovery.removed.push(copy.to_path_buf());
+    }
+    let _ = fs::remove_file(copy);
+}
+
+/// The length of the longest prefix of a fragmented MP4 that holds its header and only whole
+/// fragments, or `None` when even the header is incomplete.
+fn complete_prefix(path: &Path) -> Option<u64> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = fs::File::open(path).ok()?;
+    let length = file.metadata().ok()?.len();
+    let (mut offset, mut good, mut moov_seen, mut fragment_header_end) =
+        (0_u64, None, false, false);
+    for _ in 0..1_000_000 {
+        if offset.checked_add(8)? > length {
+            break;
+        }
+        file.seek(SeekFrom::Start(offset)).ok()?;
+        let mut header = [0_u8; 16];
+        let wanted = usize::try_from((length - offset).min(16)).ok()?;
+        file.read_exact(header.get_mut(..wanted)?).ok()?;
+        let declared = u64::from(u32::from_be_bytes([
+            header[0], header[1], header[2], header[3],
+        ]));
+        let size = match declared {
+            0 => length - offset,
+            1 if wanted >= 16 => u64::from_be_bytes([
+                header[8], header[9], header[10], header[11], header[12], header[13], header[14],
+                header[15],
+            ]),
+            1 => break,
+            other => other,
+        };
+        let end = offset.checked_add(size)?;
+        if size < 8 || end > length {
+            break;
+        }
+        match &header[4..8] {
+            b"moov" => {
+                moov_seen = true;
+                good = Some(end);
+            }
+            b"moof" => fragment_header_end = true,
+            b"mdat" if moov_seen && fragment_header_end => {
+                good = Some(end);
+                fragment_header_end = false;
+            }
+            _ => {}
+        }
+        offset = end;
+    }
+    good
 }
 
 /// `base`, or `base (recovered)`, whichever does not exist yet.
@@ -307,6 +410,184 @@ mod tests {
                 .0
                 .join("ClipCraft 2026-10-20 07-15-36.mkv.partial")
                 .exists()
+        );
+    }
+
+    /// A recorder with a tone on its sound, five seconds in, for the crash-safe copy tests.
+    fn recorder_with_sound() -> clipcraft_record::Recorder {
+        use clipcraft_capture::SyntheticSource;
+        use clipcraft_capture::reframe::{Framing, OutputShape};
+        use clipcraft_record::{
+            AudioConfig, AudioControl, AudioFormat, AudioInput, AudioSetup, EncoderSpeed,
+            RecordConfig, Recorder, ToneSource,
+        };
+        let recorder = Recorder::start_with_audio(
+            Box::new(SyntheticSource::new(160, 90, 30)),
+            RecordConfig {
+                output_height: 90,
+                shape: OutputShape::Source,
+                framing: Framing::Original,
+                fps: 30,
+                video_kbps: 800,
+                constant_bitrate: false,
+                speed: EncoderSpeed::Fast,
+                keyframe_seconds: 1,
+                replay_seconds: 20,
+                max_buffer_bytes: 64 * 1024 * 1024,
+                threads: 2,
+                hardware: None,
+            },
+            Some(AudioSetup {
+                config: AudioConfig {
+                    sample_rate: 48_000,
+                    channels: 2,
+                    kbps: 128,
+                    tracks: vec!["Audio".to_owned()],
+                },
+                inputs: vec![AudioInput::new(
+                    Box::new(ToneSource::new(
+                        AudioFormat {
+                            sample_rate: 48_000,
+                            channels: 2,
+                        },
+                        440.0,
+                        0.4,
+                    )),
+                    AudioControl::default(),
+                    0,
+                )],
+            }),
+        )
+        .expect("recorder");
+        let deadline = std::time::Instant::now() + Duration::from_secs(40);
+        while recorder.status().buffered_seconds < 5.0 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        recorder
+    }
+
+    /// Duration, whether sound is present, and whether it decodes without a complaint.
+    fn judge(path: &Path) -> Option<(f64, bool, bool)> {
+        let probe = std::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration:stream=codec_type",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(path)
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&probe.stdout).into_owned();
+        let duration = text
+            .lines()
+            .filter_map(|l| l.trim().parse::<f64>().ok())
+            .fold(0.0, f64::max);
+        let decoded = std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(path)
+            .args(["-f", "null", "-"])
+            .output()
+            .ok()?;
+        Some((
+            duration,
+            text.contains("audio"),
+            decoded.status.success() && decoded.stderr.is_empty(),
+        ))
+    }
+
+    #[test]
+    fn a_cut_off_mp4_is_recovered_from_its_crash_safe_copy_with_picture_and_sound() {
+        let scratch = Scratch::new("mp4-copy");
+        let recorder = recorder_with_sound();
+        let name = "ClipCraft 2026-10-20 07-15-36.mp4";
+        // The program died after two fragments: the copy has them, the real file is half written.
+        recorder
+            .save_clip_interrupted(20, &scratch.0.join(format!("{name}.recovery")), 2)
+            .expect("copy");
+        fs::write(
+            scratch.0.join(format!("{name}.partial")),
+            b"half an mp4 with no index",
+        )
+        .expect("partial");
+        let recovery = recover_interrupted_after(&scratch.0, Duration::ZERO);
+        assert_eq!(
+            recovery.salvaged,
+            vec![scratch.0.join(name)],
+            "{recovery:?}"
+        );
+        assert_eq!(
+            recovery.removed.len(),
+            1,
+            "the unusable half file goes: {recovery:?}"
+        );
+        assert!(!scratch.0.join(format!("{name}.recovery")).exists());
+        assert!(!scratch.0.join(format!("{name}.partial")).exists());
+        let probe = clipcraft_media::probe_file(&scratch.0.join(name)).expect("probes");
+        assert_eq!(
+            (probe.width, probe.height, probe.audio_tracks),
+            (Some(160), Some(90), 1)
+        );
+        if let Some((seconds, has_sound, clean)) = judge(&scratch.0.join(name)) {
+            assert!((1.5..=4.0).contains(&seconds), "{seconds} s");
+            assert!(has_sound && clean, "sound {has_sound}, clean {clean}");
+        }
+    }
+
+    #[test]
+    fn a_crash_safe_copy_cut_off_mid_fragment_keeps_everything_before_the_cut() {
+        let scratch = Scratch::new("mid-fragment");
+        let recorder = recorder_with_sound();
+        let name = "ClipCraft 2026-10-20 07-15-37.mp4";
+        let copy = scratch.0.join(format!("{name}.recovery"));
+        // The whole copy, then cut at points inside different fragments.
+        recorder
+            .save_clip_interrupted(20, &copy, 10_000)
+            .expect("copy");
+        let whole = fs::read(&copy).expect("read");
+        let mut longest = 0.0_f64;
+        for percent in [35_usize, 55, 80] {
+            fs::write(&copy, &whole[..whole.len() * percent / 100]).expect("cut");
+            let recovery = recover_interrupted_after(&scratch.0, Duration::ZERO);
+            assert_eq!(recovery.salvaged.len(), 1, "{percent}%: {recovery:?}");
+            let kept = scratch.0.join(name);
+            if let Some((seconds, _, clean)) = judge(&kept) {
+                assert!(clean, "{percent}% does not decode cleanly");
+                assert!(
+                    seconds > longest,
+                    "{percent}%: {seconds} s should beat {longest} s"
+                );
+                longest = seconds;
+            }
+            fs::remove_file(&kept).expect("clear");
+        }
+        // A copy cut inside the header, before any fragment, is not a clip.
+        fs::write(&copy, &whole[..40]).expect("cut");
+        let nothing = recover_interrupted_after(&scratch.0, Duration::ZERO);
+        assert!(
+            nothing.salvaged.is_empty() && nothing.removed.len() == 1,
+            "{nothing:?}"
+        );
+    }
+
+    #[test]
+    fn a_copy_left_after_a_finished_clip_is_just_removed() {
+        let scratch = Scratch::new("leftover");
+        let name = "ClipCraft 2026-10-20 07-15-38.mp4";
+        fs::write(scratch.0.join(name), b"the real clip").expect("clip");
+        fs::write(scratch.0.join(format!("{name}.recovery")), b"copy").expect("copy");
+        let recovery = recover_interrupted_after(&scratch.0, Duration::ZERO);
+        assert!(
+            recovery.is_empty(),
+            "nothing to tell the person: {recovery:?}"
+        );
+        assert!(!scratch.0.join(format!("{name}.recovery")).exists());
+        assert_eq!(
+            fs::read(scratch.0.join(name)).expect("clip"),
+            b"the real clip"
         );
     }
 }

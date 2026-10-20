@@ -333,8 +333,12 @@ impl CaptureSession {
         // Refuse early, before writing anything, when the disk cannot hold what is buffered.
         // Skipped when the free space is not known.
         let buffered = recorder.status().buffered_bytes;
+        // An MP4 is written twice (a crash-safe copy first), so it needs twice the room while it
+        // is being saved.
+        let copies = if format == ClipFormat::Mp4 { 2 } else { 1 };
         let needed = buffered
             .saturating_add(buffered / 16)
+            .saturating_mul(copies)
             .saturating_add(4 * 1024 * 1024);
         if crate::storage::storage_usage(folder)
             .free_bytes

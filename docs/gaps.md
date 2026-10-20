@@ -83,7 +83,11 @@ touches ClipCraft's own clips.
   settings and the library index are written to a temporary file and renamed, so an interruption
   never damages what exists. On launch ClipCraft removes its own unfinished `.partial` clips
   (and keeps a cut-off Matroska one that still plays) and says so. A damaged settings or index file
-  is moved to `*.damaged` instead of being overwritten. A save refuses before writing when the disk
+  is moved to `*.damaged` instead of being overwritten. An MP4 is first written as a fragmented
+  crash-safe copy (`.mp4.recovery`, playable up to its last complete fragment) and then as the
+  ordinary clip; after a crash the copy is turned back into a clip, with sound, up to the last
+  whole fragment (one per keyframe interval). MP4 saves therefore write the clip twice and need
+  twice the room while saving. A save refuses before writing when the disk
   cannot hold the buffer, and a disk that fills mid-save (tested on a real 2-16 MB tmpfs) reports
   "disk is full", leaves no partial file, keeps earlier clips, never deletes older clips to make
   room, and recording carries on. Not covered: the replay buffer itself lives in memory, so a

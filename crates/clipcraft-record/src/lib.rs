@@ -25,7 +25,7 @@ pub use audio::{
     AudioProvider, AudioSetup, AudioSource, SampleQueue, ToneSource,
 };
 pub use hardware::{HardwareEncoder, HardwarePacket, HardwareProvider, HardwareRequest};
-pub use mux::{ClipAudio, ClipFormat, SavedClip, VideoInfo, write_clip};
+pub use mux::{ClipAudio, ClipFormat, SavedClip, VideoInfo, write_clip, write_clip_interrupted};
 pub use recorder::{EncoderSpeed, RecordConfig, RecordState, RecordStatus, Recorder, output_size};
 
 /// Why recording or saving failed.

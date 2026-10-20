@@ -434,3 +434,23 @@ fn a_disk_that_fills_during_a_save_leaves_no_partial_file_and_keeps_earlier_clip
         .save_clip(3, ClipFormat::Mp4, &disk.0.join("third.mp4"))
         .unwrap();
 }
+
+#[test]
+fn a_finished_mp4_save_leaves_only_the_clip_behind() {
+    let scratch = Scratch::new("tidy");
+    let recorder = Recorder::start(Box::new(SyntheticSource::new(160, 90, 30)), config()).unwrap();
+    wait_for(&recorder, "two seconds", |s| s.buffered_seconds >= 2.0);
+    for (format, name) in [(ClipFormat::Mp4, "tidy.mp4"), (ClipFormat::Mkv, "tidy.mkv")] {
+        recorder.save_clip(2, format, &scratch.file(name)).unwrap();
+    }
+    let mut names: Vec<String> = std::fs::read_dir(&scratch.0)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["tidy.mkv", "tidy.mp4"],
+        "no crash-safe copy or partial may remain"
+    );
+}
