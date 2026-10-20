@@ -1,3 +1,7 @@
+// Release builds on Windows are window programs: without this Windows opens a terminal beside
+// the app. Debug builds keep the console so development output stays visible.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use clipcraft_engine::{
     Command, CommandOutput, EngineError, LibraryScanResult, MediaEntry, MediaProbe, MetaEdit,
     RecordingSettings, apply_edit, default_index_path, default_thumbnail_dir, execute, game_of,
