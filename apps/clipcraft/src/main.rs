@@ -1534,28 +1534,49 @@ impl ClipCraftApp {
         ui.label(RichText::new(self.settings_tab.help()).color(MUTED));
         ui.add_space(12.0);
         if self.capture.is_stale(&self.recording) {
+            let mut restart = false;
             egui::Frame::new()
-                .fill(Color32::from_rgba_unmultiplied(190, 255, 43, 18))
+                .fill(Color32::from_rgba_unmultiplied(190, 255, 43, 14))
                 .stroke(Stroke::new(
                     1.0_f32,
-                    Color32::from_rgba_unmultiplied(190, 255, 43, 80),
+                    Color32::from_rgba_unmultiplied(190, 255, 43, 70),
                 ))
-                .corner_radius(egui::CornerRadius::same(10))
-                .inner_margin(egui::Margin::symmetric(14, 10))
+                .corner_radius(egui::CornerRadius::same(12))
+                .inner_margin(egui::Margin::symmetric(16, 14))
                 .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Clipping is using the earlier settings.").color(TEXT),
-                        );
-                        if kit::labelled_button(ui, Icon::Record, "Restart clipping", true, true)
-                            .clicked()
-                        {
-                            self.stop_capture();
-                            self.start_capture();
-                        }
+                        // Room for the button on the right; the words take the rest.
+                        let words = (ui.available_width() - 190.0).max(120.0);
+                        ui.vertical(|ui| {
+                            ui.set_width(words);
+                            ui.label(
+                                RichText::new("New settings are ready")
+                                    .color(TEXT)
+                                    .size(14.5)
+                                    .family(kit::semibold()),
+                            );
+                            ui.label(
+                                RichText::new(
+                                    "Clipping is still using the earlier settings. Restarting applies them and empties the replay buffer.",
+                                )
+                                .color(MUTED)
+                                .size(12.5),
+                            );
+                        });
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            restart =
+                                kit::labelled_button(ui, Icon::Restart, "Restart clipping", true, true)
+                                    .on_hover_text("Stop clipping and start again with the new settings")
+                                    .clicked();
+                        });
                     });
                 });
-            ui.add_space(10.0);
+            ui.add_space(12.0);
+            if restart {
+                self.stop_capture();
+                self.start_capture();
+            }
         }
         let tab = self.settings_tab;
         self.settings_state

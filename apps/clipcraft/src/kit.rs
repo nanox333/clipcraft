@@ -181,6 +181,7 @@ pub enum Icon {
     Stop,
     Scissors,
     Trash,
+    Restart,
 }
 
 /// Draws `icon` centered on `c`, about 18 px across at `scale` 1.0.
@@ -366,6 +367,29 @@ pub fn draw_icon(painter: &Painter, c: Pos2, icon: Icon, color: Color32, scale: 
             line(&[at(6.0, 6.0), at(-7.0, -8.0)]);
             painter.circle_stroke(at(-6.0, 6.5), 2.6 * scale, stroke);
             painter.circle_stroke(at(6.0, 6.5), 2.6 * scale, stroke);
+        }
+        Icon::Restart => {
+            // Most of a circle, with an arrowhead where it ends.
+            let radius = 7.0_f32;
+            let point = |degrees: f32| {
+                let angle = degrees.to_radians();
+                at(radius * angle.cos(), radius * angle.sin())
+            };
+            let arc: Vec<Pos2> = (0..=28)
+                .map(|step| point(25.0 + step as f32 * 10.0))
+                .collect();
+            line(&arc);
+            let end = point(305.0);
+            let tangent = Vec2::new(
+                -(305.0_f32.to_radians().sin()),
+                305.0_f32.to_radians().cos(),
+            );
+            let across = Vec2::new(-tangent.y, tangent.x);
+            fill(vec![
+                end + tangent * 5.0 * scale,
+                end + across * 3.6 * scale,
+                end - across * 3.6 * scale,
+            ]);
         }
         Icon::Stop => {
             painter.rect_filled(
