@@ -9,8 +9,7 @@ use clipcraft_engine::{
     AUDIO_KBPS, CaptureSource, Command, CommandOutput, Container, EncoderPreset, FRAME_RATES,
     Framing, HEIGHTS, HotkeyAction, KEYFRAME_SECONDS, OutputShape, POST_ROLL_SECONDS, QualityMode,
     REPLAY_SECONDS, RateControl, RecordingSettings, SAMPLE_RATES, StorageUsage, VIDEO_KBPS,
-    VideoCodec, VideoEncoder, default_capture_folder, estimated_bytes, execute, format_bytes,
-    normalize_hotkey,
+    VideoCodec, VideoEncoder, default_capture_folder, execute, format_bytes, normalize_hotkey,
 };
 use eframe::egui;
 use egui::{Color32, RichText, Stroke, Vec2};
@@ -313,7 +312,7 @@ fn quality_tile(
     summary: &str,
 ) -> bool {
     let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(width.max(0.0), 112.0), egui::Sense::click());
+        ui.allocate_exact_size(Vec2::new(width.max(0.0), 108.0), egui::Sense::click());
     let fill = if selected {
         Color32::from_rgb(52, 52, 58)
     } else if response.hovered() {
@@ -392,39 +391,35 @@ fn summary(mode: QualityMode, settings: &RecordingSettings) -> String {
         settings.video_kbps,
     ));
     format!(
-        "{height}p {fps} FPS\n\u{2248} {} per clip",
-        format_bytes(settings.estimated_clip_bytes(kbps))
+        "{height}p {fps} FPS\n\u{2248} {} \u{00b7} {} clip",
+        format_bytes(settings.estimated_clip_bytes(kbps)),
+        clip_length(settings)
     )
 }
 
-/// What a clip at the chosen quality weighs, and that clipping never writes a full recording.
-fn clip_size_note(ui: &mut egui::Ui, settings: &RecordingSettings) {
+/// How long a clip is, as shown to people.
+fn clip_length(settings: &RecordingSettings) -> String {
     let seconds = settings.clip_seconds();
-    let length = if seconds >= 60 && seconds.is_multiple_of(60) {
+    if seconds >= 60 && seconds.is_multiple_of(60) {
         format!("{} min", seconds / 60)
     } else {
         format!("{seconds} s")
-    };
-    let clip = settings.estimated_clip_bytes(settings.video_kbps);
-    let per_minute = estimated_bytes(settings.video_kbps, settings.audio_total_kbps(), 60);
+    }
+}
+
+/// One line: clipping keeps no full recording.
+fn clip_size_note(ui: &mut egui::Ui, settings: &RecordingSettings) {
     ui.add_space(10.0);
     ui.label(
         RichText::new(format!(
-            "A {length} clip takes about {} (about {} for every minute). Variable bitrate can be smaller when the picture is calm.",
-            format_bytes(clip),
-            format_bytes(per_minute),
-        ))
-        .color(TEXT)
-        .size(12.5),
-    );
-    ui.add_space(4.0);
-    ui.label(
-        RichText::new(format!(
-            "Clipping does not save a full recording. It keeps only the last {length} in memory (about {}), and nothing is written to your disk until you save a clip.",
-            format_bytes(clip),
+            "Clipping keeps only the last {} in memory. Nothing is saved to disk until you save a clip.",
+            clip_length(settings)
         ))
         .color(MUTED)
         .size(12.5),
+    )
+    .on_hover_text(
+        "Sizes are estimated from the bitrate for your clip length (Settings \u{203a} Audio). Variable bitrate can be smaller when the picture is calm.",
     );
 }
 
