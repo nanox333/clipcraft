@@ -11,5 +11,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Tests one at a time
-        run: cargo test -p clipcraft --bin clipcraft every_screen_draws -- --test-threads=1 --nocapture
+        run: cargo test -p clipcraft --bin clipcraft -- --test-threads=1 --nocapture
         continue-on-error: true
