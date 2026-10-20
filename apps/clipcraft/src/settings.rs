@@ -303,64 +303,79 @@ fn dropdown(
     chosen
 }
 
-/// A big tile for picking a quality. True when clicked.
+/// What a quality tile says besides its name.
+struct TileFacts {
+    /// Resolution and frame rate, such as `1080p \u{00b7} 60 FPS`.
+    picture: String,
+    /// The estimated size of one clip.
+    size: String,
+    /// The clip length that size is for.
+    length: String,
+}
+
+/// A tile for picking a quality: its name, the picture, and what a clip weighs. True when
+/// clicked.
 fn quality_tile(
     ui: &mut egui::Ui,
     width: f32,
     mode: QualityMode,
     selected: bool,
-    summary: &str,
+    facts: &TileFacts,
 ) -> bool {
     let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(width.max(0.0), 108.0), egui::Sense::click());
+        ui.allocate_exact_size(Vec2::new(width.max(0.0), 104.0), egui::Sense::click());
+    let response = response.on_hover_text(mode.detail());
     let fill = if selected {
-        Color32::from_rgb(52, 52, 58)
+        Color32::from_rgb(40, 44, 30)
     } else if response.hovered() {
         CARD_HOVER
     } else {
         CARD
     };
-    ui.painter().rect_filled(rect, 10.0, fill);
+    ui.painter().rect_filled(rect, 12.0, fill);
     ui.painter().rect_stroke(
         rect,
-        10.0,
-        Stroke::new(1.0_f32, if selected { TEXT } else { BORDER }),
+        12.0,
+        Stroke::new(
+            if selected { 1.5_f32 } else { 1.0 },
+            if selected { LIME } else { BORDER },
+        ),
         egui::StrokeKind::Inside,
     );
-    let inner = (rect.width() - 28.0).max(0.0);
-    let title = ui.painter().layout(
-        mode.label().to_owned(),
+    let left = rect.left() + 16.0;
+    let write = |y: f32, text: &str, font: egui::FontId, color: Color32| {
+        ui.painter().text(
+            egui::pos2(left, rect.top() + y),
+            egui::Align2::LEFT_TOP,
+            text,
+            font,
+            color,
+        );
+    };
+    write(
+        14.0,
+        mode.label(),
         egui::FontId::new(15.0, kit::semibold()),
         TEXT,
-        inner,
     );
-    let detail = ui.painter().layout(
-        format!("{}\n{summary}", mode.detail()),
+    write(
+        36.0,
+        &facts.picture,
+        egui::FontId::proportional(12.5),
+        MUTED,
+    );
+    write(
+        56.0,
+        &format!("\u{2248} {}", facts.size),
+        egui::FontId::new(20.0, kit::semibold()),
+        if selected { LIME } else { TEXT },
+    );
+    write(
+        82.0,
+        &format!("per {} clip", facts.length),
         egui::FontId::proportional(12.0),
-        MUTED,
-        inner,
+        FAINT,
     );
-    let top = rect.top() + 14.0;
-    let title_height = title.size().y;
-    ui.painter()
-        .galley(egui::pos2(rect.left() + 14.0, top), title, TEXT);
-    ui.painter().galley(
-        egui::pos2(rect.left() + 14.0, top + title_height + 6.0),
-        detail,
-        MUTED,
-    );
-    if selected {
-        let at = egui::pos2(rect.right() - 18.0, rect.top() + 22.0);
-        let stroke = Stroke::new(1.8_f32, LIME);
-        ui.painter().line_segment(
-            [at + Vec2::new(-5.0, 0.0), at + Vec2::new(-1.5, 3.5)],
-            stroke,
-        );
-        ui.painter().line_segment(
-            [at + Vec2::new(-1.5, 3.5), at + Vec2::new(5.0, -4.0)],
-            stroke,
-        );
-    }
     response.clicked() && !selected
 }
 
@@ -384,17 +399,17 @@ fn bitrate_label(kbps: u32) -> String {
     }
 }
 
-fn summary(mode: QualityMode, settings: &RecordingSettings) -> String {
+fn tile_facts(mode: QualityMode, settings: &RecordingSettings) -> TileFacts {
     let (height, fps, kbps) = mode.values().unwrap_or((
         settings.height,
         settings.frames_per_second,
         settings.video_kbps,
     ));
-    format!(
-        "{height}p {fps} FPS\n\u{2248} {} \u{00b7} {} clip",
-        format_bytes(settings.estimated_clip_bytes(kbps)),
-        clip_length(settings)
-    )
+    TileFacts {
+        picture: format!("{height}p \u{00b7} {fps} FPS"),
+        size: format_bytes(settings.estimated_clip_bytes(kbps)),
+        length: clip_length(settings),
+    }
 }
 
 /// How long a clip is, as shown to people.
@@ -426,21 +441,13 @@ fn clip_size_note(ui: &mut egui::Ui, settings: &RecordingSettings) {
 pub fn quality_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, gpu: &GpuProbe) {
     card(ui, "Recording quality", |ui| {
         ui.add_space(10.0);
-        ui.label(
-            RichText::new(
-                "Higher settings use more of your computer. If you have problems, try a lower setting.",
-            )
-            .color(MUTED)
-            .size(12.5),
-        );
-        ui.add_space(10.0);
         let gap = 10.0;
         let width = (ui.available_width() - gap * 3.0) / 4.0;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = gap;
             for mode in QualityMode::ALL {
                 let selected = settings.quality == mode;
-                if quality_tile(ui, width, mode, selected, &summary(mode, settings)) {
+                if quality_tile(ui, width, mode, selected, &tile_facts(mode, settings)) {
                     settings.quality = mode;
                 }
             }

@@ -157,7 +157,7 @@ impl SettingsTab {
             Self::Storage => "Where clips are saved, how much space they use, and a limit.",
             Self::Hotkeys => "Keyboard shortcuts for recording.",
             Self::Capture => "What gets recorded.",
-            Self::Quality => "Manage your recording resolution, frame rate, bitrate and more.",
+            Self::Quality => "How sharp and smooth your clips are, and how big.",
             Self::Audio => "What sound is recorded and how well.",
             Self::Advanced => {
                 "Fine control over the picture, encoder and audio. The defaults suit most people."
