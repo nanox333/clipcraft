@@ -4,18 +4,19 @@
 
 This is the ranked work list, not a parity claim. Capture, replay, playback, local library
 organization, and no-reencode trim export are implemented. Linux/X11 has end-to-end synthetic
-capture evidence; Windows capture compiles but has not run on Windows hardware. Rank remaining work
+capture evidence; Windows/AMD now has generated-window capture and native GPU encoding evidence,
+with unresolved 1080p60 throughput and hardware reliability gates. Rank remaining work
 by user impact, frequency, and evidence. Update this file in the same pull request whenever a
 feature's status, workaround, or evidence changes.
 
 | Rank | Gap | Evidence / current limitation | Impact | Work |
 | ---: | --- | --- | --- | --- |
-| G0 | Windows capture and real-device release evidence remain open | Windows Graphics Capture and hotkeys compile but have not run on Windows; real microphone/speaker and GPU encoder tests remain open. Linux/X11 capture-to-export is proven against synthetic sources | Limits platform and release claims | M0 evidence close-out; M2/M3/M5 |
-| G1 | Low-copy GPU capture-to-encode path and reference-hardware performance are unverified | The recorder now has a tested optional opaque surface handoff and CPU-readback fallback, exercised with fake capture/encoder surfaces. No OS provider or hardware encoder implements that handoff yet; active capture still returns CPU-owned BGRA frames and conversion runs on the CPU. No real GPU has been exercised. Software 1080p60 drops frames in the shared container. | Could affect game frame time, CPU use, and clip quality | M5.1/M5.2 |
+| G0 | Windows release and broader real-device evidence remain open | Windows/AMD generated-window WGC and native/CPU MF encode have run. Windows hotkeys, game-only arming, real microphone/speaker, device loss and other GPU encoders remain unverified. Linux/X11 capture-to-export is proven against synthetic sources | Limits platform and release claims | M0 evidence close-out; M2/M3/M5 |
+| G1 | Low-copy GPU path is implemented for Windows SDR; performance gates remain open | WGC D3D11 leases and Media Foundation GPU NV12 conversion produced AMD generated-window MP4 clips with zero CPU readbacks. Matching dimensions/original framing and HDR compatibility disabled are required. Both CPU/native runs encoded about 32 fps at requested 1080p60. Other GPUs, HDR/scaling, GPU-use/power and real-game comparisons remain open; see [measurements](windows-performance.md). | 1080p60 throughput and game impact are not established | M5.1/M5.2 |
 | G2 | Game-only capture needs real platform evidence; library scan is non-recursive | Game-only mode, local process matching, exact Steam app IDs on Linux, manual pause, and X11/Windows process-to-window lookup are implemented. The X11 adapter has a synthetic-window test; no real game or Windows runtime has been tested. Wayland game-window matching is unavailable; library labels are not auto-tagged from the active capture game | Game arming is not yet proven on the user's desktop; clips still need manual/library filename game labels | M4/M7 |
 | G3 | Compressed export needs reference-machine measurements; broader output controls remain open | Original-quality trim and software H.264 size presets (10 MB, 25 MB, custom 1–500 MB) are built. Generated MP4/MKV fixtures verify decoding, audio sync, cancellation, actual-size reporting, and collision safety. Compression is at most 720p/30 fps, copies AAC audio, and estimates rather than guarantees size; 30/60-second throughput measurements on representative PCs remain open | Local small-file export is available; broader codec/quality controls and speed claims remain limited | M4.2/M4.3 |
 | G4 | macOS capture/audio is not implemented; Wayland capture is only partly verified | No ScreenCaptureKit/CoreAudio provider; Wayland portal and PipeWire pieces pass component tests but no real desktop chooser has delivered a frame | Limits supported-platform claims | M6 |
-| G5 | Real-device audio, Windows, soak, and performance evidence are incomplete | Recorder audio is verified with generated sources; real audio devices, real-game impact, two-hour soak, and Windows capture remain untested | Limits reliability and release claims | M3/M5 |
+| G5 | Real-device audio, soak, and performance evidence are incomplete | Windows/AMD capture now has generated-window and generated-audio runs. Real audio devices, real-game impact, two-hour hardware soak and device-loss integration remain open | Limits reliability and release claims | M3/M5 |
 
 The core workflow exists and can be exercised locally on Linux/X11 with synthetic capture and audio.
 Do not mark platform support from compilation alone; attach evidence for the user workflow and
@@ -41,7 +42,10 @@ M2.P1 removes encoded-video payload copies from clip snapshots, caches replay GO
 avoids redundant full-frame RGBA clears and unscaled interpolation tables. On a Ryzen 7 5700X3D
 Windows CPU microbenchmark, a ~150 MB video snapshot fell from 68.070 ms to 0.034 ms and 1080p
 RGBA conversion with four threads fell from 1.392 ms to 0.638 ms. These are synthetic CPU timings,
-not game-FPS or capture throughput evidence. GPU readback, full captured-frame clones, HDR cost,
+not game-FPS evidence. Windows SDR native surfaces now avoid readback for compatible MF encoders;
+[generated-window measurements](windows-performance.md) show an unresolved 1080p60 throughput limit.
+Hardware pending input is bounded, and drain errors are reported on stop without modifying saved clips.
+CPU fallback frame clones, HDR cost,
 worker churn, large-library traversal/index merging and real-hardware validation remain open.
 See [the performance review](performance.md) for workloads, limitations and ranked follow-up work.
 
@@ -92,11 +96,11 @@ touches ClipCraft's own clips.
   graphics-card encoder is the default (it falls back to the processor), the software encoder is
   capped at four threads, and on Windows the program runs a little below normal priority while
   clipping. **Not measured:** the effect on a game's frame rate on any machine. **Still costly:**
-  every picture is copied from the graphics card to memory before it is encoded, and the
-  hardware encoder has never run on a real graphics card. A zero-copy path from the capture
-  texture to the encoder is the real fix and is not built.
-- **Windows.** The Graphics Capture provider and the Windows hotkeys compile
-  (`cargo check --target x86_64-pc-windows-gnu`) but have never run. Exclusive-full-screen games,
+  HDR/scaled/incompatible paths still copy pictures from the graphics card to memory. The new
+  native SDR WGC-to-Media-Foundation route avoids that readback on the tested AMD combination,
+  but both native and CPU runs still miss 1080p60. See [the report](windows-performance.md).
+- **Windows.** Generated-window Graphics Capture and AMD Media Foundation encode have run;
+  Windows hotkeys, exclusive-full-screen games,
   the cursor option, protected content, and elevated windows are all untested.
 - **macOS** has no provider (it needs ScreenCaptureKit).
 - **Wayland** ([ADR 0012](adr/0012-wayland-capture.md), [docs/wayland.md](wayland.md)): the desktop

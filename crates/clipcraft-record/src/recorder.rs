@@ -670,8 +670,13 @@ fn encode_loop(shared: &Shared, config: &RecordConfig) {
         }
         lock(&shared.stats).encode_nanos += started.elapsed().as_nanos();
     }
-    if let Some(mut finished) = active {
-        flush(shared, &mut finished);
+    if let Some(mut finished) = active
+        && let Err(error) = flush(shared, &mut finished)
+    {
+        let mut state = lock(&shared.state);
+        if !matches!(*state, RecordState::Failed(_)) {
+            *state = RecordState::Failed(error);
+        }
     }
 }
 
@@ -686,7 +691,7 @@ fn store_packet(shared: &Shared, data: Vec<u8>, keyframe: bool, pts: i64) {
     });
 }
 
-fn flush(shared: &Shared, active: &mut Active) {
+fn flush(shared: &Shared, active: &mut Active) -> Result<(), RecordError> {
     match &mut active.stage {
         Stage::Software(encoder) => {
             for packet in encoder.flush() {
@@ -694,15 +699,18 @@ fn flush(shared: &Shared, active: &mut Active) {
             }
         }
         Stage::Hardware(encoder) => {
-            if let Ok(packets) = encoder.flush() {
-                for packet in packets {
-                    if let Some(pts) = active.pending.pop_front() {
-                        store_packet(shared, packet.data, packet.keyframe, pts);
-                    }
+            let packets = encoder.flush().map_err(|why| {
+                *lock(&shared.encoder) = format!("GPU (drain failed: {why})");
+                RecordError::EncoderFailed
+            })?;
+            for packet in packets {
+                if let Some(pts) = active.pending.pop_front() {
+                    store_packet(shared, packet.data, packet.keyframe, pts);
                 }
             }
         }
     }
+    Ok(())
 }
 
 fn software_stage(
@@ -834,7 +842,7 @@ fn encode_one(
             || (current.last_pts >= 0 && pts - current.last_pts > gap_frames)
     }) {
         let restarted = if let Some(mut old) = active.take() {
-            flush(shared, &mut old);
+            flush(shared, &mut old)?;
             true
         } else {
             false
@@ -860,6 +868,11 @@ fn encode_one(
             }
         }
         if let Stage::Hardware(_) = current.stage {
+            if current.last_pts < 0
+                && let Stage::Hardware(encoder) = &current.stage
+            {
+                *lock(&shared.encoder) = format!("GPU ({})", encoder.name());
+            }
             current.last_pts = pts;
             lock(&shared.stats).encoded += 1;
             return Ok(());
@@ -904,6 +917,9 @@ fn encode_hardware(
         return Err("not a hardware stage".to_owned());
     };
     current.pending.push_back(pts);
+    if current.pending.len() > 32 {
+        return Err("hardware encoder exceeded its pending-picture bound".to_owned());
+    }
     let index = u64::try_from(pts).unwrap_or(0);
     let native_packets = if direct_surface {
         match frame {

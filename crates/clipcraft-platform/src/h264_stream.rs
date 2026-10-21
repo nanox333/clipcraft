@@ -9,6 +9,23 @@
 /// allocate without bound.
 const MAX_NAL_UNITS: usize = 4_096;
 
+/// Lowest supported H.264 level for the macroblock size/rate, capped at level 5.2.
+pub fn level_for(width: u32, height: u32, fps: u32) -> u8 {
+    let frame = u64::from(width.div_ceil(16)) * u64::from(height.div_ceil(16));
+    let rate = frame.saturating_mul(u64::from(fps));
+    [
+        (31, 108_000, 3_600),
+        (40, 245_760, 8_192),
+        (42, 522_240, 8_704),
+        (50, 589_824, 22_080),
+        (51, 983_040, 36_864),
+        (52, 2_073_600, 36_864),
+    ]
+    .into_iter()
+    .find(|(_, per_second, per_frame)| rate <= *per_second && frame <= *per_frame)
+    .map_or(52, |entry| entry.0)
+}
+
 /// One encoded picture converted for a file.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ConvertedPicture {

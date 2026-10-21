@@ -299,11 +299,11 @@ disabled, full disk, device loss, suspend/resume, and measured CPU/GPU/memory/po
 
 ### M5.2 — Low-copy GPU capture-to-encode path
 
-**Status:** optional opaque surface handoff and CPU-readback fallback are built and tested with
-stand-ins. Platform feasibility and implementation remain planned: no capture provider or hardware
-encoder uses the handoff yet. Hardware encoders are connected, but active capture still returns
-CPU-owned BGRA frames and the recorder converts those frames before encoding; hardware encoding
-alone does not provide ShadowPlay-style GPU-resident capture.
+**Status:** Windows SDR WGC-to-D3D11-to-Media-Foundation is implemented with bounded owned surface
+leases and CPU fallback. Generated-window AMD runs confirm zero CPU readbacks at matching dimensions;
+both native and CPU paths still encode about 32 fps when requesting 1080p60. See
+[the measurements](windows-performance.md). HDR/scaling, other GPUs, real-game frame times,
+GPU/power metrics, device-loss integration and the two-hour hardware soak remain open. M5.2 is partial.
 
 **User problem:** full-frame transfers to CPU memory and CPU-side conversion can use processor time
 and GPU bandwidth while the user is playing. Reduce that work for supported capture and encoder

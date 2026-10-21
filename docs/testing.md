@@ -58,10 +58,13 @@ remaining real-device checks. Timing is informational and is not a flaky CI asse
 - **Replay/capture:** deterministic fake-provider tests for ring eviction, limits, timestamps,
   post-roll, dropped frames, save races, start/stop, device loss, and full disk. Real capture tests
   run on platform hardware and state their OS/device matrix.
-- **Low-copy GPU capture (planned):** test bounded surface leases, device loss, format/color
+- **Low-copy GPU capture (Windows SDR partial):** test bounded surface leases, device loss, format/color
   conversion, and parity with the CPU-frame fallback. A fake native surface and hardware encoder
   already verify that compatible surfaces bypass readback and unsupported encoders use the fallback;
-  no real platform surface/encoder pair is implemented yet. Real-device evidence names the GPU,
+  Windows WGC/D3D11 and AMD Media Foundation also have generated-window evidence and an explicit
+  real-device lease/readback/resize test. Reproduction and the checkpointed Windows soak example
+  are in [windows-performance.md](windows-performance.md). Other GPU/format pairs remain unrun.
+  Real-device evidence names the GPU,
   driver, OS, compositor, capture/encoder APIs, resolution/FPS, CPU use, GPU use, dropped frames, and
   game frame-time delta. Never infer sub-1% CPU use or broad compositor support from a compile or
   mock.

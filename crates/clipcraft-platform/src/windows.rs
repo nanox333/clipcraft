@@ -1,16 +1,14 @@
 //! Screen and window capture on Windows through the Windows Graphics Capture API, using the
-//! `windows-capture` crate for the WinRT and Direct3D details (it holds the `unsafe`; this crate
-//! has none).
+//! `windows-capture` crate for WinRT and `d3d11` for bounded owned texture leases.
 //!
-//! This module compiles for Windows (`cargo check --target x86_64-pc-windows-gnu`) but has not
-//! been run on real hardware. See `docs/gaps.md`.
+//! Generated-window hardware evidence and remaining limitations are recorded in `docs/gaps.md`.
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use clipcraft_capture::{
     Capabilities, CaptureError, CaptureFrame, CaptureSource, CaptureTarget, MAX_CAPTURE_EDGE,
-    TargetKind,
+    NativeCaptureFrame, TargetKind,
 };
 use clipcraft_time::Tick;
 use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
@@ -110,6 +108,7 @@ pub fn window_for_process(process_id: u32) -> Result<Option<CaptureTarget>, Capt
 #[derive(Default)]
 struct Latest {
     frame: Option<CaptureFrame>,
+    surface: Option<crate::d3d11::Surface>,
     sequence: u64,
     closed: bool,
     failed: bool,
@@ -127,6 +126,8 @@ fn lock(shared: &Shared) -> MutexGuard<'_, Latest> {
 
 struct Handler {
     shared: Arc<Shared>,
+    pool: crate::d3d11::Pool,
+    native_disabled: bool,
 }
 
 impl GraphicsCaptureApiHandler for Handler {
@@ -136,6 +137,8 @@ impl GraphicsCaptureApiHandler for Handler {
     fn new(context: Context<Self::Flags>) -> Result<Self, Self::Error> {
         Ok(Self {
             shared: context.flags,
+            pool: crate::d3d11::Pool::default(),
+            native_disabled: false,
         })
     }
 
@@ -144,40 +147,73 @@ impl GraphicsCaptureApiHandler for Handler {
         frame: &mut Frame<'_>,
         _control: InternalCaptureControl,
     ) -> Result<(), Self::Error> {
-        let buffer = frame.buffer().map_err(|_| "could not read the frame")?;
-        let (width, height) = (buffer.width(), buffer.height());
-        if width == 0 || height == 0 || width > MAX_CAPTURE_EDGE || height > MAX_CAPTURE_EDGE {
-            return Err("impossible frame size");
-        }
-        let mut scratch = Vec::new();
-        let pixels = buffer.as_nopadding_buffer(&mut scratch);
-        // HDR frames arrive as linear half floats and are tone mapped to standard range here.
-        let bgra = if buffer.color_format() == ColorFormat::Rgba16F {
-            let white = clipcraft_capture::hdr::reference_white_for(pixels);
-            clipcraft_capture::hdr::scrgb_to_bgra8(pixels, width, height, width as usize * 8, white)
-                .ok_or("damaged HDR frame")?
-        } else {
-            pixels.to_vec()
-        };
-        let captured = CaptureFrame {
-            width,
-            height,
-            stride: width as usize * 4,
-            bgra,
-            captured_at: Tick::from_units(
+        let result = (|| {
+            let captured_at = Tick::from_units(
                 i64::try_from(self.shared.started.elapsed().as_micros()).unwrap_or(i64::MAX),
                 1_000_000,
-            ),
-        };
-        if captured.validate().is_err() {
-            return Err("damaged frame");
+            );
+            if frame.color_format() == ColorFormat::Bgra8 && !self.native_disabled {
+                match self.pool.copy(frame, captured_at) {
+                    Ok(Some(surface)) => {
+                        let mut latest = lock(&self.shared);
+                        latest.surface = Some(surface);
+                        latest.frame = None;
+                        latest.sequence = latest.sequence.wrapping_add(1);
+                        drop(latest);
+                        self.shared.changed.notify_all();
+                        return Ok(());
+                    }
+                    // Every slot is leased. Keep the previous image and bound GPU memory.
+                    Ok(None) => return Ok(()),
+                    // The existing CPU path handles unsupported devices, formats and budgets.
+                    Err(_) => self.native_disabled = true,
+                }
+            }
+            let buffer = frame.buffer().map_err(|_| "could not read the frame")?;
+            crate::d3d11::readback_count();
+            let (width, height) = (buffer.width(), buffer.height());
+            if width == 0 || height == 0 || width > MAX_CAPTURE_EDGE || height > MAX_CAPTURE_EDGE {
+                return Err("impossible frame size");
+            }
+            let mut scratch = Vec::new();
+            let pixels = buffer.as_nopadding_buffer(&mut scratch);
+            // HDR frames arrive as linear half floats and are tone mapped to standard range here.
+            let bgra = if buffer.color_format() == ColorFormat::Rgba16F {
+                let white = clipcraft_capture::hdr::reference_white_for(pixels);
+                clipcraft_capture::hdr::scrgb_to_bgra8(
+                    pixels,
+                    width,
+                    height,
+                    width as usize * 8,
+                    white,
+                )
+                .ok_or("damaged HDR frame")?
+            } else {
+                pixels.to_vec()
+            };
+            let captured = CaptureFrame {
+                width,
+                height,
+                stride: width as usize * 4,
+                bgra,
+                captured_at,
+            };
+            if captured.validate().is_err() {
+                return Err("damaged frame");
+            }
+            let mut latest = lock(&self.shared);
+            latest.frame = Some(captured);
+            latest.surface = None;
+            latest.sequence = latest.sequence.wrapping_add(1);
+            drop(latest);
+            self.shared.changed.notify_all();
+            Ok(())
+        })();
+        if result.is_err() {
+            lock(&self.shared).failed = true;
+            self.shared.changed.notify_all();
         }
-        let mut latest = lock(&self.shared);
-        latest.frame = Some(captured);
-        latest.sequence += 1;
-        drop(latest);
-        self.shared.changed.notify_all();
-        Ok(())
+        result
     }
 
     fn on_closed(&mut self) -> Result<(), Self::Error> {
@@ -192,6 +228,7 @@ struct WindowsSource {
     control: Option<CaptureControl<Handler, &'static str>>,
     target: CaptureTarget,
     seen: u64,
+    pending_cpu: Option<CaptureFrame>,
 }
 
 fn settings<T: TryInto<GraphicsCaptureItemType>>(
@@ -283,6 +320,7 @@ pub fn open(
         control: Some(control),
         target,
         seen: 0,
+        pending_cpu: None,
     }))
 }
 
@@ -291,7 +329,34 @@ impl CaptureSource for WindowsSource {
         &self.target
     }
 
+    fn capture_surface(&mut self) -> Result<Option<Box<dyn NativeCaptureFrame>>, CaptureError> {
+        match self.next_frame()? {
+            Captured::Surface(surface) => Ok(Some(Box::new(surface))),
+            Captured::Cpu(frame) => {
+                self.pending_cpu = Some(frame);
+                Ok(None)
+            }
+        }
+    }
+
     fn capture(&mut self) -> Result<CaptureFrame, CaptureError> {
+        if let Some(frame) = self.pending_cpu.take() {
+            return Ok(frame);
+        }
+        match self.next_frame()? {
+            Captured::Surface(mut surface) => surface.readback(),
+            Captured::Cpu(frame) => Ok(frame),
+        }
+    }
+}
+
+enum Captured {
+    Surface(crate::d3d11::Surface),
+    Cpu(CaptureFrame),
+}
+
+impl WindowsSource {
+    fn next_frame(&mut self) -> Result<Captured, CaptureError> {
         // Graphics Capture only delivers a picture when the screen changes, so wait a little for a
         // new one and otherwise repeat the last.
         let deadline = Instant::now() + Duration::from_millis(40);
@@ -299,7 +364,7 @@ impl CaptureSource for WindowsSource {
         while latest.sequence == self.seen && !latest.closed && !latest.failed {
             let now = Instant::now();
             // With no picture at all yet, allow a longer wait for the first one.
-            let limit = if latest.frame.is_none() {
+            let limit = if latest.frame.is_none() && latest.surface.is_none() {
                 deadline + Duration::from_secs(3)
             } else {
                 deadline
@@ -321,10 +386,15 @@ impl CaptureSource for WindowsSource {
             return Err(CaptureError::Failed);
         }
         self.seen = latest.sequence;
+        if let Some(surface) = &latest.surface {
+            self.target.width = surface.width();
+            self.target.height = surface.height();
+            return Ok(Captured::Surface(surface.clone()));
+        }
         let frame = latest.frame.clone().ok_or(CaptureError::Failed)?;
         self.target.width = frame.width;
         self.target.height = frame.height;
-        Ok(frame)
+        Ok(Captured::Cpu(frame))
     }
 }
 
@@ -447,4 +517,70 @@ pub fn active_window() -> Result<Option<CaptureTarget>, CaptureError> {
         width: width as u32,
         height: height as u32,
     }))
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::*;
+
+    fn source(shared: Arc<Shared>) -> WindowsSource {
+        WindowsSource {
+            shared,
+            control: None,
+            seen: 0,
+            pending_cpu: None,
+            target: CaptureTarget {
+                id: "generated".to_owned(),
+                name: "generated".to_owned(),
+                kind: TargetKind::Window,
+                width: 1,
+                height: 1,
+            },
+        }
+    }
+
+    #[test]
+    fn failed_callback_wakes_capture_instead_of_leaving_it_running() {
+        let shared = Arc::new(Shared {
+            latest: Mutex::new(Latest::default()),
+            changed: Condvar::new(),
+            started: Instant::now(),
+        });
+        let mut source = source(Arc::clone(&shared));
+        let (send, receive) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _ = send.send(source.capture().err());
+        });
+        lock(&shared).failed = true;
+        shared.changed.notify_all();
+        assert_eq!(
+            receive.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Some(CaptureError::Failed)
+        );
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn target_loss_takes_precedence_over_a_cached_picture() {
+        let shared = Arc::new(Shared {
+            latest: Mutex::new(Latest {
+                frame: Some(CaptureFrame {
+                    width: 1,
+                    height: 1,
+                    stride: 4,
+                    bgra: vec![0; 4],
+                    captured_at: Tick(0),
+                }),
+                sequence: 1,
+                closed: true,
+                ..Latest::default()
+            }),
+            changed: Condvar::new(),
+            started: Instant::now(),
+        });
+        assert_eq!(
+            source(shared).capture().err(),
+            Some(CaptureError::TargetGone)
+        );
+    }
 }

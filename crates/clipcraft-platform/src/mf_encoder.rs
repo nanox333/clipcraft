@@ -2,16 +2,15 @@
 //! encoder for: AMD, Intel, and NVIDIA all install a hardware H.264 encoder transform that Windows
 //! lists as a Media Foundation transform (MFT).
 //!
-//! This is the only `unsafe` in ClipCraft's own code (see `docs/adr/0007-media-foundation-encoder.md`).
-//! It is confined to this file, every block says why it is sound, and nothing in it can reach the
+//! Platform `unsafe` boundaries are recorded in ADRs 0007 and 0014. Every block documents its
+//! invariants, and nothing in it can reach the
 //! rest of the app except through the safe [`clipcraft_record::HardwareEncoder`] trait.
 //!
 //! Media Foundation's entry points are loaded from `mfplat.dll` when an encoder is first asked
 //! for, not linked, so ClipCraft still starts on Windows editions that ship without the Media
 //! Feature Pack. The interface objects themselves are called through their virtual tables.
 //!
-//! **Not run on real hardware.** It compiles for Windows and its stream handling is tested, but no
-//! AMD, Intel, or NVIDIA encoder has run it.
+//! AMD generated-window hardware evidence is recorded in `docs/windows-performance.md`.
 
 #![allow(unsafe_code)]
 #![warn(clippy::undocumented_unsafe_blocks)]
@@ -21,16 +20,18 @@ use std::mem::ManuallyDrop;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+use clipcraft_capture::NativeCaptureFrame;
 use clipcraft_record::{HardwareEncoder, HardwarePacket, HardwareRequest};
-use windows::Win32::Foundation::{FreeLibrary, HMODULE};
+use windows::Win32::Foundation::{FreeLibrary, HMODULE, VARIANT_TRUE};
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::{
     COINIT_MULTITHREADED, CoInitializeEx, CoTaskMemFree, CoUninitialize,
 };
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
-use windows::Win32::System::Variant::{VARIANT, VT_UI4};
+use windows::Win32::System::Variant::{VARIANT, VT_BOOL, VT_UI4};
 use windows::core::{GUID, HRESULT, Interface, PCSTR, PWSTR, w};
 
+use crate::d3d11::{Converter, Surface};
 use crate::h264_stream::{annexb_to_length_prefixed, build_avcc, rgba_to_nv12, split_nal_units};
 
 /// How long to wait for an encoder to accept a picture before calling it stuck.
@@ -40,6 +41,8 @@ type StartupFn = unsafe extern "system" fn(u32, u32) -> HRESULT;
 type ShutdownFn = unsafe extern "system" fn() -> HRESULT;
 type CreateFn = unsafe extern "system" fn(*mut *mut c_void) -> HRESULT;
 type CreateBufferFn = unsafe extern "system" fn(u32, *mut *mut c_void) -> HRESULT;
+type CreateManagerFn = unsafe extern "system" fn(*mut u32, *mut *mut c_void) -> HRESULT;
+type CreateAllocatorFn = unsafe extern "system" fn(*const GUID, *mut *mut c_void) -> HRESULT;
 type EnumFn = unsafe extern "system" fn(
     GUID,
     u32,
@@ -57,6 +60,8 @@ struct Api {
     create_media_type: CreateFn,
     create_sample: CreateFn,
     create_memory_buffer: CreateBufferFn,
+    create_dxgi_manager: CreateManagerFn,
+    create_video_allocator: CreateAllocatorFn,
     enum_transforms: EnumFn,
 }
 
@@ -100,6 +105,8 @@ fn load_api() -> Result<Api, String> {
         create_media_type: symbol!("MFCreateMediaType"),
         create_sample: symbol!("MFCreateSample"),
         create_memory_buffer: symbol!("MFCreateMemoryBuffer"),
+        create_dxgi_manager: symbol!("MFCreateDXGIDeviceManager"),
+        create_video_allocator: symbol!("MFCreateVideoSampleAllocatorEx"),
         enum_transforms: symbol!("MFTEnumEx"),
     })
 }
@@ -158,7 +165,7 @@ pub struct MfEncoder {
     // Declared first so the transform is released before Media Foundation shuts down.
     transform: IMFTransform,
     activate: IMFActivate,
-    events: Option<IMFMediaEventGenerator>,
+    events: Option<crate::mf_events::Events>,
     api: &'static Api,
     name: String,
     width: u32,
@@ -171,7 +178,16 @@ pub struct MfEncoder {
     sps: Option<Vec<u8>>,
     pps: Option<Vec<u8>>,
     last_time: i64,
+    streaming: bool,
+    gpu: Option<GpuInput>,
+    gpu_declined: Option<String>,
     _runtime: Runtime,
+}
+
+struct GpuInput {
+    allocator: IMFVideoSampleAllocatorEx,
+    converter: Converter,
+    _manager: IMFDXGIDeviceManager,
 }
 
 // SAFETY: an encoder is created on the recorder's encode thread and used only there; Media
@@ -270,6 +286,18 @@ fn codec_value(codec: &ICodecAPI, key: &GUID, value: u32) {
     let _ = unsafe { codec.SetValue(key, &variant) };
 }
 
+fn codec_bool(codec: &ICodecAPI, key: &GUID) {
+    let mut variant = VARIANT::default();
+    // SAFETY: zeroed variant with the matching VT_BOOL tag/union member; no owning payload.
+    unsafe {
+        let inner = &mut *variant.Anonymous.Anonymous;
+        inner.vt = VT_BOOL;
+        inner.Anonymous.boolVal = VARIANT_TRUE;
+    }
+    // SAFETY: live codec, valid GUID/variant. Unsupported optional latency hints keep defaults.
+    let _ = unsafe { codec.SetValue(key, &variant) };
+}
+
 impl MfEncoder {
     fn open(
         api: &'static Api,
@@ -287,6 +315,9 @@ impl MfEncoder {
         let mut events = None;
         // SAFETY: attribute reads and writes on a live transform.
         unsafe {
+            if let Ok(attributes) = transform.GetAttributes() {
+                let _ = attributes.SetUINT32(&MF_LOW_LATENCY, 1);
+            }
             if let Ok(attributes) = transform.GetAttributes()
                 && attributes.GetUINT32(&MF_TRANSFORM_ASYNC).unwrap_or(0) == 1
             {
@@ -294,7 +325,10 @@ impl MfEncoder {
                     attributes.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1),
                     "unlocking the encoder",
                 )?;
-                events = transform.cast::<IMFMediaEventGenerator>().ok();
+                let generator = transform
+                    .cast::<IMFMediaEventGenerator>()
+                    .map_err(|error| format!("asynchronous encoder has no events: {error}"))?;
+                events = Some(crate::mf_events::Events::new(generator)?);
             }
         }
 
@@ -329,6 +363,13 @@ impl MfEncoder {
             check(output.SetUINT32(&MF_MT_INTERLACE_MODE, 2), "interlace mode")?;
             // Baseline (66) has no B-frames, so pictures come out in the order they went in.
             check(output.SetUINT32(&MF_MT_MPEG2_PROFILE, 66), "profile")?;
+            // Describe the requested stream accurately: 1080p60 needs level 4.2.
+            let level = u32::from(crate::h264_stream::level_for(
+                request.width,
+                request.height,
+                request.fps,
+            ));
+            check(output.SetUINT32(&MF_MT_MPEG2_LEVEL, level), "H.264 level")?;
             // Some encoders refuse the Baseline tag. Without it they still make in-order pictures,
             // because B-frames are switched off below; reordering is checked on every picture.
             if transform.SetOutputType(0, &output, 0).is_err() {
@@ -356,7 +397,8 @@ impl MfEncoder {
                 request.keyframe_frames.max(1),
             );
             codec_value(&codec, &CODECAPI_AVEncMPVDefaultBPictureCount, 0);
-            codec_value(&codec, &CODECAPI_AVLowLatencyMode, 1);
+            codec_bool(&codec, &CODECAPI_AVLowLatencyMode);
+            codec_bool(&codec, &CODECAPI_AVEncCommonRealTime);
         }
 
         let input = media_type(api)?;
@@ -395,14 +437,6 @@ impl MfEncoder {
             let info = transform
                 .GetOutputStreamInfo(0)
                 .map_err(|error| format!("{name}: output stream info failed: {error}"))?;
-            check(
-                transform.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0),
-                "starting the stream",
-            )?;
-            check(
-                transform.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0),
-                "starting the stream",
-            )?;
             let provides = info.dwFlags
                 & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0)
                     as u32
@@ -426,10 +460,140 @@ impl MfEncoder {
             sps: None,
             pps: None,
             last_time: i64::MIN,
+            streaming: false,
+            gpu: None,
+            gpu_declined: None,
             _runtime: runtime,
         };
         encoder.read_sequence_header();
         Ok(encoder)
+    }
+
+    fn begin(&mut self) -> Result<(), String> {
+        if !self.streaming {
+            // SAFETY: configured live transform; GPU manager negotiation, if any, is complete.
+            unsafe {
+                check(
+                    self.transform
+                        .ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0),
+                    "begin streaming",
+                )?;
+                check(
+                    self.transform
+                        .ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0),
+                    "start stream",
+                )?;
+            }
+            self.streaming = true;
+        }
+        Ok(())
+    }
+
+    fn enable_gpu(&mut self, surface: &Surface) -> Result<(), String> {
+        if self.streaming {
+            return Err("encoder already accepted CPU frames".to_owned());
+        }
+        let bytes = (self.width as usize)
+            .checked_mul(self.height as usize)
+            .and_then(|n| n.checked_mul(3))
+            .map(|n| n / 2)
+            .ok_or("GPU input size overflow")?;
+        let max_samples = (128 * 1024 * 1024 / bytes.max(1)).min(8) as u32;
+        if max_samples < 2 {
+            return Err("GPU sample pool exceeds its memory budget".to_owned());
+        }
+        let converter = Converter::new(surface, self.fps)?;
+        // SAFETY: live transform; the attribute is optional and absence declines native input.
+        let aware = unsafe {
+            self.transform
+                .GetAttributes()
+                .and_then(|a| a.GetUINT32(&MF_SA_D3D11_AWARE))
+        }
+        .unwrap_or(0);
+        if aware != 1 {
+            return Err("encoder does not advertise D3D11 input".to_owned());
+        }
+        let mut raw = std::ptr::null_mut();
+        let mut token = 0;
+        hr(
+            // SAFETY: dynamically loaded documented function, valid owned out-parameters.
+            unsafe { (self.api.create_dxgi_manager)(&mut token, &mut raw) },
+            "creating GPU device manager",
+        )?;
+        if raw.is_null() {
+            return Err("no GPU device manager".to_owned());
+        }
+        // SAFETY: successful MFCreateDXGIDeviceManager transfers one owned COM reference.
+        let manager = unsafe { IMFDXGIDeviceManager::from_raw(raw) };
+        // SAFETY: capture device is live, multithread-protected, and retained by converter/surface.
+        unsafe {
+            check(
+                manager.ResetDevice(surface.device(), token),
+                "binding capture GPU",
+            )?;
+        }
+        raw = std::ptr::null_mut();
+        hr(
+            // SAFETY: a valid requested interface IID and out-pointer for an owned COM reference.
+            unsafe { (self.api.create_video_allocator)(&IMFVideoSampleAllocatorEx::IID, &mut raw) },
+            "creating GPU sample pool",
+        )?;
+        if raw.is_null() {
+            return Err("no GPU sample allocator".to_owned());
+        }
+        // SAFETY: the allocator function returned the requested owned interface on success.
+        let allocator = unsafe { IMFVideoSampleAllocatorEx::from_raw(raw) };
+        let attributes = media_type(self.api)?;
+        // SAFETY: attributes are ours; allocator retains device/sample references. Media Foundation
+        // tracks leases and returns textures only after all consumers release their sample.
+        unsafe {
+            check(attributes.SetUINT32(&MF_SA_D3D11_USAGE, 0), "GPU usage")?;
+            check(
+                attributes.SetUINT32(
+                    &MF_SA_D3D11_BINDFLAGS,
+                    windows::Win32::Graphics::Direct3D11::D3D11_BIND_RENDER_TARGET.0 as u32,
+                ),
+                "GPU bind flags",
+            )?;
+            check(allocator.SetDirectXManager(&manager), "sample pool GPU")?;
+            let input = self
+                .transform
+                .GetInputCurrentType(0)
+                .map_err(|e| e.to_string())?;
+            check(
+                allocator.InitializeSampleAllocatorEx(2, max_samples, &attributes, &input),
+                "allocating GPU samples",
+            )?;
+            // Attach only after every fallible pool/converter setup step succeeds, so a
+            // declined native path leaves the CPU transform configuration untouched.
+            check(
+                self.transform
+                    .ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, manager.as_raw() as usize),
+                "setting capture GPU",
+            )?;
+        }
+        self.gpu = Some(GpuInput {
+            allocator,
+            converter,
+            _manager: manager,
+        });
+        Ok(())
+    }
+
+    fn sample_time(&self, sample: &IMFSample, index: u64) -> Result<(), String> {
+        let time = i64::try_from(index)
+            .unwrap_or(i64::MAX)
+            .saturating_mul(10_000_000)
+            / i64::from(self.fps);
+        // SAFETY: caller owns this sample; integer timestamp and positive duration are bounded.
+        unsafe {
+            check(sample.SetSampleTime(time), "GPU sample time")?;
+            check(
+                sample.SetSampleDuration(10_000_000 / i64::from(self.fps)),
+                "GPU sample duration",
+            )?;
+        }
+        Ok(())
     }
 
     /// Takes the parameter sets some encoders publish on the output type.
@@ -522,6 +686,7 @@ impl MfEncoder {
 
     /// Reads one encoded picture, if the encoder has one. Returns whether it produced one.
     fn process_output(&mut self, out: &mut Vec<HardwarePacket>) -> Result<bool, String> {
+        let _time = crate::d3d11::measure_output();
         let mut buffers = [MFT_OUTPUT_DATA_BUFFER {
             dwStreamID: 0,
             pSample: ManuallyDrop::new(None),
@@ -632,6 +797,7 @@ impl MfEncoder {
 
     /// Hands one picture to the encoder and collects what is ready.
     fn feed(&mut self, sample: IMFSample, out: &mut Vec<HardwarePacket>) -> Result<(), String> {
+        let _time = crate::d3d11::measure_feed();
         let started = Instant::now();
         match self.events.clone() {
             Some(events) => {
@@ -643,7 +809,10 @@ impl MfEncoder {
                     {
                         check(
                             // SAFETY: the encoder asked for input; the sample is a complete picture.
-                            unsafe { self.transform.ProcessInput(0, &sample, 0) },
+                            unsafe {
+                                let _time = crate::d3d11::measure_input();
+                                self.transform.ProcessInput(0, &sample, 0)
+                            },
                             "sending a picture",
                         )?;
                         self.input_credit -= 1;
@@ -656,7 +825,7 @@ impl MfEncoder {
                     if started.elapsed() > STALL_LIMIT {
                         return Err(format!("{} stopped accepting pictures", self.name));
                     }
-                    std::thread::sleep(Duration::from_micros(500));
+                    events.wait(STALL_LIMIT.saturating_sub(started.elapsed()));
                 }
             }
             None => {
@@ -682,19 +851,17 @@ impl MfEncoder {
 
     fn drain_events(
         &mut self,
-        events: &IMFMediaEventGenerator,
+        events: &crate::mf_events::Events,
         out: &mut Vec<HardwarePacket>,
     ) -> Result<(), String> {
-        loop {
-            // SAFETY: a non-blocking event read from a live generator.
-            let event = match unsafe { events.GetEvent(MF_EVENT_FLAG_NO_WAIT) } {
-                Ok(event) => event,
-                Err(error) if error.code() == MF_E_NO_EVENTS_AVAILABLE => return Ok(()),
-                Err(error) => return Err(format!("{}: reading events failed: {error}", self.name)),
+        for _ in 0..256 {
+            let Some(kind) = events.try_next()? else {
+                return Ok(());
             };
-            // SAFETY: a plain read of the event's type.
-            let kind = unsafe { event.GetType() }.map_err(|error| error.to_string())?;
             if kind == METransformNeedInput.0 as u32 {
+                if self.input_credit >= 32 {
+                    return Err("encoder requested too many outstanding inputs".to_owned());
+                }
                 self.input_credit += 1;
             } else if kind == METransformHaveOutput.0 as u32 {
                 self.process_output(out)?;
@@ -702,6 +869,7 @@ impl MfEncoder {
                 return Err(format!("{} reported an error", self.name));
             }
         }
+        Err("encoder event burst exceeded its bound".to_owned())
     }
 }
 
@@ -730,11 +898,48 @@ fn copy_sample(sample: &IMFSample) -> Result<Vec<u8>, String> {
 
 impl HardwareEncoder for MfEncoder {
     fn encode(&mut self, rgba: &[u8], index: u64) -> Result<Vec<HardwarePacket>, String> {
+        self.begin()?;
         rgba_to_nv12(rgba, self.width, self.height, &mut self.nv12, 2)?;
         let sample = self.make_sample(index)?;
         let mut out = Vec::new();
         self.feed(sample, &mut out)?;
+        crate::d3d11::cpu_input_count();
         Ok(out)
+    }
+
+    fn encode_surface(
+        &mut self,
+        frame: &mut dyn NativeCaptureFrame,
+        index: u64,
+    ) -> Result<Option<Vec<HardwarePacket>>, String> {
+        let Some(surface) = frame.as_any_mut().downcast_mut::<Surface>() else {
+            return Ok(None);
+        };
+        if surface.width() != self.width || surface.height() != self.height {
+            return Ok(None);
+        }
+        if self.gpu.is_none()
+            && self.gpu_declined.is_none()
+            && let Err(why) = self.enable_gpu(surface)
+        {
+            self.gpu_declined = Some(why);
+        }
+        let Some(gpu) = &self.gpu else {
+            return Ok(None);
+        };
+        let conversion_time = crate::d3d11::measure_conversion();
+        // SAFETY: a configured bounded allocator; returned sample is exclusively leased until
+        // submitted. Empty pools report an error rather than allocating beyond their maximum.
+        let sample = unsafe { gpu.allocator.AllocateSample() }
+            .map_err(|e| format!("GPU sample unavailable: {e}"))?;
+        gpu.converter.convert(surface, &sample)?;
+        self.sample_time(&sample, index)?;
+        self.begin()?;
+        drop(conversion_time);
+        let mut out = Vec::new();
+        self.feed(sample, &mut out)?;
+        crate::d3d11::native_input_count();
+        Ok(Some(out))
     }
 
     fn flush(&mut self) -> Result<Vec<HardwarePacket>, String> {
@@ -747,26 +952,22 @@ impl HardwareEncoder for MfEncoder {
         let started = Instant::now();
         match self.events.clone() {
             Some(events) => loop {
-                // SAFETY: a non-blocking event read.
-                match unsafe { events.GetEvent(MF_EVENT_FLAG_NO_WAIT) } {
-                    Ok(event) => {
-                        // SAFETY: a plain read of the event's type.
-                        let kind = unsafe { event.GetType() }.map_err(|error| error.to_string())?;
+                if started.elapsed() > STALL_LIMIT {
+                    return Err(format!("{} timed out while draining", self.name));
+                }
+                match events.try_next()? {
+                    Some(kind) => {
                         if kind == METransformHaveOutput.0 as u32 {
                             self.process_output(&mut out)?;
-                        } else if kind == METransformDrainComplete.0 as u32
-                            || kind == MEError.0 as u32
-                        {
+                        } else if kind == MEError.0 as u32 {
+                            return Err(format!("{} failed while draining", self.name));
+                        } else if kind == METransformDrainComplete.0 as u32 {
                             break;
                         }
                     }
-                    Err(error) if error.code() == MF_E_NO_EVENTS_AVAILABLE => {
-                        if started.elapsed() > STALL_LIMIT {
-                            break;
-                        }
-                        std::thread::sleep(Duration::from_millis(1));
+                    None => {
+                        events.wait(STALL_LIMIT.saturating_sub(started.elapsed()));
                     }
-                    Err(_) => break,
                 }
             },
             None => while self.process_output(&mut out)? {},
@@ -782,12 +983,21 @@ impl HardwareEncoder for MfEncoder {
     }
 
     fn name(&self) -> String {
-        format!("Media Foundation: {}", self.name)
+        if self.gpu.is_some() {
+            format!("Media Foundation: {}; D3D11 GPU surfaces", self.name)
+        } else if let Some(why) = &self.gpu_declined {
+            format!("Media Foundation: {}; CPU input ({why})", self.name)
+        } else {
+            format!("Media Foundation: {}", self.name)
+        }
     }
 }
 
 impl Drop for MfEncoder {
     fn drop(&mut self) {
+        if let Some(events) = &self.events {
+            events.close();
+        }
         // SAFETY: orderly shutdown of a live transform; errors cannot be acted on while dropping.
         unsafe {
             let _ = self

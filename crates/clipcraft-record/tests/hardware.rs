@@ -29,6 +29,9 @@ struct Behaviour {
     reorder_after: Option<u64>,
     /// Accept an opaque capture surface without asking it for a CPU readback.
     direct_surface: bool,
+    /// Accept input indefinitely without returning packets.
+    withhold_output: bool,
+    fail_flush: bool,
 }
 
 struct Fake {
@@ -65,6 +68,9 @@ impl HardwareEncoder for Fake {
             .reorder_after
             .is_some_and(|limit| self.seen >= limit);
         self.seen += 1;
+        if self.behaviour.withhold_output {
+            return Ok(Vec::new());
+        }
         let luma: Vec<u8> = rgba.chunks_exact(4).map(|pixel| pixel[1].max(16)).collect();
         let chroma = vec![128_u8; self.width * self.height / 4];
         let frame = YuvFrame {
@@ -106,6 +112,9 @@ impl HardwareEncoder for Fake {
     }
 
     fn flush(&mut self) -> Result<Vec<HardwarePacket>, String> {
+        if self.behaviour.fail_flush {
+            return Err("device lost during drain".to_owned());
+        }
         Ok(self
             .encoder
             .flush()
@@ -429,6 +438,59 @@ fn a_gpu_that_fails_midway_hands_over_to_software() {
     assert!(matches!(status.state, RecordState::Running), "{status:?}");
     let path = scratch.0.join("after.mp4");
     recorder.save_clip(5, ClipFormat::Mp4, &path).unwrap();
+    judged(&path, 320, 180);
+}
+
+#[test]
+fn a_gpu_that_accepts_input_without_output_cannot_grow_pending_forever() {
+    let recorder = Recorder::start(
+        Box::new(SyntheticSource::new(320, 180, 30)),
+        config(Some(provider(Behaviour {
+            withhold_output: true,
+            ..Behaviour::default()
+        }))),
+    )
+    .unwrap();
+    wait_for(&recorder, "bounded handover from a silent encoder", |s| {
+        s.restarts >= 1 && s.buffered_seconds >= 1.0
+    });
+    let status = recorder.status();
+    assert!(
+        status.encoder.contains("pending-picture bound"),
+        "{status:?}"
+    );
+    assert!(matches!(status.state, RecordState::Running));
+    let scratch = Scratch::new("silent-gpu");
+    let path = scratch.0.join("after.mp4");
+    recorder.save_clip(5, ClipFormat::Mp4, &path).unwrap();
+    judged(&path, 320, 180);
+}
+
+#[test]
+fn a_failed_drain_is_reported_even_after_halt_and_preserves_saved_clips() {
+    let scratch = Scratch::new("drain-failure");
+    let recorder = Recorder::start(
+        Box::new(SyntheticSource::new(320, 180, 30)),
+        config(Some(provider(Behaviour {
+            fail_flush: true,
+            ..Behaviour::default()
+        }))),
+    )
+    .unwrap();
+    wait_for(&recorder, "video before drain failure", |s| {
+        s.buffered_seconds >= 1.0
+    });
+    let path = scratch.0.join("preserved.mp4");
+    recorder.save_clip(5, ClipFormat::Mp4, &path).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    recorder.halt();
+    let status = recorder.stop();
+    assert_eq!(
+        status.state,
+        RecordState::Failed(clipcraft_record::RecordError::EncoderFailed)
+    );
+    assert!(status.encoder.contains("device lost during drain"));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
     judged(&path, 320, 180);
 }
 

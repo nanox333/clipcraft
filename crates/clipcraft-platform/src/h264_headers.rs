@@ -117,26 +117,9 @@ impl StreamShape {
     }
 }
 
-/// `(level_idc, max macroblocks per second, max frame size in macroblocks)` for the levels a
-/// screen recorder needs, smallest first.
-const LEVELS: [(u8, u32, u32); 7] = [
-    (31, 108_000, 3_600),
-    (40, 245_760, 8_192),
-    (41, 245_760, 8_192),
-    (42, 522_240, 8_704),
-    (50, 589_824, 22_080),
-    (51, 983_040, 36_864),
-    (52, 2_073_600, 36_864),
-];
-
 /// The lowest level whose limits hold this picture size and frame rate, or the highest known.
 pub fn level_for(shape: StreamShape) -> u8 {
-    let frame = shape.width_in_mbs().saturating_mul(shape.height_in_mbs());
-    let rate = frame.saturating_mul(shape.fps);
-    LEVELS
-        .iter()
-        .find(|(_, per_second, per_frame)| rate <= *per_second && frame <= *per_frame)
-        .map_or(LEVELS[LEVELS.len() - 1].0, |entry| entry.0)
+    crate::h264_stream::level_for(shape.width, shape.height, shape.fps)
 }
 
 fn nal(header: u8, rbsp: Vec<u8>) -> Vec<u8> {

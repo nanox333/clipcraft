@@ -57,8 +57,9 @@ platforms:
   framing, generated audio sync, and trim export have automated or virtual-display end-to-end tests.
 - **Linux/Wayland:** the portal conversation and PipeWire receiver have component tests, but no real
   portal chooser has produced a captured frame. See [ADR 0012](0012-wayland-capture.md).
-- **Windows:** Graphics Capture, global hotkeys, and Media Foundation code compile; none has run on
-  a Windows machine. Protected windows, exclusive fullscreen, and hardware encoders remain open.
+- **Windows:** WGC and AMD Media Foundation have generated-window hardware evidence, including
+  D3D11 surface leases and GPU color conversion. Global hotkeys, protected windows, exclusive
+  fullscreen, device loss and sustained 1080p60 remain open; see [the report](../windows-performance.md).
 - **macOS:** no capture/audio provider has been implemented.
-- **Real devices:** microphone/speaker capture and NVENC, VA-API, VideoToolbox, and Media Foundation
-  hardware encoding have not been exercised on real hardware here.
+- **Real devices:** microphone/speaker capture and NVENC, VA-API and VideoToolbox remain unrun.
+  AMD Media Foundation is the only encoder with current Windows hardware evidence here.

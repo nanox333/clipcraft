@@ -60,10 +60,11 @@ not a formal clean-room implementation.
 - **Capture model:** portable source descriptors, capabilities, packets, timestamps, and failure
   states. `CaptureSource` retains its CPU-frame method and offers an optional opaque native-surface
   lease; a compatible hardware encoder may consume that lease directly or the recorder requests a
-  CPU readback. The handoff and fallback are tested with stand-ins, but no platform provider or
-  encoder implements the route yet, so the active pipeline still reads frames into CPU-owned BGRA
-  and converts them on the CPU. OS APIs and device handles stay inside `clipcraft-platform`; see
-  M5.2 in the backlog. No GPU performance claim is supported yet.
+  CPU readback. Windows SDR WGC textures now use bounded owned D3D11 leases; compatible Media
+  Foundation encoders convert to NV12 on the same GPU with a bounded sample allocator. HDR,
+  scaling/cropping and incompatible encoders retain CPU fallback. OS APIs and device handles stay
+  inside `clipcraft-platform`; see [ADR 0014](adr/0014-windows-d3d11-capture-encode.md) and
+  [measured limitations](windows-performance.md). The 1080p60 performance gate remains open.
 - **Platform:** display/window capture, audio devices, global hotkeys, and hardware encoder adapters.
   Expose safe, fallible Rust APIs. Any OS FFI is isolated here, reviewed by ADR, and documented with
   safety invariants. `sysinfo` provides Rust process enumeration; the game watcher retains only

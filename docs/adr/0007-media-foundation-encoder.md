@@ -1,7 +1,7 @@
 # ADR 0007: Hardware H.264 recording on AMD and Intel through Media Foundation
 
-- **Status:** Accepted. The code compiles for Windows and its stream handling is unit tested, but it
-  has **never run on a Windows computer or any AMD, Intel, or NVIDIA encoder**.
+- **Status:** Accepted; extended by [ADR 0014](0014-windows-d3d11-capture-encode.md). AMD Windows
+  generated-window runtime evidence now exists; sustained 1080p60 and other GPUs remain open.
 - **Date:** 2026-10-19
 
 ## Context
@@ -25,8 +25,9 @@ encoder's own), and RGBA to NV12.
 
 ## `unsafe`
 
-This is the only `unsafe` in ClipCraft's own code, as `AGENTS.md` allows: confined to
-`clipcraft-platform`, in one file, every block with a `// SAFETY:` comment, and the lint
+At this decision's introduction the Windows encoder boundary was confined to `mf_encoder.rs` in
+`clipcraft-platform`. ADR 0014 adds the D3D11 surface and asynchronous callback modules; other
+platform boundaries have their own ADRs. Every block has a `// SAFETY:` comment, and the lint
 `clippy::undocumented_unsafe_blocks` warns on any that lacks one. It cannot be reached except through
 the trait, which returns `Result` everywhere. The unsafe parts are:
 

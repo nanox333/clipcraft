@@ -108,6 +108,11 @@ fallback tests; it adds no real-GPU evidence. The combined gate log is
 
 ## Remaining work, ordered by likely user impact
 
+Windows SDR work has since implemented the compatible WGC/D3D11/Media Foundation handoff.
+[Generated-window measurements](windows-performance.md) confirm zero CPU readbacks, but both CPU
+and native routes still miss requested 1080p60. The table below describes the original review;
+the linked report records current implementation, evidence and remaining gates.
+
 | Priority | Area / source | Observed cost and next measurement |
 | --- | --- | --- |
 | 1 | Platform/capture/record: `windows.rs`, `hardware.rs`, `mf_encoder.rs`, `recorder.rs` | Windows reads a GPU texture to CPU memory, then clones a full `CaptureFrame` in `capture()`. Hardware encoding consumes CPU RGBA; Media Foundation additionally converts to NV12 and copies into an input buffer. Measure bytes copied, capture callback time and game CPU/GPU frame times at native 1080p60, 1440p60 and 4K60. Design a safe GPU-surface capture-to-encoder interface with bounded lifetimes and tested CPU fallback. This is the largest architectural candidate, not a measured ranking. |

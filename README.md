@@ -6,8 +6,8 @@ backend, backup, upload, sync, or share-link service.
 
 > **Status: active prototype.** The screen-capture/replay/save pipeline, playback, local library,
 > and basic trim-to-MP4 workflow are implemented. Their verification varies by platform: the
-> end-to-end capture pipeline is tested on Linux/X11, while Windows capture only compiles and has
-> not yet run on Windows hardware. See [`ROADMAP.md`](ROADMAP.md) and
+> end-to-end capture pipeline is tested on Linux/X11 and with a generated window on Windows/AMD.
+> Windows 1080p60 throughput and the two-hour hardware soak remain open. See [`ROADMAP.md`](ROADMAP.md) and
 > [`docs/gaps.md`](docs/gaps.md) for current evidence and limits.
 
 ClipCraft takes inspiration from Medal's capture-first workflow and compact dark interface. It
@@ -19,7 +19,7 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
 - **Capture and replay:** choose a screen or window, record into a bounded replay buffer, and save
   clips with the global hotkey. Recording supports MP4/MKV, configurable quality and framing,
   replay length, post-roll, and storage limits. Linux/X11 has end-to-end synthetic-screen evidence;
-  Windows Graphics Capture currently compiles but has not been run on Windows hardware. Game-only
+  Windows/AMD has generated-window capture-to-MP4 evidence, including a native D3D11 path. Game-only
   mode is on by default: replay stays stopped until a user-added game process and capturable window
   are found, then stops when that process exits. Manual capture mode is available by turning the
   setting off.
@@ -54,8 +54,11 @@ they do not establish game-FPS impact or sustained capture performance.
 
 - Linux/X11 capture and replay have been tested end to end in a virtual display. Wayland support is
   partly verified; no real desktop portal chooser has delivered a frame yet.
-- The Windows capture provider and Windows hotkeys compile, but have not been run on Windows.
-  macOS capture is not implemented.
+- Windows/AMD native SDR capture avoids full-frame CPU readback at matching source/output size.
+  HDR compatibility, resizing/cropping and incompatible encoders retain CPU fallback. Both tested
+  CPU and native paths encoded about 32 fps when requesting 1080p60; this gate remains open.
+  See [Windows measurements and reproduction](docs/windows-performance.md). Windows hotkeys and
+  real-game behavior remain untested; macOS capture is not implemented.
 - Game-only capture is the default and stays idle until a game is added to the allowlist. X11 and
   Windows window-to-process adapters are implemented; this environment verifies X11 with a
   synthetic window, not a real game. Wayland does not expose the

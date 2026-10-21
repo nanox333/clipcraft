@@ -5,12 +5,14 @@
 //!   display.
 //! * Linux (Wayland): the desktop's ScreenCast portal chooses the screen or window and PipeWire
 //!   carries the pictures. See `wayland` and `docs/wayland.md`.
-//! * Windows: Windows Graphics Capture. See the `windows` module; it compiles for Windows but has
-//!   not been run on real hardware.
+//! * Windows: Windows Graphics Capture, with generated-window AMD hardware evidence. See
+//!   `docs/windows-performance.md` for measured limits.
 //! * macOS: no provider yet.
 
 use clipcraft_capture::{Capabilities, CaptureError, CaptureSource, CaptureTarget};
 
+#[cfg(windows)]
+mod d3d11;
 #[cfg(any(target_os = "linux", test))]
 mod h264_headers;
 #[cfg(any(windows, target_os = "linux", test))]
@@ -19,6 +21,8 @@ mod hardware;
 mod hotkey;
 #[cfg(windows)]
 mod mf_encoder;
+#[cfg(windows)]
+mod mf_events;
 mod priority;
 mod process;
 #[cfg(target_os = "linux")]
@@ -36,6 +40,34 @@ pub use hardware::{hardware_provider, probe_hardware_encoder};
 pub use hotkey::{HotkeyBinding, HotkeyEvent, HotkeyListener, parse_shortcut};
 pub use priority::set_background_priority;
 pub use process::{ProcessObserver, RunningProcess, running_processes};
+
+/// Process-local counters for measuring the Windows native path without media/path logging.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CapturePipelineStats {
+    pub gpu_copies: u64,
+    pub cpu_readbacks: u64,
+    pub native_encoder_inputs: u64,
+    pub cpu_encoder_inputs: u64,
+    pub pool_drops: u64,
+    pub feed_us: u64,
+    pub conversion_us: u64,
+    pub output_us: u64,
+    pub input_wait_us: u64,
+    pub input_submit_us: u64,
+    pub event_us: u64,
+}
+
+/// Cumulative counters; compare snapshots around a recording when other sources are inactive.
+pub fn capture_pipeline_stats() -> CapturePipelineStats {
+    #[cfg(windows)]
+    {
+        d3d11::stats()
+    }
+    #[cfg(not(windows))]
+    {
+        CapturePipelineStats::default()
+    }
+}
 #[cfg(target_os = "linux")]
 pub use pulse::{Output, Outputs, list_outputs, open_system_monitor};
 #[cfg(target_os = "linux")]
