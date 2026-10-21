@@ -9,6 +9,7 @@ use std::process::Stdio;
 use std::time::UNIX_EPOCH;
 
 mod diagnose;
+mod game_detection;
 mod hotkeys;
 mod index;
 mod library_meta;
@@ -20,12 +21,17 @@ mod session;
 mod startup;
 mod storage;
 
+pub use clipcraft_export::{ExportPreset, TrimRequest as ExportRange};
 pub use clipcraft_media::MediaProbe;
 
 pub use clipcraft_capture::reframe::{
     Framing, MAX_OUTPUT_EDGE, MIN_OUTPUT_EDGE, OutputShape, PixelRect, Reframe, reframe,
 };
 pub use diagnose::{Check, Diagnostics};
+pub use game_detection::{
+    GameArmingDecision, GameArmingState, GameMatchRule, GameProcessMatch, best_game_match,
+    match_game_process, match_game_with_user_priority,
+};
 pub use hotkeys::{HotkeyAction, Hotkeys, normalize_hotkey};
 pub use library_meta::{
     GameGroup, MAX_COLLECTIONS, MAX_COLLECTIONS_PER_CLIP, MAX_NAME_CHARS, MetaEdit, apply_edit,
@@ -114,6 +120,14 @@ pub enum Command {
         start_ms: u64,
         end_ms: u64,
     },
+    /// Re-encodes a range locally with an estimated size target.
+    ExportClip {
+        input: PathBuf,
+        output: PathBuf,
+        start_ms: u64,
+        end_ms: u64,
+        preset: ExportPreset,
+    },
 }
 
 impl Command {
@@ -134,6 +148,7 @@ impl Command {
             Self::SetLaunchAtStartup { .. } => "app.launch_at_startup",
             Self::SaveRecordingSettings { .. } => "recording.save_settings",
             Self::TrimClip { .. } => "clip.trim",
+            Self::ExportClip { .. } => "clip.export",
             Self::FindMovedFile { .. } => "library.find_file",
         }
     }
@@ -209,6 +224,43 @@ pub struct TrimmedClip {
     pub bytes: u64,
 }
 
+/// A compressed local clip, with its estimate and actual file size.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ExportedClip {
+    pub clip: TrimmedClip,
+    pub target_bytes: u64,
+    pub within_target: bool,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Command `clip.export`: compress a range without modifying or uploading its source.
+pub fn export_clip(
+    request: &ExportRange,
+    preset: ExportPreset,
+    progress: &mut dyn FnMut(f32),
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<ExportedClip, EngineError> {
+    if request.input.as_os_str().is_empty() || request.output.as_os_str().is_empty() {
+        return Err(EngineError::EmptyMediaPath);
+    }
+    let report = clipcraft_export::compress_to_mp4(request, preset, progress, cancel)
+        .map_err(EngineError::Export)?;
+    Ok(ExportedClip {
+        clip: TrimmedClip {
+            path: report.clip.path.to_string_lossy().into_owned(),
+            duration_ms: u64::try_from(report.clip.duration.to_units_floor(1_000)).unwrap_or(0),
+            pictures: report.clip.pictures,
+            audio_tracks: report.clip.audio_tracks,
+            bytes: report.clip.bytes,
+        },
+        target_bytes: report.target_bytes,
+        within_target: report.within_target,
+        width: report.width,
+        height: report.height,
+    })
+}
+
 /// Cuts `input` from `start_ms` to `end_ms` into a new MP4 at `output`, reporting progress from 0
 /// to 1 and stopping when `cancel` is set. Nothing is re-encoded and the input is never changed.
 /// Command id `clip.trim`.
@@ -246,13 +298,22 @@ pub fn trim_clip(
 /// A file name beside `input` for its trimmed copy (`Name (trimmed).mp4`, then `(trimmed 2)`),
 /// one that does not exist yet.
 pub fn trimmed_path(input: &std::path::Path) -> Option<PathBuf> {
+    copy_path(input, "trimmed")
+}
+
+/// An unused name for an exported copy beside the source.
+pub fn exported_path(input: &std::path::Path) -> Option<PathBuf> {
+    copy_path(input, "exported")
+}
+
+fn copy_path(input: &std::path::Path, suffix: &str) -> Option<PathBuf> {
     let folder = input.parent()?;
     let stem = input.file_stem()?.to_string_lossy().into_owned();
     (1..1_000).find_map(|n| {
         let tag = if n == 1 {
-            "trimmed".to_owned()
+            suffix.to_owned()
         } else {
-            format!("trimmed {n}")
+            format!("{suffix} {n}")
         };
         let candidate = folder.join(format!("{stem} ({tag}).mp4"));
         (!candidate.exists()).then_some(candidate)
@@ -279,6 +340,8 @@ pub enum CommandOutput {
     StorageUsage(StorageUsage),
     /// A clip that was cut and saved.
     Trimmed(TrimmedClip),
+    /// A compressed clip and the actual/target size comparison.
+    Exported(ExportedClip),
     /// Where a moved clip was found, if it was.
     FoundFile {
         path: Option<String>,
@@ -464,6 +527,25 @@ pub fn execute(command: Command) -> Result<CommandOutput, EngineError> {
             let never = std::sync::atomic::AtomicBool::new(false);
             trim_clip(&input, &output, start_ms, end_ms, &mut |_| {}, &never)
                 .map(CommandOutput::Trimmed)
+        }
+        Command::ExportClip {
+            input,
+            output,
+            start_ms,
+            end_ms,
+            preset,
+        } => {
+            let never = std::sync::atomic::AtomicBool::new(false);
+            let to_tick = |ms: u64| {
+                clipcraft_time::Tick::from_units(i64::try_from(ms).unwrap_or(i64::MAX), 1_000)
+            };
+            let request = clipcraft_export::TrimRequest {
+                input,
+                output,
+                start: to_tick(start_ms),
+                end: to_tick(end_ms),
+            };
+            export_clip(&request, preset, &mut |_| {}, &never).map(CommandOutput::Exported)
         }
         Command::FindMovedFile {
             name,
@@ -723,6 +805,7 @@ pub const fn command_ids() -> &'static [&'static str] {
         "capture.status",
         "capture.save_clip",
         "clip.trim",
+        "clip.export",
         "library.find_file",
         "capture.toggle_microphone",
         "capture.push_to_talk",
@@ -763,6 +846,38 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn export_command_validates_paths_ranges_and_size_before_creating_output() {
+        let directory = TestDirectory::new();
+        let output = directory.path().join("out.mp4");
+        let export = |input: &str, start_ms, end_ms, megabytes| {
+            super::execute(Command::ExportClip {
+                input: input.into(),
+                output: output.clone(),
+                start_ms,
+                end_ms,
+                preset: super::ExportPreset::Custom { megabytes },
+            })
+        };
+        assert_eq!(export("", 0, 1_000, 10), Err(EngineError::EmptyMediaPath));
+        assert_eq!(
+            export("missing.mp4", 0, 1_000, 0),
+            Err(EngineError::Export(
+                clipcraft_export::ExportError::BadPreset
+            ))
+        );
+        assert_eq!(
+            export("missing.mp4", 2_000, 1_000, 10),
+            Err(EngineError::Export(clipcraft_export::ExportError::BadRange))
+        );
+        assert!(!output.exists());
+        assert!(super::command_ids().contains(&"clip.export"));
+        assert_eq!(
+            super::exported_path(&directory.path().join("run.mp4")),
+            Some(directory.path().join("run (exported).mp4"))
+        );
     }
 
     #[test]

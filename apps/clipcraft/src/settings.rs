@@ -7,9 +7,9 @@ use std::time::Duration;
 use clipcraft_audio_out::{DeviceNames, MicMeter, list_devices};
 use clipcraft_engine::{
     AUDIO_KBPS, CaptureSource, Command, CommandOutput, Container, EncoderPreset, FRAME_RATES,
-    Framing, HEIGHTS, HotkeyAction, KEYFRAME_SECONDS, OutputShape, POST_ROLL_SECONDS, QualityMode,
-    REPLAY_SECONDS, RateControl, RecordingSettings, SAMPLE_RATES, StorageUsage, VIDEO_KBPS,
-    VideoCodec, VideoEncoder, execute, format_bytes, normalize_hotkey,
+    Framing, GameMatchRule, HEIGHTS, HotkeyAction, KEYFRAME_SECONDS, OutputShape,
+    POST_ROLL_SECONDS, QualityMode, REPLAY_SECONDS, RateControl, RecordingSettings, SAMPLE_RATES,
+    StorageUsage, VIDEO_KBPS, VideoCodec, VideoEncoder, execute, format_bytes, normalize_hotkey,
 };
 use eframe::egui;
 use egui::{Color32, RichText, Stroke, Vec2};
@@ -44,6 +44,32 @@ pub struct SettingsState {
     usage: Option<StorageUsage>,
     usage_for: Option<PathBuf>,
     usage_receiver: Option<mpsc::Receiver<StorageUsage>>,
+    pub(crate) game_processes: Vec<clipcraft_platform::RunningProcess>,
+    pub(crate) game_processes_loaded: bool,
+    pub(crate) game_process_error: Option<String>,
+    selected_game_process: Option<clipcraft_platform::RunningProcess>,
+    game_name_draft: String,
+    game_process_draft: String,
+    game_steam_id_draft: String,
+}
+
+impl SettingsState {
+    pub(crate) fn set_game_processes(
+        &mut self,
+        result: Result<Vec<clipcraft_platform::RunningProcess>, String>,
+    ) {
+        self.game_processes_loaded = true;
+        match result {
+            Ok(processes) => {
+                self.game_process_error = None;
+                self.game_processes = processes;
+            }
+            Err(error) => {
+                self.game_process_error = Some(error);
+                self.game_processes.clear();
+            }
+        }
+    }
 }
 
 impl SettingsState {
@@ -773,6 +799,255 @@ pub fn capture_tab(
             true,
         );
     });
+}
+
+/// Process rules that are allowed to start the replay buffer.
+pub fn games_tab(
+    ui: &mut egui::Ui,
+    settings: &mut RecordingSettings,
+    state: &mut SettingsState,
+) -> bool {
+    let mut refresh_processes = false;
+    card(ui, "Game-aware capture", |ui| {
+        toggle_row(
+            ui,
+            "Arm replay only for selected games",
+            "The replay buffer stays stopped until a matching game process and capturable window are found.",
+            &mut settings.game_only_capture,
+            true,
+        );
+        if settings.game_only_capture && settings.game_rules.is_empty() {
+            ui.label(
+                RichText::new("Add a game below before automatic capture can start.")
+                    .color(FAINT)
+                    .size(12.5),
+            );
+        }
+        if settings.game_only_capture && settings.record_on_launch {
+            ui.add_space(5.0);
+            ui.label(
+                RichText::new("Start on launch is ignored while game-only capture is enabled.")
+                    .color(MUTED)
+                    .size(12.5),
+            );
+        }
+    });
+
+    card(ui, "Add a game", |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Running app").color(TEXT).size(13.0));
+            if ui.button("Refresh list").clicked() {
+                refresh_processes = true;
+            }
+        });
+        if let Some(error) = state.game_process_error.as_ref() {
+            ui.label(RichText::new(error).color(DANGER).size(12.5));
+        } else if state.game_processes_loaded && state.game_processes.is_empty() {
+            ui.label(
+                RichText::new("No running apps were found. You can enter a process name below.")
+                    .color(FAINT)
+                    .size(12.5),
+            );
+        }
+
+        let mut unique_processes = Vec::new();
+        for process in &state.game_processes {
+            if unique_processes
+                .iter()
+                .any(|existing: &clipcraft_platform::RunningProcess| {
+                    existing
+                        .executable
+                        .eq_ignore_ascii_case(&process.executable)
+                        && existing.steam_app_id == process.steam_app_id
+                })
+            {
+                continue;
+            }
+            unique_processes.push(process.clone());
+            if unique_processes.len() >= 512 {
+                break;
+            }
+        }
+        let selected_label = state
+            .selected_game_process
+            .as_ref()
+            .map(|process| match process.steam_app_id.as_deref() {
+                Some(id) => format!("{}  ·  Steam {id}", process.executable),
+                None => process.executable.clone(),
+            })
+            .unwrap_or_else(|| "Choose an app".to_owned());
+        egui::ComboBox::from_id_salt("game-process-picker")
+            .selected_text(selected_label)
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                for process in &unique_processes {
+                    let label = match process.steam_app_id.as_deref() {
+                        Some(id) => format!("{}  ·  Steam {id}", process.executable),
+                        None => process.executable.clone(),
+                    };
+                    if ui
+                        .selectable_label(
+                            state
+                                .selected_game_process
+                                .as_ref()
+                                .is_some_and(|selected| {
+                                    selected.executable == process.executable
+                                        && selected.steam_app_id == process.steam_app_id
+                                }),
+                            label,
+                        )
+                        .clicked()
+                    {
+                        state.selected_game_process = Some(process.clone());
+                        state.game_process_draft = process.executable.clone();
+                        if let Some(id) = process.steam_app_id.as_deref() {
+                            state.game_steam_id_draft = id.to_owned();
+                        }
+                        if state.game_name_draft.trim().is_empty() {
+                            state.game_name_draft = display_game_name(&process.executable);
+                        }
+                    }
+                }
+            });
+
+        ui.add_space(8.0);
+        ui.label(RichText::new("Game name").color(TEXT).size(13.0));
+        ui.add(
+            egui::TextEdit::singleline(&mut state.game_name_draft)
+                .hint_text("e.g. Counter-Strike 2")
+                .desired_width(f32::INFINITY),
+        );
+        ui.add_space(7.0);
+        ui.label(
+            RichText::new("Process name contains")
+                .color(TEXT)
+                .size(13.0),
+        );
+        ui.add(
+            egui::TextEdit::singleline(&mut state.game_process_draft)
+                .hint_text("e.g. cs2.exe")
+                .desired_width(f32::INFINITY),
+        );
+        ui.add_space(7.0);
+        ui.label(
+            RichText::new("Steam app ID (optional)")
+                .color(TEXT)
+                .size(13.0),
+        );
+        ui.add(
+            egui::TextEdit::singleline(&mut state.game_steam_id_draft)
+                .hint_text("e.g. 730")
+                .desired_width(f32::INFINITY),
+        );
+        ui.add_space(8.0);
+        let can_add = settings.game_rules.len() < 64
+            && !state.game_name_draft.trim().is_empty()
+            && (!parse_list(&state.game_process_draft).is_empty()
+                || !parse_list(&state.game_steam_id_draft).is_empty());
+        if ui
+            .add_enabled(can_add, egui::Button::new("Add to game list"))
+            .clicked()
+        {
+            let rule = GameMatchRule::new(
+                state.game_name_draft.trim(),
+                parse_list(&state.game_process_draft),
+            )
+            .with_steam_app_ids(parse_list(&state.game_steam_id_draft))
+            .sanitized();
+            if !rule.name.is_empty() && (!rule.needles.is_empty() || !rule.steam_app_ids.is_empty())
+            {
+                settings.game_rules.push(rule);
+                settings.game_rules.truncate(64);
+                state.game_name_draft.clear();
+                state.game_process_draft.clear();
+                state.game_steam_id_draft.clear();
+                state.selected_game_process = None;
+            }
+        }
+    });
+
+    card(ui, "Allowed games", |ui| {
+        if settings.game_rules.is_empty() {
+            ui.label(
+                RichText::new("No games added. Automatic capture remains idle.")
+                    .color(FAINT)
+                    .size(12.5),
+            );
+        }
+        if settings.game_rules.len() >= 64 {
+            ui.label(
+                RichText::new("The game list is full. Remove an entry before adding another.")
+                    .color(FAINT)
+                    .size(12.5),
+            );
+        }
+        let mut remove = Vec::new();
+        for (index, rule) in settings.game_rules.iter_mut().enumerate() {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut rule.name)
+                        .desired_width(150.0)
+                        .hint_text("Game name"),
+                );
+                let mut needles = rule.needles.join(", ");
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut needles)
+                            .desired_width(180.0)
+                            .hint_text("Process name"),
+                    )
+                    .changed()
+                {
+                    rule.needles = parse_list(&needles);
+                }
+                let mut app_ids = rule.steam_app_ids.join(", ");
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut app_ids)
+                            .desired_width(100.0)
+                            .hint_text("Steam ID"),
+                    )
+                    .changed()
+                {
+                    rule.steam_app_ids = parse_list(&app_ids);
+                }
+                if ui.small_button("Remove").clicked() {
+                    remove.push(index);
+                }
+            });
+        }
+        for index in remove.into_iter().rev() {
+            settings.game_rules.remove(index);
+        }
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(
+                "Process matching uses local executable names. Linux can also match the exact Steam app ID when Steam exposes it. Process names may be shared by more than one game, so prefer an app ID when needed.",
+            )
+            .color(MUTED)
+            .size(12.5),
+        );
+    });
+    refresh_processes
+}
+
+fn parse_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .take(8)
+        .map(str::to_owned)
+        .collect()
+}
+
+fn display_game_name(executable: &str) -> String {
+    let stem = PathBuf::from(executable)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| executable.to_owned());
+    stem.replace(['_', '-'], " ")
 }
 
 fn refresh_devices(state: &mut SettingsState) {

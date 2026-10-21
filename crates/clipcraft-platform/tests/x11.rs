@@ -5,6 +5,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use clipcraft_capture::{CaptureError, TargetKind};
+use clipcraft_platform::window_for_process_on;
 use clipcraft_platform::{HotkeyBinding, HotkeyListener, list_targets_on, open_on};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConnectionExt, CreateWindowAux, WindowClass};
@@ -260,4 +261,47 @@ fn the_focused_window_is_found_through_the_window_managers_hint() {
     // The hint can be opened and captured.
     let mut source = open_on(&server.display, &found.id).unwrap();
     assert_eq!(source.capture().unwrap().width, 200);
+}
+
+#[test]
+fn a_game_window_is_selected_by_its_exact_process_id() {
+    let Some(server) = Server::start(66) else {
+        return;
+    };
+    let window = make_window(&server.display, 200, 100, 0x336699);
+    let process_id = 42_424;
+    let (conn, screen) = RustConnection::connect(Some(&server.display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    let atom = |name: &[u8]| conn.intern_atom(false, name).unwrap().reply().unwrap().atom;
+    let clients = atom(b"_NET_CLIENT_LIST");
+    let pid = atom(b"_NET_WM_PID");
+    conn.change_property32(
+        x11rb::protocol::xproto::PropMode::REPLACE,
+        root,
+        clients,
+        x11rb::protocol::xproto::AtomEnum::WINDOW,
+        &[window],
+    )
+    .unwrap();
+    conn.change_property32(
+        x11rb::protocol::xproto::PropMode::REPLACE,
+        window,
+        pid,
+        x11rb::protocol::xproto::AtomEnum::CARDINAL,
+        &[process_id],
+    )
+    .unwrap();
+    conn.flush().unwrap();
+    conn.get_input_focus().unwrap().reply().unwrap();
+
+    let found = window_for_process_on(&server.display, process_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.id, format!("window:{window:x}"));
+    assert_eq!((found.width, found.height), (200, 100));
+    assert!(
+        window_for_process_on(&server.display, process_id + 1)
+            .unwrap()
+            .is_none()
+    );
 }

@@ -1,8 +1,8 @@
 # ADR 0002: Capture platform matrix and Windows-first path
 
-- **Status:** Accepted as the M0 plan. Every row is **unmeasured**: it comes from public platform
-  documentation, not from a benchmark on reference hardware. The M2/M3 spikes replace each
-  "expected" with a measured result, or supersede this ADR.
+- **Status:** Accepted as the Windows-first target matrix. Implementation evidence has been added
+  below; real reference-gaming-hardware results remain open. See [`docs/gaps.md`](../gaps.md) for
+  the current evidence and known limits.
 - **Date:** 2026-10-19
 - **Decision owners:** ClipCraft maintainers
 
@@ -31,10 +31,11 @@ provisional until the audio spike confirms per-process loopback availability.
 hardware encoder is unavailable the UI shows the specific missing capability and keeps the library
 and editor usable. No fallback injects into a game process, loads a driver, or bypasses DRM.
 
-**Software encode.** [ADR 0004](0004-filmcraft-crates.md) identifies FilmCraft's pure-Rust H.264
-encoder (`filmcraft-h264enc`) as the software fallback candidate. Its 1080p60 speed and quality are
-unmeasured; confirming them is an M2 spike deliverable. Until it is wired in, export and capture
-report "no encoder available" rather than producing a file.
+**Software encode.** FilmCraft's pure-Rust H.264 encoder (`filmcraft-h264enc`) is wired as the
+recording fallback. In this shared 4-core container it cannot sustain 1080p60 and drops 73% of
+pictures under the measured workload; 720p60 also drops about a third. Performance on a real gaming
+PC remains unmeasured. Platform hardware encoder adapters are wired, but no real GPU encoder has run
+in this environment. See [`docs/gaps.md`](../gaps.md).
 
 ## Consequences
 
@@ -42,4 +43,22 @@ report "no encoder available" rather than producing a file.
   safe `Result` API.
 - Release claims for any row need measured evidence in `docs/gaps.md`: 1080p60 capture, hotkey
   latency, dropped frames, A/V drift, and power draw on a named reference machine.
-- macOS and Linux rows are design intent only until M6.
+- Linux X11 capture, replay, system sound, and trim recording have end-to-end evidence in a virtual
+  display. Wayland portal/PipeWire pieces are partly verified, but no real desktop chooser has
+  delivered a frame. Windows capture compiles but has not run on Windows hardware; macOS capture is
+  not implemented. These limits do not change the Windows-first release target.
+
+## Implementation evidence update
+
+The original table remains the target capability matrix. Current evidence is not equivalent across
+platforms:
+
+- **Linux/X11:** screen and single-window capture, global hotkey, bounded replay, MP4/MKV writing,
+  framing, generated audio sync, and trim export have automated or virtual-display end-to-end tests.
+- **Linux/Wayland:** the portal conversation and PipeWire receiver have component tests, but no real
+  portal chooser has produced a captured frame. See [ADR 0012](0012-wayland-capture.md).
+- **Windows:** Graphics Capture, global hotkeys, and Media Foundation code compile; none has run on
+  a Windows machine. Protected windows, exclusive fullscreen, and hardware encoders remain open.
+- **macOS:** no capture/audio provider has been implemented.
+- **Real devices:** microphone/speaker capture and NVENC, VA-API, VideoToolbox, and Media Foundation
+  hardware encoding have not been exercised on real hardware here.

@@ -9,6 +9,7 @@ pub mod hdr;
 pub mod reframe;
 
 use clipcraft_time::Tick;
+use std::any::Any;
 use std::fmt;
 
 /// Widest or tallest picture ClipCraft will accept from a provider, in pixels.
@@ -91,6 +92,26 @@ impl CaptureFrame {
     }
 }
 
+/// A platform-owned capture surface that can stay on its GPU until an encoder consumes it.
+///
+/// The concrete type and operating-system handles stay in `clipcraft-platform`. The recorder can
+/// offer the opaque surface to a compatible hardware encoder, or request a CPU readback when a
+/// surface/encoder pair is not supported. Implementations must keep any borrowed platform buffer
+/// alive until this value is dropped.
+pub trait NativeCaptureFrame: Send {
+    /// Width in pixels.
+    fn width(&self) -> u32;
+
+    /// Height in pixels.
+    fn height(&self) -> u32;
+
+    /// Copies this surface to a CPU-owned frame for compatibility paths and screenshots.
+    fn readback(&mut self) -> Result<CaptureFrame, CaptureError>;
+
+    /// Lets the platform encoder recognize its own opaque surface type.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
 /// Why capture failed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CaptureError {
@@ -126,6 +147,14 @@ impl std::error::Error for CaptureError {}
 pub trait CaptureSource: Send {
     /// The target being captured, with its latest known size.
     fn target(&self) -> &CaptureTarget;
+
+    /// Takes a native surface when this provider and a GPU encoder can share one.
+    ///
+    /// Existing providers keep returning `None`; the recorder then calls [`Self::capture`] as it
+    /// always has. A native frame must own a bounded lease and provide a CPU readback fallback.
+    fn capture_surface(&mut self) -> Result<Option<Box<dyn NativeCaptureFrame>>, CaptureError> {
+        Ok(None)
+    }
 
     /// Takes the current picture. May block briefly (up to one frame time) waiting for a new one.
     fn capture(&mut self) -> Result<CaptureFrame, CaptureError>;

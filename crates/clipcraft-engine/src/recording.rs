@@ -1,7 +1,7 @@
 //! Recording preferences: output container, what is captured, and how it is framed.
 //!
 //! These are pure data and geometry. Nothing here touches the screen or a codec, so every rule is
-//! unit-tested without a display. Capture itself is not implemented yet.
+//! unit-tested without a display; the capture session consumes these settings through the engine.
 
 use std::fs;
 use std::io::Write;
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use clipcraft_capture::reframe::{Framing, MIN_OUTPUT_EDGE, OutputShape, Reframe, reframe};
 
 use crate::EngineError;
+use crate::game_detection::GameMatchRule;
 use crate::hotkeys::Hotkeys;
 
 /// Largest settings file ClipCraft will read.
@@ -368,6 +369,10 @@ pub struct RecordingSettings {
     pub capture_target_name: String,
     /// Start recording into the replay buffer when ClipCraft opens.
     pub record_on_launch: bool,
+    /// Start the replay buffer only while a process in the game allowlist is running.
+    pub game_only_capture: bool,
+    /// User-managed process and Steam-ID rules that may arm capture.
+    pub game_rules: Vec<GameMatchRule>,
     /// Capture the game's window even when the game is full screen.
     pub force_window_capture: bool,
     /// Convert HDR games to standard colours so clips look right everywhere.
@@ -430,6 +435,8 @@ impl Default for RecordingSettings {
             capture_target: String::new(),
             capture_target_name: String::new(),
             record_on_launch: false,
+            game_only_capture: true,
+            game_rules: Vec::new(),
             force_window_capture: false,
             hdr_compatibility: true,
             capture_folder: String::new(),
@@ -532,6 +539,12 @@ impl RecordingSettings {
             self.codec = VideoCodec::H264;
         }
         self.hotkeys = self.hotkeys.sanitized();
+        self.game_rules = self
+            .game_rules
+            .into_iter()
+            .take(64)
+            .map(GameMatchRule::sanitized)
+            .collect();
         for text in [
             &mut self.microphone_device,
             &mut self.output_device,
@@ -924,11 +937,15 @@ mod tests {
         let dir = scratch("round");
         let path = dir.join("nested/settings.json");
         assert_eq!(load_settings(&path).unwrap(), RecordingSettings::default());
+        assert!(RecordingSettings::default().game_only_capture);
         let chosen = RecordingSettings {
             container: Container::Mkv,
             source: CaptureSource::Desktop,
             shape: OutputShape::Wide16x9,
             framing: Framing::Letterbox,
+            game_rules: vec![
+                GameMatchRule::new("Apex Legends", ["r5apex.exe"]).with_steam_app_ids(["1172470"]),
+            ],
             ..RecordingSettings::default()
         };
         let saved = save_settings(&path, chosen.clone()).unwrap();

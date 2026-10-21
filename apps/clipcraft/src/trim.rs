@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, mpsc};
 
-use clipcraft_engine::{TrimmedClip, format_bytes};
+use clipcraft_engine::{ExportPreset, ExportRange, TrimmedClip, format_bytes};
 use eframe::egui;
 use egui::{Color32, RichText};
 
@@ -16,9 +16,14 @@ use crate::kit::{self, DANGER, Icon, LIME, MUTED, TEXT};
 const MIN_SECONDS: f64 = 0.1;
 
 struct Job {
-    receiver: mpsc::Receiver<Result<TrimmedClip, String>>,
+    receiver: mpsc::Receiver<Result<Finished, String>>,
     progress: Arc<AtomicU32>,
     cancel: Arc<AtomicBool>,
+}
+
+struct Finished {
+    clip: TrimmedClip,
+    target: Option<u64>,
 }
 
 /// The trim controls and the export in flight.
@@ -35,6 +40,14 @@ pub struct TrimState {
     saved: Option<PathBuf>,
     /// The size of the clip being trimmed, read once.
     size_of: Option<(String, Option<u64>)>,
+    /// None preserves the existing lossless trim workflow.
+    preset: Option<ExportPreset>,
+}
+
+impl Drop for Job {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
 }
 
 impl TrimState {
@@ -99,7 +112,13 @@ impl TrimState {
             return;
         }
         let input = PathBuf::from(input);
-        let Some(output) = clipcraft_engine::trimmed_path(&input) else {
+        let preset = self.preset;
+        let output = if preset.is_some() {
+            clipcraft_engine::exported_path(&input)
+        } else {
+            clipcraft_engine::trimmed_path(&input)
+        };
+        let Some(output) = output else {
             self.message = Some((
                 "There is no free name for the trimmed clip.".to_owned(),
                 true,
@@ -117,23 +136,50 @@ impl TrimState {
         let (thread_progress, thread_cancel) = (progress.clone(), cancel.clone());
         let wake = context.clone();
         self.message = None;
-        std::thread::spawn(move || {
-            let mut report = |fraction: f32| {
-                thread_progress.store(fraction.to_bits(), Ordering::Relaxed);
+        let spawned = std::thread::Builder::new()
+            .name("clipcraft-export".to_owned())
+            .spawn(move || {
+                let mut report = |fraction: f32| {
+                    thread_progress.store(fraction.to_bits(), Ordering::Relaxed);
+                    wake.request_repaint();
+                };
+                let result = if let Some(preset) = preset {
+                    let request = ExportRange {
+                        input,
+                        output,
+                        start: clipcraft_time::Tick::from_units(
+                            i64::try_from(start_ms).unwrap_or(i64::MAX),
+                            1_000,
+                        ),
+                        end: clipcraft_time::Tick::from_units(
+                            i64::try_from(end_ms).unwrap_or(i64::MAX),
+                            1_000,
+                        ),
+                    };
+                    clipcraft_engine::export_clip(&request, preset, &mut report, &thread_cancel)
+                        .map(|report| Finished {
+                            clip: report.clip,
+                            target: Some(report.target_bytes),
+                        })
+                } else {
+                    clipcraft_engine::trim_clip(
+                        &input,
+                        &output,
+                        start_ms,
+                        end_ms,
+                        &mut report,
+                        &thread_cancel,
+                    )
+                    .map(|clip| Finished { clip, target: None })
+                }
+                .map_err(|error| error.to_string());
+                let _ = sender.send(result);
                 wake.request_repaint();
-            };
-            let result = clipcraft_engine::trim_clip(
-                &input,
-                &output,
-                start_ms,
-                end_ms,
-                &mut report,
-                &thread_cancel,
-            )
-            .map_err(|error| error.to_string());
-            let _ = sender.send(result);
-            wake.request_repaint();
-        });
+            });
+        if spawned.is_err() {
+            self.message = Some(("The export could not start. Try again.".to_owned(), true));
+            return;
+        }
         self.job = Some(Job {
             receiver,
             progress,
@@ -155,12 +201,19 @@ impl TrimState {
         };
         self.job = None;
         match result {
-            Ok(clip) => {
+            Ok(Finished { clip, target }) => {
                 let name = std::path::Path::new(&clip.path)
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                self.message = Some((format!("Saved {name}"), false));
+                let size = format_bytes(clip.bytes);
+                let detail = target.map(|target| {
+                    let target_size = format_bytes(target);
+                    if clip.bytes > target {
+                        format!(" · above the {target_size} estimate; choose a smaller target to reduce it further")
+                    } else { format!(" · target {target_size}") }
+                }).unwrap_or_default();
+                self.message = Some((format!("Saved {name} · {size}{detail}"), false));
                 self.saved = Some(PathBuf::from(clip.path));
             }
             // Cancelling is the person's own choice, not a failure to report.
@@ -237,6 +290,44 @@ impl TrimState {
         }
         ui.add_space(10.0);
 
+        ui.add_enabled_ui(idle, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Export").color(MUTED).size(13.0));
+                egui::ComboBox::from_id_salt("export-preset")
+                    .selected_text(preset_label(self.preset))
+                    .show_ui(ui, |ui| {
+                        let custom = match self.preset {
+                            Some(value @ ExportPreset::Custom { .. }) => value,
+                            _ => ExportPreset::Custom { megabytes: 10 },
+                        };
+                        let options = [
+                            (None, "Original quality"),
+                            (Some(ExportPreset::Small), "Small file · ~10 MB"),
+                            (Some(ExportPreset::Medium), "Medium file · ~25 MB"),
+                            (Some(custom), "Custom size"),
+                        ];
+                        for (value, label) in options {
+                            let selected = self.preset == value;
+                            let response = ui.selectable_label(selected, label);
+                            if response.clicked() {
+                                self.preset = value;
+                                ui.close();
+                            }
+                        }
+                    });
+                if let Some(ExportPreset::Custom { megabytes }) = &mut self.preset {
+                    ui.add(egui::DragValue::new(megabytes).range(1..=500).suffix(" MB"));
+                }
+                let hint = if self.preset.is_some() {
+                    "Estimated size. Resolution and frame rate may be reduced."
+                } else {
+                    "Keeps the original picture and sound quality."
+                };
+                ui.label(RichText::new(hint).size(12.0).color(MUTED));
+            });
+        });
+        ui.add_space(8.0);
+
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             if kit::labelled_button(ui, Icon::StepForward, "Start here", false, idle)
@@ -278,11 +369,13 @@ impl TrimState {
                 } else if kit::labelled_button(
                     ui,
                     Icon::Scissors,
-                    "Save trimmed clip",
+                    if self.preset.is_some() { "Export clip" } else { "Save trimmed clip" },
                     true,
                     self.valid(duration),
                 )
-                .on_hover_text("Saves a new MP4 next to the original. Nothing is re-encoded.")
+                .on_hover_text(if self.preset.is_some() {
+                    "Saves a compressed MP4 next to the original. The source is preserved. Up to 30 minutes per export."
+                } else { "Saves a new MP4 next to the original. Nothing is re-encoded." })
                 .clicked()
                 {
                     self.save(input, duration, ui.ctx());
@@ -311,6 +404,15 @@ impl TrimState {
             self.size_of = Some((input.to_owned(), bytes));
         }
         self.size_of.as_ref().and_then(|(_, bytes)| *bytes)
+    }
+}
+
+fn preset_label(preset: Option<ExportPreset>) -> &'static str {
+    match preset {
+        None => "Original quality",
+        Some(ExportPreset::Small) => "Small file · ~10 MB",
+        Some(ExportPreset::Medium) => "Medium file · ~25 MB",
+        Some(ExportPreset::Custom { .. }) => "Custom size",
     }
 }
 
@@ -511,6 +613,40 @@ fn clock(seconds: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_controls_draw_at_narrow_and_desktop_sizes_for_each_preset() {
+        for width in [300.0, 960.0, 1440.0] {
+            for preset in [
+                None,
+                Some(ExportPreset::Small),
+                Some(ExportPreset::Medium),
+                Some(ExportPreset::Custom { megabytes: 10 }),
+            ] {
+                let context = egui::Context::default();
+                kit::install_fonts(&context);
+                let mut trim = TrimState {
+                    open: true,
+                    preset,
+                    ..Default::default()
+                };
+                let _ = context.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 900.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            trim.show(ui, 1.0, 3.0, "missing.mp4");
+                        });
+                    },
+                );
+            }
+        }
+    }
 
     #[test]
     fn marks_are_shown_to_a_tenth_of_a_second() {

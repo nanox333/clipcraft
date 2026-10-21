@@ -2,6 +2,7 @@
 //! Windows and Linux, VideoToolbox on macOS); this crate only knows the shape of it, so the
 //! recorder can be tested with a stand-in and falls back to the software encoder on any trouble.
 
+use clipcraft_capture::NativeCaptureFrame;
 use std::fmt;
 use std::sync::Arc;
 
@@ -38,6 +39,19 @@ pub struct HardwarePacket {
 pub trait HardwareEncoder: Send {
     /// Encodes one picture. `index` is its time in frames.
     fn encode(&mut self, rgba: &[u8], index: u64) -> Result<Vec<HardwarePacket>, String>;
+
+    /// Encodes a platform surface directly when this encoder can share its device and pixel
+    /// format. `None` means the caller should read the surface back and use [`Self::encode`].
+    ///
+    /// The default keeps existing CPU-input encoders source-compatible. A platform implementation
+    /// may downcast the opaque surface only inside `clipcraft-platform`.
+    fn encode_surface(
+        &mut self,
+        _frame: &mut dyn NativeCaptureFrame,
+        _index: u64,
+    ) -> Result<Option<Vec<HardwarePacket>>, String> {
+        Ok(None)
+    }
 
     /// Finishes the stream.
     fn flush(&mut self) -> Result<Vec<HardwarePacket>, String>;

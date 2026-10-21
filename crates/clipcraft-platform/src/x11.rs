@@ -97,6 +97,73 @@ fn window_name(conn: &RustConnection, window: Window, net_name: Atom, utf8: Atom
         .unwrap_or_else(|| "Untitled window".to_owned())
 }
 
+fn window_pid(conn: &RustConnection, window: Window) -> Option<u32> {
+    let property = atom(conn, b"_NET_WM_PID")?;
+    conn.get_property(false, window, property, AtomEnum::CARDINAL, 0, 1)
+        .ok()?
+        .reply()
+        .ok()?
+        .value32()?
+        .next()
+}
+
+/// Finds an X11 client window owned by `process_id`.
+pub fn window_for_process(
+    display: Option<&str>,
+    process_id: u32,
+) -> Result<Option<CaptureTarget>, CaptureError> {
+    if process_id == 0 {
+        return Ok(None);
+    }
+    let (conn, screen_number) = connect(display)?;
+    let root = conn
+        .setup()
+        .roots
+        .get(screen_number)
+        .ok_or(CaptureError::NoProvider)?
+        .root;
+    let (Some(list), Some(net_name), Some(utf8)) = (
+        atom(&conn, b"_NET_CLIENT_LIST"),
+        atom(&conn, b"_NET_WM_NAME"),
+        atom(&conn, b"UTF8_STRING"),
+    ) else {
+        return Ok(None);
+    };
+    let Some(reply) = conn
+        .get_property(false, root, list, AtomEnum::WINDOW, 0, MAX_WINDOWS as u32)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+    else {
+        return Ok(None);
+    };
+    let Some(windows) = reply.value32() else {
+        return Ok(None);
+    };
+    for window in windows.take(MAX_WINDOWS) {
+        if window_pid(&conn, window) != Some(process_id) {
+            continue;
+        }
+        let Some(geometry) = conn
+            .get_geometry(window)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+        else {
+            continue;
+        };
+        if geometry.width == 0 || geometry.height == 0 {
+            continue;
+        }
+        return Ok(Some(CaptureTarget {
+            id: format!("window:{window:x}"),
+            name: window_name(&conn, window, net_name, utf8),
+            kind: TargetKind::Window,
+            width: u32::from(geometry.width),
+            height: u32::from(geometry.height),
+        }));
+    }
+    Ok(None)
+}
+
 pub fn list_targets(display: Option<&str>) -> Result<Vec<CaptureTarget>, CaptureError> {
     let (conn, screen_number) = connect(display)?;
     let screen = conn

@@ -3,17 +3,18 @@
 These rules apply to every human and AI contributor. `CLAUDE.md` describes the working process;
 this file contains the rules that must not be broken. If the two disagree, this file wins.
 
-## 0. Rust only; no hosted service
+## 0. Rust only; offline-first, no required hosted service
 
 - **The product is written in Rust.** All first-party application code, UI, engine, CLI, local
   library metadata, and required build/test tools belong in the Rust Cargo workspace. Do not add JavaScript,
   TypeScript, Node, Python, C, or C++ as a product runtime, sidecar, UI, or required build step.
 - Use a native Rust desktop UI (initially egui/eframe). Do not add Electron, Tauri, a browser app,
   or a web frontend.
-- **ClipCraft must not require a hosted server or a server process.** Install, launch, capture,
-  manage clips, edit, and export offline. Do not add a backend, account, upload, cloud sync,
-  share-link service, telemetry endpoint, or network-dependent feature. Users can share exported
-  files with software they choose.
+- **Core workflows must not require a hosted server, account, network connection, or server
+  process.** Install, launch, capture, manage clips, edit, and export offline. The roadmap may add
+  optional encrypted backups to a user-selected storage provider; such a feature must be off until
+  explicitly configured, encrypt media on-device before transfer, and never require ClipCraft-hosted
+  storage or accounts. Do not add social feeds, share links, telemetry, or background uploads.
 - Pure Rust still needs OS media APIs. Put platform bindings behind `clipcraft-platform` and a safe
   `Result`-returning interface. `unsafe` is forbidden everywhere else; any platform `unsafe` needs
   an ADR, a `// SAFETY:` comment for every block, and a tested fallback where practical.
@@ -39,18 +40,25 @@ an actionable error and preserve existing files. This rule outranks feature work
 
 ## 2. Local media and privacy
 
-- Captures and library metadata remain on the user's device. Never upload, sync, or transmit media.
+- Captures and library metadata remain on the user's device by default. No feature may transmit
+  media unless the user explicitly configures an approved encrypted-backup workflow. Backup issues
+  must specify key recovery, metadata exposure, provider credentials, deletion, restore, and offline
+  behavior before implementation.
 - Do not overwrite source media during export. Use atomic writes, collision checks, and explicit
   confirmation before destructive deletion.
 - Do not log captured paths, audio content, raw environment values, or private library metadata.
 - Keep user media and reference screenshots out of Git. Generate deterministic fixtures or fetch
   pinned, hash-verified test corpora into ignored build/cache directories.
 
-## 3. Clean-room and assets
+## 3. Original implementation, dependencies, and assets
 
 - Observe Medal's public product behavior and supplied screenshots for layout and interaction only.
   Do not copy Medal code, logos, icons, game footage, screenshots into the product, text, private
   APIs, or network protocol. Use original ClipCraft artwork and generated or openly licensed media.
+- ClipCraft is an independent product implementation, but it reuses selected open-source FilmCraft
+  crates and may use other reviewed Rust dependencies. Review each dependency's license, pinned
+  source, API fit, and unsafe-code boundary; record meaningful reuse decisions in an ADR. Do not
+  describe the whole product as a formal clean-room implementation.
 - Every shipped image, icon, font, sound, video, and other non-code asset needs a permissive license
   and an attribution entry in `ATTRIBUTION.md`. Unknown licenses are not accepted.
 - Never copy code or assets from proprietary products. Read public format specifications, not
@@ -73,6 +81,13 @@ an actionable error and preserve existing files. This rule outranks feature work
 - A change is not done until its issue acceptance criteria pass, tests cover the behavior and failure
   cases, docs and [`docs/gaps.md`](docs/gaps.md) reflect any remaining limitations, and
   `cargo xtask ci` passes.
+- **Documentation ships with the feature.** Whenever behavior is built or changed, update the
+  documentation in the same pull request before calling the work done. At minimum, update
+  `README.md` with user-visible capabilities and `docs/gaps.md` with current limitations and
+  verification evidence. Update `ROADMAP.md` and the matching `docs/backlog.md` item when status
+  changes; update architecture, testing, CLI, release, or ADR docs whenever their guidance changes.
+  Do not defer documentation to a follow-up issue. The pull-request CI checks for README and gap
+  updates whenever `apps/`, `crates/`, or `tools/` code changes.
 - Parser, media, timing, and command changes require malformed/hostile-input tests. Crash fixes need
   a regression test. UI changes require a screenshot at a representative desktop size and keyboard
   checks. Capture changes require deterministic fake-provider tests plus platform integration proof.

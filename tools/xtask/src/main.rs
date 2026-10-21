@@ -27,12 +27,24 @@ fn run(arguments: Vec<OsString>) -> TaskResult<()> {
         .ok_or(TaskError::Usage)?;
     match task {
         "ci" => ci(),
+        "docs-check" => {
+            if arguments.len() != 2 {
+                return Err(TaskError::DocsCheckUsage);
+            }
+            let base_ref = arguments[1]
+                .to_str()
+                .filter(|value| !value.is_empty())
+                .ok_or(TaskError::DocsCheckUsage)?;
+            docs_check(base_ref)
+        }
         "layers" => check_layers(),
         "assets" => check_assets(),
         "licenses" => check_licenses(),
         "package" => package(),
         "help" | "--help" | "-h" => {
-            println!("ClipCraft Rust tasks: ci, layers, assets, licenses, package");
+            println!(
+                "ClipCraft Rust tasks: ci, docs-check <base-ref>, layers, assets, licenses, package"
+            );
             Ok(())
         }
         _ => Err(TaskError::Usage),
@@ -53,6 +65,79 @@ fn ci() -> TaskResult<()> {
     check_layers()?;
     check_assets()?;
     check_licenses()
+}
+
+/// Enforces the minimum user-facing documentation updates for implementation pull requests.
+///
+/// The base ref must be fetched before running this command. Three-dot diff compares the PR head
+/// to the merge base, so it works both with a merge checkout and a normal local feature branch.
+fn docs_check(base_ref: &str) -> TaskResult<()> {
+    let workspace = workspace_root()?;
+    let range = format!("{base_ref}...HEAD");
+    let mut changed_paths = git_paths(&workspace, &["diff", "--name-only", "-z", &range])?;
+    // Include local staged/unstaged work and new files so contributors can run this before commit.
+    changed_paths.extend(git_paths(
+        &workspace,
+        &["diff", "--name-only", "-z", "HEAD"],
+    )?);
+    changed_paths.extend(git_paths(
+        &workspace,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )?);
+    let missing = missing_documentation(&changed_paths);
+    if missing.is_empty() {
+        println!("Documentation check passed.");
+        Ok(())
+    } else {
+        for path in missing {
+            eprintln!("implementation changes require an update to {path}");
+        }
+        Err(TaskError::DocumentationMissing)
+    }
+}
+
+fn git_paths(workspace: &Path, arguments: &[&str]) -> TaskResult<Vec<String>> {
+    let output = Command::new("git")
+        .current_dir(workspace)
+        .args(arguments)
+        .output()
+        .map_err(|_| TaskError::CommandUnavailable)?;
+    if !output.status.success() {
+        if !output.stderr.is_empty() {
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
+        }
+        return Err(TaskError::GitDiffFailed);
+    }
+
+    Ok(output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8_lossy(path).replace('\\', "/"))
+        .collect())
+}
+
+fn missing_documentation(changed_paths: &[String]) -> Vec<&'static str> {
+    let has_implementation = changed_paths.iter().any(|path| {
+        path.starts_with("apps/")
+            || path.starts_with("crates/")
+            || path.starts_with("tools/")
+            || matches!(path.as_str(), "Cargo.toml" | "Cargo.lock")
+    });
+    if !has_implementation {
+        return Vec::new();
+    }
+
+    let has_readme = changed_paths.iter().any(|path| path == "README.md");
+    let has_gaps = changed_paths.iter().any(|path| path == "docs/gaps.md");
+    let mut missing = Vec::new();
+    if !has_readme {
+        missing.push("README.md");
+    }
+    if !has_gaps {
+        missing.push("docs/gaps.md");
+    }
+    missing
 }
 
 fn run_cargo(arguments: &[&str]) -> TaskResult<()> {
@@ -337,8 +422,11 @@ fn workspace_root() -> TaskResult<PathBuf> {
 #[derive(Clone, Copy, Debug)]
 enum TaskError {
     Usage,
+    DocsCheckUsage,
     CommandUnavailable,
     CommandFailed,
+    GitDiffFailed,
+    DocumentationMissing,
     MetadataUnavailable,
     MetadataInvalid,
     MissingLayer,
@@ -358,9 +446,16 @@ impl fmt::Display for TaskError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
             Self::PackageFailed => "the release package could not be built",
-            Self::Usage => "usage: cargo xtask <ci|layers|assets|licenses|package>",
+            Self::Usage => {
+                "usage: cargo xtask <ci|docs-check <base-ref>|layers|assets|licenses|package>"
+            }
+            Self::DocsCheckUsage => "usage: cargo xtask docs-check <base-ref>",
             Self::CommandUnavailable => "required Rust command could not be started",
             Self::CommandFailed => "a quality-gate command failed",
+            Self::GitDiffFailed => "git could not compare the pull request with its base ref",
+            Self::DocumentationMissing => {
+                "implementation changes are missing required documentation updates"
+            }
             Self::MetadataUnavailable => "cargo metadata failed",
             Self::MetadataInvalid => "cargo metadata was incomplete or invalid",
             Self::MissingLayer => {
@@ -388,7 +483,7 @@ impl Error for TaskError {}
 
 #[cfg(test)]
 mod tests {
-    use super::find_layer_violations;
+    use super::{find_layer_violations, missing_documentation};
     use serde_json::json;
 
     #[test]
@@ -432,5 +527,28 @@ mod tests {
         assert_eq!(violations.len(), 1);
         assert!(violations[0].contains("clipcraft-time (layer 0)"));
         assert!(violations[0].contains("higher layer clipcraft-engine (layer 4)"));
+    }
+
+    #[test]
+    fn documentation_checker_requires_readme_and_gaps_for_implementation_changes() {
+        let changed = vec!["crates/clipcraft-engine/src/lib.rs".to_owned()];
+
+        assert_eq!(
+            missing_documentation(&changed),
+            vec!["README.md", "docs/gaps.md"]
+        );
+    }
+
+    #[test]
+    fn documentation_checker_accepts_complete_or_docs_only_changes() {
+        let implementation_and_docs = vec![
+            "apps/clipcraft/src/main.rs".to_owned(),
+            "README.md".to_owned(),
+            "docs/gaps.md".to_owned(),
+        ];
+        let docs_only = vec!["docs/architecture.md".to_owned()];
+
+        assert!(missing_documentation(&implementation_and_docs).is_empty());
+        assert!(missing_documentation(&docs_only).is_empty());
     }
 }

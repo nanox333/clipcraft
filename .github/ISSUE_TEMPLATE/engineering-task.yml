@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Tasks still follow the Rust-only, offline, no-server, safe-input, and dependency-layering constraints in `AGENTS.md`.
+        Tasks still follow the pure-Rust, offline-core, no-required-server, safe-input, and dependency-layering constraints in `AGENTS.md`.
   - type: textarea
     id: outcome
     attributes:
@@ -41,8 +41,8 @@ body:
   - type: textarea
     id: verification
     attributes:
-      label: Tests and docs to update
-      description: Required checks, issue/gap/roadmap docs, and screenshots if UI is involved.
+      label: Tests and documentation to update
+      description: Required checks and screenshots. Code changes under apps/, crates/, or tools/ must update README.md and docs/gaps.md in the same pull request; list other affected docs too.
     validations:
       required: true
   - type: input

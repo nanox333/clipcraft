@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Product constraints: Rust-only first-party code; local/offline operation; no hosted service, server process, account, upload, sync, or share links. See `docs/issue-requirements.md`.
+        Product constraints: pure Rust; offline-first core workflows; no required hosted service, account, or server. Optional encrypted backup must be explicitly configured and client-side encrypted. See `docs/issue-requirements.md`.
   - type: textarea
     id: problem
     attributes:
@@ -25,7 +25,7 @@ body:
     id: limitations
     attributes:
       label: Scope, non-goals, and limitations
-      description: List platforms supported and unsupported, API/device constraints, fallbacks, and explicit non-goals. Confirm this does not require a server or non-Rust runtime.
+      description: List platforms supported and unsupported, API/device constraints, fallbacks, and explicit non-goals. Confirm core workflows stay offline and note any opt-in network use.
     validations:
       required: true
   - type: input
@@ -48,6 +48,11 @@ body:
         - M4 — Lightweight editor and export
         - M5 — Release hardening
         - M6 — Additional local platforms
+        - M7 — Game-aware capture and reference review
+        - M8 — Desktop platform parity and Android feasibility
+        - M9 — Optional encrypted backup
+        - M10 — Controller, presence, overlays, and extensions
+        - M11 — Focused editing and local AI-agent workflows
         - Needs triage
     validations:
       required: true
@@ -73,8 +78,8 @@ body:
   - type: textarea
     id: verification
     attributes:
-      label: Test and visual evidence
-      description: Name unit/property/integration/platform tests, benchmark setup, or UI screenshots needed to prove the criteria.
+      label: Tests, docs, and visual evidence
+      description: Name tests, platform evidence, and screenshots. The implementation must update README.md and docs/gaps.md in the same pull request; list any other docs whose status or guidance will change.
     validations:
       required: true
   - type: textarea

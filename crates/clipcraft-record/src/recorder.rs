@@ -8,7 +8,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use clipcraft_capture::reframe::{Framing, OutputShape, Reframe, reframe};
-use clipcraft_capture::{CaptureFrame, CaptureSource};
+use clipcraft_capture::{CaptureFrame, CaptureSource, MAX_CAPTURE_EDGE, NativeCaptureFrame};
 use filmcraft_h264enc::{
     Encoder, EncoderConfig, PacketFormat, Preset, Profile, RateControl, YuvFrame,
 };
@@ -164,8 +164,46 @@ struct Stats {
 }
 
 struct Queued {
-    frame: CaptureFrame,
+    frame: QueuedFrame,
     pts: i64,
+}
+
+enum QueuedFrame {
+    Cpu(CaptureFrame),
+    Surface {
+        surface: Box<dyn NativeCaptureFrame>,
+        readback: Option<CaptureFrame>,
+    },
+}
+
+impl QueuedFrame {
+    fn dimensions(&self) -> Result<(u32, u32), RecordError> {
+        let (width, height) = match self {
+            Self::Cpu(frame) => {
+                frame.validate().map_err(|_| RecordError::BadFrame)?;
+                (frame.width, frame.height)
+            }
+            Self::Surface { surface, .. } => (surface.width(), surface.height()),
+        };
+        if width == 0 || height == 0 || width > MAX_CAPTURE_EDGE || height > MAX_CAPTURE_EDGE {
+            return Err(RecordError::BadFrame);
+        }
+        Ok((width, height))
+    }
+
+    fn readback(&mut self) -> Result<&CaptureFrame, RecordError> {
+        let frame = match self {
+            Self::Cpu(frame) => frame,
+            Self::Surface { surface, readback } => {
+                if readback.is_none() {
+                    *readback = Some(surface.readback().map_err(RecordError::Capture)?);
+                }
+                readback.as_ref().ok_or(RecordError::BadFrame)?
+            }
+        };
+        frame.validate().map_err(|_| RecordError::BadFrame)?;
+        Ok(frame)
+    }
 }
 
 #[derive(Default)]
@@ -508,14 +546,22 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
             std::thread::sleep((due - elapsed).min(Duration::from_millis(20)));
             continue;
         }
-        match source.capture() {
-            Ok(frame) => {
+        let captured = match source.capture_surface() {
+            Ok(Some(surface)) => Ok(QueuedFrame::Surface {
+                surface,
+                readback: None,
+            }),
+            Ok(None) => source.capture().map(QueuedFrame::Cpu),
+            Err(error) => Err(error),
+        };
+        match captured {
+            Ok(mut frame) => {
                 let pts =
                     i64::try_from(start.elapsed().as_nanos() * u128::from(fps) / nanos_per_second)
                         .unwrap_or(i64::MAX);
                 lock(&shared.stats).captured += 1;
                 if shared.screenshot_wanted.swap(false, Ordering::SeqCst) {
-                    *lock(&shared.screenshot) = Some(frame.clone());
+                    *lock(&shared.screenshot) = frame.readback().ok().cloned();
                     shared.screenshot_ready.notify_all();
                 }
                 let mut mailbox = lock(&shared.mailbox);
@@ -614,11 +660,11 @@ fn encode_loop(shared: &Shared, config: &RecordConfig) {
                     .0;
             }
         };
-        let Some(Queued { frame, pts }) = queued else {
+        let Some(Queued { mut frame, pts }) = queued else {
             break;
         };
         let started = Instant::now();
-        if let Err(error) = encode_one(shared, config, threads, &mut active, &frame, pts) {
+        if let Err(error) = encode_one(shared, config, threads, &mut active, &mut frame, pts) {
             shared.fail(error);
             break;
         }
@@ -716,11 +762,12 @@ fn new_active(
     shared: &Shared,
     config: &RecordConfig,
     threads: usize,
-    frame: &CaptureFrame,
+    source_width: u32,
+    source_height: u32,
 ) -> Result<Active, RecordError> {
     let plan = reframe(
-        frame.width,
-        frame.height,
+        source_width,
+        source_height,
         config.shape,
         config.framing,
         config.output_height,
@@ -732,7 +779,7 @@ fn new_active(
     let software = matches!(stage, Stage::Software(_));
     Ok(Active {
         stage,
-        source_size: (frame.width, frame.height),
+        source_size: (source_width, source_height),
         picture: I420::black(
             if software { plan.output_width } else { 2 },
             if software { plan.output_height } else { 2 },
@@ -775,11 +822,10 @@ fn encode_one(
     config: &RecordConfig,
     threads: usize,
     active: &mut Option<Active>,
-    frame: &CaptureFrame,
+    frame: &mut QueuedFrame,
     pts: i64,
 ) -> Result<(), RecordError> {
-    frame.validate().map_err(|_| RecordError::BadFrame)?;
-    let size = (frame.width, frame.height);
+    let size = frame.dimensions()?;
     let gap_frames = i64::from(config.gap_restart_seconds) * i64::from(shared.fps);
     if active.as_ref().is_none_or(|current| {
         current.source_size != size
@@ -791,7 +837,7 @@ fn encode_one(
         } else {
             false
         };
-        let fresh = new_active(shared, config, threads, frame)?;
+        let fresh = new_active(shared, config, threads, size.0, size.1)?;
         if restarted {
             lock(&shared.stats).restarts += 1;
         }
@@ -818,7 +864,8 @@ fn encode_one(
         }
         // Fell back to software: this picture is encoded below, as the new stream's first.
     }
-    convert(frame, &current.plan, &mut current.picture, threads)?;
+    let pixels = frame.readback()?;
+    convert(pixels, &current.plan, &mut current.picture, threads)?;
     let picture = &current.picture;
     let yuv = YuvFrame {
         y: &picture.y,
@@ -846,19 +893,37 @@ fn encode_one(
 fn encode_hardware(
     shared: &Shared,
     current: &mut Active,
-    frame: &CaptureFrame,
+    frame: &mut QueuedFrame,
     pts: i64,
     threads: usize,
 ) -> Result<(), String> {
-    convert_rgba(frame, &current.plan, &mut current.rgba, threads)
-        .map_err(|error| error.to_string())?;
+    let direct_surface = surface_matches_output(current, frame);
     let Stage::Hardware(encoder) = &mut current.stage else {
         return Err("not a hardware stage".to_owned());
     };
     current.pending.push_back(pts);
-    let packets = encoder
-        .encode(&current.rgba, u64::try_from(pts).unwrap_or(0))
-        .map_err(|why| why.clone())?;
+    let index = u64::try_from(pts).unwrap_or(0);
+    let native_packets = if direct_surface {
+        match frame {
+            QueuedFrame::Surface { surface, .. } => {
+                encoder.encode_surface(surface.as_mut(), index)?
+            }
+            QueuedFrame::Cpu(_) => None,
+        }
+    } else {
+        None
+    };
+    let packets = match native_packets {
+        Some(packets) => packets,
+        None => {
+            let pixels = frame.readback().map_err(|error| error.to_string())?;
+            convert_rgba(pixels, &current.plan, &mut current.rgba, threads)
+                .map_err(|error| error.to_string())?;
+            encoder
+                .encode(&current.rgba, index)
+                .map_err(|why| why.clone())?
+        }
+    };
     for packet in packets {
         if packet.reordered {
             return Err("it reorders pictures".to_owned());
@@ -878,6 +943,28 @@ fn encode_hardware(
         store_packet(shared, packet.data, packet.keyframe, time);
     }
     Ok(())
+}
+
+/// A direct surface can be encoded only when no GPU-side crop, scale, or letterbox is needed.
+/// More complex transforms stay on the established CPU conversion path until a platform encoder
+/// explicitly supports them.
+fn surface_matches_output(current: &Active, frame: &QueuedFrame) -> bool {
+    let QueuedFrame::Surface { surface, .. } = frame else {
+        return false;
+    };
+    let (width, height) = current.source_size;
+    let full = clipcraft_capture::reframe::PixelRect {
+        x: 0,
+        y: 0,
+        width,
+        height,
+    };
+    surface.width() == width
+        && surface.height() == height
+        && current.plan.output_width == width
+        && current.plan.output_height == height
+        && current.plan.source == full
+        && current.plan.destination == full
 }
 
 #[cfg(test)]

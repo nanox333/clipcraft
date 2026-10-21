@@ -17,6 +17,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install ALSA headers (Linux sound output)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
@@ -28,3 +30,15 @@ jobs:
         run: cargo install cargo-deny --version 0.20.2 --locked
       - name: Run canonical gate
         run: cargo xtask ci
+      - name: Require feature documentation updates
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: cargo xtask docs-check "$BASE_REF"
+      - name: Require documentation updates on main pushes
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.before }}
+        run: cargo xtask docs-check "$BASE_REF"

@@ -96,7 +96,10 @@ fn run_library(arguments: &[OsString]) -> Result<(), CliError> {
 /// `clip trim INPUT OUTPUT START END` cuts INPUT from START to END (seconds) into a new MP4
 /// without re-encoding, and prints what was written.
 fn run_clip(arguments: &[OsString]) -> Result<(), CliError> {
-    if arguments.len() != 5 || arguments[0].to_str() != Some("trim") {
+    let exporting = arguments.first().and_then(|arg| arg.to_str()) == Some("export");
+    if !((exporting && arguments.len() == 6)
+        || (arguments.len() == 5 && arguments[0].to_str() == Some("trim")))
+    {
         return Err(CliError::Usage);
     }
     let seconds = |index: usize| -> Result<u64, CliError> {
@@ -109,14 +112,33 @@ fn run_clip(arguments: &[OsString]) -> Result<(), CliError> {
         }
         Ok((value * 1000.0).round() as u64)
     };
-    let command = Command::TrimClip {
-        input: PathBuf::from(&arguments[1]),
-        output: PathBuf::from(&arguments[2]),
-        start_ms: seconds(3)?,
-        end_ms: seconds(4)?,
+    let input = PathBuf::from(&arguments[1]);
+    let output = PathBuf::from(&arguments[2]);
+    let (start_ms, end_ms) = (seconds(3)?, seconds(4)?);
+    let command = if exporting {
+        let megabytes: u16 = arguments[5]
+            .to_str()
+            .and_then(|text| text.parse().ok())
+            .filter(|size| (1..=500).contains(size))
+            .ok_or(CliError::Usage)?;
+        Command::ExportClip {
+            input,
+            output,
+            start_ms,
+            end_ms,
+            preset: clipcraft_engine::ExportPreset::Custom { megabytes },
+        }
+    } else {
+        Command::TrimClip {
+            input,
+            output,
+            start_ms,
+            end_ms,
+        }
     };
     match execute(command).map_err(CliError::Engine)? {
         CommandOutput::Trimmed(clip) => write_json(&clip),
+        CommandOutput::Exported(clip) => write_json(&clip),
         _ => Err(CliError::UnexpectedOutput),
     }
 }
@@ -324,6 +346,7 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli library probe <file>\n",
         "  clipcraft-cli library thumbnail <file>\n",
         "  clipcraft-cli clip trim <input> <output.mp4> <start-seconds> <end-seconds>\n",
+        "  clipcraft-cli clip export <input> <output.mp4> <start-seconds> <end-seconds> <target-MB:1..500>\n",
         "  clipcraft-cli diagnose [--json]\n",
         "  clipcraft-cli recording settings\n",
         "  clipcraft-cli capture targets\n",
@@ -386,6 +409,28 @@ impl std::error::Error for CliError {
 mod tests {
     use super::{CliError, run};
     use std::ffi::OsString;
+
+    #[test]
+    fn export_rejects_missing_target_bad_sizes_and_non_finite_times() {
+        for args in [
+            vec!["clip", "export", "a.mp4", "b.mp4", "0", "2"],
+            vec!["clip", "export", "a.mp4", "b.mp4", "0", "2", "0"],
+            vec!["clip", "export", "a.mp4", "b.mp4", "0", "2", "501"],
+            vec!["clip", "export", "a.mp4", "b.mp4", "NaN", "2", "10"],
+        ] {
+            assert!(matches!(
+                run(args.into_iter().map(OsString::from).collect()),
+                Err(CliError::Usage)
+            ));
+        }
+        assert!(matches!(
+            run(["clip", "export", "", "out.mp4", "0", "2", "10"]
+                .into_iter()
+                .map(OsString::from)
+                .collect()),
+            Err(CliError::Engine(_))
+        ));
+    }
 
     #[test]
     fn missing_folder_is_a_usage_error() {

@@ -145,6 +145,7 @@ enum SettingsTab {
     General,
     Storage,
     Hotkeys,
+    Games,
     Capture,
     Quality,
     Audio,
@@ -158,6 +159,7 @@ impl SettingsTab {
             Self::General => "General",
             Self::Storage => "Storage",
             Self::Hotkeys => "Hotkeys",
+            Self::Games => "Games",
             Self::Capture => "Capture",
             Self::Quality => "Quality",
             Self::Audio => "Audio",
@@ -173,6 +175,7 @@ impl SettingsTab {
             }
             Self::Storage => "Where clips are saved, how much space they use, and a limit.",
             Self::Hotkeys => "Keyboard shortcuts for recording.",
+            Self::Games => "Choose which running games can arm replay capture.",
             Self::Capture => "What gets recorded.",
             Self::Quality => "How sharp and smooth your clips are, and how big.",
             Self::Audio => "What sound is recorded and how well.",
@@ -1473,9 +1476,12 @@ impl ClipCraftApp {
                 {
                     self.reveal_media(PathBuf::from(&entry.path));
                 }
-                let editor =
-                    kit::labelled_button_sized(ui, Icon::Play, "Open in editor", true, false, full);
-                editor.on_hover_text("The basic editor is not built yet");
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Quick trim and export is available below the player.")
+                        .color(MUTED)
+                        .size(12.0),
+                );
             });
     }
 
@@ -1532,6 +1538,7 @@ impl ClipCraftApp {
             (
                 "Recording",
                 [
+                    SettingsTab::Games,
                     SettingsTab::Capture,
                     SettingsTab::Quality,
                     SettingsTab::Audio,
@@ -1653,6 +1660,13 @@ impl ClipCraftApp {
             }
             SettingsTab::Hotkeys => {
                 settings::hotkeys_tab(ui, &mut working, &mut self.settings_state)
+            }
+            SettingsTab::Games => {
+                let refresh = settings::games_tab(ui, &mut working, &mut self.settings_state);
+                if refresh {
+                    self.settings_state
+                        .set_game_processes(Ok(clipcraft_platform::running_processes(true)));
+                }
             }
             SettingsTab::Capture => {
                 let mut refresh = !self.capture.targets_loaded();
@@ -2909,7 +2923,7 @@ mod tests {
         app.recording.source = clipcraft_engine::CaptureSource::Desktop;
         // With no window in front the person is told what to do; a machine that has one (a CI
         // runner's desktop) records it, which is what the option is for.
-        match app.capture_target_id() {
+        match app.capture_target_id(None) {
             Err(message) => assert!(
                 message.contains("hotkey") && message.contains("focus"),
                 "{message}"
@@ -2918,7 +2932,7 @@ mod tests {
         }
         // Without the option, the desktop is simply the first screen (or nothing, with no display).
         app.recording.force_window_capture = false;
-        if let Err(message) = app.capture_target_id() {
+        if let Err(message) = app.capture_target_id(None) {
             assert!(!message.contains("hotkey"), "{message}");
         }
     }
