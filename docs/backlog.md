@@ -1,8 +1,9 @@
-# Initial issue backlog
+# ClipCraft issue backlog
 
-This is the issue breakdown for the early application workspace. These IDs are stable
-work-item IDs; create a GitHub issue from the matching template before implementation and add its
-number here. Every item inherits the constraints in [`issue-requirements.md`](issue-requirements.md).
+These IDs are stable work-item IDs; create a GitHub issue from the matching template before
+implementation and add its number here. Completed items remain as history and evidence pointers.
+Every item inherits the constraints in [`issue-requirements.md`](issue-requirements.md). Update the
+item status in the same pull request that changes its implementation.
 
 ## M0 — product and architecture
 
@@ -14,14 +15,15 @@ number here. Every item inherits the constraints in [`issue-requirements.md`](is
 reference-hardware measurements are the open evidence and belong to the M2/M3 spikes.
 
 **Requirements:** document Windows/macOS/Linux capture and audio APIs, permissions, min OS versions,
-encoder availability, and known unsupported sources; record the pure-Rust and no-hosted-server
+encoder availability, and known unsupported sources; record the pure-Rust and offline-core
 constraints in an ADR; make `docs/gaps.md` reflect measured evidence only.
 
 **Limitations:** no anti-cheat-sensitive injection, kernel driver, DRM bypass, livestream, account,
 upload, web app, or remote-control endpoint.
 
 **Acceptance:** the platform matrix names one supported Windows path and clear failure/fallback
-behavior; all network/server requirements are absent; open decisions and their evidence are linked.
+behavior; core workflows work without network/server access; optional backup is not assumed and its
+future design is linked; open decisions and their evidence are linked.
 
 ### M0.2 — Rust workspace, layering, and quality gate
 
@@ -35,26 +37,32 @@ manifests from a clean checkout.
 product component, Electron, Tauri, backend, HTTP service, or mandatory external binary runtime.
 
 **Acceptance:** `cargo xtask ci` passes on the supported CI runner; a layer-violation fixture fails;
-Rust-only and offline/no-server checks are documented and enforced where automatable.
+Rust-only and offline-core/no-required-server checks are documented and enforced where automatable.
 
 ### M0.3 — Engine command registry and local CLI skeleton
 
-**Status:** implemented for M0 — `library.scan`, `library.path`, `library.reveal`, `commands`, and typed dispatch exist, with tests for valid, missing, and unknown parameters; capture and media commands remain future work.
+**Status:** implemented — the shared typed command engine covers library scan/path/probe/thumbnail,
+recording settings, capture targets and recording, clip trim, and diagnostics. The CLI and desktop
+dispatch through the same engine; commands are local and do not start a server.
 
 **Requirements:** define stable command IDs, typed parameters, validation, error types, and JSON
 stdin/stdout behavior; UI and CLI dispatch through the same registry.
 
-**Limitations:** CLI runs locally and does not start a socket, HTTP server, MCP server, or background
-daemon. No command uploads, syncs, or transmits media.
+**Limitations:** CLI runs locally and does not start a socket, HTTP server, or background daemon. No
+current command uploads, syncs, or transmits media. A future MCP adapter is planned over local stdio;
+optional encrypted backup is a separate roadmap issue.
 
-**Acceptance:** command list/help and one synthetic no-op or clip-inspection command have tests
-for valid, missing, and unknown parameters; test runs need no network.
+**Acceptance:** command list/help and each command's valid, missing, and unknown parameters have
+tests; file-changing commands preserve inputs and report failure; test runs need no network.
 
 ## M1 — local media and library foundation
 
 ### M1.1 — Exact time and bounded media primitives
 
-**Status:** implemented for the current scope — integer ticks, rational frame rates, audio sample positions, and `clipcraft-frame` bounded queues (item and byte caps, drop-oldest or reject policy, every drop counted) are covered by deterministic invariant tests over common frame/sample rates, overflow, zero limits, and trim boundaries. Not yet done: frame and audio buffer types that carry media, and generated A/V fixtures beyond the timestamp test.
+**Status:** implemented for the current scope — integer ticks, rational frame rates, audio sample
+positions, media frame/audio buffers, bounded queues (item and byte caps, drop-oldest or reject
+policy), and generated A/V synchronization fixtures are covered by deterministic tests. Buffer
+overflow, invalid limits, drift, and trim boundaries are exercised.
 
 **Requirements:** implement integer ticks/rational rates, audio sample positions, checked conversion,
 bounded frame/audio buffers, and deterministic generated fixtures.
@@ -67,7 +75,13 @@ overflow, zero/invalid rates, and boundary trims; generated audio/video share a 
 
 ### M1.2 — Rebuildable local library index
 
-**Status:** partial — clip duration, resolution, frame rate, and codec are probed from MP4/MOV headers on a background thread (`library.probe`, `library.store_probes`) and cached in the index until the file changes. `library.refresh` and `library.load` keep a versioned JSON index in the per-user data directory (atomic temp-file-and-rename saves, size and field caps, corrupt index rebuilt by rescan, missing files kept as offline entries, favorite/tags preserved across rescans). The desktop app restores and refreshes the last folder on launch. Library cards show real thumbnails (`library.thumbnail`): a frame about a tenth into each clip, shrunk to 320 px wide and cached as a small JPEG in the per-user data folder, keyed by path, size, and modified time, with a 5,000-file cap. A background worker fills the cache and cards load textures only while visible. UI to set favorites/tags and multi-folder management remain future work.
+**Status:** implemented with limits — MP4/MOV/MKV/WebM metadata is probed on a background thread
+and cached in a versioned per-user JSON index with bounded fields, atomic saves, rescan recovery,
+offline entries, and preserved metadata. The desktop restores its last folder and shows cached
+thumbnails, favorites, collections, and game groups. Game labels can be guessed from recorder-style
+filenames or set manually. Scanning is non-recursive and only one active folder is shown; automatic
+game-process detection and multi-folder library browsing remain future work. Tags are retained in
+the index schema but do not have a complete user-facing editing workflow.
 
 **Containers and export:** MKV and WebM are probed as well as MP4/MOV (`clipcraft-media`). A clip can be trimmed and saved as a new MP4 without re-encoding (`clipcraft-export`, command `clip.trim`, [ADR 0010](adr/0010-trim-export.md)).
 
@@ -87,6 +101,9 @@ malformed/oversized metadata returns an error; interrupted writes preserve the p
 
 ### M2.1 — Windows display/window capture provider
 
+**Status:** implemented to compile; runtime evidence open — Windows Graphics Capture and global
+hotkey adapters compile for `x86_64-pc-windows-gnu`; they have not run on a Windows machine.
+
 **Requirements:** capture a selected monitor or application window, report permissions/capabilities,
 handle display scaling and hot-plug, and return timestamps/failures through the platform trait.
 
@@ -97,6 +114,11 @@ content bypass, or anti-cheat-sensitive behavior.
 unsupported protected windows, device loss, and restart produce actionable states without crashing.
 
 ### M2.2 — Bounded replay ring and clip hotkey
+
+**Status:** implemented and end-to-end verified on Linux/X11 with synthetic capture — bounded
+pre-roll, post-roll, global save hotkey, MP4/MKV writing, framing, storage limits, and failure
+cleanup have automated/virtual-display evidence. Windows capture runtime and real-game performance
+are open; see [`gaps.md`](gaps.md).
 
 **Requirements:** store encoded segments within duration/byte quotas, capture the configured
 pre-roll, flush optional post-roll, save atomically, and expose armed/recording/buffer status.
@@ -124,6 +146,10 @@ and gain, understandable permission errors, and recovery after device loss.
 
 ### M3.2 — Clip finalization and local storage limits
 
+**Status:** implemented and tested — MP4/MKV recording, progress/cancel, local storage limit,
+crash recovery, and full-disk preservation are verified with generated sources and Linux tests.
+Windows filesystem and runtime behavior remain open.
+
 **Requirements:** finalize replay segments into local clips, expose progress, enforce a configurable
 quota, and clearly distinguish clips/other files/free space.
 
@@ -137,9 +163,10 @@ measurements within documented rounding.
 
 ### M4.1 — Thumbnail library and storage UI
 
-**Status:** partial — local folder browsing, bounded scans, title search, sorting, and file-path
-copy are implemented; decoded thumbnails, duration/source metadata, and persistent library metadata
-remain open.
+**Status:** implemented with limits — local folder browsing, bounded non-recursive scans, search,
+sorting, decoded/cached thumbnails, probed media metadata, persistent index, favorites, collections,
+game labels, missing-file relink, playback, and local file actions are available. Multi-folder
+browsing, automatic game detection, and a full tagging workflow are open.
 
 **Requirements:** show a dense desktop grid with duration, title, game/source, on-device state, file
 size, and date; support import, new edit, filters, rename, tags, favorites, local collections,
@@ -166,8 +193,8 @@ screenshot-tested; file actions resolve to the correct local path and never call
   adds a typed local-path command. It does not change media files or the metadata schema.
 - **Limitations and fallback:** one non-recursive folder is scanned at a time. Folder-picker
   availability depends on the user's local desktop; manual path entry remains available if the OS
-  dialog cannot open. The cards use original vector placeholders because video decoding, actual
-  thumbnails, duration, game detection, persistent library metadata, and playback are not built.
+  dialog cannot open. This historical slice used original vector placeholders; current thumbnails,
+  media details, persistent metadata, and playback are documented in M1.2 and M4.1.
   Search filters the current in-memory scan only. No import copy, cloud action, or editor workflow is
   added.
 - **Dependencies:** `rfd` provides the native OS folder dialog; the scan still uses the shared
@@ -188,9 +215,14 @@ screenshot-tested; file actions resolve to the correct local path and never call
 - **Verification:** app unit tests cover scan-on-selection, cancel preservation, case-insensitive
   search, sort ties, and date display; `cargo xtask ci` checks the workspace; manual screenshots
   cover empty and populated states at 1440×900.
-- **Estimate:** completed as a focused UI slice; thumbnail decoding remains a separate M1/M4 task.
+- **Status:** completed. Its original acceptance evidence describes the first library shell; current
+  behavior and additional limits are recorded in M1.2, M4.1, and [`gaps.md`](gaps.md).
 
 ### M4.2 — Basic cut/trim editor and MP4 export
+
+**Status:** partial, core trim delivered — a clip can be previewed, trimmed, and exported as a new
+MP4 without re-encoding, with progress/cancel and input preservation. The editor remains intentionally
+basic; re-encoding, arbitrary split workflows, and quality/size presets are not implemented.
 
 **Requirements:** support preview, frame-accurate start/end trim, split/cut, undo for the active edit,
 and H.264/AAC MP4 export with progress/cancel.
@@ -201,9 +233,50 @@ remote render job, or saved editor project. Preserve originals; export a new nor
 **Acceptance:** command-level tests reproduce the UI edit; generated fixtures verify duration,
 frame-accurate cut points, audio sync, metadata, cancellation cleanup, and input-file preservation.
 
+### M4.3 — Local export size and quality presets
+
+**Status:** initial software implementation built — `clip.export` and the player trim panel offer
+estimated 10 MB, 25 MB, and custom 1–500 MB H.264 MP4 exports. Original-quality trim remains the
+default. Generated MP4/MKV tests verify decoding, trim/audio alignment, actual-size reporting,
+cancellation, malformed inputs, and collision cleanup. See [ADR 0013](adr/0013-local-compressed-export.md).
+Broader quality/codec controls and representative 30/60-second performance evidence remain open.
+
+**Requirements:** add an offline export job that can re-encode a selected trim to a small set of
+clear quality/size presets. Include an estimated Discord-friendly target, a custom size/quality
+choice if the encoder supports it, visible progress and cancellation, and an output-size report.
+Keep the original clip unchanged and write a normal local video file.
+
+**Limitations:** no upload, link creation, Discord integration, login, server, or guarantee that a
+variable-bitrate file meets a third-party platform's changing size limit. Do not ship a runtime
+FFmpeg dependency. Any encoder dependency must pass license, maintenance, Rust-safety, and performance
+review before adoption.
+
+The implemented slice accepts H.264/AAC MP4/MOV/MKV, copies up to 16 AAC tracks, and re-encodes video
+in software at up to 720p/30 fps without upscaling. It is bounded to 30 minutes per job. HDR and
+non-square pixels are refused. The destination filesystem must support hard links. Audio bitrate
+reduction, hardware export, custom dimensions/FPS, and additional codecs are outside this slice;
+the original clip remains intact on success or failure.
+
+**Acceptance:** generated fixtures verify output decodes, selected trim range and A/V sync are
+preserved, output size/quality controls behave within documented tolerance, cancel/error leaves no
+partial file, input bytes remain unchanged, and the feature works with network access disabled.
+
+**Verification:** deterministic encoder tests plus ffprobe/ffmpeg as external test oracles; measure
+encode time and output size for representative 30 s and 60 s clips at each preset.
+
+**Dependencies:** the existing reviewed FilmCraft Rust decoder, software encoder, conversion and
+muxer, plus the workspace image resizer. No new upstream revision or license exception. The
+software-only implementation does not require GPU evidence; representative-machine throughput
+still needs measurement. Estimate: initial implementation complete, remaining controls TBD.
+
 ## M5 — Reliability and release
 
 ### M5.1 — Recovery, installer, and performance gate
+
+**Status:** partial — crash and full-disk recovery, Linux package, diagnostics, keyboard access, and
+short resource soak are implemented. Signed Windows/macOS installers, two-hour soak, real screen
+reader, real-device audio, and reference-PC performance evidence remain open; see
+[`release-checklist.md`](release-checklist.md).
 
 **Requirements:** crash recovery, startup/device diagnostics, signed installer, keyboard access,
 resource budgets, suspend/resume, two-hour soak, and documented limitations.
@@ -214,9 +287,72 @@ mandatory update service or network telemetry.
 **Acceptance:** release checklist includes reproducible capture-to-export evidence with network
 disabled, full disk, device loss, suspend/resume, and measured CPU/GPU/memory/power behavior.
 
+### M5.2 — Low-copy GPU capture-to-encode path
+
+**Status:** optional opaque surface handoff and CPU-readback fallback are built and tested with
+stand-ins. Platform feasibility and implementation remain planned: no capture provider or hardware
+encoder uses the handoff yet. Hardware encoders are connected, but active capture still returns
+CPU-owned BGRA frames and the recorder converts those frames before encoding; hardware encoding
+alone does not provide ShadowPlay-style GPU-resident capture.
+
+**User problem:** full-frame transfers to CPU memory and CPU-side conversion can use processor time
+and GPU bandwidth while the user is playing. Reduce that work for supported capture and encoder
+pairs without changing the offline replay/save workflow.
+
+**Target behavior:** where the OS capture API and the selected hardware encoder can share compatible
+GPU resources, keep each picture on the same GPU through capture, scaling/color conversion, and
+encoding. Place encoded packets in the existing bounded replay buffer. Show the active capture and
+encoder path in diagnostics; keep the current CPU-frame path as a clear fallback when resources,
+drivers, or permissions do not support the low-copy path.
+
+**Requirements:** first add a platform feasibility spike and surface-lifetime design. Evaluate
+PipeWire DMA-BUF import and per-user Linux capture paths; evaluate D3D11 texture handoff from Windows
+Graphics Capture to supported hardware encoders; consider ScreenCaptureKit/IOSurface and
+VideoToolbox after macOS capture exists. Keep OS and GPU handles inside `clipcraft-platform`, use
+bounded frame/surface queues, report device loss and fallback reasons, and preserve frame timing,
+HDR/color handling, audio sync, and crash-safe saving. Measure CPU use, game frame-time impact, GPU
+engine use, dropped frames, memory, and power on named reference systems at 1080p60.
+
+**Limitations and fallback:** this is an optimization, not a prerequisite for local capture. Do not
+load a driver, inject into a game, require a privileged KMS helper, or silently switch capture APIs.
+Keep portal consent and compositor permission behavior intact. Do not ship GPU Screen Recorder as a
+runtime: its GPL-3.0-only license and non-Rust/FFmpeg stack conflict with ClipCraft's
+permissive-dependency and Rust-runtime rules. Use it as a public behavior reference only. Do not claim
+support for every compositor or promise sub-1% CPU until each claimed combination is measured;
+monitor capture through KMS may need elevated access, while portal delivery and drivers vary by
+compositor and GPU.
+
+Implement the capability independently in Rust from public operating-system and vendor API
+documentation. Do not translate or copy GSR source: that would make this a source port with GPL
+licensing implications, outside the current permissive-dependency policy. Keep the existing CPU
+capture path available throughout development, and enable a native path only for combinations that
+pass capture, audio-sync, device-loss, and performance checks.
+
+**Affected code/platforms:** `clipcraft-capture`, `clipcraft-record`, and `clipcraft-platform`;
+NVIDIA, AMD, and Intel hardware only where the native capture and encode APIs interoperate. Initial
+work targets Linux and Windows; macOS follows its capture provider.
+
+**Acceptance:** on each claimed platform/GPU path, a real-device capture-to-file run avoids a
+full-frame CPU readback and re-upload in ClipCraft's pipeline, preserves pixel correctness and
+timestamps, stays within the configured surface/queue bounds, and recovers or reports a clear error
+on device loss. The existing CPU fallback remains selectable and produces equivalent clips. Publish
+CPU/GPU use, game frame-time delta, dropped frames, resolution/FPS, driver, compositor, and power
+measurements. Sub-1% CPU is a stretch target for named systems, not a cross-platform guarantee.
+
+**Verification:** fake surface-pool tests prove bounded ownership and cleanup; integration tests
+compare generated colors, timestamps, and A/V sync between GPU and CPU paths; real hardware tests
+cover device loss, permission denial, compositor changes, and repeated start/stop. Do not mark a
+vendor, compositor, or OS combination supported from compilation alone.
+
+**Dependencies:** M2/M3 capture and recording APIs, M5.1 performance baseline, and the relevant
+platform provider (M6.2 for Linux Wayland, future macOS capture for Apple). **Estimate:** large; split
+the work by platform after the feasibility report.
+
 ## M6 — Additional local platforms
 
 ### M6.1 — macOS capture/audio provider
+
+**Status:** not started.
 
 **Requirements:** implement the same local platform trait with ScreenCaptureKit/CoreAudio, permission
 guidance, device-loss handling, and the Windows-equivalent verification matrix.
@@ -241,3 +377,358 @@ devices, and recovery cases.
 **Status:** X11 capture, VA-API, and PulseAudio/PipeWire sound are done; Wayland (portal + PipeWire)
 is built and partly verified, see [docs/wayland.md](wayland.md). Open: a run on GNOME, KDE and a GPU
 wlroots desktop, restoring the chooser's choice, and DMA-BUF buffers.
+
+## M7 — Game-aware capture and reference review
+
+### M7.0 — Compare reference projects and record product decisions
+
+**Status:** partial — Vice and ClipRecorder source/docs and repository metadata were inspected on
+2026-10-21; two small Rust source ports are now implemented under permission reported by the
+ClipCraft maintainer. Review of Segra, ScreenCraft, Medal, and ShadowPlay remains open.
+
+**User problem and evidence:** suggestions include Vice, ClipRecorder, Segra, ScreenCraft, Medal, and
+NVIDIA ShadowPlay. Their capture lifecycle, game awareness, compression, controller, editor, and
+community choices may inform ClipCraft. This initial review checked Vice at
+[`7e4b2a3`](https://github.com/splitshotz/Vice/commit/7e4b2a3bccc6e43285d095afe95d0d7fe3d0c84c)
+and ClipRecorder at
+[`153025b`](https://github.com/By183/ClipRecorder/commit/153025b4c88ed42a23a97e030ce140c2fc54949d)
+on 2026-10-21.
+
+**Initial findings — Vice:** its [README](https://github.com/splitshotz/Vice/blob/7e4b2a3bccc6e43285d095afe95d0d7fe3d0c84c/README.md)
+describes a Linux game clipper with game labels/playlists,
+Discord Rich Presence, configurable hotkeys, longer sessions with markers, a keyboard overlay, and
+a built-in multitrack editor. Its game identification is based on focused-window/compositor
+adapters; it does not implement the requested Game-only start/stop lifecycle. Its documented
+installer can enable a user daemon at login, and its default runtime is always-on even when no game
+is focused (Nix exposes an `autoStart` opt-out). The longest-match game-name rule in
+`vice/main.py` has been ported to Rust as a matching primitive; process observation and automatic
+arming remain separate work. It uses an external `gpu-screen-recorder` backend,
+a Python package, and a Qt WebEngine/TypeScript UI. Its package metadata declares
+GPL-3.0-or-later ([`pyproject.toml`](https://github.com/splitshotz/Vice/blob/7e4b2a3bccc6e43285d095afe95d0d7fe3d0c84c/pyproject.toml)). The broader source, assets, and
+runtime are outside ClipCraft's port scope; the selected matching function is included under
+reported permission. The README's low-CPU claim
+does not establish idle GPU use. The user reported high idle GPU use while testing Vice; that report
+is anecdotal and unverified. ClipCraft must measure both CPU and GPU while no game is running.
+
+**Initial findings — ClipRecorder:** its [README](https://github.com/By183/ClipRecorder/blob/153025b4c88ed42a23a97e030ce140c2fc54949d/README.md)
+and [`recorder.cpp`](https://github.com/By183/ClipRecorder/blob/153025b4c88ed42a23a97e030ce140c2fc54949d/src/recorder.cpp)
+describe Windows Graphics Capture
+frames converted by a D3D11 video processor to NV12, a generic Media Foundation H.264 hardware MFT,
+an encoded time ring, WASAPI loopback/microphone audio, and MP4 muxing when the user saves. Its
+timestamp gap, overlap, and microphone recovery policy from `src/audio_timeline.h` has been ported
+to a Rust utility. This
+closely overlaps ClipCraft's Rust WGC provider, Media Foundation encoder adapter, recorder ring, and
+local export path, so it does not currently offer a missing subsystem to transplant. It starts
+recording when the app launches, which does not fit Game-only default behavior. The repository is
+C++20/Windows-only and has no license grant: GitHub reports no license and the README states
+“unlicensed — all rights reserved.” The port is included under permission reported by the ClipCraft
+maintainer; see [`upstream-ports.md`](upstream-ports.md). Do not add its C++ app, assets, or runtime.
+Public Windows API documentation and independent test scenarios remain useful references.
+
+**Remaining requirements:** review public documentation and repositories for Segra, ScreenCraft,
+Medal, and ShadowPlay. Complete the comparison matrix for game detection/idle behavior,
+capture/encoding path, audio, replay controls, editor, export, controller support, backups, and
+external services. For any future code candidate, check license, maintenance, Rust fit, `unsafe`, and
+dependency direction before proposing reuse. Link primary sources and date the findings.
+
+**Reuse decisions for the two inspected projects:**
+
+| Behavior or technique | Decision |
+| --- | --- |
+| Vice game matching and game labels | Port the longest-match rule into `clipcraft-engine`; add a user-editable allowlist and low-overhead process lifecycle watcher as M7.1. Do not bundle Vice's game data. |
+| Vice keyboard overlay and Rich Presence | Keep as later optional features in M10; default off, clearly scoped permissions, no clip transmission. |
+| Vice multi-track editor and session markers | Defer. The first editor expansion remains a one-track evaluation after capture/platform work. |
+| Vice public links, tunnel, social sharing, and always-on daemon | Reject for ClipCraft's local-first/Game-only direction. |
+| ClipRecorder WGC/D3D11/MFT/ring-buffer pipeline | Port only its timestamped audio gap/overlap/microphone-recovery policy as a Rust utility. ClipCraft already has Rust WGC, MF encoder, replay, and export components; validate these on Windows hardware rather than duplicate them. |
+| ClipRecorder launch-time capture | Reject as the default. The replay ring should remain stopped until an allowlisted game is running. |
+
+**Limitations:** the two source ports are limited to the documented algorithms and depend on the
+maintainer-reported permission in [`upstream-ports.md`](upstream-ports.md); do not copy unrelated
+source, bundled game data, artwork, game footage, protocols, or private APIs. Do not add
+`gpu-screen-recorder` or another non-Rust recorder as a product runtime. Segra/community and hosted
+sharing features are research context only and remain out of scope.
+
+**Acceptance:** the matrix separates verified facts from assumptions; each borrowed behavior has a
+clear product decision (`adopt`, `adapt`, `defer`, or `reject`); any dependency candidate has a
+license/API/safety note or is explicitly not recommended. The two reviewed repositories have
+documented product decisions, and each completed algorithm port has parity tests and keeps its
+upstream source references in sync with future changes.
+
+**Verification:** maintainers review source links and decisions in `PLAN.md` and
+[`upstream-ports.md`](upstream-ports.md); focused Rust tests verify the ported algorithms. Broader
+repository review remains open.
+
+**Dependencies:** none. **Estimate:** small research task.
+
+### M7.1 — Game-only automatic replay arming
+
+**Status:** partial; the user-managed allowlist, process matching, Game-only default, manual pause,
+and X11/Windows process-to-window adapters are implemented. Real-game and Windows runtime evidence,
+Wayland matching, and library auto-tagging remain open.
+
+**User problem and target behavior:** ClipCraft should record only when a game is started, so the app
+must not continuously capture an idle desktop. **Game-only** is the default. Starting an explicitly
+selected game arms the bounded replay buffer; closing its process stops capture and releases the
+buffer. The user can pause capture until all matching games exit, or disable Game-only mode for
+manual capture. Start-on-launch is ignored in Game-only mode.
+
+**Requirements:** provide an editable per-game allowlist and a platform process-observation adapter.
+Match only process metadata (executable basename and optional exact Steam app ID); do not read
+process memory, inject code, install drivers, or infer protected game state. Show which game caused
+capture to arm, provide an immediate stop/pause control, and never auto-start at login or capture
+while no selected game is running. Add fake process-event tests and real platform evidence for
+every supported OS.
+
+**Limitations and fallback:** no game database is bundled; users add games from the running-process
+picker or enter executable names and Steam app IDs. Steam IDs are read only on Linux. Process names
+can be ambiguous, elevated or sandboxed games may be hidden, and anti-cheat/protected games can deny
+capture. Windows mapping is compile-only here; Wayland does not expose game-window process IDs, and
+macOS capture is not implemented. On unsupported or permission failures show a clear message and
+remain idle; never fall back to capturing the desktop silently. Android game launch cannot bypass
+MediaProjection consent or background-service restrictions.
+
+**Affected code/platforms:** `apps/clipcraft`, `crates/clipcraft-engine`, and
+`crates/clipcraft-platform`; Windows/Linux/macOS desktop providers. Android remains outside this
+implementation item.
+
+**Acceptance:** with no allowlisted process, Game-only mode leaves capture and the replay ring
+stopped; starting an allowlisted process arms once; duplicate/matching helper processes do not create
+duplicate sessions; process exit stops capture without corrupting already saved clips; failures and
+permission denial leave capture stopped; the UI identifies the active game and manual stop pauses
+automatic restart until all matched processes exit. The user can disable Game-only mode to use
+manual capture.
+
+**Verification:** engine tests cover process matching, exact IDs, duplicate observations, exit,
+restart, and manual pause; an X11 integration test maps a fake process ID to a window. The app's
+Linux build and real-game flow still need capture-hardware verification; Windows needs a real-device
+run. Measure idle CPU/GPU use before treating the resource budget as proven.
+
+**Dependencies:** M6 platform providers and M7.0 research. **Estimate:** TBD after platform API
+spikes.
+
+## M8 — Desktop platform parity and Android feasibility
+
+### M8.1 — Cross-platform desktop support matrix
+
+**Status:** planned; M6 Linux work is partial and macOS is not started.
+
+**Requirements:** close the Windows/Linux/macOS matrix for game-only arming, capture, audio, hotkeys,
+replay save, playback, trim/export, permissions, recovery, and installers using the shared Rust core
+and narrow platform adapters. Publish explicit supported OS versions and known unsupported capture
+sources.
+
+**Affected code/platforms:** `crates/clipcraft-platform`, media/audio adapters, engine, desktop app,
+and release packaging on Windows, Linux, and macOS.
+
+**Limitations:** do not claim support from compilation alone. DRM/protected content and
+anti-cheat-sensitive injection remain unsupported; no platform may silently use a hosted capture
+fallback.
+
+**Acceptance:** each advertised OS passes named-device end-to-end capture-to-export, game-start/exit
+lifecycle, permission denial, device loss, and restart tests. Differences and workarounds appear in
+the README and release checklist.
+
+**Verification:** platform CI plus real-device evidence, named OS/API versions, GPU, audio devices,
+and measured performance. **Dependencies:** M6, M7.1. **Estimate:** TBD per platform.
+
+### M8.2 — Android capture feasibility study
+
+**Status:** planned research spike; Android is not a supported platform commitment.
+
+**Requirements:** test whether a Rust-first client can use Android's user-visible screen-capture
+permission, foreground service, storage, audio, controller, and codec APIs while staying within
+battery and thermal budgets. Deliver a platform/dependency matrix, a small capture prototype only if
+permitted by platform policy, and a go/no-go recommendation.
+
+**Affected code/platforms:** Rust platform/UI compatibility and Android APIs; this is a research
+spike, not a shipping-platform implementation.
+
+**Limitations:** never capture before explicit OS consent or hide a foreground recording indicator.
+Game launch cannot grant screen-capture permission automatically. No Android feature is promised by
+the desktop roadmap.
+
+**Acceptance:** the report covers user consent and revocation, background restrictions, process/game
+detection, audio permission, suspend/resume, low storage, thermal behavior, and Rust UI/runtime
+compatibility; any prototype records only after visible consent and can stop immediately.
+
+**Verification:** named Android API levels and physical devices; record battery/thermal measurements
+or mark them uncollected. **Dependencies:** M8.1 shared core boundaries. **Estimate:** small spike.
+
+## M9 — Optional encrypted backup
+
+### M9.1 — User-configured client-side-encrypted backup and restore
+
+**Status:** proposed; no backup provider, encryption format, or key recovery mechanism is selected.
+
+**User problem:** the user wants a way to protect local clips with encrypted cloud backups while
+keeping ClipCraft usable offline and avoiding a ClipCraft-hosted server or sharing service.
+
+**Requirements:** first complete a design ADR that selects a provider and reviewed Rust cryptography
+and specifies local secret storage, passphrase/recovery key, ciphertext versioning, visible metadata,
+chunking, retry, integrity checks, restore, delete, credential revocation, and key-loss behavior. Then
+implement opt-in backup of user-selected clips and required library metadata. Encrypt on the device
+before transfer. Support cancellation and resume without altering originals; explain that losing the
+key makes ciphertext unrecoverable.
+
+**Affected code/platforms:** a proposed Rust backup/provider crate, engine commands, UI/CLI, and
+platform secret storage on supported desktop OSes. Exact crate boundaries follow the design ADR.
+
+**Limitations:** no backup is enabled by default; no ClipCraft account, hosted bucket, key escrow,
+social sharing, or automatic cross-device library sync. A network/provider outage must not block
+capture, local playback, edit, or export. Provider object names and other unavoidable metadata must
+be documented.
+
+**Acceptance:** an explicit setup flow names the provider and key recovery warning; no bytes are
+sent before confirmation; the provider receives ciphertext only; interrupted backup resumes safely;
+integrity failure is surfaced; a fresh installation restores and decrypts synthetic clips with the
+recovery material; losing credentials/key returns a clear unrecoverable state; originals are never
+modified or deleted as a side effect.
+
+**Verification:** local fake-provider tests exercise retries, cancellation, corruption, deletion, and
+restore; crypto uses vetted crates with license/security review, test vectors, and no custom cipher;
+a disposable cloud account test verifies the actual provider path with synthetic footage. Audit logs
+and diagnostics contain no keys, tokens, or private paths.
+
+**Dependencies:** M7.0 reference review, key-storage/security ADR, and provider selection. **Estimate:**
+TBD after design spike.
+
+## M10 — Controller, presence, overlays, and extensions
+
+### M10.1 — Controller shortcut bindings
+
+**Status:** planned.
+
+**Requirements:** allow the user to bind a supported controller button/chord to save the replay,
+start/stop a session, or take a screenshot; expose binding and conflict state in settings. Reuse the
+same engine commands as keyboard hotkeys and keep controls accessible by keyboard.
+
+**Affected code/platforms:** `clipcraft-platform`, engine hotkey/command registry, and desktop
+settings on Windows, Linux, and macOS.
+
+**Limitations:** support only controllers and OS APIs verified in the matrix. Do not emulate a
+controller, inject input into games, or require a game launcher. Game focus/anti-cheat behavior may
+prevent global input observation.
+
+**Acceptance:** binding persists locally, conflicts are reported, unplug/replug recovers, and a
+button press invokes the same tested command as its keyboard equivalent without consuming game
+input. **Verification:** fake-device tests plus named controller/OS integration evidence.
+
+**Dependencies:** M8.1. **Estimate:** TBD.
+
+### M10.2 — Optional Discord Rich Presence
+
+**Status:** planned.
+
+**Requirements:** provide opt-in local Rich Presence that can show ClipCraft activity and, only if
+the user enables it, the detected game name. Explain the exact fields before enabling; turn off and
+clear presence when the user exits or disables it.
+
+**Affected code/platforms:** desktop app and a small Rust presence adapter on Windows/Linux/macOS;
+Discord's local IPC availability is optional.
+
+**Limitations:** no clip upload, link, Discord login inside ClipCraft, friends/community surface, or
+collection of Discord account data. Discord availability is optional and must not affect capture.
+
+**Acceptance:** default is off; enabling/disabling and Discord unavailable states are clear; stopping
+ClipCraft clears the presence; capture remains functional when Discord is missing or blocked.
+
+**Verification:** mock IPC tests and a manual opt-in desktop check; inspect logs for no token, clip
+path, or private metadata. **Dependencies:** M7.1 game identity. **Estimate:** TBD.
+
+### M10.3 — Built-in keyboard/mouse overlays and themes
+
+**Status:** planned.
+
+**Requirements:** prototype an optional, user-positionable keyboard/mouse overlay and a small set of
+declarative visual themes. Overlays are composited into exported/captured footage only after the user
+turns them on and chooses what input categories to reveal. Provide preview and a clear recording
+indicator for overlay state.
+
+**Affected code/platforms:** Rust UI/settings, capture/render composition, and export on verified
+desktop platforms.
+
+**Limitations:** no keystroke logging outside the active capture session, no passwords/private text,
+no hidden capture, and no third-party shader code in this first slice. The overlay must be optional
+and must not intercept game input.
+
+**Acceptance:** user can disable overlay globally, choose allowed input categories, preview placement,
+and verify export contains only selected events; accessibility and performance budgets are met.
+
+**Verification:** synthetic input tests, screenshot/video fixture comparison, privacy tests for
+excluded input, and measured capture overhead. **Dependencies:** M8.1, editor/compositor capability
+spike. **Estimate:** TBD.
+
+### M10.4 — Plugin and shader extension design spike
+
+**Status:** planned research; no plugin runtime is approved.
+
+**Requirements:** compare declarative packages, Rust/WASM plugins, and other Rust-compatible
+isolation options for themes, small functions, and shaders. Define versioning, capability grants,
+filesystem/network access, CPU/GPU and memory budgets, crash isolation, signing/trust, and removal.
+
+**Affected code/platforms:** a future Rust engine extension boundary and desktop app; runtime and OS
+matrix remain undecided pending this spike.
+
+**Limitations:** do not load unrestricted native dynamic libraries or grant filesystem/network access
+by default. Do not block a built-in theme/overlay feature on a plugin framework. A Rust-written app
+does not by itself make third-party plugins safe.
+
+**Acceptance:** a short threat model and decision ADR show the chosen extension model, dependencies,
+license/unsafe review, and sandbox boundaries; if no option meets requirements, defer plugins.
+
+**Verification:** prototype only with synthetic data; demonstrate resource exhaustion and denied
+capability behavior. **Dependencies:** M10.3 and stable engine command API. **Estimate:** small spike.
+
+## M11 — Focused editing and local AI-agent workflows
+
+### M11.1 — One-track editor expansion evaluation
+
+**Status:** proposed; the current editor remains a basic no-reencode trim.
+
+**User problem:** the user wants a more complete inbuilt editor in the spirit of Medal or a small
+CapCut/Clipchamp workflow while keeping capture and library as the main product.
+
+**Requirements:** first build and evaluate a bounded one-track prototype for arranging local clips,
+cuts, simple transitions, text/input overlays, and basic audio placement/levels. Preserve the source
+clips and export an ordinary video. Document undo, preview quality, export time, and exact supported
+operations before deciding whether to continue.
+
+**Affected code/platforms:** desktop editor UI, engine edit model, and local export pipeline on the
+platforms that pass M8.1.
+
+**Limitations:** no general-purpose multitrack NLE, community templates, cloud project format, or
+ClipCraft-specific `.ccproj` requirement. Keep the current simple trim flow available and do not
+delay core capture/platform work for advanced editing.
+
+**Acceptance:** user testing shows the added workflow improves common clip preparation; edit math
+uses integer ticks; project/session state is rebuildable or saved only if an ADR justifies it; export
+preserves source files and meets measured performance limits. The decision may be to defer.
+
+**Verification:** prototype screenshots/video, command-level edit tests, generated A/V sync tests,
+and a written continue/defer decision. **Dependencies:** M8.1 and M10.3. **Estimate:** TBD after UX
+spike.
+
+### M11.2 — Local CLI and MCP footage-management adapter
+
+**Status:** planned; the local Rust CLI exists, but an MCP adapter does not.
+
+**Requirements:** extend `clipcraft-cli` with stable machine-readable JSON for library search, clip
+inspection, trim/export, and safe metadata edits. Evaluate an MCP adapter over stdio that exposes the
+same engine commands to a user-selected AI client and scopes operations to explicitly configured
+library roots.
+
+**Affected code/platforms:** `apps/clipcraft-cli`, `crates/clipcraft-engine`, and a possible Rust
+MCP stdio adapter on Windows, Linux, and macOS.
+
+**Limitations:** do not add an HTTP listener, remote control server, telemetry, or automatic footage
+upload. ClipCraft tools must not send video/audio to an AI provider. Read-only tools are the default;
+edits, delete, backup, and overwrite-sensitive operations require explicit user approval or an
+explicit per-session policy. The host AI may have its own privacy/network behavior outside ClipCraft.
+
+**Acceptance:** CLI and MCP use the same validated command registry; invalid paths and malformed
+arguments are rejected; read-only mode cannot mutate files; mutation permission is visible and
+revocable; outputs avoid leaking private paths unless explicitly requested.
+
+**Verification:** protocol/schema tests, sandboxed temp-library tests, malicious path/oversize-input
+tests, and an end-to-end stdio host test with synthetic clips. **Dependencies:** stable command IDs
+and M9 backup permissions. **Estimate:** TBD.

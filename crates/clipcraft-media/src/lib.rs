@@ -1,9 +1,10 @@
 //! Local media file probing for ClipCraft.
 //!
 //! [`probe_file`] reads only a clip's container headers (never its picture or sound data) and
-//! reports duration, size, frame rate and codecs. MP4 and MOV go through FilmCraft's clean-room
-//! ISO BMFF demuxer, Matroska and WebM (which ClipCraft writes too) through its Matroska one. Every number comes from an untrusted file, so header sizes are capped before
-//! the demuxer allocates and all arithmetic is checked.
+//! reports duration, size, frame rate and codecs. MP4 and MOV go through FilmCraft's ISO BMFF
+//! demuxer; Matroska and WebM (which ClipCraft writes too) use its Matroska demuxer. Every number
+//! comes from an untrusted file, so header sizes are capped before the demuxer allocates and all
+//! arithmetic is checked.
 
 use clipcraft_time::{FrameRate, Tick};
 use filmcraft_isobmff::{ByteSource, Mp4File, Track, TrackKind};

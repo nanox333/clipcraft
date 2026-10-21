@@ -7,10 +7,11 @@
 
 ## Context
 
-ADR 0003 deferred reuse until an API review. FilmCraft (`storytold/filmcraft`, MIT OR Apache-2.0,
-pure Rust, clean-room) was reviewed at commit `6c3948a`. It already provides the pieces ClipCraft
-planned to write: an exact tick clock, MP4/MOV demux and mux, a pure-Rust H.264 decoder and
-encoder, frame and audio buffer types, and OS hardware codec adapters.
+ADR 0003 deferred reuse until an API review. FilmCraft (`storytold/filmcraft`, MIT OR Apache-2.0)
+was reviewed at commit `6c3948a`. It provides an exact tick clock, MP4/MOV demux and mux,
+pure-Rust codec implementations, frame and audio abstractions, and OS hardware codec adapters.
+ClipCraft consumes selected crates at a pinned revision. Because it reuses open-source code, this is
+an independent product implementation, not a formal clean-room implementation.
 
 ## Decision
 
@@ -22,28 +23,26 @@ encoder, frame and audio buffer types, and OS hardware codec adapters.
    input plus audio `SampleRate` math. The older nanosecond clock is gone. Every common frame
    rate (including 23.976, 29.97 and 59.94) and sample rate (8 kHz to 192 kHz) is an exact whole
    number of ticks, so no rounding is needed.
-3. **Used now.** `filmcraft-time` and `filmcraft-isobmff`: `clipcraft-media` probes MP4 and MOV
-   files with the ISO BMFF demuxer after its own header-size check. `filmcraft-codecs` and
-   `filmcraft-media`: `clipcraft-player` opens clips through the streaming file reader and decodes
-   video (H.264 and the other codecs that hub registers) on a worker thread.
-   `filmcraft-h264enc` is a dev-dependency used to generate test clips without `ffmpeg`.
-   Audio is decoded by the same hub (`MediaSource::audio`, resampled to the output device's rate)
-   and played through ClipCraft's own `cpal` wrapper in `clipcraft-audio-out`.
-4. **Planned.** `filmcraft-h264enc` as the software encoder; `filmcraft-platform` for hardware
-   codecs (see below).
-5. **Not used.** `filmcraft-export`, `filmcraft-render`, `filmcraft-project` and the editor crates.
-   They pull in most of FilmCraft and ClipCraft has no project format (ADR 0001).
-6. **Toolchain.** FilmCraft requires Rust 1.95, so the workspace `rust-version` is 1.95.
+3. **Used now.** `filmcraft-time` supplies exact `Tick` and `FrameRate` values to
+   `clipcraft-time`. `filmcraft-isobmff` and `filmcraft-matroska` back probing, playback, recording,
+   and trim export. `filmcraft-codecs` and `filmcraft-media` provide the playback decoder hub.
+   `filmcraft-h264enc` and `filmcraft-aac` are used by the local recorder; `filmcraft-h264` and
+   `filmcraft-platform` provide hardware encoder paths behind `clipcraft-platform`. ClipCraft owns
+   its command engine, UI, capture model/providers, replay buffer, recording flow, player controls,
+   index, and no-reencode trim behavior.
+4. **Not used.** `filmcraft-render`, `filmcraft-project`, and FilmCraft's full editor workflow are
+   not part of ClipCraft. The app has no user-facing project format or multitrack timeline (ADR 0001).
+5. **Toolchain.** FilmCraft requires Rust 1.95, so the workspace `rust-version` is 1.95.
 
-## Open items
+## Safety and open items
 
-- `filmcraft-platform` is the one FilmCraft crate that contains `unsafe`. ClipCraft's rule (`AGENTS.md`)
-  keeps `unsafe` inside `clipcraft-platform`. Before depending on it, either record an ADR that
-  accepts its `unsafe` as a reviewed third-party dependency or write ClipCraft's own adapters.
-- The pure-Rust H.264 encoder's speed and quality for 1080p60 are unmeasured here. M2 must measure
-  them on reference hardware before it is called the software fallback.
-- Only MP4 and MOV are probed so far. FilmCraft has Matroska, WebM, AVI and MPEG-TS crates that
-  can extend `clipcraft-media` the same way.
+- FilmCraft's `filmcraft-platform` contains audited third-party `unsafe`; it is isolated behind
+  ClipCraft's `clipcraft-platform` API. ClipCraft's own `unsafe` remains confined to its reviewed
+  platform crate with `// SAFETY:` comments and tests. License and source pin updates require review.
+- The pure-Rust H.264 encoder is wired as fallback but is too slow for reliable 1080p60 in the
+  measured container; reference gaming-hardware performance is still open.
+- Probing supports MP4/MOV and Matroska/WebM metadata. AVI/WMV are not probed or trim-exported.
+- Real NVENC, VA-API, Media Foundation, and VideoToolbox hardware runs remain unverified.
 
 ## Consequences
 

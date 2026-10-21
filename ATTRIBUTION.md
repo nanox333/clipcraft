@@ -10,4 +10,5 @@
 Add every first-party shipped asset to this table and place a `<filename>.license.md` sidecar beside
 it with its source, author, and license. `cargo xtask assets` checks that each file under `assets/`
 has a sidecar and a matching path in this table. User-provided Medal screenshots and downloaded
-reference images are private planning references, not product assets.
+reference images are private planning references, not product assets. Source-code ports are tracked
+separately in [`docs/upstream-ports.md`](docs/upstream-ports.md).

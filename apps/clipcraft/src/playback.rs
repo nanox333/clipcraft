@@ -27,7 +27,7 @@ const CONTROLS_HIDE_AFTER: Duration = Duration::from_millis(2500);
 /// Height of the control card (seek bar and buttons), used to size the picture above it.
 const CONTROLS_HEIGHT: f32 = 100.0;
 /// Extra room the trim panel takes under the controls.
-const TRIM_HEIGHT: f32 = 232.0;
+const TRIM_HEIGHT: f32 = 276.0;
 /// Speeds offered by the menu and the `[` / `]` keys.
 pub const SPEEDS: [f64; 10] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 3.0, 4.0];
 const NORMAL_SPEED_INDEX: usize = 3;
@@ -318,7 +318,10 @@ impl Playback {
     /// Space/K play, ←/→ ∓5 s, J/L ∓10 s, `,`/`.` frame step, ↑/↓ volume, M mute, F fullscreen,
     /// Esc leave fullscreen, `[`/`]` speed, R loop, Home/End, 0–9 jump to 0–90 %.
     pub fn handle_keys(&mut self, context: &egui::Context) {
-        if context.wants_keyboard_input() || self.error.is_some() {
+        if context.wants_keyboard_input()
+            || egui::Popup::is_any_open(context)
+            || self.error.is_some()
+        {
             return;
         }
         let pressed = |key: egui::Key| context.input(|input| input.key_pressed(key));
@@ -944,6 +947,23 @@ mod tests {
             height,
             rgba: vec![200; bytes],
         })
+    }
+
+    #[test]
+    fn player_shortcuts_do_not_fire_while_an_export_menu_is_open() {
+        let context = egui::Context::default();
+        let mut player = playback();
+        let volume = player.prefs.volume;
+        let playing = player.playing;
+        egui::Popup::open_id(&context, egui::Id::new("export-menu"));
+        press(
+            &mut player,
+            &context,
+            &[egui::Key::ArrowDown, egui::Key::Space, egui::Key::T],
+        );
+        assert_eq!(player.prefs.volume, volume);
+        assert_eq!(player.playing, playing);
+        assert!(!player.trim.open);
     }
 
     #[test]

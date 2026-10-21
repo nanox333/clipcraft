@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        ClipCraft is Rust-only and local-only. Do not attach private gameplay or clip files without redaction and permission. Include evidence with private paths and IDs removed.
+        ClipCraft is pure Rust and offline-first. Do not attach private gameplay or clip files without redaction and permission. Include evidence with private paths and IDs removed.
   - type: textarea
     id: problem
     attributes:
@@ -62,5 +62,13 @@ body:
       placeholder: |
         - [ ] …
         - [ ] …
+    validations:
+      required: true
+  - type: textarea
+    id: docs_impact
+    attributes:
+      label: Documentation impact
+      description: State which status, limitation, setup, or troubleshooting docs need updating if this bug changes documented behavior. Implementation PRs must update README.md and docs/gaps.md.
+      placeholder: README.md, docs/gaps.md, docs/backlog.md — or explain why the documented behavior does not change.
     validations:
       required: true

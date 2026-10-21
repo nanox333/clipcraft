@@ -1,13 +1,19 @@
 # ClipCraft plan
 
-**Status:** early build; M0 workspace and first local-library slice implemented
-**Date:** 2026-10-19
+**Status:** active prototype; local capture/replay, playback, library, original-quality trim, and estimated-size H.264 export are implemented with platform-specific limits
+**Last reviewed:** 2026-10-21
 **Product:** a local-first instant-clip recorder, clip library, and basic cut tool for players
+
+This document describes product direction and the intended MVP, not a claim that every planned
+capability is complete. For the current implementation and verification limits, see
+[`README.md`](README.md), [`ROADMAP.md`](ROADMAP.md), and [`docs/gaps.md`](docs/gaps.md).
 
 **Implementation requirement: pure Rust.** First-party product code, UI, CLI, and required tooling
 belong in a Rust Cargo workspace. No JavaScript/TypeScript frontend or non-Rust app runtime.
-**Hosting requirement: none.** The app must not need a hosted backend, account, network connection,
-or server process for capture, library, editing, settings, or export.
+**Offline-first requirement:** capture, library, editing, settings, and export must work without a
+network connection or server process. Optional, user-configured encrypted backup is a planned
+network feature; it must not make ClipCraft accounts, ClipCraft-hosted storage, or an online core
+workflow necessary.
 
 ## Product direction
 
@@ -19,11 +25,13 @@ choose capture source → keep a bounded replay buffer → press the clip hotkey
 → save the last N seconds (+ optional post-roll) → make a quick cut or trim → export locally
 ```
 
-Capture and the local clip library are the product; the editor is a quick trim/cut tool, not a
-general-purpose non-linear editor or social network. ClipCraft is a standalone offline desktop app: capture,
-library, editing, settings, and export must work without an account, network connection, or hosted
-server. It keeps recordings on the user's computer and exports ordinary video files. Sharing means
-the user chooses what to do with an exported file outside ClipCraft.
+Capture and the local clip library are the product. The first editor is a quick trim/cut tool; a
+more capable but still focused one-track editor is a later proposal, not an MVP dependency. ClipCraft
+is an offline-first desktop app: capture, library, editing, settings, and export work without an
+account, network connection, or server. Recordings stay on the user's computer unless the user
+explicitly configures encrypted backup to a storage provider. There is no community or social feed.
+Low capture overhead is a product goal; the current CPU-frame pipeline does not yet match the
+GPU-resident capture-to-encode path described by Vice.
 
 [Medal.tv](https://medal.tv/) is the feature reference for the loop: instant replay, configurable
 hotkeys and durations, game/window capture, system audio plus microphone, a clip library, quick
@@ -35,20 +43,21 @@ source code, network protocol, or proprietary media.
 
 ## Pure-Rust implementation and repository practice
 
-ClipCraft is a clean-room Rust rebuild. The desktop app, UI, capture and editing engines, CLI,
-local library metadata, and automation are implemented in Rust in a Cargo workspace. Use a native
-Rust UI (initially egui/eframe); do not add a JavaScript/TypeScript app, Electron or Tauri shell,
-hosted backend, or bundled FFmpeg runtime. The app must not need a server process to run. Choose
-permissively licensed Rust dependencies and implement formats from public specifications.
-FFmpeg/ffprobe may be used as external fixture generators or test oracles, never linked or shipped.
-Platform capture and hardware APIs sit behind a small Rust platform crate and safe `Result`-returning
-interfaces; isolate and document any necessary OS FFI there, with a pure-Rust fallback wherever
-practical.
+ClipCraft is an independent Rust implementation that reuses selected, pinned open-source
+dependencies, including FilmCraft media crates. It is not a formal clean-room implementation. The
+desktop app, UI, capture and editing engines, CLI, local library metadata, and automation are Rust
+workspace code. Use a native Rust UI (egui/eframe); do not add a JavaScript/TypeScript app, Electron
+or Tauri shell, hosted backend, or bundled FFmpeg runtime. The app must not need a server process to
+run. Review dependency licenses, pinned sources, API fit, and safety implications; implement file
+formats from public specifications. FFmpeg/ffprobe may be used as external fixture generators or
+test oracles, never linked or shipped. Platform capture and hardware APIs sit behind a small Rust
+platform crate and safe `Result`-returning interfaces; isolate and document any necessary OS FFI
+there, with a fallback wherever practical.
 
 Follow the ArtCraft documentation model and tailor it to ClipCraft:
 
 - `AGENTS.md` is the short, authoritative set of rules for all contributors: never crash or lose
-  work, no panic shortcuts in non-test code, hostile-input bounds, clean-room/licence rules, and
+  work, no panic shortcuts in non-test code, hostile-input bounds, dependency/licence rules, and
   the limited platform-FFI boundary.
 - `CLAUDE.md` is the working guide: read `AGENTS.md`, then the current roadmap/gaps, architecture,
   and relevant crate docs; keep work autonomous and follow the repository's single quality gate.
@@ -58,6 +67,10 @@ Follow the ArtCraft documentation model and tailor it to ClipCraft:
   `agents`, `backlog`, `contributing`, `testing`, `gaps`, issue requirements, and short ADRs). Keep
   detailed working notes and Medal reference screenshots under a gitignored local `plan/medal/`
   directory.
+- Documentation ships with implementation. Every feature change updates the README's current
+  capabilities and `docs/gaps.md`'s remaining limits/evidence in the same pull request; update the
+  roadmap, backlog, architecture, and testing pages when implementation changes their status or
+  guidance. The PR gate checks the README and gaps report.
 - Give milestones and tasks stable IDs. Use one `cargo xtask ci` entry point for formatting,
   linting, tests, dependency/layer checks, and platform checks; CI and contributor instructions call
   the same gate. Keep the engine command registry shared by the UI and CLI so features can be driven
@@ -65,6 +78,9 @@ Follow the ArtCraft documentation model and tailor it to ClipCraft:
 
 The product model and interaction patterns may be inspired by ArtCraft siblings; do not copy their
 source code. Reuse a sibling crate only after checking its license, API fit, and maintenance cost.
+Selected code from Vice and ClipRecorder is being translated into Rust under permission reported by
+the ClipCraft maintainer; the exact ports and upstream revisions are tracked in
+[`docs/upstream-ports.md`](docs/upstream-ports.md).
 
 ## Principles taken from the ArtCraft repositories
 
@@ -73,7 +89,13 @@ source code. Reuse a sibling crate only after checking its license, API fit, and
 | [EffectCraft](https://github.com/storytold/effectcraft) | engine-first design, exact time math, render jobs, CLI automation, evidence-based issue workflow | keep the editor intentionally small; prioritize capture latency and bounded memory |
 | [PhotoCraft](https://github.com/storytold/photocraft) | thin egui shell, one command registry for UI and CLI, versioned local metadata, no-panic input handling, contributor/agent guidance | keep the UI/CLI command model and no-panic rules; do not make a custom edit-project format the center of a clip recorder |
 | [FilmCraft](https://github.com/storytold/filmcraft) (sibling video project) | reusable media/frame/audio abstractions, rational timebase, codecs, export jobs, platform hardware adapters | extract or depend on shared crates only after an API review; do not fork a large editor wholesale |
-| Medal.tv | one-key capture, replay buffer, clip library, quick editing, local storage controls | keep the familiar capture-to-export loop; omit cloud, social, account, and link features |
+| Medal.tv | one-key capture, replay buffer, clip library, quick editing, local storage controls | keep the familiar capture-to-export loop; omit social, account, and link features; evaluate opt-in encrypted backup separately |
+| [Vice](https://github.com/splitshotz/Vice) | Linux instant replay, game labels/playlists, Discord presence, keyboard overlay, and a built-in editor; GPL-3.0-or-later Python app using a separate GPU recorder and web UI | the longest-match game-name rule is ported into Rust for future process detection; no bundled game database, UI, or non-Rust runtime; exclude daemon-at-login and public link/tunnel behavior |
+| [GPU Screen Recorder](https://git.dec05eba.com/gpu-screen-recorder/) | Linux GPU capture and hardware encoding across vendor/compositor combinations, with driver and permission caveats | implement equivalent behavior independently in Rust against public platform APIs for M5.2; do not translate/copy its GPL-3.0-only source, ship its C/C++/FFmpeg runtime, or require its privileged KMS helper |
+| [ClipRecorder](https://github.com/By183/ClipRecorder) | Windows Graphics Capture → D3D11 conversion → generic Media Foundation H.264 MFT → encoded ring buffer → MP4 save, with WASAPI audio | its timestamped audio gap/overlap policy is ported as a Rust utility; keep the existing Rust capture/encoder path and do not add the C++ app or assets |
+| [Segra](https://segra.tv/) | community and creator-facing product patterns | review for product research; community features are explicitly out of scope |
+| [NVIDIA ShadowPlay](https://www.nvidia.com/en-us/geforce/geforce-experience/shadowplay/) | game-triggered capture, replay, and controller-oriented save-clip flow | use as a behavior reference; no NVIDIA-only SDK or vendor lock-in |
+| ScreenCraft | focused creator-video editing patterns | review for small editor interactions; do not let an editor-first product reshape the capture-first MVP |
 
 Use the public [EffectCraft `AGENTS.md`](https://github.com/storytold/effectcraft/blob/main/AGENTS.md),
 [`CLAUDE.md`](https://github.com/storytold/effectcraft/blob/main/CLAUDE.md), and
@@ -85,8 +107,9 @@ and [`docs/architecture.md`](https://github.com/storytold/photocraft/blob/main/d
 as concrete examples for contributor rules, agent workflow, issue requirements, and product/setup
 documentation described below.
 
-The implementation is clean-room: study public behaviour and specifications, use permissively
-licensed dependencies, and keep third-party assets and their attribution sidecars explicit.
+Use public product behavior and standards as references, never copy proprietary code or assets, and
+track reused open-source crates and third-party assets with explicit source, license, and attribution
+records. See [ADR 0004](docs/adr/0004-filmcraft-crates.md) for the FilmCraft dependency review.
 
 ## Medal visual references and direction
 
@@ -107,7 +130,8 @@ panel separators, slim icon rail, compact capture strip, thumbnail-led library, 
 selection/action state. Keep the quick editor visually consistent with the dark shell, but simplify
 it to a large preview, play/pause, one scrubber with trim handles, split/cut, and save. Do not copy
 Medal's full editor tool rails or timeline depth into this product. Replace “Create Link” and cloud
-actions with local “Reveal in Folder” and “Copy File Path” actions; omit cloud-sync settings.
+actions with local “Reveal in Folder” and “Copy File Path” actions. Keep backup out of the main
+capture/library surfaces; a future backup feature belongs in a separate, deliberate settings flow.
 
 Public reference pages (the embedded screenshots are the references):
 
@@ -121,8 +145,9 @@ additional library, storage, recording, and audio-settings screenshots supplied 
 are also visual references. Keep all references local; do not add them to Git, bundle them, or trace
 their logos or artwork. Recreate layout, palette, sizing, and interaction states with original
 ClipCraft icons and generated/openly licensed media. “Less bloat” means the first app has only the
-capture strip, library, compact editor, and focused local settings; no feed, profiles, friends,
-quests, store, comments, accounts, links, cloud sync, or upload prompts.
+capture strip, library, compact editor, and focused settings; no feed, profiles, friends, quests,
+store, comments, accounts, or share links. Optional encrypted backup is a later, separate utility
+rather than a social or library-sharing feature.
 
 The Medal support pages refer to editor “projects,” but do not document a user-facing `.ccproj`
 file format. `.ccproj` was my earlier ClipCraft architecture suggestion, not a Medal format. To
@@ -137,7 +162,8 @@ The platform boundary must leave room for macOS ScreenCaptureKit and Linux PipeW
 from the beginning. The initial capture target is a monitor or application window; game-specific
 hooks, kernel drivers, and anti-cheat-sensitive injection are deliberately out of scope.
 
-MVP capabilities:
+MVP target capabilities (not all implemented; check [`ROADMAP.md`](ROADMAP.md) and
+[`docs/gaps.md`](docs/gaps.md) for delivery and evidence status):
 
 1. First-run setup discovers displays/windows and lets the user choose a source, replay duration
    (15/30/60/120 seconds), output folder, video quality, microphone, and a global clip hotkey.
@@ -165,91 +191,112 @@ exported file plays after restarting the app. Verify the complete path with netw
 and without starting a service. A two-hour soak, suspend/resume test, display
 hot-plug test, and full-disk test are release checks rather than demo-only checks.
 
-## Scope boundaries
+## Planned expansion after the current local workflow
 
-ClipCraft has no hosted component in this plan. Installing, launching, capturing, managing the
-library, editing, and exporting must work offline and must not depend on a hosted server or a
-separately running service. The MVP also excludes livestreaming, mobile clients, browser capture,
-full Premiere-style editing, kernel-level capture, DRM bypass, hidden/background capture without an
-explicit user setting, cloud upload/sync, accounts, share links, comments, likes, moderation,
-monetisation, and AI highlight detection. Users can share exported files with tools of their choice.
+These are product proposals, not implemented features or release promises. Work is staged in
+[`ROADMAP.md`](ROADMAP.md) and specified as bounded issues in [`docs/backlog.md`](docs/backlog.md).
+The order prioritizes the user's explicit request that capture only arms for selected games, then
+platform breadth, backup safety, and optional integrations. Project comparisons are research input,
+not permission to copy code, assets, or proprietary interfaces.
+
+- **Game-aware capture:** default to Game-only mode: detect an explicitly allowlisted game and arm
+  the replay buffer only while it runs. Do not capture the desktop while idle. A separate, deliberate
+  one-session desktop-capture action may be available. Detection must not read process memory,
+  inject code, install drivers, or bypass anti-cheat.
+- **Platform breadth:** target tested Windows, Linux, and macOS desktop workflows through shared
+  Rust core APIs. Android is a feasibility study only until screen-capture permission, foreground
+  service, battery, thermal, storage, and game-launch constraints are proven.
+- **Low-copy GPU capture:** evaluate native GPU-surface handoff from capture through conversion and
+  hardware encoding, starting with the best-supported Windows and Linux paths. Do not ship
+  `gpu-screen-recorder` as a C/C++/FFmpeg runtime; use its public behavior as a reference only. Avoid
+  privileged KMS helpers, and keep the existing CPU path as a visible fallback. Treat Vice's
+  sub-1% CPU figure as a target to measure on named hardware, not a universal promise.
+- **Encrypted backup:** optionally back up user-selected clips and metadata after encrypting them on
+  the device. The user chooses and configures a storage provider. No ClipCraft account or hosted
+  storage is required, and core workflows remain available offline. Provider choice, key recovery,
+  metadata exposure, deletion, and restore behavior must be settled before implementation.
+- **Controller and presence integrations:** optional controller shortcuts and Discord Rich Presence
+  can be considered after desktop platform parity. Both are off by default and must not upload clips
+  or inspect game memory.
+- **Themes, overlays, and plugins:** start with built-in keyboard/mouse overlays and declarative
+  themes. A plugin API and shader/effect extensions require a security and portability spike first;
+  never load unrestricted native plugins by default.
+- **CLI and AI-agent access:** grow the existing local CLI and consider an MCP stdio adapter for
+  managing and editing clips. Keep the interface local and permission-scoped; ClipCraft itself must
+  not send footage to an AI provider. Destructive operations require explicit user authorization.
+- **Editor growth:** after trim/cut and export are reliable across target platforms, evaluate a
+  focused one-track editor with a few transitions, text/keyboard/mouse overlays, and simple audio
+  controls. Do not promise a CapCut/Clipchamp replacement or make multitrack editing a core
+  requirement. Video and microphone/system audio recording are already part of the current capture
+  plan; voice/video calls and community features remain out of scope.
+
+The product boundary remains: no livestreaming, web client, social feed, accounts, share links,
+comments, likes, moderation, monetisation, privileged capture helpers, driver injection, DRM bypass,
+or hidden capture. Explicitly configured optional backup is the only planned core workflow that may
+need a network.
 
 ## Issue-level limitations and requirements
 
 Every issue must state the user problem, evidence, target behavior, affected Rust crates/platforms,
 unsupported cases and fallbacks, dependencies, acceptance criteria, and how each criterion will be
-verified. All issues inherit the non-negotiable pure-Rust, offline/no-server, safe-input, bounded
-resource, local-media, and clean-room rules in [`AGENTS.md`](AGENTS.md). Feature issues specify
+verified. All issues inherit the non-negotiable pure-Rust, offline-first/no-required-server,
+safe-input, bounded-resource, local-media, and original-code/licensing rules in [`AGENTS.md`](AGENTS.md).
+Optional network features must be opt-in and must not require ClipCraft-hosted services. Feature issues specify
 default/empty/error states; bugs provide reproduction steps and regression tests; platform work
 names OS/API/permission coverage; performance work includes repeatable baseline and target values.
 The full definition and GitHub templates are in
 [`docs/issue-requirements.md`](docs/issue-requirements.md) and `.github/ISSUE_TEMPLATE/`. No issue
 is complete without evidence, relevant tests, and updates to the roadmap/gap record.
 
-## Proposed repository shape
+## Current repository architecture
 
-Keep the dependency direction explicit and make the engine portable across native platforms:
+The implementation uses the dependency layers and workspace crates in
+[`docs/architecture.md`](docs/architecture.md); that page is the source of truth for current crate
+names and boundaries. The main pieces are `clipcraft-time` and `clipcraft-frame`,
+`clipcraft-capture` and `clipcraft-media`, `clipcraft-player` and `clipcraft-export`,
+`clipcraft-record`, `clipcraft-engine`, `clipcraft-audio-out` and `clipcraft-platform`, plus the
+desktop app, CLI, and Rust `xtask`.
 
-```text
-L0  time, geom, color, frame, bitstream
-L1  capture-model, audio, media, library
-L2  cut/trim edit, codecs, thumbnails
-L3  export jobs
-L4  engine (Session + commands)
-L5  ui-egui, platform (OS capture/audio/hardware FFI)
-L6  apps/clipcraft, apps/clipcraft-cli
-```
+The app uses FilmCraft's pinned time and media crates for decoding, encoding, container support, and
+hardware encoder adapters ([ADR 0004](docs/adr/0004-filmcraft-crates.md)). ClipCraft owns the UI,
+platform-provider integration, replay buffer, recording/session logic, local index, and trim flow.
+The library index is local and rebuildable; normal video files remain the user's primary artifacts.
+The editor is currently playback plus a basic trim-to-new-MP4 operation. There is no
+user-facing `.ccproj`, multitrack timeline, general effect system, or server component.
 
-Names can change after the FilmCraft reuse spike, but the boundaries should remain:
+The exact crate graph is checked with `cargo xtask layers`. Platform adapters expose fallible safe
+interfaces, and platform-specific `unsafe` stays in the reviewed boundary. Capture provider evidence
+and format/performance limits are recorded in [`docs/gaps.md`](docs/gaps.md).
 
-- `clipcraft-time` owns integer ticks, rational frame rates, sample positions, and conversions at
-  the API boundary. Never use floating-point seconds for edit math.
-- `clipcraft-capture-model` defines `CaptureSession`, source descriptors, capabilities, encoded
-  segments, audio packets, timestamps, and failure states. It has no OS dependencies.
-- `clipcraft-platform` implements providers: Windows Graphics Capture/DXGI and WASAPI loopback
-  first; ScreenCaptureKit/CoreAudio and PipeWire/portal later. It is the only crate allowed to
-  contain platform `unsafe`, behind a safe `Result` API with a software/no-capture fallback.
-- `clipcraft-media` probes/imports files and exposes a GOP-aware `MediaSource`, frame cache, audio
-  decode, thumbnails, and waveform summaries. Reuse FilmCraft codecs or extract shared crates only
-  when licenses, APIs, and maintenance ownership are clear.
-- `clipcraft-replay` owns the bounded segment ring. Segment metadata includes first/last timestamp,
-  keyframe positions, audio span, codec parameters, and a content hash. A save operation atomically
-  snapshots the required segments, flushes post-roll, and records any keyframe re-encode needed at
-  the requested in-point.
-- `clipcraft-library` indexes normal local video files and stores small app metadata such as title,
-  tags, favorite state, capture time, and thumbnail location. It can rebuild its index from the
-  configured folders; missing files appear as offline entries. The video file remains the user's
-  primary artifact.
-- `clipcraft-edit` holds simple in-memory cut/trim ranges and produces a new local video file. It
-  does not require a user-facing project document or custom `.ccproj` format.
-- `clipcraft-engine` owns capture/library state, validation, local background jobs, recovery, and
-  commands such as `capture.start`, `capture.clip`, `library.list`, `library.reveal`, `clip.trim`,
-  `clip.split`, and `export.queue`.
-- `clipcraft-library` metadata and caches live in an app data directory, are versioned and recoverable,
-  and can be rebuilt from the original local video files.
-- `clipcraft-ui-egui` is a view over engine state. The CLI and UI dispatch the same commands. Capture
-  status is visible without opening the editor; no web viewer, backend, or server component is part
-  of the product.
+## Capture and media constraints
 
-## Capture and media design
-
-The capture path is the highest-risk subsystem and gets a design spike before UI work:
+The capture/replay/save pipeline is implemented. Changes to it must preserve these requirements and
+add platform evidence for any new behavior; open verification is listed in [`docs/gaps.md`](docs/gaps.md):
 
 1. Confirm per-platform permission prompts, cursor inclusion, HDR/SDR conversion, display scaling,
    multi-monitor coordinates, occlusion behaviour, and capture of protected windows.
-2. Choose a hardware encoder through a capability probe. Use short GOPs and independent segment
-   files so the replay buffer can evict old data without rewriting the whole recording.
+2. Choose an encoder through a capability probe, prefer hardware where available, and report a
+   software fallback. Keep GOPs short enough to bound replay start error and buffer encoded media
+   within explicit duration/byte limits.
 3. Timestamp video and each audio source against one monotonic clock. Resample only at the edge;
    store the original sample rate and clock correction in metadata.
 4. Bound every queue by bytes, duration, and item count. Backpressure must drop or degrade preview
    frames before it drops encoded clip data, and every drop must be observable.
 5. Make privacy visible: a clear armed/recording indicator, a configurable hotkey to pause capture,
    per-source mute, a local-only storage label, and a one-click purge of the replay buffer.
+6. For any future low-copy path, implement the handoff independently in Rust against documented
+   platform APIs. Keep compatible capture surfaces on the same GPU through conversion and hardware
+   encoding, and bound their lifetime. Preserve the current CPU-frame fallback when a device,
+   driver, or compositor cannot share a surface safely. Do not translate/copy GSR source under the
+   current permissive-dependency policy.
 
 The first performance budget is 1080p60 capture with <250 ms hotkey-to-armed acknowledgement, no
 unbounded memory growth, and a saved clip available within five seconds after post-roll ends on a
 reference machine. Measure encode latency, dropped frames, audio drift, disk throughput, and power
-draw rather than relying on a successful process start.
+draw rather than relying on a successful process start. The current capture interface reads every
+frame into CPU-owned BGRA memory before conversion; a low-copy GPU-resident path is planned in
+M5.2. Vice reports sub-1% CPU for its own backend, but that number is not a ClipCraft requirement
+or claim until it is measured on a named device, driver, compositor, resolution, and frame rate.
 
 ## UI flow
 
@@ -273,8 +320,9 @@ draw rather than relying on a successful process start.
   MVP. The main product remains capture and library.
 - **Capture settings:** show a clear capture toggle, source preview, system/game-audio and microphone
   selectors, and an obvious stop action. **PC Storage:** choose a local capture folder, set a local
-  storage limit, and show used/free space with clips separated from other files. No cloud-sync
-  section. Every permission failure explains how to fix it.
+  storage limit, and show used/free space with clips separated from other files. Do not add an
+  always-visible sync status; any future backup gets a separate explicit setup flow. Every
+  permission failure explains how to fix it.
 - **Audio settings:** choose the recording mode and microphone, keep game/system audio and the mic
   as separate tracks, expose their levels, and provide a simple mic test. Per-app audio routing and
   noise suppression are advanced follow-ups, not required in the first UI.
@@ -321,8 +369,9 @@ and a GPU compositor out of scope for the first release.
 ### M5 — release hardening
 
 Add crash recovery, startup diagnostics, signed installers, update-safe migrations, two-hour soak
-tests, performance budgets, accessibility/keyboard navigation, and Windows permission guidance.
-Document all known platform limitations honestly before calling the build beta-quality.
+tests, performance budgets, accessibility/keyboard navigation, Windows permission guidance, and the
+planned low-copy GPU capture-to-encode path after platform feasibility checks. Document all known
+platform limitations honestly before calling the build beta-quality.
 
 ### M6 — additional local platforms
 
@@ -359,5 +408,5 @@ There is no sharing service, web client, user account system, or hosted mileston
 Open decisions to resolve at M0 (answers and deferrals are recorded in `docs/adr/0002` and `docs/adr/0003`): the minimum Windows version, whether to consume FilmCraft crates or
 extract shared media crates, the first hardware encoder matrix, local library metadata/index format,
 storage quota defaults, and per-platform source-selection/permission behaviour. No custom project
-format is required for the MVP. All decisions must preserve offline operation and the no-hosted-server
-requirement.
+format is required for the MVP. All decisions must preserve offline core workflows and the
+no-required-hosted-service rule; optional backup is governed by the M9 design ADR.

@@ -1,8 +1,10 @@
 # Architecture
 
-ClipCraft is a **Rust-only native desktop application**. Every first-party runtime component is a
-Rust crate in the Cargo workspace. The supported product has no backend, web client, account system,
-network endpoint, or server process. Capture, library, edit, and export must work offline.
+ClipCraft is a **pure-Rust native desktop application**. Every first-party runtime component is a
+Rust crate in the Cargo workspace. The core product has no required backend, web client, account
+system, or server process. Capture, library, edit, and export must work offline. An optional
+client-side-encrypted backup is planned but not implemented; its provider adapter must remain
+separate from the offline core.
 
 ## Dependency layers
 
@@ -18,10 +20,14 @@ L5  egui UI, Rust platform adapters
 L6  clipcraft desktop app, clipcraft CLI, Rust xtask
 ```
 
-The implemented workspace currently contains `clipcraft-time` and `clipcraft-frame` (L0),
-`clipcraft-media` (L1), `clipcraft-player` (L2), `clipcraft-engine` (L4), `clipcraft-audio-out` (L5), and the `clipcraft`, `clipcraft-cli`, and `xtask`
-entry points (L6). `clipcraft-capture` (L1), `clipcraft-record` (L3), and `clipcraft-platform` (L5) hold capture, the replay buffer, and the operating-system providers ([ADR 0006](adr/0006-m2-capture-and-replay-buffer.md)). Edit and export crates remain planned. FilmCraft crates
-are consumed as pinned git dependencies ([ADR 0004](adr/0004-filmcraft-crates.md)).
+The implemented workspace contains `clipcraft-time` and `clipcraft-frame` (L0),
+`clipcraft-capture` and `clipcraft-media` (L1), `clipcraft-player` and `clipcraft-export` (L2),
+`clipcraft-record` (L3), `clipcraft-engine` (L4), `clipcraft-audio-out` and
+`clipcraft-platform` (L5), and the `clipcraft`, `clipcraft-cli`, and `xtask` entry points (L6).
+Capture, replay recording, playback, local indexing, and trim export are implemented with the
+platform evidence and limits listed in [`gaps.md`](gaps.md). FilmCraft crates are consumed as pinned
+git dependencies ([ADR 0004](adr/0004-filmcraft-crates.md)); this is reviewed open-source reuse,
+not a formal clean-room implementation.
 
 - **Time:** `clipcraft-time` re-exports FilmCraft's exact `Tick` and `FrameRate` and adds validated
   constructors and audio sample positions. Floating-point seconds are display-only.
@@ -48,28 +54,52 @@ are consumed as pinned git dependencies ([ADR 0004](adr/0004-filmcraft-crates.md
 - **Thumbnails:** `clipcraft-player::thumbnail` decodes a frame about a tenth into the clip, reduces it
   in the decoder's native format before converting to RGBA, and stores a 320 px JPEG in a bounded,
   atomically written cache. The app creates textures only for visible cards, a few per frame.
-- **Media probing:** `clipcraft-media` reads MP4/MOV container headers (duration, size, frame rate,
-  codecs) after bounding header sizes; it never decodes picture or sound data.
+- **Media probing:** `clipcraft-media` reads supported MP4/MOV and Matroska/WebM metadata after
+  bounding input sizes. Playback decoding and thumbnail generation are handled by
+  `clipcraft-player` using pinned FilmCraft crates.
 - **Capture model:** portable source descriptors, capabilities, packets, timestamps, and failure
-  states. No OS APIs or device handles leak into this layer.
+  states. `CaptureSource` retains its CPU-frame method and offers an optional opaque native-surface
+  lease; a compatible hardware encoder may consume that lease directly or the recorder requests a
+  CPU readback. The handoff and fallback are tested with stand-ins, but no platform provider or
+  encoder implements the route yet, so the active pipeline still reads frames into CPU-owned BGRA
+  and converts them on the CPU. OS APIs and device handles stay inside `clipcraft-platform`; see
+  M5.2 in the backlog. No GPU performance claim is supported yet.
 - **Platform:** display/window capture, audio devices, global hotkeys, and hardware encoder adapters.
   Expose safe, fallible Rust APIs. Any OS FFI is isolated here, reviewed by ADR, and documented with
-  safety invariants.
+  safety invariants. `sysinfo` provides Rust process enumeration; the game watcher retains only
+  executable basenames, process IDs for window lookup, and (when configured) numeric Steam IDs.
 - **Media and library:** video files remain normal local media files. A rebuildable, versioned local
   index stores small library metadata such as title, tags, favorites, and thumbnail paths. Caches
   and replay segments are disposable app data. There is no user-facing editor-project format in
   the MVP.
 - **Replay:** a bounded encoded-segment ring with explicit duration/byte limits. Saving snapshots
   segment references atomically, handles post-roll, and reports any required keyframe re-encode.
-- **Edit/export:** a small in-memory cut/trim model and local export jobs with progress,
-  cancellation, and actionable error states. The first release does not need a multitrack timeline,
-  compositor, or editor-project file.
-- **Engine:** owns session, validation, undo/redo, autosave/recovery, background jobs, and stable
-  typed commands. UI and CLI dispatch these same commands.
+- **Edit/export:** `clipcraft-export` offers sample-copy trim (`clip.trim`) and software H.264
+  compression (`clip.export`). Size presets reserve the exact copied AAC bytes, estimate a video
+  bitrate with overhead headroom, and choose bounded dimensions/FPS without upscaling. Frames are
+  decoded, resized, encoded, and muxed sequentially; no whole-clip raw-frame buffer is built. The
+  original is preserved, progress/cancel is shared with the UI, and actual output size is reported.
+  Compression uses exclusive temporary-file creation and publishes via a no-replace hard link;
+  the output filesystem must support hard links. See [ADR 0013](adr/0013-local-compressed-export.md).
+  No multitrack timeline, compositor, or editor-project file is required.
+- **Engine:** owns recording sessions, input validation, local index operations, crash recovery,
+  background jobs, and stable typed commands. UI and CLI dispatch these same commands. It does not
+  yet provide a persistent editor project, autosaved edit sessions, or general undo/redo history.
+- **Game-aware capture:** `clipcraft-engine` owns the user-rule matcher and deterministic arming
+  state; `clipcraft-platform` observes local processes and resolves X11/Windows game windows by
+  process ID. The app polls every two seconds only when Game-only mode is enabled, arms the bounded
+  replay buffer for a matching process, and stops it when that process exits. Rules are local and
+  user-managed; no Vice game database is included. Wayland process-to-window lookup and macOS
+  capture are not supported yet, and real Windows/game evidence remains open in `gaps.md`.
+- **Audio timeline policy:** `clipcraft-record::audio_timeline` aligns timestamped native audio
+  packets. The current `AudioSource` mixer remains clock-driven and does not call this helper until
+  a timestamped platform source is connected.
 - **UI/CLI:** native egui desktop app and local command-line tool. No HTTP/WebSocket control service,
   MCP server, browser UI, or remotely hosted feature is part of this architecture.
-- **Current shell limit:** the UI scans a user-selected folder and displays file metadata. It does not
-  decode video or start capture; unavailable actions are disabled or labeled.
+- **Current product status:** the UI provides recording controls/settings, a persistent local clip
+  library, playback, and trim. Capture/playback evidence varies by platform; see the current
+  platform and performance limits in [`gaps.md`](gaps.md) rather than inferring support from code
+  compiling alone.
 
 ## Rust and dependency policy
 
@@ -77,6 +107,10 @@ Use Rust for first-party code and required tooling. Do not add JavaScript/TypeSc
 product code, Electron, Tauri, or FFmpeg to the application. Select permissively licensed Rust
 dependencies and record licenses. FFmpeg/ffprobe are permitted only as external test oracles or
 fixture generators; they are never linked or shipped.
+
+Small source-to-Rust ports from Vice and ClipRecorder are tracked with their upstream revisions,
+scope, and permission provenance in [`upstream-ports.md`](upstream-ports.md). Those ports add no
+non-Rust runtime; they do not include either upstream UI, app, bundled game database, or assets.
 
 The platform boundary may call native operating-system APIs through Rust bindings. It must report
 capability failures cleanly and keep portable crates buildable without the OS-specific provider.
@@ -86,7 +120,9 @@ Every crate declares its layer; `cargo xtask layers` checks for invalid dependen
 
 The app stores the configured replay buffer, clips, library index, thumbnails, and preferences on
 the user's device. Every queue and cache has a documented bound. Export never overwrites its input.
-There is no network path for captured media.
+The current implementation has no network path for captured media. A future backup adapter may
+transfer only locally encrypted data after explicit user setup; it must remain outside the offline
+capture/library/edit/export path.
 
-See [`PLAN.md`](../PLAN.md) for the proposed crate list, capture design, and milestones. Changes to
+See [`PLAN.md`](../PLAN.md) for product direction, capture constraints, and milestones. Changes to
 the library metadata schema or platform safety boundary require an ADR.

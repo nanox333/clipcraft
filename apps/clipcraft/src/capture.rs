@@ -7,7 +7,10 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use clipcraft_capture::{CaptureTarget, TargetKind};
-use clipcraft_engine::{CaptureSession, HotkeyAction, RecordingSettings, SavedClipReport};
+use clipcraft_engine::{
+    CaptureSession, GameArmingDecision, GameArmingState, GameProcessMatch, HotkeyAction,
+    RecordingSettings, SavedClipReport, match_game_process,
+};
 use clipcraft_platform::{CaptureOptions, HotkeyBinding, HotkeyListener};
 use clipcraft_record::{RecordError, RecordState, RecordStatus};
 use eframe::egui;
@@ -77,6 +80,8 @@ pub struct CaptureState {
     shooting: Option<mpsc::Receiver<Result<PathBuf, String>>>,
     /// A screen share being set up while the desktop's own chooser is open.
     opening: Option<mpsc::Receiver<Result<Box<dyn clipcraft_capture::CaptureSource>, String>>>,
+    /// The game that caused a pending desktop share to open.
+    opening_game: Option<GameProcessMatch>,
     /// When the clip being saved will be written, if it is waiting for the post-roll.
     saving_at: Option<Instant>,
     listener: Option<HotkeyListener>,
@@ -92,12 +97,28 @@ pub struct CaptureState {
     last_hotkey: Option<(HotkeyAction, Instant)>,
     /// Set after a clip was saved into the library folder, so the library is rescanned.
     pub saved_into: Option<PathBuf>,
+    process_observer: clipcraft_platform::ProcessObserver,
+    game_arming: GameArmingState,
+    game_session: Option<GameProcessMatch>,
+    game_scan_due: Option<Instant>,
+    game_retry_after: Option<Instant>,
+    game_only_was_enabled: bool,
 }
 
 impl CaptureState {
     /// True while recording runs (or has failed but can still save what it has).
     pub fn is_active(&self) -> bool {
         self.session.is_active() || self.opening.is_some()
+    }
+
+    pub fn game_recording_name(&self) -> Option<&str> {
+        self.game_arming
+            .recording()
+            .map(|game| game.game_name.as_str())
+    }
+
+    pub fn game_capture_paused(&self) -> bool {
+        self.game_arming.is_paused()
     }
 
     /// True when the open recording was started with different settings than the current ones.
@@ -158,12 +179,16 @@ impl ClipCraftApp {
         if !self.capture.launched {
             self.capture.launched = true;
             self.recover_after_crash();
-            if self.recording.record_on_launch {
+            if self.recording.record_on_launch && !self.recording.game_only_capture {
                 self.start_capture();
             }
         }
         self.poll_gpu_probe();
         self.poll_opening();
+        self.poll_game_arming();
+        if self.recording.game_only_capture {
+            context.request_repaint_after(Duration::from_secs(1));
+        }
         self.yield_to_the_game();
         self.sync_hotkeys();
         let mut actions = Vec::new();
@@ -371,8 +396,124 @@ impl ClipCraftApp {
         }
     }
 
+    fn refresh_game_match(&mut self) {
+        let matches = self.detect_game_processes();
+        let _ = self.capture.game_arming.observe(&matches);
+        self.capture.game_scan_due = Some(Instant::now() + Duration::from_secs(2));
+    }
+
+    fn detect_game_processes(&mut self) -> Vec<GameProcessMatch> {
+        if self.recording.game_rules.is_empty() {
+            return Vec::new();
+        }
+        let include_steam_app_ids = self
+            .recording
+            .game_rules
+            .iter()
+            .any(|rule| !rule.steam_app_ids.is_empty());
+        let processes = self.capture.process_observer.refresh(include_steam_app_ids);
+        let mut matches = Vec::new();
+        for process in processes {
+            if process.process_id == std::process::id() {
+                continue;
+            }
+            let Some(game_name) = match_game_process(
+                &self.recording.game_rules,
+                &process.executable,
+                process.steam_app_id.as_deref(),
+            ) else {
+                continue;
+            };
+            let game = GameProcessMatch {
+                game_name: game_name.to_owned(),
+                process_id: process.process_id,
+            };
+            if !matches.contains(&game) {
+                matches.push(game);
+            }
+        }
+        matches
+    }
+
+    fn poll_game_arming(&mut self) {
+        if !self.recording.game_only_capture {
+            if self.capture.game_only_was_enabled {
+                if self.capture.game_session.is_some() {
+                    self.stop_capture();
+                }
+                self.capture.game_arming.reset();
+                self.capture.game_only_was_enabled = false;
+            }
+            return;
+        }
+        if !self.capture.game_only_was_enabled {
+            self.capture.game_only_was_enabled = true;
+            // Switching from ordinary manual capture to game-only mode drops the old replay
+            // buffer, so an idle desktop cannot remain captured under the new setting.
+            if self.capture.is_active() && self.capture.game_session.is_none() {
+                self.stop_capture();
+            }
+        }
+        if self
+            .capture
+            .game_scan_due
+            .is_some_and(|due| Instant::now() < due)
+        {
+            return;
+        }
+        self.capture.game_scan_due = Some(Instant::now() + Duration::from_secs(2));
+        let matches = self.detect_game_processes();
+        match self.capture.game_arming.observe(&matches) {
+            Some(GameArmingDecision::Start(game))
+                if !self.capture.is_active()
+                    && self
+                        .capture
+                        .game_retry_after
+                        .is_none_or(|retry| Instant::now() >= retry) =>
+            {
+                self.capture.game_retry_after = Some(Instant::now() + Duration::from_secs(10));
+                self.start_capture_for_game(Some(game));
+            }
+            Some(GameArmingDecision::Stop) if self.capture.game_session.is_some() => {
+                self.stop_capture();
+            }
+            Some(GameArmingDecision::Start(game)) if self.capture.is_active() => {
+                self.capture.game_arming.capture_started(game.clone());
+                self.capture.game_session = Some(game);
+            }
+            _ => {}
+        }
+    }
+
     /// Picks what to record from the settings.
-    pub(crate) fn capture_target_id(&mut self) -> Result<String, String> {
+    pub(crate) fn capture_target_id(
+        &mut self,
+        game_process: Option<&GameProcessMatch>,
+    ) -> Result<String, String> {
+        let game_window = if let Some(game) = game_process {
+            match clipcraft_platform::window_for_process(game.process_id) {
+                Ok(Some(window)) => Some(window),
+                Ok(None) => {
+                    return Err(format!(
+                        "ClipCraft found {} running, but this desktop did not expose its game window. Capture is still idle.",
+                        game.game_name
+                    ));
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "ClipCraft found {} running, but could not read its game window: {error}",
+                        game.game_name
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+        if self.recording.source == clipcraft_engine::CaptureSource::Game
+            && let Some(window) = game_window
+        {
+            return Ok(window.id);
+        }
         if !self.capture.targets_loaded() {
             self.capture.refresh_targets();
         }
@@ -432,15 +573,50 @@ impl ClipCraftApp {
     }
 
     pub(crate) fn start_capture(&mut self) {
+        let game = if self.recording.game_only_capture {
+            self.refresh_game_match();
+            if self.capture.game_arming.is_paused() {
+                self.capture.notice = notice(
+                    "Game capture is paused until all selected games have closed.",
+                    false,
+                    None,
+                );
+                return;
+            }
+            match self.capture.game_arming.observed().cloned() {
+                Some(game) => Some(game),
+                None => {
+                    self.capture.notice = notice(
+                        if self.recording.game_rules.is_empty() {
+                            "Add a game in Settings › Games before automatic capture can start."
+                        } else {
+                            "Waiting for a selected game. Capture stays idle until its process is running."
+                        },
+                        false,
+                        None,
+                    );
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        self.start_capture_for_game(game);
+    }
+
+    fn start_capture_for_game(&mut self, game: Option<GameProcessMatch>) {
         if self.capture.is_active() {
             return;
         }
         self.capture.notice = None;
-        self.capture.refresh_targets();
-        let id = match self.capture_target_id() {
+        if game.is_none() || self.recording.source != clipcraft_engine::CaptureSource::Game {
+            self.capture.refresh_targets();
+        }
+        let id = match self.capture_target_id(game.as_ref()) {
             Ok(id) => id,
             Err(message) => {
                 self.capture.notice = notice(message, true, None);
+                self.capture.game_arming.capture_start_failed();
                 return;
             }
         };
@@ -453,6 +629,11 @@ impl ClipCraftApp {
         if id == clipcraft_platform::PORTAL_TARGET {
             let (sender, receiver) = mpsc::channel();
             self.capture.opening = Some(receiver);
+            self.capture.opening_game = game.clone();
+            self.capture.game_session = game.clone();
+            if let Some(game) = game {
+                self.capture.game_arming.capture_started(game);
+            }
             self.capture.notice = notice(
                 "Choose the monitor or window to clip in the window your desktop shows.",
                 false,
@@ -466,13 +647,26 @@ impl ClipCraftApp {
             return;
         }
         match clipcraft_platform::open(&id, &options) {
-            Ok(source) => self.begin_session(source),
-            Err(error) => self.capture.notice = notice(error.to_string(), true, None),
+            Ok(source) => {
+                if self.begin_session(source) {
+                    if let Some(game) = game {
+                        self.capture.game_arming.capture_started(game.clone());
+                        self.capture.game_session = Some(game);
+                        self.capture.game_retry_after = None;
+                    }
+                } else {
+                    self.capture.game_arming.capture_start_failed();
+                }
+            }
+            Err(error) => {
+                self.capture.notice = notice(error.to_string(), true, None);
+                self.capture.game_arming.capture_start_failed();
+            }
         }
     }
 
     /// Finishes starting once a screen is being captured.
-    fn begin_session(&mut self, source: Box<dyn clipcraft_capture::CaptureSource>) {
+    fn begin_session(&mut self, source: Box<dyn clipcraft_capture::CaptureSource>) -> bool {
         let hardware = (self.recording.video_encoder == clipcraft_engine::VideoEncoder::Gpu)
             .then(clipcraft_platform::hardware_provider)
             .flatten();
@@ -494,8 +688,12 @@ impl ClipCraftApp {
                         None,
                     );
                 }
+                true
             }
-            Err(error) => self.capture.notice = notice(error.to_string(), true, None),
+            Err(error) => {
+                self.capture.notice = notice(error.to_string(), true, None);
+                false
+            }
         }
     }
 
@@ -519,18 +717,38 @@ impl ClipCraftApp {
                 self.capture.opening = None;
                 self.capture.notice = None;
                 match result {
-                    Ok(source) => self.begin_session(source),
-                    Err(message) => self.capture.notice = notice(message, true, None),
+                    Ok(source) => {
+                        if !self.begin_session(source) {
+                            self.capture.opening_game = None;
+                            self.capture.game_session = None;
+                            self.capture.game_arming.capture_start_failed();
+                        } else if let Some(game) = self.capture.opening_game.take() {
+                            self.capture.game_arming.capture_started(game.clone());
+                            self.capture.game_session = Some(game);
+                        }
+                    }
+                    Err(message) => {
+                        self.capture.notice = notice(message, true, None);
+                        self.capture.opening_game = None;
+                        self.capture.game_session = None;
+                        self.capture.game_arming.capture_start_failed();
+                    }
                 }
             }
             Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => self.capture.opening = None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.capture.opening = None;
+                self.capture.opening_game = None;
+                self.capture.game_session = None;
+                self.capture.game_arming.capture_start_failed();
+            }
         }
     }
 
     pub(crate) fn stop_capture(&mut self) {
         // Cancelling while the chooser is open: the share is dropped when it arrives.
         self.capture.opening = None;
+        self.capture.opening_game = None;
         let was_clipping = self.capture.session.is_active();
         self.capture.session.stop();
         if was_clipping {
@@ -538,10 +756,15 @@ impl ClipCraftApp {
         }
         self.capture.started_with = None;
         self.capture.status = None;
+        self.capture.game_session = None;
+        self.capture.game_arming.capture_stopped_automatically();
     }
 
     fn toggle_capture(&mut self) {
         if self.capture.is_active() {
+            if self.recording.game_only_capture {
+                self.capture.game_arming.capture_stopped_by_user();
+            }
             self.stop_capture();
         } else {
             self.start_capture();
@@ -695,6 +918,7 @@ impl ClipCraftApp {
     /// The recording controls in the top bar.
     pub(crate) fn capture_controls(&mut self, ui: &mut egui::Ui) {
         let active = self.capture.is_active();
+        let game_name = self.capture.game_recording_name().map(str::to_owned);
         let (dot, text) = match self.capture.status.as_ref() {
             Some(status) => match status.state {
                 RecordState::Running => {
@@ -708,11 +932,28 @@ impl ClipCraftApp {
                             )
                         })
                         .unwrap_or_default();
-                    (LIME, format!("Clipping{tag}"))
+                    (
+                        LIME,
+                        game_name
+                            .map(|game| format!("Clipping · {game}"))
+                            .unwrap_or_else(|| format!("Clipping{tag}")),
+                    )
                 }
                 RecordState::Failed(_) => (DANGER, "Capture stopped".to_owned()),
                 RecordState::Stopped => (FAINT, "Not clipping".to_owned()),
             },
+            None if self.recording.game_only_capture && self.capture.game_capture_paused() => {
+                (FAINT, "Game capture paused".to_owned())
+            }
+            None if self.recording.game_only_capture && !active => {
+                (FAINT, "Waiting for selected game".to_owned())
+            }
+            None if self.recording.game_only_capture => {
+                let label = game_name
+                    .map(|game| format!("Opening capture · {game}"))
+                    .unwrap_or_else(|| "Opening capture".to_owned());
+                (MUTED, label)
+            }
             None => (FAINT, "Not clipping".to_owned()),
         };
         kit::status_pill(ui, dot, &text);

@@ -4,14 +4,20 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use clipcraft_capture::SyntheticSource;
 use clipcraft_capture::reframe::{Framing, OutputShape};
+use clipcraft_capture::{
+    CaptureError, CaptureFrame, CaptureSource, CaptureTarget, NativeCaptureFrame, SyntheticSource,
+    TargetKind,
+};
 use clipcraft_record::{
     ClipFormat, EncoderSpeed, HardwareEncoder, HardwarePacket, HardwareProvider, HardwareRequest,
     RecordConfig, RecordState, Recorder,
 };
+use clipcraft_time::Tick;
 use filmcraft_h264enc::{Encoder, EncoderConfig, PacketFormat, Profile, RateControl, YuvFrame};
 
 /// How the stand-in misbehaves.
@@ -21,6 +27,8 @@ struct Behaviour {
     fail_after: Option<u64>,
     /// Mark pictures as reordered after this many.
     reorder_after: Option<u64>,
+    /// Accept an opaque capture surface without asking it for a CPU readback.
+    direct_surface: bool,
 }
 
 struct Fake {
@@ -29,6 +37,7 @@ struct Fake {
     height: usize,
     seen: u64,
     behaviour: Behaviour,
+    native_calls: Arc<AtomicUsize>,
     /// The RGBA of the first picture, so tests can check what the recorder handed over.
     first_pixel: Option<[u8; 4]>,
 }
@@ -79,6 +88,23 @@ impl HardwareEncoder for Fake {
             .collect())
     }
 
+    fn encode_surface(
+        &mut self,
+        frame: &mut dyn NativeCaptureFrame,
+        index: u64,
+    ) -> Result<Option<Vec<HardwarePacket>>, String> {
+        if !self.behaviour.direct_surface {
+            return Ok(None);
+        }
+        let Some(surface) = frame.as_any_mut().downcast_mut::<TestSurface>() else {
+            return Ok(None);
+        };
+        self.native_calls.fetch_add(1, Ordering::Relaxed);
+        let pixel = surface.pixel;
+        let rgba = pixel.repeat(self.width * self.height);
+        self.encode(&rgba, index).map(Some)
+    }
+
     fn flush(&mut self) -> Result<Vec<HardwarePacket>, String> {
         Ok(self
             .encoder
@@ -102,6 +128,10 @@ impl HardwareEncoder for Fake {
 }
 
 fn provider(behaviour: Behaviour) -> HardwareProvider {
+    provider_counted(behaviour, Arc::new(AtomicUsize::new(0)))
+}
+
+fn provider_counted(behaviour: Behaviour, native_calls: Arc<AtomicUsize>) -> HardwareProvider {
     HardwareProvider::new(move |request: &HardwareRequest| {
         let mut config = EncoderConfig::new(request.width, request.height, request.fps, 1);
         config.profile = Profile::Baseline;
@@ -119,9 +149,77 @@ fn provider(behaviour: Behaviour) -> HardwareProvider {
             height: request.height as usize,
             seen: 0,
             behaviour,
+            native_calls: native_calls.clone(),
             first_pixel: None,
         }) as Box<dyn HardwareEncoder>)
     })
+}
+
+struct TestSurface {
+    width: u32,
+    height: u32,
+    pixel: [u8; 4],
+    readbacks: Arc<AtomicUsize>,
+}
+
+impl NativeCaptureFrame for TestSurface {
+    fn width(&self) -> u32 {
+        self.width
+    }
+
+    fn height(&self) -> u32 {
+        self.height
+    }
+
+    fn readback(&mut self) -> Result<CaptureFrame, CaptureError> {
+        self.readbacks.fetch_add(1, Ordering::Relaxed);
+        let stride = self.width as usize * 4;
+        Ok(CaptureFrame {
+            width: self.width,
+            height: self.height,
+            stride,
+            bgra: self
+                .pixel
+                .repeat(self.width as usize * self.height as usize),
+            captured_at: Tick::from_units(0, 1),
+        })
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+struct NativeSource {
+    readbacks: Arc<AtomicUsize>,
+    cpu_captures: Arc<AtomicUsize>,
+}
+
+impl CaptureSource for NativeSource {
+    fn target(&self) -> &CaptureTarget {
+        static TARGET: std::sync::OnceLock<CaptureTarget> = std::sync::OnceLock::new();
+        TARGET.get_or_init(|| CaptureTarget {
+            id: "test-native".to_owned(),
+            name: "Native surface test".to_owned(),
+            kind: TargetKind::Display,
+            width: 320,
+            height: 180,
+        })
+    }
+
+    fn capture_surface(&mut self) -> Result<Option<Box<dyn NativeCaptureFrame>>, CaptureError> {
+        Ok(Some(Box::new(TestSurface {
+            width: 320,
+            height: 180,
+            pixel: [8, 40, 120, 255],
+            readbacks: self.readbacks.clone(),
+        })))
+    }
+
+    fn capture(&mut self) -> Result<CaptureFrame, CaptureError> {
+        self.cpu_captures.fetch_add(1, Ordering::Relaxed);
+        Err(CaptureError::Failed)
+    }
 }
 
 fn config(hardware: Option<HardwareProvider>) -> RecordConfig {
@@ -227,6 +325,53 @@ fn a_hardware_encoder_fills_the_buffer_and_saves_a_valid_clip() {
         assert!(saved.frames >= 40);
         judged(&path, 320, 180);
     }
+    assert_eq!(recorder.stop().state, RecordState::Stopped);
+}
+
+#[test]
+fn a_compatible_encoder_receives_native_surfaces_without_cpu_readback() {
+    let readbacks = Arc::new(AtomicUsize::new(0));
+    let cpu_captures = Arc::new(AtomicUsize::new(0));
+    let native_calls = Arc::new(AtomicUsize::new(0));
+    let hardware = provider_counted(
+        Behaviour {
+            direct_surface: true,
+            ..Behaviour::default()
+        },
+        native_calls.clone(),
+    );
+    let source = NativeSource {
+        readbacks: readbacks.clone(),
+        cpu_captures: cpu_captures.clone(),
+    };
+    let recorder = Recorder::start(Box::new(source), config(Some(hardware))).unwrap();
+    wait_for(&recorder, "native-surface video", |status| {
+        status.buffered_seconds >= 1.2
+    });
+    assert!(native_calls.load(Ordering::Relaxed) > 0);
+    assert_eq!(readbacks.load(Ordering::Relaxed), 0);
+    assert_eq!(cpu_captures.load(Ordering::Relaxed), 0);
+    assert_eq!(recorder.stop().state, RecordState::Stopped);
+}
+
+#[test]
+fn an_encoder_without_native_surface_support_uses_the_cpu_readback_fallback() {
+    let readbacks = Arc::new(AtomicUsize::new(0));
+    let cpu_captures = Arc::new(AtomicUsize::new(0));
+    let source = NativeSource {
+        readbacks: readbacks.clone(),
+        cpu_captures: cpu_captures.clone(),
+    };
+    let recorder = Recorder::start(
+        Box::new(source),
+        config(Some(provider(Behaviour::default()))),
+    )
+    .unwrap();
+    wait_for(&recorder, "fallback video", |status| {
+        status.buffered_seconds >= 1.2
+    });
+    assert!(readbacks.load(Ordering::Relaxed) > 0);
+    assert_eq!(cpu_captures.load(Ordering::Relaxed), 0);
     assert_eq!(recorder.stop().state, RecordState::Stopped);
 }
 

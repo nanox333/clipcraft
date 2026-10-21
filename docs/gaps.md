@@ -1,38 +1,53 @@
 # Known gaps
 
-**Status:** active build baseline · **Last reviewed:** 2026-10-19 · **Target:** local Windows capture-to-export alpha
+**Status:** active prototype · **Last reviewed:** 2026-10-21 · **Target:** local Windows capture-to-export alpha
 
-This is the ranked work list, not a parity claim. The workspace, UI shell, time primitives, scanner,
-and first command tests exist; capture-to-export is still unimplemented. Estimates and performance
-claims remain TBD until the platform spikes provide evidence. Rank by user impact, frequency, and
-evidence. Update this file whenever a gap's status, workaround, or estimate changes.
+This is the ranked work list, not a parity claim. Capture, replay, playback, local library
+organization, and no-reencode trim export are implemented. Linux/X11 has end-to-end synthetic
+capture evidence; Windows capture compiles but has not run on Windows hardware. Rank remaining work
+by user impact, frequency, and evidence. Update this file in the same pull request whenever a
+feature's status, workaround, or evidence changes.
 
 | Rank | Gap | Evidence / current limitation | Impact | Work |
 | ---: | --- | --- | --- | --- |
-| G0 | M0 hardware evidence and Windows CI remain open | Workspace, shell, CLI, time crate (including audio sample math and a one-hour synthetic A/V alignment test), scanner, and layer/asset/license checks exist; the gate passes locally on Linux. The capability matrix ([ADR 0002](adr/0002-capture-platform-matrix.md)) is documentation only, and the Windows CI job has not run | Limits platform and release claims | M0 close-out |
-| G1 | Windows capture API and hardware matrix are undecided | Must measure monitor/window capture, audio APIs, permissions, and encoder availability | Core app cannot record reliably | M0 spike, then M2/M3 |
-| G2 | Replay buffer and A/V synchronization are unimplemented | Exact rational time primitives exist; no segment ring, bounded queues, or A/V synchronization tests | Instant clipping is the core workflow | M1/M2/M3 |
-| G3 | Persistent library and storage controls are incomplete | The desktop can browse one local folder, scan it, search titles, sort clips, copy paths, and reveal files; a versioned local index restores the last folder; MP4/MOV duration and stream facts are probed; clips play with sound; thumbnails are cached. Missing: WebM/MKV probing, a storage quota, full-disk behavior, and any UI for the stored favorites and tags | Users still have no durable library organization or storage protection | M1.2/M4.1/M5 |
-| G4 | Editor and export quality are unverified | No cut/trim model, MP4 exporter, or pinned media corpus | Cannot deliver dependable clips | M1/M4 |
-| G5 | Mac and Linux capture are not implemented | No ScreenCaptureKit/CoreAudio or PipeWire/portal provider | Initial release is Windows-only | M6 |
+| G0 | Windows capture and real-device release evidence remain open | Windows Graphics Capture and hotkeys compile but have not run on Windows; real microphone/speaker and GPU encoder tests remain open. Linux/X11 capture-to-export is proven against synthetic sources | Limits platform and release claims | M0 evidence close-out; M2/M3/M5 |
+| G1 | Low-copy GPU capture-to-encode path and reference-hardware performance are unverified | The recorder now has a tested optional opaque surface handoff and CPU-readback fallback, exercised with fake capture/encoder surfaces. No OS provider or hardware encoder implements that handoff yet; active capture still returns CPU-owned BGRA frames and conversion runs on the CPU. No real GPU has been exercised. Software 1080p60 drops frames in the shared container. | Could affect game frame time, CPU use, and clip quality | M5.1/M5.2 |
+| G2 | Game-only capture needs real platform evidence; library scan is non-recursive | Game-only mode, local process matching, exact Steam app IDs on Linux, manual pause, and X11/Windows process-to-window lookup are implemented. The X11 adapter has a synthetic-window test; no real game or Windows runtime has been tested. Wayland game-window matching is unavailable; library labels are not auto-tagged from the active capture game | Game arming is not yet proven on the user's desktop; clips still need manual/library filename game labels | M4/M7 |
+| G3 | Compressed export needs reference-machine measurements; broader output controls remain open | Original-quality trim and software H.264 size presets (10 MB, 25 MB, custom 1–500 MB) are built. Generated MP4/MKV fixtures verify decoding, audio sync, cancellation, actual-size reporting, and collision safety. Compression is at most 720p/30 fps, copies AAC audio, and estimates rather than guarantees size; 30/60-second throughput measurements on representative PCs remain open | Local small-file export is available; broader codec/quality controls and speed claims remain limited | M4.2/M4.3 |
+| G4 | macOS capture/audio is not implemented; Wayland capture is only partly verified | No ScreenCaptureKit/CoreAudio provider; Wayland portal and PipeWire pieces pass component tests but no real desktop chooser has delivered a frame | Limits supported-platform claims | M6 |
+| G5 | Real-device audio, Windows, soak, and performance evidence are incomplete | Recorder audio is verified with generated sources; real audio devices, real-game impact, two-hour soak, and Windows capture remain untested | Limits reliability and release claims | M3/M5 |
 
-G0 tracks remaining workspace and gate work. The capture capability spike in G1 is the next blocker
-for recording features. Do not mark a gap done because code compiles; attach evidence for its user
-workflow and required failure cases. Do not publish percentages until a repeatable scorecard exists.
+The core workflow exists and can be exercised locally on Linux/X11 with synthetic capture and audio.
+Do not mark platform support from compilation alone; attach evidence for the user workflow and
+required failure cases. Do not publish completion percentages until a repeatable scorecard exists.
+
+Vice reports sub-1% CPU for its GPU Screen Recorder backend, but this is not a measured ClipCraft
+result or a universal expectation. GPU Screen Recorder documents X11 and Wayland support across
+NVIDIA, AMD, and Intel with driver, permission, and compositor caveats; ClipCraft uses it as a
+behavior reference only because its GPL-3.0-only non-Rust/FFmpeg runtime is outside project rules.
+M5.2 plans a Rust-native GPU-surface path and requires real per-device measurements before any
+compositor, GPU-vendor, or CPU-use claim.
+
+Reference behavior from Vice now drives the engine's longest-match rule, user-managed game allowlist,
+process observation, and automatic replay arming. The process watcher polls every two seconds only
+in Game-only mode; it stores executable basenames and exact Steam IDs, not command lines or paths.
+ClipRecorder's timestamped audio-gap policy is also ported in `clipcraft-record`, but the current
+untimestamped `AudioSource` mixer does not use it. Upstream revisions, permission provenance, and
+exact source files are recorded in [`upstream-ports.md`](upstream-ports.md).
 
 ## Recording output options
 
-- **Done:** recording preferences (container MP4/MKV, game or desktop source, 16:9 / 4:3 / source shape with stretch, black bars, or crop, resolution, frame rate, replay length) are modelled, validated, saved locally (`recording.load_settings` / `recording.save_settings`, `clipcraft-cli recording settings`), and shown in Settings. The reframe geometry is unit-tested.
+- **Done:** capture, bounded replay, and MP4/MKV recording with configurable source, framing (stretch, black bars, or crop), resolution, frame rate, replay length, post-roll, and local storage limit are implemented. Settings are validated and saved locally (`recording.load_settings` / `recording.save_settings`, `clipcraft-cli recording settings`); reframe geometry is unit-tested and the Linux/X11 workflow is end-to-end tested.
 - **WebM unavailable:** FilmCraft has VP9 and Opus decoders only. Pure-Rust encoders exist on crates.io (`rusty_vp9`, `opus-pure`, `rav1e`) but are young, carry many `unsafe` blocks, and have not been vetted. WebM stays greyed out until one passes a spike (decode check with ffprobe/ffmpeg) and a licence and `unsafe` review.
-- **Not done:** capture itself (full-screen game and desktop sources), and exporting a clip with the chosen format and framing. Neither can be verified in a headless container.
-- **H.265:** FilmCraft has a pure-Rust HEVC *decoder* only. Encoding is hardware-only (VideoToolbox on macOS, NVENC on Windows, via `filmcraft-platform`, which contains `unsafe` FFI), so H.265 is greyed out in Settings until that path is adopted and checked on real hardware.
+- **Export options:** original-quality trim copies samples to a new MP4. Small-file export can re-encode H.264/AAC MP4/MOV/MKV to H.264 MP4 with estimated 10 MB, 25 MB, or custom 1–500 MB targets. It caps output at 720p/30 fps, preserves AAC tracks, reports actual bytes, and supports progress/cancel. It does not add recording codecs or guarantee a service's upload limit.
+- **H.265:** recording is H.264-only. FilmCraft supplies a pure-Rust HEVC decoder; no H.265 encoder path is connected to ClipCraft's file writer, so H.265 remains unavailable.
 
 ### Recording settings (applied by M2 where noted below)
 
 - Quality tiles (Low 360p24, Standard 720p60, High 1080p60, Custom with resolution, FPS, bitrate, encoder, codec).
-- Hotkeys for save clip, long recording, mute microphone, push to talk, screenshot, with conflict detection. They are saved but not yet registered with the operating system; global key capture needs the capture work.
+- Global save-clip, long-recording, microphone-mute, push-to-talk, and screenshot hotkeys are registered while clipping; conflict checking and local persistence are implemented. Screenshot behavior is verified on Linux/X11 only.
 - Audio: PC audio and microphone toggles, output and microphone device pickers, a live microphone level test, push to talk, mono microphone, separate tracks, volumes.
-- Storage: capture folder, usage and free space, a storage limit, and a delete-oldest or stop policy. The cleanup plan is tested; nothing is deleted until recording exists.
+- Storage: capture folder, usage and free space, a storage limit, and a delete-oldest or stop policy. The limit applies only to ClipCraft's own clips; full-disk and cleanup paths have deterministic Linux tests.
 - Capture: cursor, force window capture, HDR compatibility. Aspect ratio (game, stretch, black bars, crop to 16:9) moved to Advanced.
 - General: launch at sign-in (Linux autostart entry, macOS launch agent, Windows Run key) and start minimized. Only the Linux path can be exercised in this container.
 
@@ -93,16 +108,16 @@ touches ClipCraft's own clips.
   PulseAudio server with a null sink (a tone played into it ends up in a saved clip); the output chosen in
   Settings › Audio (PulseAudio's outputs are listed by name and recorded through their monitors;
   verified with two null sinks: a tone played to one is heard only by its monitor) is what is
-  recorded, and macOS has none; resampling is linear; per-application audio is not separated; the screenshot hotkey is
-  saved but not wired; push-to-talk works through the global hotkey only (not when ClipCraft
+  recorded, and macOS has none; resampling is linear; per-application audio is not separated;
+  screenshots are wired to a global hotkey and save PNGs beside clips; push-to-talk works through the global hotkey only (not when ClipCraft
   has the focus). Sound and picture of a clip can differ by up to a frame at the very end.
 - **Settings not yet applied:** H.265 and WebM.
 - **Speed.** Measured on a shared 4-core container with a software-rendered video playing on the
   same screen, using the Fast preset: 360p30 keeps up (10 ms per picture); 720p30 keeps up (25 ms;
   241 of 241 pictures); 720p60 encodes about two of every three pictures (it drops a third); 1080p
   at any rate is not sustainable in software. Pixel conversion alone is 4 to 11 ms at 1080p. A
-  real gaming computer is faster and the game also competes for it; hardware encoders are the way
-  to 1080p60 and are not wired. The top bar shows when more than 5% of pictures are dropped.
+  real gaming computer is faster and the game also competes for it; hardware encoders are wired but
+  need real GPU measurements. The top bar shows when more than 5% of pictures are dropped.
 - **Crash and full-disk safety** ([ADR 0011](adr/0011-crash-and-disk-safety.md)). Clips, trims,
   settings and the library index are written to a temporary file and renamed, so an interruption
   never damages what exists. On launch ClipCraft removes its own unfinished `.partial` clips
@@ -156,6 +171,27 @@ touches ClipCraft's own clips.
 - **Saved clips are named in UTC** (`ClipCraft 2026-10-19 21-04-55.mp4`).
 - **Changing a quality setting while recording** needs a restart; the Settings page offers it.
 - **A resize** restarts the stream and drops the buffered video.
+
+### M4.3: local export size presets (implemented, broader controls open)
+
+The player trim panel and CLI `clip export INPUT OUTPUT START END TARGET_MB` now offer local
+small-file H.264 export. The original-quality copy path stays available. Size targets are decimal
+MB, software encoding uses two threads, and output is capped at 1280×720 and 30 fps without
+upscaling. Lower budgets select smaller dimensions. AAC tracks and their edit offsets are copied;
+if audio leaves insufficient room for video, the job asks for a larger target or shorter range.
+
+Rust-generated 60 fps MP4/MKV fixtures verify 30 fps output, duration, the first picture of a cut
+between keyframes, two audio tracks with a click aligned within 50 ms, monotonic progress, source
+preservation, cancellation cleanup, malformed input, temporary-file collisions, and a destination
+created while encoding. FFmpeg additionally verifies decoding when available. No GPU is needed.
+
+Limits: H.264/AAC sources only, at most 16 audio tracks, at most 30 minutes per export. Explicit
+HDR and non-square-pixel sources are refused; HDR mastering and arbitrary metadata are not
+preserved. Output needs a filesystem supporting hard links for atomic no-replace publication.
+One-pass size targets can be exceeded, and the completion report says so. Audio bitrate reduction,
+user-selected resolution/FPS/codecs, and representative 30/60-second performance measurements
+remain open. No upload, Discord account, link, or network path is added. See
+[ADR 0013](adr/0013-local-compressed-export.md).
 
 ### Force window capture, HDR, and GPU encoding
 

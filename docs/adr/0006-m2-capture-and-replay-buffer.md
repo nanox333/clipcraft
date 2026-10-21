@@ -39,7 +39,10 @@ How it behaves:
 - With a storage limit and "delete the oldest" selected, only clips ClipCraft named itself
   (`ClipCraft …`) are ever deleted, never the one just saved. With "stop saving" the save is
   refused once the folder is full.
-- Sound is not recorded. That is M3.
+- At the time of this decision, sound was deferred to M3. M3 is now implemented: generated-source
+  tests cover synchronized AAC system/microphone tracks, mixed or separate recording, gain/mute,
+  push-to-talk, and device-loss recovery. Real microphone/speaker hardware remains untested; see
+  [`gaps.md`](../gaps.md) and [ADR 0009](0009-audio-recording.md).
 
 ## Dependencies added
 
@@ -54,8 +57,10 @@ How it behaves:
 - Every claim about Windows capture, Windows hotkeys, and exclusive-full-screen games stays open
   in `docs/gaps.md` until it is run on real hardware.
 - Software H.264 encoding is the limit on weak computers; see the measurements in `docs/gaps.md`.
-  Hardware encoders (FilmCraft's platform crate) are the way past it and are a separate decision.
-- Wayland-only sessions and macOS have no provider and report that plainly.
+  Hardware encoder adapters are now wired and fall back to software, but their real-device
+  performance remains unverified.
+- macOS has no capture provider. Wayland has a portal/PipeWire provider with component evidence, but
+  no real desktop chooser has yet delivered a frame; see [ADR 0012](0012-wayland-capture.md).
 
 ## Addendum: GPU encoding, HDR, and forcing a window
 

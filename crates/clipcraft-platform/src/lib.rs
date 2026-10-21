@@ -20,6 +20,7 @@ mod hotkey;
 #[cfg(windows)]
 mod mf_encoder;
 mod priority;
+mod process;
 #[cfg(target_os = "linux")]
 mod pulse;
 #[cfg(target_os = "linux")]
@@ -34,6 +35,7 @@ mod x11;
 pub use hardware::{hardware_provider, probe_hardware_encoder};
 pub use hotkey::{HotkeyBinding, HotkeyEvent, HotkeyListener, parse_shortcut};
 pub use priority::set_background_priority;
+pub use process::{ProcessObserver, RunningProcess, running_processes};
 #[cfg(target_os = "linux")]
 pub use pulse::{Output, Outputs, list_outputs, open_system_monitor};
 #[cfg(target_os = "linux")]
@@ -166,10 +168,42 @@ pub fn active_window() -> Result<Option<CaptureTarget>, CaptureError> {
     }
 }
 
+/// Finds a capturable window owned by this process. Returns `None` where the desktop does not
+/// expose window ownership (for example, a Wayland session using the screen-capture portal).
+pub fn window_for_process(process_id: u32) -> Result<Option<CaptureTarget>, CaptureError> {
+    #[cfg(target_os = "linux")]
+    if wayland::available() {
+        let _ = process_id;
+        return Ok(None);
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        x11::window_for_process(None, process_id)
+    }
+    #[cfg(windows)]
+    {
+        windows::window_for_process(process_id)
+    }
+    #[cfg(not(any(all(unix, not(target_os = "macos")), windows)))]
+    {
+        let _ = process_id;
+        Ok(None)
+    }
+}
+
 /// Like [`active_window`], on an explicit X display. For tests.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn active_window_on(display: &str) -> Result<Option<CaptureTarget>, CaptureError> {
     x11::active_window(Some(display))
+}
+
+/// Like [`window_for_process`], on an explicit X display. For tests.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn window_for_process_on(
+    display: &str,
+    process_id: u32,
+) -> Result<Option<CaptureTarget>, CaptureError> {
+    x11::window_for_process(Some(display), process_id)
 }
 
 /// One line of a diagnostics report: what was checked, whether it is fine, and the details.

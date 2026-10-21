@@ -2,4 +2,4 @@ blank_issues_enabled: false
 contact_links:
   - name: Planning and product scope
     url: https://github.com/nanox333/clipcraft/blob/main/PLAN.md
-    about: Check the local-only and Rust-only product constraints before opening a request.
+    about: Check the offline-first and Rust-only product constraints before opening a request.

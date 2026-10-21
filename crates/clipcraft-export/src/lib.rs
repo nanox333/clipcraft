@@ -10,7 +10,10 @@
 //! The input is never touched. The output appears only when complete, is never written over an
 //! existing file, and can be cancelled at any moment. Everything read from the input is bounded.
 
+mod compress;
 mod source;
+
+pub use compress::{CompressReport, ExportPreset, compress_to_mp4};
 
 use std::fs::{self, File};
 use std::io::{BufWriter, ErrorKind, Write};
@@ -73,14 +76,22 @@ pub enum ExportError {
     WriteFailed,
     /// Cancelled; nothing was left behind.
     Cancelled,
+    /// The requested size or amount of work is outside the supported limits.
+    BadPreset,
+    /// The selected audio and minimum video bitrate do not fit the target.
+    TargetTooSmall,
+    /// Decoding or encoding failed. The original is preserved.
+    EncodeFailed,
 }
 
 impl std::fmt::Display for ExportError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unreadable => formatter.write_str("The clip could not be read."),
-            Self::Unsupported(what) => write!(formatter, "This clip cannot be cut yet: {what}."),
-            Self::Damaged => formatter.write_str("The clip is damaged and cannot be cut."),
+            Self::Unsupported(what) => {
+                write!(formatter, "This clip cannot be exported yet: {what}.")
+            }
+            Self::Damaged => formatter.write_str("The clip is damaged and cannot be exported."),
             Self::BadRange => formatter.write_str("Choose a start that comes before the end."),
             Self::AlreadyExists => formatter.write_str("A file with that name already exists."),
             Self::DiskFull => {
@@ -91,6 +102,15 @@ impl std::fmt::Display for ExportError {
             }
             Self::WriteFailed => formatter.write_str("The new clip could not be written."),
             Self::Cancelled => formatter.write_str("Export cancelled."),
+            Self::BadPreset => formatter.write_str(
+                "Choose a target from 1 to 500 MB and a range from 0.1 seconds to 30 minutes.",
+            ),
+            Self::TargetTooSmall => formatter.write_str(
+                "The audio and video need more room. Choose a larger target or a shorter range.",
+            ),
+            Self::EncodeFailed => formatter.write_str(
+                "The clip could not be decoded or compressed. The original was preserved.",
+            ),
         }
     }
 }

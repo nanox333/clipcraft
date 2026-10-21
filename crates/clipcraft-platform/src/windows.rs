@@ -81,6 +81,31 @@ pub fn list_targets() -> Result<Vec<CaptureTarget>, CaptureError> {
     Ok(targets)
 }
 
+/// Finds a capturable top-level window owned by `process_id`.
+pub fn window_for_process(process_id: u32) -> Result<Option<CaptureTarget>, CaptureError> {
+    let windows = Window::enumerate().map_err(|_| CaptureError::Failed)?;
+    for window in windows.into_iter().take(MAX_WINDOWS) {
+        if window.process_id().ok() != Some(process_id) {
+            continue;
+        }
+        let (Ok(title), Ok(width), Ok(height)) = (window.title(), window.width(), window.height())
+        else {
+            continue;
+        };
+        if title.is_empty() || width <= 0 || height <= 0 || !window.is_valid() {
+            continue;
+        }
+        return Ok(Some(CaptureTarget {
+            id: format!("window:{:x}", window.as_raw_hwnd() as usize),
+            name: title,
+            kind: TargetKind::Window,
+            width: width as u32,
+            height: height as u32,
+        }));
+    }
+    Ok(None)
+}
+
 /// The newest picture the capture thread produced.
 #[derive(Default)]
 struct Latest {
