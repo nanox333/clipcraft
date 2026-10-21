@@ -48,6 +48,11 @@ edits; implementation changes require both.
 
 ## Required evidence by area
 
+The offline CPU benchmark is `cargo run --release -p clipcraft-record --example performance`.
+It measures patterned-frame conversion, a 60-second encoded-video snapshot and long-GOP replay
+insertion. See [performance.md](performance.md) for the machine, method, measured baseline and
+remaining real-device checks. Timing is informational and is not a flaky CI assertion.
+
 - **Time/library metadata:** property tests for rational conversions and trim algebra; round-trip,
   migration, truncation, oversized values, malformed metadata, missing media, and atomic-write tests.
 - **Replay/capture:** deterministic fake-provider tests for ring eviction, limits, timestamps,

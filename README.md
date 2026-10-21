@@ -45,6 +45,13 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
 
 ## Known platform and format limits
 
+Replay snapshots share immutable encoded-video bytes with the save job, avoiding a full-buffer
+copy while recording. Replay insertion caches keyframe boundaries, and full-frame RGBA conversion
+reuses output storage without redundant clears. Repeatable synthetic CPU measurements and remaining
+GPU/capture limitations are documented in the [performance review](docs/performance.md). Run
+`cargo run --release -p clipcraft-record --example performance` to reproduce the CPU benchmarks;
+they do not establish game-FPS impact or sustained capture performance.
+
 - Linux/X11 capture and replay have been tested end to end in a virtual display. Wayland support is
   partly verified; no real desktop portal chooser has delivered a frame yet.
 - The Windows capture provider and Windows hotkeys compile, but have not been run on Windows.

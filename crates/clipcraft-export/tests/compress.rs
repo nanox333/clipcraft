@@ -160,7 +160,7 @@ fn fixture(path: &Path, format: ClipFormat, audio: bool) {
         {
             samples.push(EncodedSample {
                 pts: p.pts,
-                data: p.data,
+                data: p.data.into(),
                 keyframe: p.keyframe,
             });
         }
@@ -175,7 +175,7 @@ fn fixture(path: &Path, format: ClipFormat, audio: bool) {
     for p in encoder.flush() {
         samples.push(EncodedSample {
             pts: p.pts,
-            data: p.data,
+            data: p.data.into(),
             keyframe: p.keyframe,
         });
     }
@@ -235,7 +235,7 @@ fn full_hd_frames_are_resized_before_encoding() {
         {
             frames.push(EncodedSample {
                 pts: p.pts,
-                data: p.data,
+                data: p.data.into(),
                 keyframe: p.keyframe,
             });
         }
@@ -243,7 +243,7 @@ fn full_hd_frames_are_resized_before_encoding() {
     for p in encoder.flush() {
         frames.push(EncodedSample {
             pts: p.pts,
-            data: p.data,
+            data: p.data.into(),
             keyframe: p.keyframe,
         });
     }

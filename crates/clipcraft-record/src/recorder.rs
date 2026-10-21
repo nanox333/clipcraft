@@ -676,6 +676,8 @@ fn encode_loop(shared: &Shared, config: &RecordConfig) {
 }
 
 fn store_packet(shared: &Shared, data: Vec<u8>, keyframe: bool, pts: i64) {
+    // Prepare shared ownership outside the replay lock. Saving clones references, not payloads.
+    let data = data.into();
     // A refused sample (out of order, or no keyframe yet) is simply not stored.
     let _ = lock(&shared.buffer).push(EncodedSample {
         pts,

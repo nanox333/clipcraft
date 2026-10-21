@@ -22,6 +22,11 @@ ClipCraft-hosted storage or account. The complete direction and constraints are 
 
 ## Milestones
 
+Performance work M2.P1 has synthetic CPU measurements for shared replay snapshots, GOP boundary
+caching and redundant pixel-write removal. [The review](docs/performance.md) records the results
+and priorities across the workspace. Game frame-time comparisons, GPU readback removal and the
+reference-hardware capture/soak gates remain open; no milestone status changes follow from this work.
+
 | ID | Status | Outcome |
 | --- | --- | --- |
 | M0 | 🟡 Software exit criteria met; hardware evidence open | Rust workspace, layering rules, CLI, CI gate, and the synthetic video/audio timestamp check are done; decisions are recorded in ADRs 0002–0003. Capture APIs are not yet benchmarked on reference hardware, so M0 is not marked complete |

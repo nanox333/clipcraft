@@ -202,8 +202,17 @@ pub fn convert(
         out.u.fill(128);
         out.v.fill(128);
     }
-    let columns = taps(sx, sw, dw);
-    let rows = taps(sy, sh, dh);
+    let unscaled = sw == dw && sh == dh;
+    let columns = if unscaled {
+        Vec::new()
+    } else {
+        taps(sx, sw, dw)
+    };
+    let rows = if unscaled {
+        Vec::new()
+    } else {
+        taps(sy, sh, dh)
+    };
 
     let out_width = out.width as usize;
     let chroma_width = out_width / 2;
@@ -231,7 +240,6 @@ pub fn convert(
         .zip(v_region.chunks_mut(pairs_per_band * chroma_width))
         .enumerate();
 
-    let unscaled = sw == dw && sh == dh;
     let work = |index: usize, y_band: &mut [u8], u_band: &mut [u8], v_band: &mut [u8]| {
         let first_row = index * pairs_per_band * 2;
         let band_pairs = y_band.len() / (2 * out_width);
@@ -326,15 +334,25 @@ pub fn convert_rgba(
         .checked_mul(oh)
         .and_then(|n| n.checked_mul(4))
         .ok_or(RecordError::BadSize)?;
-    out.clear();
     out.resize(size, 0);
-    // Opaque black everywhere; the destination is drawn over it.
-    for pixel in out.chunks_exact_mut(4) {
-        pixel[3] = 255;
+    // A full-frame conversion writes every byte below. Only letterboxing needs a clear.
+    let full = dx == 0 && dy == 0 && dw as usize == ow && dh as usize == oh;
+    if !full {
+        for pixel in out.chunks_exact_mut(4) {
+            pixel.copy_from_slice(&[0, 0, 0, 255]);
+        }
     }
-    let columns = taps(sx, sw, dw);
-    let rows = taps(sy, sh, dh);
     let unscaled = sw == dw && sh == dh;
+    let columns = if unscaled {
+        Vec::new()
+    } else {
+        taps(sx, sw, dw)
+    };
+    let rows = if unscaled {
+        Vec::new()
+    } else {
+        taps(sy, sh, dh)
+    };
     let threads = threads.clamp(1, 32).min(dh as usize);
     let rows_per_band = (dh as usize).div_ceil(threads).max(1);
     let first = dy as usize * ow * 4;
@@ -651,5 +669,40 @@ mod tests {
             convert_rgba(&frame, &bad, &mut out, 1),
             Err(RecordError::BadSize)
         );
+    }
+
+    #[test]
+    fn reused_rgba_storage_has_no_stale_pixels_or_transparency() {
+        let mut frame = solid(64, 48, [17, 31, 239, 0]);
+        let mut out = vec![123; 64 * 48 * 4];
+        // Repeated full frames, resized frames, then bars with a previously coloured destination.
+        for (shape, framing, height) in [
+            (OutputShape::Source, Framing::Original, 48),
+            (OutputShape::Source, Framing::Original, 48),
+            (OutputShape::Source, Framing::Original, 24),
+            (OutputShape::Wide16x9, Framing::Letterbox, 48),
+            (OutputShape::Source, Framing::Original, 48),
+        ] {
+            let plan = reframe(64, 48, shape, framing, height).unwrap();
+            convert_rgba(&frame, &plan, &mut out, 4).unwrap();
+            for (index, pixel) in out.chunks_exact(4).enumerate() {
+                let x = index % plan.output_width as usize;
+                let y = index / plan.output_width as usize;
+                let d = plan.destination;
+                let inside = (d.x as usize..(d.x + d.width) as usize).contains(&x)
+                    && (d.y as usize..(d.y + d.height) as usize).contains(&y);
+                let expected = if inside {
+                    [239, 31, 17, 255]
+                } else {
+                    [0, 0, 0, 255]
+                };
+                assert_eq!(pixel, expected);
+            }
+            // Poison the reused output, including alpha, before the next conversion.
+            out.fill(123);
+            for pixel in frame.bgra.chunks_exact_mut(4) {
+                pixel[3] = 7;
+            }
+        }
     }
 }

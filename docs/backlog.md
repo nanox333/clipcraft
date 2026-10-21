@@ -99,6 +99,16 @@ malformed/oversized metadata returns an error; interrupted writes preserve the p
 
 ## M2 — Windows capture and replay
 
+### M2.P1 — Replay and pixel-conversion performance
+
+Local performance work item: reduce save-time payload copying, repeated GOP scans and redundant
+pixel writes without weakening clip safety or bounds. Scope, limitations, acceptance targets,
+machine/workload details, before/after measurements and follow-up work are recorded in
+[`performance.md`](performance.md). Dependencies: existing replay/recording pipeline; no new crates.
+Implemented and measured; `cargo xtask ci` passes on Windows with serial tests and the CI-pinned
+audit tool. The default parallel recovery test remains load-sensitive. Real-hardware capture,
+game-frame-time and release-soak checks remain open; see the review for details.
+
 ### M2.1 — Windows display/window capture provider
 
 **Status:** implemented to compile; runtime evidence open — Windows Graphics Capture and global

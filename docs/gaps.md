@@ -35,6 +35,16 @@ ClipRecorder's timestamped audio-gap policy is also ported in `clipcraft-record`
 untimestamped `AudioSource` mixer does not use it. Upstream revisions, permission provenance, and
 exact source files are recorded in [`upstream-ports.md`](upstream-ports.md).
 
+## Performance review (2026-10-21)
+
+M2.P1 removes encoded-video payload copies from clip snapshots, caches replay GOP boundaries and
+avoids redundant full-frame RGBA clears and unscaled interpolation tables. On a Ryzen 7 5700X3D
+Windows CPU microbenchmark, a ~150 MB video snapshot fell from 68.070 ms to 0.034 ms and 1080p
+RGBA conversion with four threads fell from 1.392 ms to 0.638 ms. These are synthetic CPU timings,
+not game-FPS or capture throughput evidence. GPU readback, full captured-frame clones, HDR cost,
+worker churn, large-library traversal/index merging and real-hardware validation remain open.
+See [the performance review](performance.md) for workloads, limitations and ranked follow-up work.
+
 ## Recording output options
 
 - **Done:** capture, bounded replay, and MP4/MKV recording with configurable source, framing (stretch, black bars, or crop), resolution, frame rate, replay length, post-roll, and local storage limit are implemented. Settings are validated and saved locally (`recording.load_settings` / `recording.save_settings`, `clipcraft-cli recording settings`); reframe geometry is unit-tested and the Linux/X11 workflow is end-to-end tested.

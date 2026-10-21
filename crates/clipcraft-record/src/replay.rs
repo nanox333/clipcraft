@@ -2,14 +2,15 @@
 //! any saved clip starts on a keyframe.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 /// One encoded picture.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncodedSample {
     /// Presentation time in frames since the recording started. Strictly increasing.
     pub pts: i64,
-    /// Length-prefixed H.264 NAL units.
-    pub data: Vec<u8>,
+    /// Immutable length-prefixed H.264 NAL units, shared with in-flight clip saves.
+    pub data: Arc<[u8]>,
     /// True for a picture the stream can start from.
     pub keyframe: bool,
 }
@@ -27,6 +28,8 @@ pub enum PushError {
 #[derive(Debug)]
 pub struct ReplayBuffer {
     samples: VecDeque<EncodedSample>,
+    /// Index of the next keyframe after the front. Recomputed only when a group is removed.
+    next_group: Option<usize>,
     bytes: usize,
     window_frames: i64,
     max_bytes: usize,
@@ -39,6 +42,7 @@ impl ReplayBuffer {
     pub fn new(window_frames: i64, max_bytes: usize) -> Self {
         Self {
             samples: VecDeque::new(),
+            next_group: None,
             bytes: 0,
             window_frames: window_frames.max(1),
             max_bytes: max_bytes.max(1),
@@ -58,6 +62,9 @@ impl ReplayBuffer {
         {
             return Err(PushError::OutOfOrder);
         }
+        if sample.keyframe && !self.samples.is_empty() && self.next_group.is_none() {
+            self.next_group = Some(self.samples.len());
+        }
         self.bytes = self.bytes.saturating_add(sample.data.len());
         self.samples.push_back(sample);
         self.evict();
@@ -65,21 +72,11 @@ impl ReplayBuffer {
     }
 
     fn evict(&mut self) {
-        loop {
-            // Where the second group starts: the first sample after the front that is a keyframe.
-            let next_group = self
-                .samples
-                .iter()
-                .skip(1)
-                .position(|sample| sample.keyframe)
-                .map(|offset| offset + 1);
-            let (Some(next_group), Some(last)) = (next_group, self.samples.back()) else {
-                break;
-            };
+        while let (Some(next_group), Some(last)) = (self.next_group, self.samples.back()) {
             let Some(next) = self.samples.get(next_group) else {
                 break;
             };
-            let remaining = last.pts - next.pts + 1;
+            let remaining = last.pts.saturating_sub(next.pts).saturating_add(1);
             let over_budget = self.bytes > self.max_bytes;
             if remaining < self.window_frames && !over_budget {
                 break;
@@ -87,16 +84,23 @@ impl ReplayBuffer {
             for _ in 0..next_group {
                 if let Some(old) = self.samples.pop_front() {
                     self.bytes = self.bytes.saturating_sub(old.data.len());
-                    self.evicted_frames += 1;
+                    self.evicted_frames = self.evicted_frames.saturating_add(1);
                 }
             }
+            self.next_group = self
+                .samples
+                .iter()
+                .skip(1)
+                .position(|sample| sample.keyframe)
+                .map(|offset| offset + 1);
         }
         // One group alone is over budget (a huge keyframe interval): keep memory bounded by
         // starting over at the next keyframe.
         if self.bytes > self.max_bytes.saturating_mul(2) {
-            self.evicted_frames += self.samples.len() as u64;
-            self.samples.clear();
-            self.bytes = 0;
+            self.evicted_frames = self
+                .evicted_frames
+                .saturating_add(self.samples.len() as u64);
+            self.clear();
         }
     }
 
@@ -106,19 +110,20 @@ impl ReplayBuffer {
         let Some(last) = self.samples.back() else {
             return Vec::new();
         };
-        let wanted_start = last.pts - frames.max(1) + 1;
+        let wanted_start = last.pts.saturating_sub(frames.max(1) - 1);
         let start = self
             .samples
             .iter()
             .rposition(|sample| sample.keyframe && sample.pts <= wanted_start)
             .unwrap_or(0);
-        self.samples.iter().skip(start).cloned().collect()
+        self.samples.range(start..).cloned().collect()
     }
 
     /// Drops everything, for example when the picture size changes and old video no longer
     /// matches the stream's parameters.
     pub fn clear(&mut self) {
         self.samples.clear();
+        self.next_group = None;
         self.bytes = 0;
     }
 
@@ -140,7 +145,7 @@ impl ReplayBuffer {
     /// Time covered, in frames.
     pub fn span_frames(&self) -> i64 {
         match (self.samples.front(), self.samples.back()) {
-            (Some(first), Some(last)) => last.pts - first.pts + 1,
+            (Some(first), Some(last)) => last.pts.saturating_sub(first.pts).saturating_add(1),
             _ => 0,
         }
     }
@@ -158,7 +163,7 @@ mod tests {
     fn sample(pts: i64, keyframe: bool) -> EncodedSample {
         EncodedSample {
             pts,
-            data: vec![0; 10],
+            data: vec![0; 10].into(),
             keyframe,
         }
     }
@@ -236,5 +241,60 @@ mod tests {
         buffer.clear();
         assert!(buffer.is_empty() && buffer.bytes() == 0);
         assert!(buffer.push(sample(100, true)).is_ok());
+    }
+
+    #[test]
+    fn snapshots_share_payloads_and_survive_eviction_and_restart() {
+        let mut buffer = ReplayBuffer::new(10, 100);
+        fill(&mut buffer, 10, 5);
+        let saved = buffer.snapshot(10);
+        let second = buffer.snapshot(10);
+        assert!(Arc::ptr_eq(&saved[0].data, &second[0].data));
+        for pts in 10..100 {
+            buffer.push(sample(pts, pts % 5 == 0)).unwrap();
+        }
+        buffer.clear();
+        buffer.push(sample(200, true)).unwrap();
+        assert_eq!(saved.len(), 10);
+        assert_eq!(saved[0].pts, 0);
+        assert_eq!(&*saved[0].data, &[0; 10]);
+        assert_eq!(saved[9].pts, 9);
+    }
+
+    #[test]
+    fn cached_group_boundary_matches_samples_after_every_operation() {
+        for budget in [1, 100, 333, usize::MAX] {
+            let mut buffer = ReplayBuffer::new(25, budget);
+            for pts in 0..2000 {
+                if pts % 173 == 0 {
+                    buffer.clear();
+                }
+                let keyframe = pts % 17 == 0 || buffer.is_empty();
+                buffer.push(sample(pts, keyframe)).unwrap();
+                let boundary = buffer
+                    .samples
+                    .iter()
+                    .skip(1)
+                    .position(|sample| sample.keyframe)
+                    .map(|offset| offset + 1);
+                assert_eq!(buffer.next_group, boundary);
+                assert_eq!(
+                    buffer.bytes(),
+                    buffer.samples.iter().map(|s| s.data.len()).sum()
+                );
+                assert!(buffer.samples.front().is_none_or(|s| s.keyframe));
+            }
+        }
+    }
+
+    #[test]
+    fn extreme_timestamps_are_bounded() {
+        let mut buffer = ReplayBuffer::new(i64::MAX, usize::MAX);
+        buffer.push(sample(i64::MIN, true)).unwrap();
+        assert_eq!(buffer.snapshot(i64::MAX).len(), 1);
+        buffer.push(sample(0, true)).unwrap();
+        buffer.push(sample(i64::MAX, false)).unwrap();
+        assert_eq!(buffer.span_frames(), i64::MAX);
+        assert!(!buffer.snapshot(i64::MAX).is_empty());
     }
 }
