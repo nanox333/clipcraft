@@ -33,6 +33,7 @@ update the matching backlog and roadmap when a status changes, and update archit
 release/ADR guidance as needed. Pull-request CI runs `cargo xtask docs-check origin/<base-branch>`
 and fails when an implementation diff does not include both `README.md` and `docs/gaps.md`. The
 same check runs on direct pushes to `main`, against the previous commit.
+Both workflow steps explicitly use Bash on Linux and Windows so `$BASE_REF` expands consistently.
 
 To run the same check locally, first fetch the target branch and pass its remote-tracking name:
 
