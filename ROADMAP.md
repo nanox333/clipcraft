@@ -42,7 +42,7 @@ passed (verified 2026-10-22); real-game and 1080p60 release gates remain open.
 | M8 | ◷ Planned | Establish tested Windows/Linux/macOS desktop support through the shared Rust platform layer; run an Android screen-capture feasibility study without promising mobile support |
 | M9 | ◷ Planned | Design and implement opt-in client-side-encrypted backup to a user-selected provider, including recovery and restore; all local workflows remain offline |
 | M10 | ◷ Planned | Add controller shortcuts and optional Discord Rich Presence; prototype declarative themes, keyboard/mouse overlays, and a permission-limited plugin/shader extension model |
-| M11 | ◷ Planned | Evaluate a focused one-track editor expansion and a local CLI/MCP adapter for footage management; no full NLE, AI service, or community feature is implied |
+| M11 | 🟡 Small editor implemented; expansion evaluation open | A bounded single-track editor adds clip arrangement, cuts, trim, volume/mute, undo/redo and local sequence MP4 export using FilmCraft. Text/transitions/overlays and the MCP adapter remain unbuilt; no full NLE, AI service or community feature is implied |
 
 Issue-level tasks require a problem statement, explicit limitations, measurable acceptance criteria,
 and test evidence. See the [`backlog`](docs/backlog.md) and
@@ -54,7 +54,9 @@ request as every code change, then update milestone/backlog status and supportin
 testing, CLI, release, or ADR guidance as needed. Pull-request CI enforces the README and gap-report
 updates.
 
-M8–M11 are proposals, not implemented capabilities. Each feature stays unstarted until its backlog
+M8–M10 and the remaining M11 expansions are proposals, not implemented capabilities. The user
+authorized the portable M11.1a editor slice ahead of platform expansion; its platform claims stay
+limited to the evidence in the testing guide. Each feature stays unstarted until its backlog
 item's limitations, privacy model, platform matrix, and verification criteria are accepted and
 evidenced. Android remains research-only, plugins require a reviewed isolation model, and backup
 must encrypt before leaving the device.

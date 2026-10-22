@@ -264,3 +264,32 @@ the source SHA-256 stayed unchanged and the completion message displayed the act
 target. T opens trim, I/O mark boundaries, text entry changes the custom target, and playback
 shortcuts are suppressed while the export popup is open. A regression test covers that popup
 conflict, and UI smoke tests draw all size choices at narrow and desktop widths.
+
+## Small sequence editor evidence (2026-10-22)
+
+`cargo xtask ci` covers exact FilmCraft-adapted splits, trim/reorder/delete/history, hostile ranges
+and identifiers, media import bounds, and failed-edit immutability. Generated Rust fixtures cover
+ordered MP4/MKV cuts, portrait fitting, silent sources, gain/mute, ten fractional-duration cuts
+without accumulated AAC delay, cancellation/publication collisions, source preservation and a
+40-segment export. The UI harness checks separate Editor navigation/media references, context
+menus on a second-row thumbnail, double-click/Enter append, Tab/Enter activation, rapid command-key
+undo/redo, split/delete and narrow/extreme layouts.
+
+The native Linux app was opened on an isolated Xvfb display at 1440×900 and 1080×760 using three
+generated 640×360 clips. Checks exercised Send to editor, the separate rail destination,
+Details/Add to timeline menus, source references without per-card Add buttons, cuts, reorder,
+volume/mute, title editing, keyboard actions and MP4 export. The shared charcoal/lime palette,
+Inter Regular/Medium/SemiBold, thumbnail truncation, unstretched timeline thumbnails, focus states
+and lower controls were inspected. Before/after and context/empty/narrow screenshots are kept
+under ignored `.clipcraft-local/editor/`; generated media stays outside Git.
+
+An app export produced a 12-second, 640×360/30 fps H.264 MP4 with 48 kHz stereo AAC (6,256,881 bytes).
+FFprobe inspected its streams and FFmpeg decoded the full file solely as external test oracles.
+All three original SHA-256 hashes were unchanged. A separate local CLI smoke check imported and
+deduplicated references, rejected a batch with a missing source, applied split/delete/undo/redo,
+reordered/muted, exported and decoded 360 pictures/12 seconds, and refused an existing destination.
+
+These are software/virtual-display checks. Native file-picker integration on installed desktop
+portal backends, physical audio output, Windows/macOS UI behavior, reference-machine 4K playback
+and real capture hardware remain unverified here. The existing platform evidence/limitations
+still apply; this editor work does not establish additional capture support or performance.

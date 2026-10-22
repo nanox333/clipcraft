@@ -25,8 +25,9 @@ choose capture source → keep a bounded replay buffer → press the clip hotkey
 → save the last N seconds (+ optional post-roll) → make a quick cut or trim → export locally
 ```
 
-Capture and the local clip library are the product. The first editor is a quick trim/cut tool; a
-more capable but still focused one-track editor is a later proposal, not an MVP dependency. ClipCraft
+Capture and the local clip library are the product. Quick trim remains available; the user-authorized small
+one-track editor now adds cuts, arrangement, linked audio volume and local MP4 export. Further
+editor features remain proposals, not capture MVP dependencies. ClipCraft
 is an offline-first desktop app: capture, library, editing, settings, and export work without an
 account, network connection, or server. Recordings stay on the user's computer unless the user
 explicitly configures encrypted backup to a storage provider. There is no community or social feed.
@@ -262,7 +263,9 @@ The app uses FilmCraft's pinned time and media crates for decoding, encoding, co
 hardware encoder adapters ([ADR 0004](docs/adr/0004-filmcraft-crates.md)). ClipCraft owns the UI,
 platform-provider integration, replay buffer, recording/session logic, local index, and trim flow.
 The library index is local and rebuildable; normal video files remain the user's primary artifacts.
-The editor is currently playback plus a basic trim-to-new-MP4 operation. There is no
+The separate Editor workspace now adds an independent media browser, sequence preview, cuts,
+trim, arrangement, undo/redo and linked audio volume, using pinned FilmCraft cut algebra and codecs.
+See [the editor guide](docs/editor.md) for export bounds and session lifetime. There is no
 user-facing `.ccproj`, multitrack timeline, general effect system, or server component.
 
 The exact crate graph is checked with `cargo xtask layers`. Platform adapters expose fallible safe

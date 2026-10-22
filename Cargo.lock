@@ -649,6 +649,8 @@ dependencies = [
  "clipcraft-player",
  "clipcraft-record",
  "clipcraft-time",
+ "filmcraft-edit",
+ "filmcraft-project",
  "fs4",
  "image",
  "serde",
@@ -663,6 +665,7 @@ dependencies = [
  "clipcraft-media",
  "clipcraft-record",
  "clipcraft-time",
+ "filmcraft-aac",
  "filmcraft-codecs",
  "filmcraft-export",
  "filmcraft-h264enc",
@@ -1379,6 +1382,16 @@ source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d92476
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "filmcraft-edit"
+version = "0.9.0"
+source = "git+https://github.com/storytold/filmcraft?rev=6c3948a36c80e4996d924766ba7157eec4fca85e#6c3948a36c80e4996d924766ba7157eec4fca85e"
+dependencies = [
+ "filmcraft-project",
+ "filmcraft-time",
  "thiserror 2.0.21",
 ]
 

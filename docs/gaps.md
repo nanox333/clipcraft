@@ -66,6 +66,35 @@ ClipRecorder's timestamped audio-gap policy is also ported in `clipcraft-record`
 untimestamped `AudioSource` mixer does not use it. Upstream revisions, permission provenance, and
 exact source files are recorded in [`upstream-ports.md`](upstream-ports.md).
 
+## Small sequence editor (M11.1a)
+
+The user-requested editor slice is implemented using FilmCraft's pinned track/cut algebra, media
+readers, H.264 and AAC codecs. The browser/preview/timeline workflow appends local library media,
+splits at the playhead, trims source ranges, reorders, duplicates and ripple-deletes segments.
+Per-segment volume/mute affects preview and export; source audio stays linked to its video.
+The editor uses the shared charcoal/lime palette and embedded Inter Regular/Medium/SemiBold
+faces, with keyboard focus, thumbnail hover states and compact controls. Its own rail icon opens
+an independent browser; Import clips and Send to editor add references, while right-click offers
+Details/Add to timeline. Undo/redo retains at most 64 edits within an 8 MiB budget. Quick trim remains available, and media is never overwritten.
+
+Limits: one gapless track, no separate segment-count limit, 30-minute total, minimum segment 1/30 second, no persisted
+draft/project format. Returning to the library retains edits until app exit. Export re-encodes
+SDR H.264/AAC MP4/MOV or recorder-compatible MKV into H.264 MP4 at 30 fps, with a 16:9 canvas
+whose height follows the first source up to 720p. Pictures fit with black bars and no upscaling.
+Only the first source audio track is used (first two channels, mono repeated); it becomes one
+48 kHz stereo AAC track, including silence for muted/silent segments. Additional audio tracks,
+HDR, non-square pixels, effects/text/transitions, detached audio and arbitrary rendering controls
+are not implemented. Cuts in the exported video are sampled on its 30 fps grid; audio follows the
+integer timeline without per-cut encoder priming. Playback speed controls in quick trim are not
+sequence speed edits. No small-file size target applies to sequence export.
+
+Preview opens one source at a time and can pause briefly while opening the next source; real-time
+4K playback and export speed on reference machines remain unmeasured. Export preserves drafts
+and sources, supports progress/cancel, and uses exclusive temporary output/no-replace publication;
+the destination filesystem must support hard links. The CLI uses the same `editor.import`, `editor.edit` and
+`editor.export` engine paths over bounded local JSON. See [editor.md](editor.md) and
+[testing.md](testing.md) for controls, evidence and remaining platform checks.
+
 ## Performance review (2026-10-21)
 
 M2.P1 removes encoded-video payload copies from clip snapshots, caches replay GOP boundaries and

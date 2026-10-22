@@ -11,7 +11,9 @@
 //! existing file, and can be cancelled at any moment. Everything read from the input is bounded.
 
 mod compress;
+mod sequence;
 mod source;
+pub use sequence::{SequenceRequest, SequenceSegment, sequence_to_mp4};
 
 pub use compress::{CompressReport, ExportPreset, compress_to_mp4};
 
@@ -58,6 +60,8 @@ pub struct ExportReport {
 /// Why an export failed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExportError {
+    /// The edit exceeds the bounded single-track contract.
+    InvalidSequence,
     /// The input could not be read.
     Unreadable,
     /// The input is not a video ClipCraft can cut, and what is missing.
@@ -87,6 +91,9 @@ pub enum ExportError {
 impl std::fmt::Display for ExportError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidSequence => formatter.write_str(
+                "Use valid segments, at least one frame each, and at most 30 minutes in the edit.",
+            ),
             Self::Unreadable => formatter.write_str("The clip could not be read."),
             Self::Unsupported(what) => {
                 write!(formatter, "This clip cannot be exported yet: {what}.")

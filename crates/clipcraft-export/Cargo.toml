@@ -11,6 +11,7 @@ description = "Local trim and size-targeted H.264 MP4 export"
 layer = 2
 
 [dependencies]
+filmcraft-aac.workspace = true
 clipcraft-media.workspace = true
 clipcraft-time.workspace = true
 filmcraft-isobmff.workspace = true

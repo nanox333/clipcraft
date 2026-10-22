@@ -817,7 +817,7 @@ capability behavior. **Dependencies:** M10.3 and stable engine command API. **Es
 
 ### M11.1 — One-track editor expansion evaluation
 
-**Status:** proposed; the current editor remains a basic no-reencode trim.
+**Status:** first bounded slice implemented under M11.1a; further editing features remain proposed.
 
 **User problem:** the user wants a more complete inbuilt editor in the spirit of Medal or a small
 CapCut/Clipchamp workflow while keeping capture and library as the main product.
@@ -841,6 +841,42 @@ preserves source files and meets measured performance limits. The decision may b
 **Verification:** prototype screenshots/video, command-level edit tests, generated A/V sync tests,
 and a written continue/defer decision. **Dependencies:** M8.1 and M10.3. **Estimate:** TBD after UX
 spike.
+
+### M11.1a — Small sequence editor: cuts, arrangement and local export
+
+**Status:** implemented and software/virtual-display verified (2026-10-22); target hardware and
+installed desktop portal checks remain open as documented in testing/gaps.
+
+**Outcome / evidence:** quick trim currently exports only one range. The user requested a small
+editor, reuse of FilmCraft editing features, and a reference layout with a left media browser,
+large preview and bottom timeline. Build the portable single-track slice now; M8/M10 validation
+remains required for broader platform or overlay claims, not a blocker for this local slice.
+
+**Scope / requirements:** append library clips, select/scrub, split at the playhead, trim selected
+source ranges, duplicate, reorder, ripple-delete and undo/redo. Keep source audio attached and
+allow per-segment volume/mute. Reuse pinned FilmCraft track/cut algebra and media/codecs; preserve
+quick trim. Export the ordered cuts as an ordinary MP4 on a bounded worker with progress/cancel.
+Commands and CLI use the shared engine. Follow the reference's browser/preview/timeline hierarchy
+with original controls/assets; no dead Effects/Text tabs. The editor has its own rail icon and
+media library, Import clips, Send to editor from Clips, and Details/Add to timeline context menus.
+Do not add per-thumbnail Add buttons or an artificial segment-count cap. Match the shared
+charcoal/lime palette, embedded Inter font weights, compact controls and keyboard focus states.
+
+**Limits:** one gapless video/audio sequence, at most 30 minutes, no separate segment-count cap, bounded
+64-step/8 MiB history; edits are in-memory and disappear on app exit. No custom project format, transitions,
+text, overlays, detached/multiple audio lanes, arbitrary effects, HDR or speed changes in this
+slice. Export is SDR H.264/AAC, at most 720p/30 FPS, first source audio track only; normalize to
+48 kHz stereo and preserve originals. Missing/unsupported media must fail with an actionable
+message without replacing output; no required server or external encoder.
+
+**Acceptance / verification:** typed command tests for exact cuts, history, bounds, invalid input
+and immutable failed edits. Generated multi-clip fixtures prove order, cuts, duration, audio
+continuity/mute, cancellation, no-overwrite collisions and source preservation. Inspect actual UI
+at 1440×900; test keyboard actions and narrow/layout extremes. Run `cargo xtask ci` and docs gate.
+
+**Docs:** README, gaps, roadmap, architecture, testing, editor guide and FilmCraft reuse ADR.
+**Dependencies:** existing player/export stack; user authorizes this bounded slice before M8/M10.
+**Estimate:** multi-part implementation.
 
 ### M11.2 — Local CLI and MCP footage-management adapter
 

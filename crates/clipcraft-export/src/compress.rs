@@ -93,7 +93,7 @@ pub fn compress_to_mp4(
     .unwrap_or(Err(ExportError::EncodeFailed))
 }
 
-struct Temporary(PathBuf);
+pub(crate) struct Temporary(pub(crate) PathBuf);
 
 impl Drop for Temporary {
     fn drop(&mut self) {
@@ -101,7 +101,7 @@ impl Drop for Temporary {
     }
 }
 
-fn check_cancel(cancel: &AtomicBool) -> Result<(), ExportError> {
+pub(crate) fn check_cancel(cancel: &AtomicBool) -> Result<(), ExportError> {
     if cancel.load(Ordering::Relaxed) {
         Err(ExportError::Cancelled)
     } else {
@@ -109,7 +109,7 @@ fn check_cancel(cancel: &AtomicBool) -> Result<(), ExportError> {
     }
 }
 
-fn source_size(width: u32, height: u32) -> Result<(), ExportError> {
+pub(crate) fn source_size(width: u32, height: u32) -> Result<(), ExportError> {
     if width < 2
         || height < 2
         || width > 7_680
@@ -390,7 +390,7 @@ fn output_size(width: u32, height: u32, kbps: u32) -> (u32, u32) {
     ((w / 2 * 2).max(2), (h / 2 * 2).max(2))
 }
 
-fn write_video(
+pub(crate) fn write_video(
     mp4: &mut Mp4Writer<BufWriter<File>>,
     id: usize,
     packet: &filmcraft_h264enc::Packet,

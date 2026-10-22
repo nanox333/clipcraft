@@ -9,6 +9,11 @@ use std::process::Stdio;
 use std::sync::atomic::AtomicBool;
 
 mod diagnose;
+mod editor;
+pub use editor::{
+    EditorAction, EditorClip, EditorSession, MAX_EDITOR_DURATION, MAX_EDITOR_HISTORY,
+    MIN_EDITOR_CLIP,
+};
 mod game_catalog;
 mod game_detection;
 pub use game_catalog::{BuiltInGame, MAX_BUILT_IN_GAMES, built_in_games};
@@ -28,6 +33,7 @@ pub use steam_games::{MAX_STEAM_GAMES, SteamGame, SteamGames};
 mod storage;
 
 pub use clipcraft_export::{ExportPreset, TrimRequest as ExportRange};
+pub use clipcraft_export::{SequenceRequest, SequenceSegment};
 pub use clipcraft_media::MediaProbe;
 
 pub use clipcraft_capture::reframe::{
@@ -75,8 +81,20 @@ const VIDEO_EXTENSIONS: [&str; 7] = ["avi", "m4v", "mkv", "mov", "mp4", "webm", 
 /// A typed operation exposed by the shared command registry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
+    ImportEditorMedia {
+        paths: Vec<PathBuf>,
+    },
+    EditSequence {
+        session: Box<EditorSession>,
+        action: EditorAction,
+    },
+    ExportSequence {
+        request: Box<SequenceRequest>,
+    },
     /// Read only local Steam installation manifests.
-    ScanSteamGames { roots: Vec<PathBuf> },
+    ScanSteamGames {
+        roots: Vec<PathBuf>,
+    },
     /// Enables/disables built-in identifiers while preserving custom rules and the global switch.
     SetBuiltInGames {
         settings: Box<RecordingSettings>,
@@ -84,9 +102,13 @@ pub enum Command {
         enabled: bool,
     },
     /// Scans a local folder tree without following symbolic links.
-    ScanLibrary { directory: PathBuf },
+    ScanLibrary {
+        directory: PathBuf,
+    },
     /// Returns a local media path for display or clipboard use.
-    LocalMediaPath { path: PathBuf },
+    LocalMediaPath {
+        path: PathBuf,
+    },
     /// Scans a folder, merges it into the local index, and saves the index atomically.
     RefreshLibrary {
         directory: PathBuf,
@@ -105,18 +127,32 @@ pub enum Command {
         game: String,
     },
     /// Restores the most recently refreshed folder from the local index without scanning.
-    LoadLibrary { index_path: PathBuf },
+    LoadLibrary {
+        index_path: PathBuf,
+    },
     /// Makes sure a thumbnail for one clip exists in the thumbnail cache, generating it if needed.
-    EnsureThumbnail { path: PathBuf, cache_dir: PathBuf },
+    EnsureThumbnail {
+        path: PathBuf,
+        cache_dir: PathBuf,
+    },
     /// Reads one clip's container headers for duration, size, frame rate, and codecs.
-    ProbeClip { path: PathBuf },
+    ProbeClip {
+        path: PathBuf,
+    },
     /// Saves probe results for clips of a remembered folder into the local index.
     /// Reads the saved recording settings, or the defaults when none are saved.
-    LoadRecordingSettings { path: PathBuf },
+    LoadRecordingSettings {
+        path: PathBuf,
+    },
     /// Measures a capture folder and the disk it is on.
-    StorageUsage { folder: PathBuf },
+    StorageUsage {
+        folder: PathBuf,
+    },
     /// Turns launching at sign-in on or off.
-    SetLaunchAtStartup { enabled: bool, executable: PathBuf },
+    SetLaunchAtStartup {
+        enabled: bool,
+        executable: PathBuf,
+    },
     /// Validates and saves recording settings.
     SaveRecordingSettings {
         path: PathBuf,
@@ -134,7 +170,9 @@ pub enum Command {
         probes: Vec<(String, MediaProbe)>,
     },
     /// Shows a local media file in the operating system's file manager.
-    RevealInFileManager { path: PathBuf },
+    RevealInFileManager {
+        path: PathBuf,
+    },
     /// Looks for a moved clip by name and size in a folder and the folders inside it.
     FindMovedFile {
         name: String,
@@ -162,6 +200,9 @@ impl Command {
     /// Returns this operation's stable command ID.
     pub const fn id(&self) -> &'static str {
         match self {
+            Self::ImportEditorMedia { .. } => "editor.import",
+            Self::EditSequence { .. } => "editor.edit",
+            Self::ExportSequence { .. } => "editor.export",
             Self::ScanSteamGames { .. } => "recording.scan_steam_games",
             Self::SetBuiltInGames { .. } => "recording.set_builtin_games",
             Self::ScanLibrary { .. } => "library.scan",
@@ -269,6 +310,23 @@ pub struct ExportedClip {
     pub height: u32,
 }
 
+/// Shared `editor.export` implementation; edits and source files are never modified.
+pub fn export_sequence(
+    request: &SequenceRequest,
+    progress: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+) -> Result<TrimmedClip, EngineError> {
+    let report = clipcraft_export::sequence_to_mp4(request, progress, cancel)
+        .map_err(EngineError::Export)?;
+    Ok(TrimmedClip {
+        path: report.path.to_string_lossy().into_owned(),
+        duration_ms: report.duration.to_units_floor(1000) as u64,
+        pictures: report.pictures,
+        audio_tracks: report.audio_tracks,
+        bytes: report.bytes,
+    })
+}
+
 /// Command `clip.export`: compress a range without modifying or uploading its source.
 pub fn export_clip(
     request: &ExportRange,
@@ -341,6 +399,11 @@ pub fn exported_path(input: &std::path::Path) -> Option<PathBuf> {
     copy_path(input, "exported")
 }
 
+/// An unused MP4 name beside the first source in a sequence.
+pub fn edited_path(input: &std::path::Path) -> Option<PathBuf> {
+    copy_path(input, "edit")
+}
+
 fn copy_path(input: &std::path::Path, suffix: &str) -> Option<PathBuf> {
     let folder = input.parent()?;
     let stem = input.file_stem()?.to_string_lossy().into_owned();
@@ -359,6 +422,8 @@ fn copy_path(input: &std::path::Path, suffix: &str) -> Option<PathBuf> {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum CommandOutput {
+    EditorMedia(Vec<MediaEntry>),
+    EditorSession(Box<EditorSession>),
     SteamGames(SteamGames),
     /// Result of scanning a local directory.
     LibraryScan(LibraryScanResult),
@@ -396,6 +461,7 @@ pub enum CommandOutput {
 /// Actionable errors returned by engine commands.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EngineError {
+    EditorInvalid,
     SteamMetadataInvalid,
     /// A requested starter game does not exist in the shipped catalog.
     GamePresetInvalid,
@@ -470,6 +536,7 @@ pub enum EngineError {
 impl fmt::Display for EngineError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EditorInvalid => formatter.write_str("This edit is outside its limits. Use at most 30 minutes total, valid source ranges at least 1/30 second long, and volume from 0 to 100%."),
             Self::SteamMetadataInvalid => formatter.write_str("Steam library metadata could not be read safely. Check the installation or refresh again; no game files were changed."),
             Self::GamePresetInvalid => formatter.write_str("Choose a game from the built-in catalog, or add a custom game."),
             Self::GameRuleLimit => formatter.write_str("Choose one or more known games, with at most 1024 IDs in a request."),
@@ -564,6 +631,15 @@ pub fn execute_cancellable(
     cancel: &AtomicBool,
 ) -> Result<CommandOutput, EngineError> {
     match command {
+        Command::ImportEditorMedia { paths } => {
+            editor::import_media(paths).map(CommandOutput::EditorMedia)
+        }
+        Command::EditSequence { session, action } => session
+            .apply(action)
+            .map(|state| CommandOutput::EditorSession(Box::new(state))),
+        Command::ExportSequence { request } => {
+            export_sequence(&request, &mut |_| {}, cancel).map(CommandOutput::Trimmed)
+        }
         Command::ScanSteamGames { roots } => {
             steam_games::scan(&roots, cancel).map(CommandOutput::SteamGames)
         }
@@ -810,6 +886,9 @@ fn scan_library_directory_with_limit(
 /// Lists stable user-facing command IDs available to the first application slice.
 pub const fn command_ids() -> &'static [&'static str] {
     &[
+        "editor.import",
+        "editor.edit",
+        "editor.export",
         "library.scan",
         "library.path",
         "library.reveal",

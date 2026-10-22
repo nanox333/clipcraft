@@ -51,3 +51,7 @@ an independent product implementation, not a formal clean-room implementation.
   builds reproducible and makes upgrades deliberate.
 - Advisory auditing (`cargo deny check advisories`) still reports an unmaintained `ttf-parser`
   through egui; it is not part of the gate.
+
+M11.1a follow-up: [ADR 0017](0017-small-filmcraft-sequence-editor.md) adds pinned `filmcraft-edit`
+and transient `filmcraft-project` track types for the small editor, plus AAC encoding in sequence
+export. The full FilmCraft application, renderer and project-file workflow remain unused.

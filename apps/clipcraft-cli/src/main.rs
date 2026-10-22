@@ -35,8 +35,55 @@ fn run(arguments: Vec<OsString>) -> Result<(), CliError> {
         "recording" => run_recording(&arguments[1..]),
         "capture" => run_capture(&arguments[1..]),
         "clip" => run_clip(&arguments[1..]),
+        "editor" => run_editor(&arguments[1..]),
         "diagnose" => run_diagnose(&arguments[1..]),
         _ => Err(CliError::Usage),
+    }
+}
+
+/// Local JSON command transport; a transient edit payload is not a project-file format.
+fn run_editor(arguments: &[OsString]) -> Result<(), CliError> {
+    use std::io::Read;
+    if arguments.len() != 1 {
+        return Err(CliError::Usage);
+    }
+    const LIMIT: u64 = 16 * 1024 * 1024;
+    let mut bytes = Vec::new();
+    io::stdin()
+        .lock()
+        .take(LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| CliError::Usage)?;
+    if bytes.len() as u64 > LIMIT {
+        return Err(CliError::Usage);
+    }
+    let command = match arguments[0].to_str() {
+        Some("import") => Command::ImportEditorMedia {
+            paths: serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?,
+        },
+        Some("apply") => {
+            #[derive(serde::Deserialize)]
+            struct Edit {
+                #[serde(default)]
+                session: clipcraft_engine::EditorSession,
+                action: clipcraft_engine::EditorAction,
+            }
+            let request: Edit = serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?;
+            Command::EditSequence {
+                session: Box::new(request.session),
+                action: request.action,
+            }
+        }
+        Some("export") => Command::ExportSequence {
+            request: Box::new(serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?),
+        },
+        _ => return Err(CliError::Usage),
+    };
+    match execute(command).map_err(CliError::Engine)? {
+        CommandOutput::EditorMedia(entries) => write_json(&entries),
+        CommandOutput::EditorSession(session) => write_json(&session),
+        CommandOutput::Trimmed(report) => write_json(&report),
+        _ => Err(CliError::UnexpectedOutput),
     }
 }
 
@@ -405,6 +452,7 @@ fn print_help() -> Result<(), CliError> {
         "\n",
         "Usage:\n",
         "  clipcraft-cli commands\n",
+        "  clipcraft-cli editor import | editor apply | editor export  (JSON on stdin)\n",
         "  clipcraft-cli recording games list | recording games installed [STEAM_ROOT ...]\n",
         "  clipcraft-cli recording games automatic on|off\n",
         "  clipcraft-cli recording games enable|disable <game-id...|all>\n",
