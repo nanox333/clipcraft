@@ -131,6 +131,10 @@ fn bilinear(
     if raw.len() < stride * sh || dw == 0 || dh == 0 {
         return out;
     }
+    if channels == 1 {
+        bilinear_plane(raw, sw, &columns, &rows, &mut out);
+        return out;
+    }
     for (y, (low, high, wy)) in rows.iter().enumerate() {
         let top = &raw[low * stride..(low + 1) * stride];
         let bottom = &raw[high * stride..(high + 1) * stride];
@@ -146,6 +150,50 @@ fn bilinear(
         }
     }
     out
+}
+
+/// One-channel case: each source row is interpolated across once and reused by the output rows
+/// that need it, with the vertical blend done on those short rows.
+fn bilinear_plane(
+    raw: &[u8],
+    sw: usize,
+    columns: &[(usize, usize, u32)],
+    rows: &[(usize, usize, u32)],
+    out: &mut [u8],
+) {
+    let across = |row: usize| -> Vec<u16> {
+        let line = &raw[row * sw..(row + 1) * sw];
+        columns
+            .iter()
+            .map(|&(a, b, wx)| (u32::from(line[a]) * (256 - wx) + u32::from(line[b]) * wx) as u16)
+            .collect()
+    };
+    let dw = columns.len();
+    // The two interpolated rows of the previous output row; neighbouring output rows mostly share.
+    let mut previous: Vec<(usize, Vec<u16>)> = Vec::new();
+    for (y, &(low, high, wy)) in rows.iter().enumerate() {
+        let take = |row: usize, previous: &mut Vec<(usize, Vec<u16>)>| -> Vec<u16> {
+            match previous.iter().position(|(r, _)| *r == row) {
+                Some(position) => previous.swap_remove(position).1,
+                None => across(row),
+            }
+        };
+        let top = take(low, &mut previous);
+        let bottom = if high == low {
+            top.clone()
+        } else {
+            take(high, &mut previous)
+        };
+        let line = &mut out[y * dw..(y + 1) * dw];
+        for ((slot, &t), &b) in line.iter_mut().zip(&top).zip(&bottom) {
+            *slot = ((u32::from(t) * (256 - wy) + u32::from(b) * wy + 32_768) >> 16) as u8;
+        }
+        previous.clear();
+        previous.push((low, top));
+        if high != low {
+            previous.push((high, bottom));
+        }
+    }
 }
 
 pub(crate) fn resize_bilinear(
@@ -333,6 +381,9 @@ fn export_inner(
     config.preset = Preset::Speed;
     config.bframes = 0;
     config.threads = worker_threads();
+    // Variance-adaptive quantisation and scene-cut search cost time for little gain at these sizes.
+    config.aq_strength = 0.0;
+    config.scenecut = false;
     config.keyint = 60;
     config.format = PacketFormat::LengthPrefixed;
     config.rate = RateControl::Vbr {
@@ -521,10 +572,13 @@ fn video_budget(target: u64, audio_bytes: u64, duration: Tick) -> Result<u32, Ex
 }
 
 fn output_size(width: u32, height: u32, kbps: u32) -> (u32, u32) {
+    // Fewer pixels also mean faster export, and at a low bitrate they look better than 720p.
     let cap = if kbps < 350 {
         360
-    } else if kbps < 1_200 {
+    } else if kbps < 900 {
         480
+    } else if kbps < 2_500 {
+        540
     } else {
         720
     };
@@ -666,9 +720,28 @@ mod tests {
     }
 
     #[test]
+    fn the_one_channel_resize_matches_the_general_one() {
+        let (w, h) = (97_usize, 61_usize);
+        let raw: Vec<u8> = (0..w * h).map(|n| (n * 37 % 251) as u8).collect();
+        let fast = bilinear(&raw, (w, h), (64, 40), 1);
+        // The same samples as four equal channels take the general path.
+        let wide: Vec<u8> = raw.iter().flat_map(|&v| [v; 4]).collect();
+        let general = bilinear(&wide, (w, h), (64, 40), 4);
+        assert!(
+            fast.iter()
+                .zip(general.chunks_exact(4))
+                .all(|(a, g)| *a == g[0])
+        );
+        // Upscaling and a 1-pixel row work too.
+        assert_eq!(bilinear(&raw[..w], (w, 1), (10, 3), 1).len(), 30);
+    }
+
+    #[test]
     fn size_keeps_aspect_and_never_upscales() {
-        assert_eq!(output_size(1920, 1080, 2_000), (1280, 720));
-        assert_eq!(output_size(1080, 1920, 2_000), (404, 720));
+        assert_eq!(output_size(1920, 1080, 3_000), (1280, 720));
+        assert_eq!(output_size(1920, 1080, 2_000), (960, 540));
+        assert_eq!(output_size(1080, 1920, 3_000), (404, 720));
+        assert_eq!(output_size(1080, 1920, 2_000), (302, 540));
         assert_eq!(output_size(160, 90, 2_000), (160, 90));
         assert_eq!(output_size(1920, 1080, 200), (640, 360));
         assert!(source_size(u32::MAX, 100).is_err());

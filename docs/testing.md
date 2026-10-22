@@ -210,16 +210,24 @@ H.264/AAC clip (40 MB, FFmpeg test pattern) through the CLI:
 
 | Export | Before (s) | After (s) |
 | --- | ---: | ---: |
-| Small file (~10 MB, wrote 9.0 MB) | 142 | 32 |
-| Medium file (~25 MB, wrote 22.5 MB) | 139 | 34 |
+| Small file (~10 MB, wrote 9.0 MB, 960×540) | 142 | 26 |
+| Medium file (~25 MB, wrote 22.5 MB, 1280×720) | 139 | 32 |
 | GIF, first 10 s | 6.2 | 6.6 |
 | Even out loudness (30 s) | — | 2.0 |
 
-Small-file export got about 4× faster by (1) scaling the decoded Y'CbCr planes directly with an
+Small-file export got about 4–5× faster by (1) scaling the decoded Y'CbCr planes directly with an
 integer bilinear filter instead of converting to RGBA, resampling with a general filter and
-converting back, (2) preparing pictures on two threads ahead of the encoder, and (3) giving the
-encoder every core but one. The result stayed within 42 dB PSNR of an FFmpeg bilinear reference at
-the 10 MB target and decodes cleanly. It is still about real time for 1080p, and a harder 720p noise
+converting back, (2) preparing pictures on two threads ahead of the encoder, (3) giving the
+encoder every core but one, (4) turning off adaptive quantisation and scene-cut search (small
+gain), (5) interpolating each source row once for the one-channel scaler, and (6) choosing 540p
+instead of 720p when the budget is under 2.5 Mbps, which also looks better at that bitrate (40.7 dB
+PSNR against an FFmpeg bilinear reference). Splitting the output into runs encoded on separate
+cores was tried and dropped: the machine was already CPU-bound (about 3.2 of 4 cores busy), so it
+saved nothing and made the size target less exact. The remaining time is the pure-Rust H.264
+encoder (about half), decoding (about a fifth) and scaling; a large further gain needs a faster
+encoder or hardware encoding, not more threads.
+
+Output decodes cleanly. It is still about real time for 1080p, and a harder 720p noise
 clip (590 MB per 30 s) ran slower than real time before and after, so expect long waits on
 very noisy recordings. GIF did not get faster because its time is spent decoding and
 quantising colours; it now uses several threads but the 1080p60 source dominates.
