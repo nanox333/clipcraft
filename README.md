@@ -52,7 +52,7 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   [ADR 0018](docs/adr/0018-gif-and-loudness-export.md); checked on Linux with generated clips only.
   Joining clips is done in the small editor below.
 - **Small sequence editor:** use its own **Editor** rail icon, **Import clips**, or **Send to editor** from Clips.
-  It shares the app’s charcoal/lime theme and embedded Inter typefaces. A left media browser
+  It shares the app’s charcoal/lime theme and embedded Inter typefaces, with icon controls, a scrub bar under the preview and a shortcut footer. A left media browser
   with Details/Add to timeline context actions, large preview and bottom
   timeline let you append, split, trim, reorder,
   duplicate or remove cuts, with 64-step undo/redo and per-cut volume/mute. Export joins up to

@@ -497,16 +497,24 @@ impl EditorState {
             thumbs.set_file(path, file);
         }
         self.keys(ui);
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Editor").size(26.0).family(kit::semibold()));
+        ui.horizontal(|ui| {
+            ui.set_min_height(44.0);
+            ui.label(
+                RichText::new("Editor")
+                    .size(28.0)
+                    .family(kit::semibold())
+                    .color(kit::TEXT),
+            );
+            ui.add_space(4.0);
             ui.label(
                 RichText::new("Arrange clips. Keep the best moments.")
-                    .size(13.0)
+                    .size(14.0)
                     .color(MUTED),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if button(
+                if tool(
                     ui,
+                    kit::Icon::Folder,
                     "Export video",
                     true,
                     !self.session.clips().is_empty() && !self.busy(),
@@ -534,7 +542,7 @@ impl EditorState {
         } else {
             0.0
         };
-        let top = (ui.available_height() - 306.0 - status_height).max(120.0);
+        let top = (ui.available_height() - 404.0 - status_height).max(120.0);
         let width = ui.available_width().max(1.0);
         let browser = if width >= 700.0 {
             260.0
@@ -547,7 +555,11 @@ impl EditorState {
                 Vec2::new(browser, top),
                 Layout::top_down(Align::Min),
                 |ui| {
-                    self.browser(ui, thumbs, top);
+                    // Match the preview panel's real height, measured last frame.
+                    let preview_height = ui
+                        .data(|d| d.get_temp::<f32>(egui::Id::new("editor-preview-height")))
+                        .unwrap_or(top);
+                    self.browser(ui, thumbs, top.max(preview_height));
                 },
             );
             let preview_width = (width - browser - 12.0).max(1.0);
@@ -555,7 +567,7 @@ impl EditorState {
                 Vec2::new(preview_width, top),
                 Layout::top_down(Align::Min),
                 |ui| {
-                    egui::Frame::new()
+                    let panel = egui::Frame::new()
                         .fill(PANEL)
                         .corner_radius(12)
                         .stroke(Stroke::new(1.0_f32, BORDER))
@@ -591,35 +603,48 @@ impl EditorState {
                                     MUTED,
                                 );
                             }
+                            ui.add_space(6.0);
+                            if let Some(time) =
+                                scrub_bar(ui, self.playhead, self.session.duration())
+                            {
+                                self.playing = false;
+                                self.seek(time);
+                            }
+                            ui.add_space(4.0);
                             ui.horizontal(|ui| {
-                                if button(
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                let any = !self.session.clips().is_empty();
+                                let playing = self.playing;
+                                if tool(
                                     ui,
-                                    if self.playing {
-                                        "Pause edit"
+                                    if playing {
+                                        kit::Icon::Pause
                                     } else {
-                                        "Play edit"
+                                        kit::Icon::Play
                                     },
+                                    if playing { "Pause edit" } else { "Play edit" },
                                     true,
-                                    !self.session.clips().is_empty(),
+                                    any,
                                 )
                                 .clicked()
                                 {
                                     self.toggle();
                                 }
-                                if button(ui, "Start", false, !self.session.clips().is_empty())
-                                    .clicked()
-                                {
+                                if tool(ui, kit::Icon::StepBack, "Start", false, any).clicked() {
                                     self.seek(Tick::ZERO);
                                 }
-                                ui.label(
-                                    RichText::new(format!(
-                                        "{} / {}",
-                                        stamp(self.playhead),
-                                        stamp(self.session.duration())
-                                    ))
-                                    .color(MUTED)
-                                    .monospace(),
-                                );
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{}  /  {}",
+                                            stamp(self.playhead),
+                                            stamp(self.session.duration())
+                                        ))
+                                        .size(13.0)
+                                        .color(MUTED)
+                                        .monospace(),
+                                    );
+                                });
                             });
                             if let Some(note) =
                                 self.preview.as_ref().and_then(|p| p.editor_audio_note())
@@ -627,6 +652,12 @@ impl EditorState {
                                 ui.label(RichText::new(note).small().color(MUTED));
                             }
                         });
+                    ui.data_mut(|d| {
+                        d.insert_temp(
+                            egui::Id::new("editor-preview-height"),
+                            panel.response.rect.height(),
+                        );
+                    });
                 },
             );
         });
@@ -655,9 +686,28 @@ impl EditorState {
             });
         }
         if let Some((text, error)) = &self.message {
-            ui.label(RichText::new(text).color(if *error { DANGER } else { LIME }));
+            kit::status_pill(ui, if *error { DANGER } else { LIME }, text);
         }
-        ui.label(RichText::new("Edits stay in this session. Export saves an MP4 beside the first source; originals stay unchanged.").small().color(FAINT));
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for (key, what) in [
+                ("Space", "play"),
+                ("S", "split"),
+                ("\u{2190} \u{2192}", "frame"),
+                ("Del", "delete"),
+                ("Ctrl Z", "undo"),
+            ] {
+                kit::keycap(ui, key);
+                ui.label(RichText::new(what).size(12.0).color(MUTED));
+                ui.add_space(8.0);
+            }
+            ui.label(
+                RichText::new("Edits stay in this session. Originals are never changed.")
+                    .size(12.0)
+                    .color(FAINT),
+            );
+        });
     }
     fn browser(&mut self, ui: &mut egui::Ui, thumbs: &mut crate::thumbs::Thumbnails, height: f32) {
         let media = Arc::clone(&self.media);
@@ -671,22 +721,29 @@ impl EditorState {
             .show(ui, |ui| {
                 ui.set_min_height((height - 24.0).max(0.0));
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Library").size(14.0).family(kit::semibold()));
+                    ui.label(
+                        RichText::new("Library")
+                            .size(16.0)
+                            .family(kit::semibold())
+                            .color(kit::TEXT),
+                    );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if button(ui, "Import clips", false, self.importing.is_none()).clicked() {
+                        if tool(
+                            ui,
+                            kit::Icon::Import,
+                            "Import clips",
+                            false,
+                            self.importing.is_none(),
+                        )
+                        .clicked()
+                        {
                             self.import(None, ui.ctx());
                         }
                     });
                 });
-                ui.add_space(8.0);
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.search)
-                        .hint_text("Search clips")
-                        .margin(egui::Margin::symmetric(10, 8))
-                        .char_limit(100)
-                        .desired_width(ui.available_width()),
-                );
-                ui.add_space(6.0);
+                ui.add_space(10.0);
+                crate::settings::search_box(ui, &mut self.search, "Search clips");
+                ui.add_space(10.0);
                 let query = self.search.to_lowercase();
                 let filtered: Vec<_> = media
                     .iter()
@@ -732,7 +789,7 @@ impl EditorState {
                                                 card.min,
                                                 Vec2::new(card_width, 68.0),
                                             );
-                                            ui.painter().rect_filled(rect, 8, CARD);
+                                            ui.painter().rect_filled(rect, 10, CARD);
                                             if let Some(texture) = thumbs.texture(
                                                 ui.ctx(),
                                                 &entry.path,
@@ -741,7 +798,7 @@ impl EditorState {
                                                 egui::Image::from_texture(
                                                     egui::load::SizedTexture::from_handle(texture),
                                                 )
-                                                .corner_radius(8)
+                                                .corner_radius(10)
                                                 .paint_at(ui, rect);
                                             }
                                             if response.hovered() || response.has_focus() {
@@ -840,18 +897,29 @@ impl EditorState {
                     ui.spinner();
                     ui.label(RichText::new("Importing clips…").small().color(MUTED));
                 } else if filtered.is_empty() {
-                    ui.label(
-                        RichText::new("Import clips here, or send them from Clips.")
-                            .small()
-                            .color(MUTED),
-                    );
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("No clips here yet")
+                                .size(14.0)
+                                .family(kit::semibold())
+                                .color(kit::TEXT),
+                        );
+                        ui.add_space(2.0);
+                        ui.label(
+                            RichText::new("Import clips, or send them from Clips.")
+                                .size(12.5)
+                                .color(MUTED),
+                        );
+                    });
                 }
+                ui.add_space(6.0);
                 ui.label(
                     RichText::new(
-                        "Right-click for details or add to timeline.\nDouble-click or drag to add.",
+                        "Double-click or drag a clip to add it.\nRight-click for details.",
                     )
-                    .size(11.5)
-                    .color(MUTED),
+                    .size(12.0)
+                    .color(kit::FAINT),
                 );
             });
         if let Some(entry) = add {
@@ -883,33 +951,52 @@ impl EditorState {
     }
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
             let enabled = !self.busy();
-            if button(
+            if tool(
                 ui,
+                kit::Icon::Scissors,
                 "Split (S)",
                 false,
                 enabled && self.playhead > Tick::ZERO && self.playhead < self.session.duration(),
             )
+            .on_hover_text("Cut the segment at the playhead")
             .clicked()
             {
                 self.edit(EditorAction::Split { at: self.playhead });
             }
             if let Some(id) = self.selected {
-                if button(ui, "Duplicate", false, enabled).clicked() {
+                if tool(ui, kit::Icon::Copy, "Duplicate", false, enabled)
+                    .on_hover_text("Copy the selected segment (Ctrl/\u{2318} D)")
+                    .clicked()
+                {
                     self.edit(EditorAction::Duplicate { id });
                 }
-                if button(ui, "Delete", false, enabled).clicked() {
+                if tool(ui, kit::Icon::Trash, "Delete", false, enabled)
+                    .on_hover_text("Remove the selected segment (Del)")
+                    .clicked()
+                {
                     self.edit(EditorAction::Delete { id });
                 }
                 if let Some(index) = self.session.clips().iter().position(|c| c.id == id) {
-                    if button(ui, "Move left", false, enabled && index > 0).clicked() {
+                    separator(ui);
+                    if tool(
+                        ui,
+                        kit::Icon::StepBack,
+                        "Move left",
+                        false,
+                        enabled && index > 0,
+                    )
+                    .clicked()
+                    {
                         self.edit(EditorAction::Move {
                             id,
                             index: index.saturating_sub(1),
                         });
                     }
-                    if button(
+                    if tool(
                         ui,
+                        kit::Icon::StepForward,
                         "Move right",
                         false,
                         enabled && index + 1 < self.session.clips().len(),
@@ -923,10 +1010,14 @@ impl EditorState {
                     }
                 }
             }
-            if button(ui, "Fit", self.fit, true).clicked() {
+            separator(ui);
+            if button(ui, "Fit", self.fit, true)
+                .on_hover_text("Show the whole edit")
+                .clicked()
+            {
                 self.fit = true;
             }
-            if button(ui, "−", false, true)
+            if button(ui, "\u{2212}", false, true)
                 .on_hover_text("Zoom out")
                 .clicked()
             {
@@ -941,21 +1032,24 @@ impl EditorState {
                 self.zoom = (self.zoom * 1.5).min(160.0);
             }
             ui.label(
-                RichText::new(format!("{} segments", self.session.clips().len()))
-                    .small()
+                RichText::new(segments(self.session.clips().len()))
+                    .size(13.0)
                     .color(MUTED),
             );
-            if button(
+            if tool(
                 ui,
+                kit::Icon::Restart,
                 "Reset edit",
                 false,
                 enabled && !self.session.clips().is_empty(),
             )
+            .on_hover_text("Clear the timeline")
             .clicked()
             {
                 self.edit(EditorAction::Reset);
             }
         });
+        ui.add_space(8.0);
     }
     fn timeline(&mut self, ui: &mut egui::Ui, thumbs: &mut crate::thumbs::Thumbnails) {
         let total = self.session.duration();
@@ -976,7 +1070,28 @@ impl EditorState {
                 let (rect, response) =
                     ui.allocate_exact_size(Vec2::new(width, 142.0), Sense::click_and_drag());
                 let painter = ui.painter();
-                painter.rect_filled(rect, 8, CANVAS);
+                painter.rect_filled(rect, 10, CANVAS);
+                painter.line_segment(
+                    [
+                        egui::pos2(rect.left(), rect.top() + 20.0),
+                        egui::pos2(rect.right(), rect.top() + 20.0),
+                    ],
+                    Stroke::new(1.0_f32, BORDER),
+                );
+                // Short ticks between the labelled ones.
+                for i in 0..=50 {
+                    if i % 5 == 0 {
+                        continue;
+                    }
+                    let x = rect.left() + width * i as f32 / 50.0;
+                    painter.line_segment(
+                        [
+                            egui::pos2(x, rect.top() + 14.0),
+                            egui::pos2(x, rect.top() + 20.0),
+                        ],
+                        Stroke::new(1.0_f32, kit::FAINT),
+                    );
+                }
                 let seconds = total.seconds().max(1.0);
                 for i in 0..=10 {
                     let x = rect.left() + width * i as f32 / 10.0;
@@ -985,7 +1100,7 @@ impl EditorState {
                         Stroke::new(0.5_f32, BORDER),
                     );
                     painter.text(
-                        egui::pos2(x + 4.0, rect.top() + 9.0),
+                        egui::pos2(x + 5.0, rect.top() + 10.0),
                         Align2::LEFT_CENTER,
                         stamp(Tick::from_units(
                             (seconds * 1000.0 * i as f64 / 10.0).round() as i64,
@@ -1094,6 +1209,17 @@ impl EditorState {
                             Stroke::new(2.0_f32, LIME),
                             egui::StrokeKind::Inside,
                         );
+                        // Grips at both ends show which segment the controls below belong to.
+                        for edge in [card.left() + 5.0, card.right() - 5.0] {
+                            painter.rect_filled(
+                                egui::Rect::from_center_size(
+                                    egui::pos2(edge, card.center().y),
+                                    Vec2::new(3.0, 22.0),
+                                ),
+                                2,
+                                LIME,
+                            );
+                        }
                     }
                     let audio = egui::Rect::from_min_max(
                         egui::pos2(x + 1.0, rect.top() + 108.0),
@@ -1153,12 +1279,20 @@ impl EditorState {
                     [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
                     Stroke::new(2.0_f32, LIME),
                 );
-                painter.circle_filled(egui::pos2(x, rect.top() + 3.0), 4.0, LIME);
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        egui::pos2(x - 6.0, rect.top()),
+                        egui::pos2(x + 6.0, rect.top()),
+                        egui::pos2(x, rect.top() + 10.0),
+                    ],
+                    LIME,
+                    Stroke::NONE,
+                ));
                 if self.session.clips().is_empty() {
                     painter.text(
                         rect.center(),
                         Align2::CENTER_CENTER,
-                        "Drag clips here, or right-click a library clip to add it",
+                        "Drag clips here, or double-click one in the library to add it",
                         FontId::new(14.0, kit::medium()),
                         MUTED,
                     );
@@ -1188,91 +1322,173 @@ impl EditorState {
         else {
             return;
         };
+        ui.add_space(10.0);
         ui.add_enabled_ui(!self.busy(), |ui| {
-            ui.horizontal_wrapped(|ui| {
-                let mut start = clip.start.seconds();
-                let mut end = clip.end.seconds();
-                let mut volume = clip.volume_percent;
-                ui.label(RichText::new("Source in / out").small().color(MUTED));
-                let changed = ui
-                    .add(
-                        egui::DragValue::new(&mut start)
-                            .speed(1.0 / 30.0)
-                            .range(0.0..=clip.source_duration.seconds())
-                            .fixed_decimals(3)
-                            .suffix(" s"),
-                    )
-                    .on_hover_text("Selected segment source start")
-                    .changed()
-                    | ui.add(
-                        egui::DragValue::new(&mut end)
-                            .speed(1.0 / 30.0)
-                            .range(0.0..=clip.source_duration.seconds())
-                            .fixed_decimals(3)
-                            .suffix(" s"),
-                    )
-                    .on_hover_text("Selected segment source end")
-                    .changed();
-                if changed {
-                    self.edit(EditorAction::Trim {
-                        id: clip.id,
-                        start: Tick::from_units((start * 1000.0).round() as i64, 1000),
-                        end: Tick::from_units((end * 1000.0).round() as i64, 1000),
+            egui::Frame::new()
+                .fill(CANVAS)
+                .corner_radius(10)
+                .inner_margin(egui::Margin::symmetric(12, 8))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+                        let mut start = clip.start.seconds();
+                        let mut end = clip.end.seconds();
+                        let mut volume = clip.volume_percent;
+                        ui.label(RichText::new("Source in / out").size(13.0).color(MUTED));
+                        let changed = ui
+                            .add(
+                                egui::DragValue::new(&mut start)
+                                    .speed(1.0 / 30.0)
+                                    .range(0.0..=clip.source_duration.seconds())
+                                    .fixed_decimals(3)
+                                    .suffix(" s"),
+                            )
+                            .on_hover_text("Selected segment source start")
+                            .changed()
+                            | ui.add(
+                                egui::DragValue::new(&mut end)
+                                    .speed(1.0 / 30.0)
+                                    .range(0.0..=clip.source_duration.seconds())
+                                    .fixed_decimals(3)
+                                    .suffix(" s"),
+                            )
+                            .on_hover_text("Selected segment source end")
+                            .changed();
+                        if changed {
+                            self.edit(EditorAction::Trim {
+                                id: clip.id,
+                                start: Tick::from_units((start * 1000.0).round() as i64, 1000),
+                                end: Tick::from_units((end * 1000.0).round() as i64, 1000),
+                            });
+                        }
+                        separator(ui);
+                        ui.label(RichText::new("Volume").size(13.0).color(MUTED));
+                        if ui
+                            .add(egui::DragValue::new(&mut volume).range(0..=100).suffix("%"))
+                            .on_hover_text("Selected segment audio volume")
+                            .changed()
+                        {
+                            self.edit(EditorAction::Volume {
+                                id: clip.id,
+                                percent: volume,
+                            });
+                        }
+                        if button(
+                            ui,
+                            if clip.volume_percent == 0 {
+                                "Unmute"
+                            } else {
+                                "Mute"
+                            },
+                            false,
+                            true,
+                        )
+                        .clicked()
+                        {
+                            self.edit(EditorAction::Volume {
+                                id: clip.id,
+                                percent: if clip.volume_percent == 0 { 100 } else { 0 },
+                            });
+                        }
+                        ui.label(
+                            RichText::new("First audio track · linked to video")
+                                .size(12.0)
+                                .color(FAINT),
+                        );
                     });
-                }
-                ui.label(RichText::new("Volume").small().color(MUTED));
-                if ui
-                    .add(egui::DragValue::new(&mut volume).range(0..=100).suffix("%"))
-                    .on_hover_text("Selected segment audio volume")
-                    .changed()
-                {
-                    self.edit(EditorAction::Volume {
-                        id: clip.id,
-                        percent: volume,
-                    });
-                }
-                if button(
-                    ui,
-                    if clip.volume_percent == 0 {
-                        "Unmute"
-                    } else {
-                        "Mute"
-                    },
-                    false,
-                    true,
-                )
-                .clicked()
-                {
-                    self.edit(EditorAction::Volume {
-                        id: clip.id,
-                        percent: if clip.volume_percent == 0 { 100 } else { 0 },
-                    });
-                }
-                ui.label(
-                    RichText::new("First audio track · linked to video")
-                        .small()
-                        .color(FAINT),
-                );
-            });
+                });
         });
     }
 }
 
-/// Standard egui buttons keep keyboard activation and the app's focus/hover states.
+/// Quiet or lime text button. Standard egui buttons keep keyboard activation and the app's
+/// focus/hover states; the colours match the rest of the app.
 fn button(ui: &mut egui::Ui, label: &str, primary: bool, enabled: bool) -> egui::Response {
-    let text = RichText::new(label).family(kit::medium()).size(12.5);
+    let text = RichText::new(label).family(kit::medium()).size(13.0);
     let mut button = egui::Button::new(if primary && enabled {
-        text.color(CANVAS)
+        text.color(Color32::BLACK)
     } else {
         text
     })
-    .corner_radius(16)
-    .min_size(Vec2::new(30.0, 32.0));
+    .corner_radius(18)
+    .min_size(Vec2::new(36.0, 36.0));
     if primary && enabled {
-        button = button.fill(LIME);
+        button = button.fill(LIME).stroke(Stroke::NONE);
+    } else {
+        button = button
+            .fill(kit::CONTROL)
+            .stroke(Stroke::new(1.0_f32, kit::CONTROL_BORDER));
     }
     ui.add_enabled(enabled, button)
 }
+
+/// A button with an icon, in the same pill shape as the rest of the app.
+fn tool(
+    ui: &mut egui::Ui,
+    icon: kit::Icon,
+    label: &str,
+    primary: bool,
+    enabled: bool,
+) -> egui::Response {
+    kit::labelled_button(ui, icon, label, primary, enabled)
+}
+
+/// A thin vertical rule between groups of controls.
+fn separator(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(9.0, 24.0), Sense::hover());
+    ui.painter().line_segment(
+        [
+            egui::pos2(rect.center().x, rect.top() + 2.0),
+            egui::pos2(rect.center().x, rect.bottom() - 2.0),
+        ],
+        Stroke::new(1.0_f32, kit::CONTROL_BORDER),
+    );
+}
+
+/// A slim position bar under the preview. Returns the time the person clicked or dragged to.
+fn scrub_bar(ui: &mut egui::Ui, position: Tick, total: Tick) -> Option<Tick> {
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width().max(1.0), 18.0),
+        Sense::click_and_drag(),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Slider, !total.0.eq(&0), "Edit position")
+    });
+    let track = egui::Rect::from_center_size(rect.center(), Vec2::new(rect.width(), 4.0));
+    let fraction = (position.0 as f64 / total.0.max(1) as f64).clamp(0.0, 1.0) as f32;
+    ui.painter().rect_filled(track, 2, kit::CONTROL);
+    let filled = egui::Rect::from_min_max(
+        track.min,
+        egui::pos2(track.left() + track.width() * fraction, track.bottom()),
+    );
+    ui.painter().rect_filled(filled, 2, LIME);
+    let hot = response.hovered() || response.dragged();
+    ui.painter().circle_filled(
+        egui::pos2(filled.right(), track.center().y),
+        if hot { 7.0 } else { 5.0 },
+        LIME,
+    );
+    if total.0 > 0
+        && (response.clicked() || response.dragged())
+        && let Some(point) = response.interact_pointer_pos()
+    {
+        let ratio = ((point.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
+        let frame = (ratio * RATE.frame_at(total) as f32).round() as i64;
+        return Some(RATE.tick_of(frame));
+    }
+    None
+}
+
+/// Words for a count of segments.
+fn segments(count: usize) -> String {
+    if count == 1 {
+        "1 segment".to_owned()
+    } else {
+        format!("{count} segments")
+    }
+}
+
 fn stamp(time: Tick) -> String {
     let ms = time.to_units_floor(1000).max(0);
     format!("{}:{:02}.{:01}", ms / 60_000, ms / 1000 % 60, ms / 100 % 10)

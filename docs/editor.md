@@ -4,7 +4,13 @@ Open the **Editor** icon on the left rail. It is a separate workspace from **Cli
 **Send to editor** on a clip card or in its detail view to place a reference in the editor library;
 this does not immediately add it to the timeline or move the source file. The normal player and
 quick trim remain in Clips. The workspace uses the same charcoal surfaces, lime actions,
-embedded Inter typefaces and keyboard focus styling as the rest of ClipCraft.
+embedded Inter typefaces and keyboard focus styling as the rest of ClipCraft. Controls are
+icon-and-label pills like the rest of the app, with quiet outlined buttons for secondary actions
+and lime for the main one. Under the preview there is a position bar you can click or drag to scrub
+the edit, then Play/Pause, Start and the time. The timeline has a ruler with minor ticks, a
+triangular playhead, grips on the selected segment, and a bar under it with the source in/out,
+volume and mute for that segment. A footer lists the keyboard shortcuts. The Library and the
+preview panel keep the same height.
 
 When entering the editor directly, **Import clips** in its Library opens a local video picker.
 Import can select multiple MP4/MOV/MKV files; files dropped on the editor use the same background

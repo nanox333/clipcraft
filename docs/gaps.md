@@ -73,7 +73,7 @@ readers, H.264 and AAC codecs. The browser/preview/timeline workflow appends loc
 splits at the playhead, trims source ranges, reorders, duplicates and ripple-deletes segments.
 Per-segment volume/mute affects preview and export; source audio stays linked to its video.
 The editor uses the shared charcoal/lime palette and embedded Inter Regular/Medium/SemiBold
-faces, with keyboard focus, thumbnail hover states and compact controls. Its own rail icon opens
+faces (icon pill controls, a scrub bar, a ruler with ticks and a shortcut footer, checked on Linux/Xvfb only), with keyboard focus, thumbnail hover states and compact controls. Its own rail icon opens
 an independent browser; Import clips and Send to editor add references, while right-click offers
 Details/Add to timeline. Undo/redo retains at most 64 edits within an 8 MiB budget. Quick trim remains available, and media is never overwritten.
 
