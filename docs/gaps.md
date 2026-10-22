@@ -66,34 +66,48 @@ ClipRecorder's timestamped audio-gap policy is also ported in `clipcraft-record`
 untimestamped `AudioSource` mixer does not use it. Upstream revisions, permission provenance, and
 exact source files are recorded in [`upstream-ports.md`](upstream-ports.md).
 
-## Small sequence editor (M11.1a)
+## Small sequence editor (M11.1a/M11.1b)
 
-The user-requested editor slice is implemented using FilmCraft's pinned track/cut algebra, media
-readers, H.264 and AAC codecs. The browser/preview/timeline workflow appends local library media,
-splits at the playhead, trims source ranges, reorders, duplicates and ripple-deletes segments.
-Per-segment volume/mute, fades (black/white dips, with presets) and seven colour effects on segments, plus text layers on their own track above the video (own timing, place, size, colour, fades and effect; FilmCraft text engine), in Library/Effects/Text tabs, affect preview and export; source audio stays linked to its video.
-The editor uses the shared charcoal/lime palette and embedded Inter Regular/Medium/SemiBold
-faces (icon pill controls, a scrub bar, a ruler with ticks and a shortcut footer, checked on Linux/Xvfb only), with keyboard focus, thumbnail hover states and compact controls. Its own rail icon opens
-an independent browser; Import clips and Send to editor add references, while right-click offers
-Details/Add to timeline. Undo/redo retains at most 64 edits within an 8 MiB budget. Quick trim remains available, and media is never overwritten.
+The editor uses FilmCraft's pinned track/cut algebra, media readers, H.264 and AAC codecs. Its
+browser/preview/timeline workflow appends local references, splits at the playhead, trims source
+ranges, reorders, duplicates and ripple-deletes segments. Linked source audio has per-segment
+volume/mute and fades with the picture. Library/Effects/Text tabs expose black/white fade presets,
+seven colour effects and independent text layers with timing, position, size, colour, fade,
+split/duplicate and shared undo/redo. Dips do not overlap video segments or change edit duration.
+Preview and export use the same FilmCraft text raster, canvas geometry and audio fade envelope.
 
-Limits: one gapless track, no separate segment-count limit, 30-minute total, minimum segment 1/30 second, no persisted
-draft/project format. Returning to the library retains edits until app exit. Export re-encodes
-SDR H.264/AAC MP4/MOV or recorder-compatible MKV into H.264 MP4 at 30 fps, with a 16:9 canvas
-whose height follows the first source up to 720p. Pictures fit with black bars and no upscaling.
-Only the first source audio track is used (first two channels, mono repeated); it becomes one
-48 kHz stereo AAC track, including silence for muted/silent segments. Additional audio tracks,
-HDR, non-square pixels, effects/text/transitions, detached audio and arbitrary rendering controls
-are not implemented. Cuts in the exported video are sampled on its 30 fps grid; audio follows the
-integer timeline without per-cut encoder priming. Playback speed controls in quick trim are not
-sequence speed edits. No small-file size target applies to sequence export.
+The workspace shares the charcoal/lime palette and embedded Inter UI faces, with icon controls,
+a ruler, a shortcut footer and resizable panels. Its own rail icon opens an independent browser;
+Import clips and Send to editor add references, while right-click offers Details/Add to timeline.
+Undo/redo retains at most 64 edits within an 8 MiB budget. Quick trim remains available.
 
-Preview opens one source at a time and can pause briefly while opening the next source; real-time
-4K playback and export speed on reference machines remain unmeasured. Export preserves drafts
-and sources, supports progress/cancel, and uses exclusive temporary output/no-replace publication;
-the destination filesystem must support hard links. The CLI uses the same `editor.import`, `editor.edit` and
-`editor.export` engine paths over bounded local JSON. See [editor.md](editor.md) and
-[testing.md](testing.md) for controls, evidence and remaining platform checks.
+Limits: one gapless video/linked-audio sequence, no separate segment-count cap, 30-minute total,
+minimum segment 1/30 second, at most 256 text layers and no persisted draft/project format.
+Navigating away retains edits until app exit. Export re-encodes SDR H.264/AAC MP4/MOV or
+recorder-compatible MKV into H.264 MP4 at 30 fps on a 16:9 canvas, at most 720p. Pictures fit with
+black bars and no upscaling. Only the first source audio track is used (first two channels, mono
+repeated), encoded as one 48 kHz stereo AAC track; muted/silent segments contribute silence.
+Additional audio tracks, HDR, non-square pixels, detached audio, overlapping video,
+cross-dissolves and arbitrary rendering controls remain unsupported. Video cuts follow the 30 fps
+output grid; audio follows integer timeline positions without per-cut encoder priming.
+
+Export video offers standard output or estimated 10 MB, 25 MB and custom 1–500 MB targets. Targets
+reserve AAC and container overhead before choosing video bitrate and may lower canvas resolution;
+an impossible budget is refused. Actual size, target status, dimensions and encoder are reported.
+These are estimates, not guarantees of a service's upload limit. When enabled by the recording
+encoder preference, sequence export tries the registered GPU encoder and restarts in software on
+encoder failure. Sequence decoding stays in software; real-GPU export speed/quality remain
+unverified. Codec and FPS are fixed in this
+slice; the GIF/loudness tools remain in quick trim.
+
+Preview opens one source at a time and can pause briefly at a cut; real-time 4K playback and
+reference-machine export speed remain unmeasured. Text rasters and caches have explicit memory
+bounds rather than retaining every layer's rendered mask. Export preserves drafts/sources,
+supports progress/cancel and uses exclusive temporary output with no-replace publication; the
+destination filesystem must support hard links. The shared `editor.import`, `editor.edit` and
+`editor.export` commands accept bounded local JSON. See [editor.md](editor.md),
+[testing.md](testing.md) and [ADR 0019](adr/0019-editor-preview-and-export-presets.md) for behavior,
+evidence and remaining platform checks.
 
 ## Performance review (2026-10-21)
 

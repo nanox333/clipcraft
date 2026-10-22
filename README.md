@@ -49,16 +49,21 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
 - **GIF and loudness:** the same Trim panel can save a range of up to 30 seconds as a looping GIF
   (480 px wide, 12 fps, no sound) or even out its loudness to -16 LUFS (the picture is copied, the
   sound is re-encoded, and the result is never pushed into clipping). See
-  [ADR 0018](docs/adr/0018-gif-and-loudness-export.md); checked on Linux with generated clips only.
+  [ADR 0018](docs/adr/0018-gif-and-loudness-export.md); platform evidence is limited to Linux
+  generated clips. GIF frame delays use cumulative centisecond timestamps so
+  rates such as the default 12 fps preserve the requested duration.
   Joining clips is done in the small editor below.
-- **Small sequence editor:** use its own **Editor** rail icon, **Import clips**, or **Send to editor** from Clips.
-  It shares the app’s charcoal/lime theme and embedded Inter typefaces, with icon controls, a scrub bar under the preview and a shortcut footer. A left media browser
-  with Details/Add to timeline context actions, large preview and bottom
-  timeline let you append, split, trim, reorder,
-  duplicate or remove cuts, with 64-step undo/redo and per-cut volume/mute. Export joins up to
-  30 minutes into a new H.264 MP4 with stereo AAC, at most 720p/30 fps. It reuses
-  FilmCraft's cut algebra and Rust codecs, keeps originals untouched and runs locally with
-  progress/cancel. Library/Effects/Text tabs: segments can fade in/out through black or white (with presets), take a colour effect, and text sits on its own layer above the video that can be moved, trimmed, faded and recoloured. Edits stay in memory; quick trim remains available. See [the editor guide](docs/editor.md).
+- **Small sequence editor:** open its own **Editor** rail icon, **Import clips**, or **Send to editor**
+  from Clips. Its resizable Library/Effects/Text panel, large preview and bottom timeline share the
+  app's charcoal/lime styling and embedded Inter typefaces. Append, split, trim, reorder, duplicate
+  or remove cuts, with 64-step undo/redo, linked audio volume/mute, black/white fades and seven colour
+  effects. Independent text layers can be moved, trimmed, split, duplicated, faded and recoloured.
+  Preview and export share FilmCraft text rendering and the same audio fade envelope.
+  **Export video** offers standard H.264 MP4 or estimated 10 MB, 25 MB and custom 1–500 MB presets,
+  with actual size and encoder reporting, progress/cancel and GPU-encoder fallback to software.
+  Output is at most 720p/30 fps with stereo AAC; size presets can choose a smaller canvas. Edits
+  stay in memory, originals remain untouched, and quick trim stays available. See
+  [the editor guide](docs/editor.md) for controls and limits.
 - **Settings and diagnostics:** recording, quality, audio, hotkey, storage, game allowlist, and
   general settings are stored locally. [348 known games](docs/game-catalog.md) are recognized
   automatically, with per-game exclusions and a global switch in Settings › Games. The toggle at
@@ -114,8 +119,9 @@ interface for footage management. These are not available in this build. See the
 [`roadmap`](ROADMAP.md) and [`backlog`](docs/backlog.md) for their requirements and limitations.
 
 ClipCraft already records video plus system/microphone audio. Voice/video calling, social feeds,
-sharing links, and a community layer are not planned. The small editor adds cuts and arrangement;
-text, transitions, effects and multitrack editing are not implemented.
+sharing links, and a community layer are not planned. The small editor includes cuts, arrangement,
+text layers, colour effects and simple fades. Overlapping video, cross-dissolves, detached audio
+and general-purpose multitrack editing remain outside its scope.
 
 ## Rust and local-data design
 

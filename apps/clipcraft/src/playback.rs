@@ -97,9 +97,9 @@ impl Playback {
             .filter(|feed| feed.driving())
             .map(|feed| feed.position())
     }
-    pub(crate) fn editor_transport(&mut self, position: Option<Tick>, playing: bool, volume: u16) {
-        self.prefs.volume = f32::from(volume) / 100.0;
-        self.prefs.muted = volume == 0;
+    pub(crate) fn editor_transport(&mut self, position: Option<Tick>, playing: bool, volume: f32) {
+        self.prefs.volume = volume.clamp(0.0, 1.0);
+        self.prefs.muted = volume <= 0.0;
         self.prefs.looping = false;
         self.player.set_loop(false);
         self.apply_volume();

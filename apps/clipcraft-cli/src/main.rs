@@ -75,14 +75,29 @@ fn run_editor(arguments: &[OsString]) -> Result<(), CliError> {
             }
         }
         Some("export") => Command::ExportSequence {
-            request: Box::new(serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?),
+            request: {
+                clipcraft_engine::set_export_hardware(clipcraft_platform::hardware_provider());
+                clipcraft_platform::register_hardware_decoding();
+                let gpu = clipcraft_engine::default_settings_path()
+                    .and_then(
+                        |path| match execute(Command::LoadRecordingSettings { path }) {
+                            Ok(CommandOutput::RecordingSettings(settings)) => Some(*settings),
+                            _ => None,
+                        },
+                    )
+                    .is_none_or(|settings| {
+                        settings.video_encoder == clipcraft_engine::VideoEncoder::Gpu
+                    });
+                clipcraft_engine::enable_export_hardware(gpu);
+                Box::new(serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?)
+            },
         },
         _ => return Err(CliError::Usage),
     };
     match execute(command).map_err(CliError::Engine)? {
         CommandOutput::EditorMedia(entries) => write_json(&entries),
         CommandOutput::EditorSession(session) => write_json(&session),
-        CommandOutput::Trimmed(report) => write_json(&report),
+        CommandOutput::SequenceExported(report) => write_json(&report),
         _ => Err(CliError::UnexpectedOutput),
     }
 }

@@ -42,7 +42,7 @@ passed (verified 2026-10-22); real-game and 1080p60 release gates remain open.
 | M8 | ◷ Planned | Establish tested Windows/Linux/macOS desktop support through the shared Rust platform layer; run an Android screen-capture feasibility study without promising mobile support |
 | M9 | ◷ Planned | Design and implement opt-in client-side-encrypted backup to a user-selected provider, including recovery and restore; all local workflows remain offline |
 | M10 | ◷ Planned | Add controller shortcuts and optional Discord Rich Presence; prototype declarative themes, keyboard/mouse overlays, and a permission-limited plugin/shader extension model |
-| M11 | 🟡 Small editor implemented; expansion evaluation open | A bounded single-track editor adds clip arrangement, cuts, trim, volume/mute, undo/redo and local sequence MP4 export using FilmCraft. Text/transitions/overlays and the MCP adapter remain unbuilt; no full NLE, AI service or community feature is implied |
+| M11 | 🟡 Small editor implemented; broader expansion evaluation open | A bounded video/audio sequence editor adds arrangement, cuts, trim, volume/mute, undo/redo, simple fades, seven colour effects and an independent text track using FilmCraft. Preview/export share text rendering and audio fades. Sequence MP4 export offers standard or estimated file-size presets with GPU-encoder fallback. Input overlays and the MCP adapter remain planned; no full NLE, AI service or community feature is implied |
 
 Issue-level tasks require a problem statement, explicit limitations, measurable acceptance criteria,
 and test evidence. See the [`backlog`](docs/backlog.md) and

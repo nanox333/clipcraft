@@ -251,6 +251,7 @@ fn sequence_cuts_reorder_video_and_reencode_continuous_audio_with_mute_and_gain(
     };
     let output = dir.file("edit.mp4");
     let request = SequenceRequest {
+        preset: None,
         texts: Vec::new(),
         output: output.clone(),
         segments: vec![
@@ -322,6 +323,7 @@ fn sequence_fractional_cuts_do_not_accumulate_audio_delay() {
     let input = dir.file("source.mp4");
     fixture(&input, ClipFormat::Mp4, true);
     let request = SequenceRequest {
+        preset: None,
         texts: Vec::new(),
         output: dir.file("edit.mp4"),
         segments: vec![
@@ -369,6 +371,7 @@ fn sequence_failures_cancellation_and_publication_collisions_preserve_files() {
     let original = std::fs::read(&input).unwrap();
     let output = dir.file("edit.mp4");
     let mut request = SequenceRequest {
+        preset: None,
         texts: Vec::new(),
         output: output.clone(),
         segments: vec![SequenceSegment {
@@ -446,6 +449,7 @@ fn sequence_normalizes_portrait_and_silent_sources_without_stretching() {
     fixture_size(&a, ClipFormat::Mp4, false, 160, 90);
     fixture_size(&b, ClipFormat::Mp4, false, 90, 160);
     let request = SequenceRequest {
+        preset: None,
         texts: Vec::new(),
         output: dir.file("edit.mp4"),
         segments: vec![
@@ -491,6 +495,7 @@ fn sequence_exports_more_than_thirty_two_segments() {
     let input = dir.file("source.mp4");
     fixture(&input, ClipFormat::Mp4, false);
     let request = SequenceRequest {
+        preset: None,
         texts: Vec::new(),
         output: dir.file("edit.mp4"),
         segments: vec![
@@ -546,6 +551,7 @@ fn sequence_fades_and_text_layers_change_the_picture_and_bad_text_is_rejected() 
     let render = |name: &str, look: SegmentLook, texts: Vec<SequenceText>| {
         let output = dir.file(name);
         let request = SequenceRequest {
+            preset: None,
             texts,
             output: output.clone(),
             segments: vec![segment(look)],
@@ -613,6 +619,7 @@ fn sequence_fades_and_text_layers_change_the_picture_and_bad_text_is_rejected() 
     too_big.size = 0;
     for layer in [bad, too_big] {
         let request = SequenceRequest {
+            preset: None,
             texts: vec![layer],
             output: dir.file("bad.mp4"),
             segments: vec![segment(SegmentLook::default())],
@@ -636,6 +643,7 @@ fn sequence_effects_recolour_the_picture_and_leave_the_source_alone() {
     let original = std::fs::read(&a).unwrap();
     let output = dir.file("gray.mp4");
     let request = SequenceRequest {
+        preset: None,
         texts: Vec::new(),
         output: output.clone(),
         segments: vec![SequenceSegment {

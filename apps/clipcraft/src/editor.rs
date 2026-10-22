@@ -5,8 +5,9 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use clipcraft_engine::{
-    Command, CommandOutput, EditorAction, EditorSession, Effect, Fade, MediaEntry, SegmentLook,
-    SequenceRequest, SequenceSegment, SequenceText, TransitionPreset, TrimmedClip, execute,
+    Command, CommandOutput, EditorAction, EditorSession, Effect, ExportPreset, ExportedSequence,
+    Fade, MediaEntry, SegmentLook, SequenceRequest, SequenceSegment, SequenceText,
+    TransitionPreset, execute,
 };
 use clipcraft_time::{FrameRate, Tick};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, RichText, Sense, Stroke, Vec2};
@@ -16,9 +17,18 @@ use crate::kit::{self, BORDER, CANVAS, CARD, CARD_HOVER, DANGER, FAINT, LIME, MU
 /// The least height the Library and preview row can be dragged down to.
 const MIN_TOP: f32 = 210.0;
 const RATE: FrameRate = FrameRate { num: 30, den: 1 };
+const PREVIEW_TEXT_BYTES: usize = 16 * 1024 * 1024;
+
+struct PreviewText {
+    key: SequenceText,
+    canvas: [u32; 2],
+    size: [usize; 2],
+    texture: egui::TextureHandle,
+    bytes: usize,
+}
 
 struct ExportJob {
-    receiver: mpsc::Receiver<Result<TrimmedClip, String>>,
+    receiver: mpsc::Receiver<Result<ExportedSequence, String>>,
     cancel: Arc<AtomicBool>,
     progress: Arc<AtomicU32>,
 }
@@ -55,6 +65,8 @@ pub struct EditorState {
     fit: bool,
     message: Option<(String, bool)>,
     job: Option<ExportJob>,
+    export_dialog: bool,
+    export_preset: Option<ExportPreset>,
     saved: Option<PathBuf>,
     /// Width the person dragged the Library to; `None` lets it follow the 16:9 preview.
     selected_text: Option<u64>,
@@ -66,6 +78,8 @@ pub struct EditorState {
     library_width: Option<f32>,
     /// Height the person dragged the preview row to; `None` gives it all the room there is.
     top_height: Option<f32>,
+    /// One bounded set of shared FilmCraft rasters uploaded to the GPU for preview.
+    preview_text: std::collections::VecDeque<PreviewText>,
 }
 impl Default for EditorState {
     fn default() -> Self {
@@ -89,6 +103,8 @@ impl Default for EditorState {
             fit: true,
             message: None,
             job: None,
+            export_dialog: false,
+            export_preset: None,
             saved: None,
             selected_text: None,
             title_draft: (0, String::new()),
@@ -98,6 +114,7 @@ impl Default for EditorState {
             effect_tab: false,
             library_width: None,
             top_height: None,
+            preview_text: std::collections::VecDeque::new(),
         }
     }
 }
@@ -173,10 +190,12 @@ impl EditorState {
     }
     pub fn close(&mut self) {
         self.open = false;
+        self.export_dialog = false;
         self.playing = false;
         self.preview = None;
         self.preview_id = None;
         self.clock = None;
+        self.preview_text.clear();
     }
     pub fn take_saved(&mut self) -> Option<PathBuf> {
         self.saved.take()
@@ -320,7 +339,12 @@ impl EditorState {
             }
             let ready = preview.editor_ready();
             let seek = self.seek_pending.then_some(source_time);
-            preview.editor_transport(seek, self.playing && ready, clip.volume_percent);
+            let gain = clip.look.audio_gain_at(
+                source_time - clip.start,
+                clip.duration(),
+                clip.volume_percent,
+            );
+            preview.editor_transport(seek, self.playing && ready, gain);
             if ready {
                 self.seek_pending = false;
                 if self.playing && self.clock.is_none() {
@@ -397,11 +421,25 @@ impl EditorState {
             self.job = None;
             match result {
                 Ok(report) => {
-                    self.saved = Some(report.path.into());
+                    self.saved = Some(report.clip.path.into());
+                    let target = report.target_bytes.map_or(String::new(), |target| {
+                        format!(
+                            " · target {}{}",
+                            clipcraft_engine::format_bytes(target),
+                            if report.within_target {
+                                ""
+                            } else {
+                                " (over estimate)"
+                            }
+                        )
+                    });
                     self.message = Some((
                         format!(
-                            "Edit saved · {}",
-                            clipcraft_engine::format_bytes(report.bytes)
+                            "Edit saved · {}{target} · {}×{} · {}",
+                            clipcraft_engine::format_bytes(report.clip.bytes),
+                            report.width,
+                            report.height,
+                            report.encoder
                         ),
                         false,
                     ));
@@ -442,6 +480,7 @@ impl EditorState {
             return;
         };
         let request = SequenceRequest {
+            preset: self.export_preset,
             texts: self
                 .session
                 .texts()
@@ -496,7 +535,7 @@ impl EditorState {
             .ctx()
             .memory(|m| m.focused())
             .is_some_and(|id| egui::TextEdit::load_state(ui.ctx(), id).is_some());
-        if typing || egui::Popup::is_any_open(ui.ctx()) || self.busy() {
+        if typing || self.export_dialog || egui::Popup::is_any_open(ui.ctx()) || self.busy() {
             return;
         }
         let pressed = |modifiers, key| ui.input_mut(|i| i.consume_key(modifiers, key));
@@ -560,11 +599,11 @@ impl EditorState {
                     !self.session.clips().is_empty() && !self.busy(),
                 )
                 .on_hover_text(
-                    "H.264 MP4, up to 720p/30 fps, stereo AAC. Saved beside the first source.",
+                    "Choose standard export or an estimated 10 MB, 25 MB or custom file size.",
                 )
                 .clicked()
                 {
-                    self.export(ui.ctx());
+                    self.export_dialog = true;
                 }
                 if button(ui, "Redo", false, self.session.can_redo() && !self.busy()).clicked() {
                     self.edit(EditorAction::Redo);
@@ -799,6 +838,120 @@ impl EditorState {
                     .color(FAINT),
             );
         });
+        self.show_export_dialog(ui.ctx());
+    }
+    fn export_canvas(&self) -> Result<(u32, u32), String> {
+        let first = self.session.clips().first();
+        let probe = first
+            .and_then(|clip| {
+                self.media
+                    .iter()
+                    .find(|m| m.path == clip.input.to_string_lossy())
+            })
+            .and_then(|m| m.probe.as_ref());
+        clipcraft_engine::sequence_canvas(
+            probe.and_then(|p| p.width).unwrap_or(1280),
+            probe.and_then(|p| p.height).unwrap_or(720),
+            self.export_preset,
+            self.session.duration(),
+        )
+        .map_err(|error| error.to_string())
+    }
+    fn show_export_dialog(&mut self, context: &egui::Context) {
+        if !self.export_dialog {
+            return;
+        }
+        if context.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            self.export_dialog = false;
+            return;
+        }
+        let mut open = true;
+        let mut start = false;
+        let mut cancel = false;
+        egui::Window::new(
+            RichText::new("Export video")
+                .size(20.0)
+                .family(kit::semibold()),
+        )
+        .id(egui::Id::new("editor-export-window"))
+        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .default_width(380.0)
+        .show(context, |ui| {
+            ui.spacing_mut().item_spacing.y = 12.0;
+            ui.label(RichText::new("Choose a file size for the finished video.").color(MUTED));
+            ui.label(RichText::new("Export preset").family(kit::medium()));
+            let custom = match self.export_preset {
+                Some(value @ ExportPreset::Custom { .. }) => value,
+                _ => ExportPreset::Custom { megabytes: 10 },
+            };
+            egui::ComboBox::from_id_salt("editor-export-preset")
+                .width(ui.available_width())
+                .selected_text(match self.export_preset {
+                    None => "Standard · up to 720p",
+                    Some(ExportPreset::Small) => "Small file · ~10 MB",
+                    Some(ExportPreset::Medium) => "Medium file · ~25 MB",
+                    Some(ExportPreset::Custom { .. }) => "Custom size",
+                })
+                .show_ui(ui, |ui| {
+                    for (value, label) in [
+                        (None, "Standard · up to 720p"),
+                        (Some(ExportPreset::Small), "Small file · ~10 MB"),
+                        (Some(ExportPreset::Medium), "Medium file · ~25 MB"),
+                        (Some(custom), "Custom size"),
+                    ] {
+                        ui.selectable_value(&mut self.export_preset, value, label);
+                    }
+                });
+            if let Some(ExportPreset::Custom { megabytes }) = &mut self.export_preset {
+                ui.horizontal(|ui| {
+                    ui.label("Target size");
+                    ui.add(egui::DragValue::new(megabytes).range(1..=500).suffix(" MB"))
+                        .on_hover_text("Estimated output size, from 1 to 500 MB");
+                });
+            }
+            let canvas = self.export_canvas();
+            match &canvas {
+                Ok((width, height)) => {
+                    ui.label(
+                        RichText::new(format!("{width} × {height} · 30 fps · H.264 MP4"))
+                            .family(kit::medium()),
+                    );
+                    ui.label(
+                        RichText::new("Stereo AAC audio. Saved beside the first source clip.")
+                            .small()
+                            .color(MUTED),
+                    );
+                }
+                Err(error) => {
+                    ui.label(RichText::new(error).color(DANGER));
+                }
+            }
+            ui.label(
+                RichText::new("File sizes are estimates. The saved result shows its actual size.")
+                    .size(12.0)
+                    .color(MUTED),
+            );
+            ui.separator();
+            ui.horizontal(|ui| {
+                cancel = button(ui, "Cancel", false, true).clicked();
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    start = button(
+                        ui,
+                        "Export",
+                        true,
+                        canvas.is_ok() && self.has_clips() && !self.busy(),
+                    )
+                    .clicked();
+                });
+            });
+        });
+        self.export_dialog = open && !cancel && !start;
+        if start {
+            self.export(context);
+        }
     }
     /// Whether Split would cut something at the playhead.
     fn can_split(&self) -> bool {
@@ -1548,6 +1701,9 @@ impl EditorState {
             (area.width(), area.width() * 9.0 / 16.0)
         };
         let canvas = egui::Rect::from_center_size(area.center(), Vec2::new(width, height));
+        let (raster_width, raster_height) = self.export_canvas().unwrap_or((1280, 720));
+        let raster_canvas = [raster_width, raster_height];
+        let scale = Vec2::new(width / raster_width as f32, height / raster_height as f32);
         let painter = ui.painter().with_clip_rect(canvas);
         if let Some((fade, amount)) = fade {
             let color = if fade == Fade::White { 255 } else { 0 };
@@ -1575,45 +1731,82 @@ impl EditorState {
             {
                 (layer.x, layer.y) = (x, y);
             }
-            let line = layer.text.trim();
-            if line.is_empty() {
+            if layer.text.trim().is_empty() {
                 continue;
             }
             let (start, _) = self.live_range(id, &layer);
             let opacity = layer.opacity_at(self.playhead - start);
-            let mut ink = [layer.color[0], layer.color[1], layer.color[2], 255];
-            layer.effect.apply_rgba(&mut ink);
-            let alpha = |a: f32| (opacity * a * 255.0).round().clamp(0.0, 255.0) as u8;
-            let color = Color32::from_rgba_unmultiplied(ink[0], ink[1], ink[2], alpha(1.0));
-            let galley = painter.layout(
-                line.to_owned(),
-                FontId::new(
-                    (height * f32::from(layer.size) / 1000.0).max(8.0),
-                    kit::semibold(),
-                ),
-                color,
-                width * 0.9,
+            // Placement and timing do not change the pixels, so a drag or fade reuses its texture.
+            let mut key = layer.clone();
+            key.start = Tick::ZERO;
+            key.end = Tick(1);
+            key.x = 0;
+            key.y = 0;
+            key.fade_in = Fade::None;
+            key.fade_out = Fade::None;
+            let cached = self
+                .preview_text
+                .iter()
+                .position(|entry| entry.key == key && entry.canvas == raster_canvas);
+            let cached = cached.and_then(|index| self.preview_text.remove(index));
+            let entry = match cached {
+                Some(entry) => entry,
+                None => {
+                    let raster = match clipcraft_engine::TextRaster::render(
+                        &layer,
+                        raster_width,
+                        raster_height,
+                    ) {
+                        Ok(Some(raster)) => raster,
+                        Ok(None) => continue,
+                        Err(error) => {
+                            self.message = Some((error.to_string(), true));
+                            continue;
+                        }
+                    };
+                    let size = raster.size();
+                    let bytes = raster.bytes();
+                    while self
+                        .preview_text
+                        .iter()
+                        .map(|entry| entry.bytes)
+                        .sum::<usize>()
+                        .saturating_add(bytes)
+                        > PREVIEW_TEXT_BYTES
+                    {
+                        if self.preview_text.pop_front().is_none() {
+                            break;
+                        }
+                    }
+                    let texture = ui.ctx().load_texture(
+                        "editor-text-raster",
+                        egui::ColorImage::from_rgba_unmultiplied(size, raster.rgba()),
+                        egui::TextureOptions::LINEAR,
+                    );
+                    PreviewText {
+                        key,
+                        canvas: raster_canvas,
+                        size,
+                        texture,
+                        bytes,
+                    }
+                }
+            };
+            let position =
+                clipcraft_engine::text_position(entry.size, raster_canvas, layer.x, layer.y);
+            let at =
+                canvas.min + Vec2::new(position[0] as f32 * scale.x, position[1] as f32 * scale.y);
+            let size = Vec2::new(
+                entry.size[0] as f32 * scale.x,
+                entry.size[1] as f32 * scale.y,
             );
-            let size = galley.size();
-            let centre = egui::pos2(
-                canvas.left() + width * f32::from(layer.x) / 1000.0,
-                canvas.top() + height * f32::from(layer.y) / 1000.0,
+            painter.image(
+                entry.texture.id(),
+                egui::Rect::from_min_size(at, size),
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                Color32::from_white_alpha((opacity * 255.0).round().clamp(0.0, 255.0) as u8),
             );
-            let at = egui::pos2(
-                (centre.x - size.x / 2.0)
-                    .clamp(canvas.left(), (canvas.right() - size.x).max(canvas.left())),
-                (centre.y - size.y / 2.0)
-                    .clamp(canvas.top(), (canvas.bottom() - size.y).max(canvas.top())),
-            );
-            let shadow = (height * 0.01).clamp(1.0, 3.0);
-            let mut shade = [0, 0, 0, 255];
-            layer.effect.apply_rgba(&mut shade);
-            painter.galley_with_override_text_color(
-                at + Vec2::splat(shadow),
-                galley.clone(),
-                Color32::from_rgba_unmultiplied(shade[0], shade[1], shade[2], alpha(0.65)),
-            );
-            painter.galley(at, galley, color);
+            self.preview_text.push_back(entry);
             if self.selected_text == Some(id) && !self.busy() {
                 let rect = egui::Rect::from_min_size(at, size).expand(6.0);
                 let response = ui
@@ -2565,6 +2758,48 @@ fn stamp(time: Tick) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn export_presets_keep_edit_shortcuts_out_of_the_dialog_and_reject_impossible_sizes() {
+        let context = crate::kit::test_context();
+        let mut editor = state();
+        editor.playhead = Tick::from_units(2, 1);
+        editor.export_dialog = true;
+        for preset in [
+            None,
+            Some(ExportPreset::Small),
+            Some(ExportPreset::Medium),
+            Some(ExportPreset::Custom { megabytes: 1 }),
+        ] {
+            editor.export_preset = preset;
+            assert!(editor.export_canvas().is_ok());
+            for size in [Vec2::new(900.0, 650.0), Vec2::new(1440.0, 900.0)] {
+                for _ in 0..3 {
+                    frame(&mut editor, &context, vec![], size);
+                }
+            }
+        }
+        let original = editor.session.clone();
+        for pressed in [egui::Key::Space, egui::Key::S, egui::Key::Delete] {
+            key(&mut editor, &context, pressed, egui::Modifiers::NONE);
+        }
+        assert_eq!(editor.session, original);
+        assert!(!editor.playing);
+        key(
+            &mut editor,
+            &context,
+            egui::Key::Escape,
+            egui::Modifiers::NONE,
+        );
+        assert!(!editor.export_dialog);
+        let mut long = EditorState::default();
+        long.edit(EditorAction::Append {
+            input: "long.mp4".into(),
+            name: "Long".into(),
+            duration: Tick::from_units(1800, 1),
+        });
+        long.export_preset = Some(ExportPreset::Custom { megabytes: 1 });
+        assert!(long.export_canvas().is_err());
+    }
     fn state() -> EditorState {
         let mut state = EditorState {
             open: true,
@@ -2837,6 +3072,62 @@ mod tests {
         assert_eq!(state.session.texts().len(), 3);
         assert_eq!(state.selected_text, Some(state.session.texts()[2].id));
     }
+    #[test]
+    fn preview_transport_fades_audio_without_rewriting_the_segment_volume() {
+        let context = crate::kit::test_context();
+        let mut state = state();
+        let id = state.session.clips()[0].id;
+        state.edit(EditorAction::Volume { id, percent: 50 });
+        state.edit(EditorAction::Look {
+            id,
+            look: SegmentLook {
+                fade_in: Fade::Black,
+                fade_out: Fade::White,
+                ..Default::default()
+            },
+        });
+        for (time, expected) in [
+            (Tick::ZERO, 0.0),
+            (Tick::from_units(1, 4), 0.25),
+            (Tick::from_units(1, 1), 0.5),
+        ] {
+            state.seek(time);
+            state.poll_preview(&context);
+            assert_eq!(state.preview.as_ref().unwrap().prefs().volume, expected);
+            assert_eq!(state.session.clips()[0].volume_percent, 50);
+        }
+    }
+
+    #[test]
+    fn preview_text_reuses_shared_pixels_for_drags_and_releases_its_cache_on_close() {
+        let context = crate::kit::test_context();
+        let mut state = state();
+        state.edit(EditorAction::AddText {
+            start: Tick::ZERO,
+            duration: Tick::from_units(2, 1),
+            text: "Preview and export".into(),
+        });
+        let id = state.session.texts()[0].id;
+        state.playhead = Tick::from_units(1, 1);
+        state.preview = Some(crate::playback::Playback::start(
+            "generated.mp4",
+            &context,
+            crate::playback::Prefs::default(),
+        ));
+        for _ in 0..3 {
+            frame(&mut state, &context, vec![], Vec2::new(1440.0, 900.0));
+        }
+        assert_eq!(state.preview_text.len(), 1);
+        let texture = state.preview_text[0].texture.id();
+        state.title_drag = Some((id, 850, 200));
+        frame(&mut state, &context, vec![], Vec2::new(1080.0, 760.0));
+        assert_eq!(state.preview_text.len(), 1);
+        assert_eq!(state.preview_text[0].texture.id(), texture);
+        assert!(state.preview_text.iter().map(|r| r.bytes).sum::<usize>() <= PREVIEW_TEXT_BYTES);
+        state.close();
+        assert!(state.preview_text.is_empty());
+    }
+
     #[test]
     fn text_layers_draw_select_and_survive_every_tab_and_size() {
         for size in [

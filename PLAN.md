@@ -226,11 +226,12 @@ not permission to copy code, assets, or proprietary interfaces.
 - **CLI and AI-agent access:** grow the existing local CLI and consider an MCP stdio adapter for
   managing and editing clips. Keep the interface local and permission-scoped; ClipCraft itself must
   not send footage to an AI provider. Destructive operations require explicit user authorization.
-- **Editor growth:** after trim/cut and export are reliable across target platforms, evaluate a
-  focused one-track editor with a few transitions, text/keyboard/mouse overlays, and simple audio
-  controls. Do not promise a CapCut/Clipchamp replacement or make multitrack editing a core
-  requirement. Video and microphone/system audio recording are already part of the current capture
-  plan; voice/video calls and community features remain out of scope.
+- **Editor growth:** the user-authorized one-track slice now includes arrangement, cuts, linked
+  audio volume, simple fade dips, colour effects, independent text layers and local export presets.
+  Further growth, including keyboard/mouse overlays and richer audio controls, remains subject to
+  evaluation after capture/platform evidence. Do not promise a CapCut/Clipchamp replacement or make
+  multitrack editing a core requirement. Video and microphone/system audio recording are already
+  built; voice/video calls and community features remain out of scope.
 
 The product boundary remains: no livestreaming, web client, social feed, accounts, share links,
 comments, likes, moderation, monetisation, privileged capture helpers, driver injection, DRM bypass,
@@ -264,7 +265,9 @@ hardware encoder adapters ([ADR 0004](docs/adr/0004-filmcraft-crates.md)). ClipC
 platform-provider integration, replay buffer, recording/session logic, local index, and trim flow.
 The library index is local and rebuildable; normal video files remain the user's primary artifacts.
 The separate Editor workspace now adds an independent media browser, sequence preview, cuts,
-trim, arrangement, undo/redo and linked audio volume, using pinned FilmCraft cut algebra and codecs.
+trim, arrangement, undo/redo, linked audio volume, colour effects, black/white fades and an independent
+text track, using pinned FilmCraft cut algebra, text layout and codecs. Editor exports offer normal
+output or estimated 10 MB/25 MB/custom-size presets with GPU encoder fallback.
 See [the editor guide](docs/editor.md) for export bounds and session lifetime. There is no
 user-facing `.ccproj`, multitrack timeline, general effect system, or server component.
 
@@ -318,10 +321,11 @@ or claim until it is measured on a named device, driver, compositor, resolution,
   Medal's detail view; omit likes, comments, views, social sharing, and online profile links.
 - **Capture HUD:** compact always-on-top status with buffer duration, source, audio meters, and a
   clip-saved toast. It must be optional and never obscure the captured content.
-- **Quick editor:** a large preview with play/pause, a simple scrubber, start/end trim handles,
-  split/cut, undo, and a lime “Save Clip” action. Keep it a focused panel or simple editor window;
-  no multitrack timeline, tool rails, effects browser, overlays, or project-document workflow in the
-  MVP. The main product remains capture and library.
+- **Quick trim:** the clip player keeps its simple range controls and local Save action. The separate
+  user-authorized **Editor** rail destination adds Library/Effects/Text tabs, cuts/undo, simple fades,
+  colour looks and independent text layers. It exports normal MP4 files, with optional size presets;
+  there is no general-purpose multitrack NLE or project-document workflow. Capture and the library
+  remain the main product.
 - **Capture settings:** show a clear capture toggle, source preview, system/game-audio and microphone
   selectors, and an obvious stop action. **PC Storage:** choose a local capture folder, set a local
   storage limit, and show used/free space with clips separated from other files. Do not add an

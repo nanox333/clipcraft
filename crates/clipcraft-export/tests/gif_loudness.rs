@@ -59,6 +59,56 @@ fn a_gif_has_the_right_size_frame_count_and_loops() {
 }
 
 #[test]
+fn gif_playback_duration_matches_default_and_fractional_frame_rates() {
+    let dir = Scratch::new("gif-clock");
+    let input = dir.file("in.mp4");
+    fixture(&input, ClipFormat::Mp4, false);
+    let before = std::fs::read(&input).unwrap();
+    for (fps, millis) in [
+        (12, 1_000),
+        (13, 1_000),
+        (12, 1_001),
+        (13, 1_237),
+        (20, 1_109),
+        (5, 101),
+    ] {
+        let output = dir.file(&format!("{fps}-{millis}.gif"));
+        let report = export_gif(
+            &TrimRequest {
+                input: input.clone(),
+                output: output.clone(),
+                start: secs(500),
+                end: secs(500 + millis),
+            },
+            GifOptions {
+                max_width: 160,
+                fps,
+            },
+            &mut |_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let mut decoder = gif::DecodeOptions::new()
+            .read_info(std::fs::File::open(output).unwrap())
+            .unwrap();
+        let mut centiseconds = 0_i64;
+        let mut frames = 0_u64;
+        while let Some(frame) = decoder.read_next_frame().unwrap() {
+            assert!(
+                frame.delay >= 2,
+                "avoid reader-specific minimum-delay defaults"
+            );
+            centiseconds += i64::from(frame.delay);
+            frames += 1;
+        }
+        assert_eq!(frames, report.pictures);
+        assert_eq!(centiseconds, (millis + 5) / 10, "{fps} fps, {millis} ms");
+        assert!((centiseconds * 10 - millis).abs() <= 5);
+    }
+    assert_eq!(std::fs::read(input).unwrap(), before);
+}
+
+#[test]
 fn gif_limits_collisions_and_cancel_leave_nothing_behind() {
     let dir = Scratch::new("gif-bad");
     let input = dir.file("in.mp4");

@@ -114,7 +114,9 @@ fn gif_inner(
     if frames < 1 {
         return Err(ExportError::BadRange);
     }
-    let delay = u16::try_from((100 / options.fps).max(2)).unwrap_or(8);
+    // GIF stores hundredths of a second. Round the cumulative clock, not each frame's
+    // interval, so rates such as 12 or 13 fps do not accumulate playback-speed error.
+    let centiseconds = (duration + Tick::from_units(1, 200)).to_units_floor(100);
 
     if let Some(folder) = request
         .output
@@ -177,7 +179,7 @@ fn gif_inner(
                             crate::compress::resize_bilinear(&image, width, height)
                         };
                         let mut frame = gif::Frame::from_rgba_speed(w16, h16, resized.as_mut(), 10);
-                        frame.delay = delay;
+                        frame.delay = frame_delay(n, frames, centiseconds, options.fps)?;
                         Ok(frame)
                     })
                 })
@@ -218,6 +220,17 @@ fn gif_inner(
     })
 }
 
+/// Quantize cumulative frame boundaries while preserving the rounded total duration. Reserve
+/// at least two hundredths for a very short final frame: GIF readers commonly replace zero/one
+/// hundredth delays with a much longer default. Earlier intervals lend it the needed time.
+fn frame_delay(index: i64, frames: i64, centiseconds: i64, fps: u32) -> Result<u16, ExportError> {
+    let boundary = |frame: i64| {
+        let nominal = (frame * 100 + i64::from(fps) / 2) / i64::from(fps);
+        nominal.min(centiseconds - (frames - frame) * 2)
+    };
+    u16::try_from(boundary(index + 1) - boundary(index)).map_err(|_| ExportError::BadRange)
+}
+
 /// Output size: at most `max_width` wide, never enlarged, aspect kept.
 fn gif_size(width: u32, height: u32, max_width: u32) -> (u32, u32) {
     let w = width.min(max_width).max(2);
@@ -255,5 +268,32 @@ mod tests {
             .check()
             .is_err()
         );
+    }
+
+    #[test]
+    fn every_supported_frame_rate_keeps_the_cumulative_clock_and_short_final_frame() {
+        for fps in 5..=MAX_GIF_FPS {
+            let rate = FrameRate {
+                num: i64::from(fps),
+                den: 1,
+            };
+            for millis in [
+                100, 101, 109, 501, 1_000, 1_001, 1_009, 1_237, 29_999, 30_000,
+            ] {
+                let duration = Tick::from_units(millis, 1_000);
+                let frames = rate.frame_at(duration)
+                    + i64::from(rate.tick_of(rate.frame_at(duration)) < duration);
+                let total = (duration + Tick::from_units(1, 200)).to_units_floor(100);
+                let delays: Vec<_> = (0..frames)
+                    .map(|index| frame_delay(index, frames, total, fps).unwrap())
+                    .collect();
+                assert!(delays.iter().all(|delay| *delay >= 2));
+                assert_eq!(
+                    delays.iter().map(|delay| i64::from(*delay)).sum::<i64>(),
+                    total
+                );
+                assert!((total * 10 - millis).abs() <= 5);
+            }
+        }
     }
 }

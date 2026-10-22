@@ -291,14 +291,16 @@ CI, keyboard/accessibility and native 1440×900/960×900 inspection pass. See te
 ### M4.2 — Basic cut/trim editor and MP4 export
 
 **Status:** partial, core trim delivered — a clip can be previewed, trimmed, and exported as a new
-MP4 without re-encoding, with progress/cancel and input preservation. The editor remains intentionally
-basic; re-encoding, arbitrary split workflows, and quality/size presets are not implemented.
+MP4 without re-encoding, with progress/cancel and input preservation. Compression and size presets
+are delivered under M4.3; sequence splitting/undo and text/effects/fades live in the separate M11.1a
+editor. This entry describes the original quick-trim path, which remains available.
 
 **Requirements:** support preview, frame-accurate start/end trim, split/cut, undo for the active edit,
 and H.264/AAC MP4 export with progress/cancel.
 
-**Limitations:** no multitrack timeline, effects, captions, overlays, plugin system, streaming export,
-remote render job, or saved editor project. Preserve originals; export a new normal video file.
+**Limitations:** this quick-trim path has no multitrack timeline, effects, captions, overlays or
+saved project. Use the separate editor for its supported text/effect operations; arbitrary native
+plugins and remote render jobs remain outside scope. Preserve originals; export a new normal video file.
 
 **Acceptance:** command-level tests reproduce the UI edit; generated fixtures verify duration,
 frame-accurate cut points, audio sync, metadata, cancellation cleanup, and input-file preservation.
@@ -874,18 +876,20 @@ remains required for broader platform or overlay claims, not a blocker for this 
 
 **Scope / requirements:** append library clips, select/scrub, split at the playhead, trim selected
 source ranges, duplicate, reorder, ripple-delete and undo/redo. Keep source audio attached and
-allow per-segment volume/mute. Reuse pinned FilmCraft track/cut algebra and media/codecs; preserve
-quick trim. Export the ordered cuts as an ordinary MP4 on a bounded worker with progress/cancel.
+allow per-segment volume/mute, colour looks and black/white fades. Independent text layers support
+placement, timing, styling, fades, split and duplicate. Reuse pinned FilmCraft track/cut algebra,
+text rendering and media/codecs; preserve quick trim. Export the ordered cuts as an ordinary MP4 on a bounded worker with progress/cancel.
 Commands and CLI use the shared engine. Follow the reference's browser/preview/timeline hierarchy
 with original controls/assets; no dead Effects/Text tabs. The editor has its own rail icon and
 media library, Import clips, Send to editor from Clips, and Details/Add to timeline context menus.
 Do not add per-thumbnail Add buttons or an artificial segment-count cap. Match the shared
 charcoal/lime palette, embedded Inter font weights, compact controls and keyboard focus states.
 
-**Limits:** one gapless video/audio sequence, at most 30 minutes, no separate segment-count cap, bounded
-64-step/8 MiB history; edits are in-memory and disappear on app exit. No custom project format, transitions,
-text, overlays, detached/multiple audio lanes, arbitrary effects, HDR or speed changes in this
-slice. Export is SDR H.264/AAC, at most 720p/30 FPS, first source audio track only; normalize to
+**Limits:** one gapless video/audio sequence plus bounded text layers, at most 30 minutes, no separate
+segment-count cap, bounded 64-step/8 MiB history; edits are in-memory and disappear on app exit.
+Simple fade dips, colour looks and text are built. No custom project format, cross-dissolves,
+overlapping video, input overlays, detached/multiple audio lanes, arbitrary effects, HDR or speed
+changes in this slice. M11.1b adds shared preview rendering and size presets. Export is SDR H.264/AAC, at most 720p/30 FPS, first source audio track only; normalize to
 48 kHz stereo and preserve originals. Missing/unsupported media must fail with an actionable
 message without replacing output; no required server or external encoder.
 
@@ -897,6 +901,41 @@ at 1440×900; test keyboard actions and narrow/layout extremes. Run `cargo xtask
 **Docs:** README, gaps, roadmap, architecture, testing, editor guide and FilmCraft reuse ADR.
 **Dependencies:** existing player/export stack; user authorizes this bounded slice before M8/M10.
 **Estimate:** multi-part implementation.
+
+### M11.1b — Preview/export consistency and editor file-size presets
+
+**Status:** implemented; software/fake-provider and Linux virtual-display checks pass (2026-10-22).
+Real-device encoder/audio validation remains open.
+
+**Problem / evidence:** a one-second default 12 fps GIF was measured as 0.96 seconds. Editor audio
+fades were applied during export only; preview text used a different weight/layout/shadow than
+export. The editor lacked the file-size choices already present in quick trim, and roadmap/gap
+text contradicted the text/effects features in the current code.
+
+**Scope / requirements:** preserve GIF duration through integer centisecond scheduling, including
+partial final frames. Use shared bounded FilmCraft text rasterization and matching audio fade gain
+in preview/export. Add Standard, estimated 10 MB, 25 MB and custom 1–500 MB editor MP4 exports,
+with the same typed engine command and bounded JSON CLI transport. Reserve encoded AAC and mux
+headroom, reject impossible budgets, report actual size/settings/encoder, and try the configured
+GPU encoder with a safe software fallback. Keep progress/cancel and source preservation.
+
+**Limitations:** pure Rust and offline; no new hosted service, project format, codec or capture
+platform claim. Size targets are estimates, not Discord limits. SDR H.264/AAC output remains at
+most 720p/30 fps; small budgets can reduce dimensions. One gapless video/audio sequence plus text
+layers; text, layer count, masks, history and workers remain bounded. Real-GPU export and physical
+audio/Windows validation are separate evidence gates.
+
+**Acceptance / verification:** decoded GIF durations match requested ranges to centisecond
+precision at all supported frame rates; preview/export share text pixels/placement and fade math;
+representative text/cut/effect/mute sequences export under each preset with correct duration/audio.
+Invalid/custom/impossible budgets, cancellation, hardware refusal/midstream failure and output
+collisions preserve all source files. Check keyboard and actual desktop UI screenshots. Run
+`cargo xtask ci` and `cargo xtask docs-check`.
+
+**Docs:** README, gaps, roadmap, editor guide, architecture, testing and relevant ADRs. Correct stale
+feature exclusions rather than documenting existing text/effects as planned.
+**Dependencies:** M11.1a and existing clip.export preset/hardware seam; no hardware needed for the
+software/fake-provider acceptance slice. **Estimate:** one focused implementation/review cycle.
 
 ### M11.2 — Local CLI and MCP footage-management adapter
 

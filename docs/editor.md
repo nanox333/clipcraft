@@ -63,26 +63,50 @@ Shortcuts remain active when a button is focused; text/numeric input retains nor
 
 ## Preview and export
 
-Preview plays the original source range and its first audio track at the selected volume. It uses
-one player and may pause briefly while opening the next source. The lower audio lane represents
-linked source audio; it is not a decoded waveform. Timeline thumbnails are cached source
+Preview plays the original source range and its first audio track at the selected volume, with
+the same fade envelope used by export. It uses one player and may pause briefly while opening
+the next source. The lower audio lane represents linked source audio; it is not a decoded waveform. Timeline thumbnails are cached source
 thumbnails, not frame-by-frame filmstrips. A missing sound device is reported and video preview
 continues without sound.
 
-**Export video** renders the ordered cuts into a new MP4 beside the first source. The default name
-is `Source (edit).mp4`; a changed title supplies the base name. Progress and **Cancel export** are
-shown while working. Editing is disabled during export; navigation and playback remain available.
-Exported media appears on the next library scan if inside the active root. Input files and the
-in-memory draft are unchanged. Failures retain the draft and show the reason.
+**Export video** opens a window with these output choices:
 
-Current output is H.264 at 30 fps, with a 16:9 canvas whose height follows the first source up to
-720p. Smaller/portrait images fit with black bars without being stretched or upscaled. Source
-video is re-encoded, so this path is not original-quality sample copy. Video cut timing is sampled
-on the output frame grid; audio follows the exact timeline and is encoded continuously to avoid
-per-cut AAC delay. The output has one 48 kHz stereo AAC track. Only the first source audio stream
-is included; mono is duplicated, the first two channels of larger layouts are used, and muted or
+| Choice | Behavior |
+| --- | --- |
+| Standard | The existing H.264 MP4 output, up to 720p/30 fps with a 4 Mbps video target |
+| Small file | Estimated 10 MB output |
+| Medium file | Estimated 25 MB output |
+| Custom size | Estimated 1–500 MB output |
+
+The window shows the chosen output dimensions. Size presets reserve the continuous AAC track
+and container overhead before estimating the video bitrate; smaller budgets can choose 540p,
+480p or 360p instead of 720p. Output is never upscaled. An estimate that cannot fit the audio and
+minimum video budget is refused so a larger target can be chosen. Targets are decimal MB and
+remain estimates; output can be smaller or larger than the target, and no Discord upload limit
+is assumed.
+
+The new MP4 is saved beside the first source. The default name is `Source (edit).mp4`; a changed
+title supplies the base name. Progress and **Cancel export** are shown while working. Editing is
+disabled during export; navigation and playback remain available. The completion message reports
+actual size, the selected target and whether it was exceeded, dimensions and encoder. Exported
+media appears on the next library scan if inside the active root. Input files and the in-memory
+draft are unchanged. Failures retain the draft and show the reason.
+
+Output is H.264 at 30 fps on a 16:9 canvas whose height follows the first source up to the chosen
+resolution cap. Smaller/portrait images fit with black bars without stretching or upscaling.
+Video is re-encoded; use quick trim for original-quality sample copy. Video cuts follow the
+output frame grid; audio follows the exact timeline and is encoded continuously to avoid per-cut
+AAC delay. The output has one 48 kHz stereo AAC track. Only the first source audio stream is
+included; mono is duplicated, the first two channels of larger layouts are used, and muted or
 silent segments contribute silence. Use quick trim when preserving separate audio tracks matters.
-There is no sequence-export size preset or adjustable codec/FPS in this slice.
+Codec and frame rate stay fixed; GIF and loudness tools remain in quick trim.
+
+Sequence export follows the recording encoder preference. With GPU encoding enabled it tries the
+registered hardware encoder, then discards its owned partial output and retries in software if
+opening, encoding, stream validation or frame accounting fails. Cancellation stops the job rather
+than starting a fallback. Real-GPU speed and quality are unverified; a successful software or
+stand-in test does not establish hardware support. Sequence decoding currently stays in
+software, so the report's `hardware_decode` field is `false`.
 
 There is no separate segment-count limit. Export remains bounded to 30 minutes total, SDR H.264/AAC MP4/MOV and recorder-compatible MKV. The
 existing MKV adapter does not accept reordered video/B-frames. HDR and non-square pixels are
@@ -119,9 +143,13 @@ are clipped to the length of the edit. Its settings are in the Text tab: the tex
 120 characters; Enter or clicking away applies it), start and length in seconds, **Size**,
 **Colour**, and the *Title*, *Lower third*, *Top banner* and *Corner tag* position presets. Drag
 the text in the preview to move it anywhere (one undo step); the position is stored as a fraction
-of the picture, so the export puts it where the preview shows it, kept inside the frame. The
-export lays text out with FilmCraft's text engine; the preview draws it approximately the same.
-Text layers are part of the same undo history as the video segments, and Reset clears both tracks.
+of the picture, so the export puts it where the preview shows it, kept inside the frame. Preview and
+export share FilmCraft's Inter SemiBold text raster, layout, shadow, wrapping and placement at
+the chosen export canvas size. The preview scales those pixels to its display area. Text rasters
+are limited to 2,097,152 pixels per layer, with a canvas-height layout cap and separate 16 MiB
+preview/export caches. Moving or fading a layer reuses its pixels.
+At most 256 text layers are accepted. Text layers share the video segments' undo history, and
+Reset clears both tracks.
 
 The Library shows each clip's resolution and file size under its name.
 
@@ -148,14 +176,33 @@ start empty. For example (ticks are integers at 254,016,000,000 per second):
 
 The result is a session that can be supplied to another action, such as
 `{"action":"split","at":1270080000000}`. Actions are append, split, trim, move, duplicate,
-delete, volume, undo, redo and reset; engine validation is the same as the UI. Durations supplied
-in an edit payload describe source metadata; export reopens the actual source and validates it.
+delete, volume, look, preset, add_text, update_text, delete_text, split_text, duplicate_text, undo,
+redo and reset; engine validation is the same as the UI. Durations supplied in an edit payload describe source metadata; export reopens the actual source and validates it.
 
-Export accepts an ordered list of source ranges and an unused output path:
+Export accepts ordered source ranges, optional text layers, an unused output path and an optional
+size preset. Omitting `preset`, or setting it to `null`, keeps standard output and remains
+compatible with earlier request payloads:
 
 ```json
 {"output":"/clips/highlights.mp4","segments":[{"input":"/clips/example.mp4","start":0,"end":1270080000000,"volume_percent":100}]}
 ```
 
-No control server, cloud service, .ccproj format or AI upload is involved. Text, effects,
-transitions, detached audio and multitrack editing remain outside this first slice.
+To use the 10 MB target, add `"preset":{"preset":"small"}`. The 25 MB target is
+`{"preset":"medium"}`; a custom 8 MB target is `{"preset":"custom","megabytes":8}`. These are the
+values of the request's `preset` field, not separate commands. For example:
+
+```json
+{"output":"/clips/highlights-small.mp4","preset":{"preset":"small"},"segments":[{"input":"/clips/example.mp4","start":0,"end":1270080000000,"volume_percent":100}]}
+```
+
+The `editor.export` JSON result preserves the existing top-level `path`, `duration_ms`,
+`pictures`, `audio_tracks` and `bytes` fields. It adds optional `target_bytes`, `within_target`,
+`width`, `height`, `encoder` and `hardware_decode`. `target_bytes` is `null` for standard output.
+The Rust report stores clip facts in `ExportedSequence.clip`, which is flattened during JSON
+serialization; CLI callers do not need to look for a nested `clip` object. The CLI and UI share
+the same engine implementation and hardware preference.
+
+No control server, cloud service, .ccproj format or AI upload is involved. Detached audio,
+overlapping video tracks, cross-dissolves and general-purpose multitrack editing remain outside
+this editor. See [ADR 0019](adr/0019-editor-preview-and-export-presets.md) for the shared rendering
+and export decision.

@@ -877,7 +877,11 @@ fn hardware_export(
     finish_output(job, output, name, progress, cancel)
 }
 
-fn video_budget(target: u64, audio_bytes: u64, duration: Tick) -> Result<u32, ExportError> {
+pub(crate) fn video_budget(
+    target: u64,
+    audio_bytes: u64,
+    duration: Tick,
+) -> Result<u32, ExportError> {
     // Reserve 10% plus 64 KB for indexes, metadata, bitrate variation, and mux overhead.
     let room = target.saturating_mul(9) / 10;
     let room = room

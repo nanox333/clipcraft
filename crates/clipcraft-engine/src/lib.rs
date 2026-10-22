@@ -34,7 +34,7 @@ mod storage;
 
 pub use clipcraft_export::{
     Effect, FADE_LENGTH, Fade, MAX_TEXT_LAYERS, MAX_TITLE_CHARS, SegmentLook, SequenceRequest,
-    SequenceSegment, SequenceText, TEXT_SIZE_RANGE,
+    SequenceSegment, SequenceText, TEXT_SIZE_RANGE, TextRaster, sequence_canvas, text_position,
 };
 pub use clipcraft_export::{
     ExportPreset, GifOptions, LOUDNESS_TARGETS, MAX_GIF_SECONDS, TrimRequest as ExportRange,
@@ -339,6 +339,19 @@ pub struct ExportedClip {
     pub hardware_decode: bool,
 }
 
+/// A rendered editor sequence, with the selected size target and actual output settings.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ExportedSequence {
+    #[serde(flatten)]
+    pub clip: TrimmedClip,
+    pub target_bytes: Option<u64>,
+    pub within_target: bool,
+    pub width: u32,
+    pub height: u32,
+    pub encoder: String,
+    pub hardware_decode: bool,
+}
+
 /// A clip saved with its loudness evened out. Loudness values are in tenths, so they compare
 /// exactly.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -483,15 +496,19 @@ pub fn export_sequence(
     request: &SequenceRequest,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
-) -> Result<TrimmedClip, EngineError> {
-    let report = clipcraft_export::sequence_to_mp4(request, progress, cancel)
-        .map_err(EngineError::Export)?;
-    Ok(TrimmedClip {
-        path: report.path.to_string_lossy().into_owned(),
-        duration_ms: report.duration.to_units_floor(1000) as u64,
-        pictures: report.pictures,
-        audio_tracks: report.audio_tracks,
-        bytes: report.bytes,
+) -> Result<ExportedSequence, EngineError> {
+    let hardware = export_hardware();
+    let report =
+        clipcraft_export::sequence_to_mp4_with(request, hardware.as_ref(), progress, cancel)
+            .map_err(EngineError::Export)?;
+    Ok(ExportedSequence {
+        clip: trimmed_clip(report.clip),
+        target_bytes: report.target_bytes,
+        within_target: report.within_target,
+        width: report.width,
+        height: report.height,
+        encoder: report.encoder,
+        hardware_decode: report.hardware_decode,
     })
 }
 
@@ -648,6 +665,7 @@ fn copy_path(input: &std::path::Path, suffix: &str, extension: &str) -> Option<P
 pub enum CommandOutput {
     EditorMedia(Vec<MediaEntry>),
     EditorSession(Box<EditorSession>),
+    SequenceExported(ExportedSequence),
     SteamGames(SteamGames),
     /// Result of scanning a local directory.
     LibraryScan(LibraryScanResult),
@@ -864,7 +882,7 @@ pub fn execute_cancellable(
             .apply(action)
             .map(|state| CommandOutput::EditorSession(Box::new(state))),
         Command::ExportSequence { request } => {
-            export_sequence(&request, &mut |_| {}, cancel).map(CommandOutput::Trimmed)
+            export_sequence(&request, &mut |_| {}, cancel).map(CommandOutput::SequenceExported)
         }
         Command::ScanSteamGames { roots } => {
             steam_games::scan(&roots, cancel).map(CommandOutput::SteamGames)
@@ -1196,6 +1214,41 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn editor_export_json_keeps_existing_fields_and_accepts_optional_size_presets() {
+        let normal: super::SequenceRequest =
+            serde_json::from_str(r#"{"segments":[],"output":"generated.mp4"}"#).unwrap();
+        assert_eq!(normal.preset, None);
+        let small: super::SequenceRequest = serde_json::from_str(
+            r#"{"segments":[],"output":"generated.mp4","preset":{"preset":"small"}}"#,
+        )
+        .unwrap();
+        assert_eq!(small.preset, Some(super::ExportPreset::Small));
+        let report = super::ExportedSequence {
+            clip: super::TrimmedClip {
+                path: "generated.mp4".into(),
+                duration_ms: 1000,
+                pictures: 30,
+                audio_tracks: 1,
+                bytes: 1234,
+            },
+            target_bytes: Some(10_000_000),
+            within_target: true,
+            width: 640,
+            height: 360,
+            encoder: "Software".into(),
+            hardware_decode: false,
+        };
+        let json = serde_json::to_value(report).unwrap();
+        assert_eq!(json["path"], "generated.mp4");
+        assert_eq!(json["duration_ms"], 1000);
+        assert_eq!(json["target_bytes"], 10_000_000);
+        assert!(
+            json.get("clip").is_none(),
+            "existing CLI fields remain at the top level"
+        );
+    }
 
     struct TestDirectory(PathBuf);
 

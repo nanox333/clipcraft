@@ -99,9 +99,13 @@ not a formal clean-room implementation. The small editor additionally consumes p
   The same crate writes looping GIFs (`clip.export_gif`) and evens out loudness by decoding, scaling and re-encoding only the sound
   (`clip.normalize`); see [ADR 0018](adr/0018-gif-and-loudness-export.md).
   `editor.export` renders a bounded ordered range list through FilmCraft H.264/AAC encoders,
-  using one source/cache at a time. One continuous audio encoder avoids per-cut priming gaps;
-  the first source audio track is normalized to 48 kHz stereo. No multitrack compositor or
-  editor-project file is required.
+  using one source/cache at a time. One continuous 160 kbps AAC encoder avoids per-cut priming
+  gaps; the first source audio track becomes 48 kHz stereo. Optional file-size presets reserve
+  that audio and mux overhead before choosing a video bitrate and canvas tier. The hardware
+  encoder seam retries the complete job in software on failure, while exclusive temporary output
+  and no-replace publication preserve sources and existing files. The result reports actual size,
+  optional target, target status, dimensions and encoder. No editor-project file is required;
+  see [ADR 0019](adr/0019-editor-preview-and-export-presets.md).
 - **Engine:** owns recording sessions, input validation, local index operations, crash recovery,
   background jobs, and stable typed commands. UI and CLI dispatch these same commands. It does not
   provide a persistent editor project or autosaved edit sessions. The new bounded `editor.edit`
@@ -133,7 +137,8 @@ not a formal clean-room implementation. The small editor additionally consumes p
 - **UI/CLI:** native egui desktop app and local command-line tool. No HTTP/WebSocket control service,
   MCP server, browser UI, or remotely hosted feature is part of this architecture.
 - **Current product status:** the UI provides recording controls/settings, a persistent local clip
-  library, playback, and trim. Capture/playback evidence varies by platform; see the current
+  library, playback, quick trim and a small video/audio sequence editor with an independent text
+  track. Capture/playback evidence varies by platform; see the current
   platform and performance limits in [`gaps.md`](gaps.md) rather than inferring support from code
   compiling alone.
 
@@ -175,3 +180,14 @@ The editor uses the shared `kit` palette, Inter families and standard keyboard-a
 A single thumbnail response handles click, drag and context menus to avoid competing hit targets.
 Dense fit views aggregate subpixel cuts, cull offscreen widgets and bound thumbnail painting;
 zooming or ruler seeking still resolves the exact sequence range.
+
+Text preview and export consume the same bounded FilmCraft Inter SemiBold raster, including its
+shadow, layout and wrapping, at canonical export-canvas dimensions. The preview scales those
+pixels into the display area and uses the same placement geometry for dragging. Timing and
+position are separate from raster content, so moving/fading text can reuse cached pixels. Export
+renders active layers through a 16 MiB cache rather than retaining every layer mask. Preview
+textures use a separate 16 MiB LRU; each raster is limited to 2,097,152 pixels and text layout
+height is capped to the canvas before allocation. Preview
+volume applies the same segment fade envelope as the audio exporter without changing the stored
+volume setting. GIF frame delays derive from cumulative integer centisecond timestamps, avoiding
+per-frame rounding drift at frame rates such as 12 and 13 fps.

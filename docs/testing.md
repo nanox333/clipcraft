@@ -359,3 +359,42 @@ These are software/virtual-display checks. Native file-picker integration on ins
 portal backends, physical audio output, Windows/macOS UI behavior, reference-machine 4K playback
 and real capture hardware remain unverified here. The existing platform evidence/limitations
 still apply; this editor work does not establish additional capture support or performance.
+
+## Editor consistency and preset export evidence (M11.1b, 2026-10-22)
+
+The follow-up to `e9b2df7` corrects the default GIF clock and editor preview/export differences,
+then adds editor size presets. `cargo xtask ci` passes with the shared engine/CLI/UI paths.
+
+- GIF regressions decode the written files and sum centisecond delays at 12/13 fps and fractional
+  durations; clock unit cases cover every accepted 5–20 fps value. The CLI smoke check measured
+  a 1-second/default-12-fps output at 1.00 s (previously 0.96 s), and 1.03 s at 13 fps.
+- Shared raster tests check FilmCraft Inter SemiBold pixels, alpha composition, long-text and
+  hostile-canvas bounds. Preview tests exercise texture reuse across placement/resize, cache
+  release, and the same audio envelope at the start/quarter/middle of a fade while preserving
+  stored volume. Existing generated sequence tests decode text, effects and fades.
+- Preset fixtures cover Standard, 10 MB, 25 MB and custom targets, canvas tiers and impossible
+  budgets. A generated 720p sequence exports 210 pictures at 852×480 for a 1 MB target. A real
+  Rust encoder behind the GPU seam proves success, refusal, mid-stream loss, missing packets,
+  missing stream description and malformed-packet fallback; cancellation/collision cases keep
+  sources and existing destinations unchanged and progress remains monotonic.
+- An isolated CLI smoke run exported two seconds from two 640×360 H.264/AAC inputs, with video
+  fades, a colour effect and a fading text layer. Standard/10 MB/25 MB outputs were 1,009,343
+  bytes; the 1 MB custom output was 810,861 bytes. All had 60 pictures, one 48 kHz stereo AAC
+  track and valid full-file FFmpeg decode. Flat JSON clip fields were preserved alongside new
+  target/settings metadata. Reusing an output, a zero custom target and a 30-minute/1 MB
+  impossible audio budget were refused; source SHA-256 hashes stayed unchanged.
+
+Native before/after evidence uses a clean parent worktree at `e9b2df7` and the changed app on an
+isolated Linux/Xvfb 1440×900 display. Screenshots under ignored `.clipcraft-local/editor-presets/`
+show the text preview and centered export window with its preset menu/custom target, including
+1080×760 sizing. Mouse/keyboard entry set the custom target to 1 MB; Escape closed the window
+without exporting and reopening retained the choice. A native 15-second/450-picture export with
+a text layer wrote 862,561 bytes at 640×360/30 fps with 48 kHz stereo AAC; FFprobe inspected it
+and FFmpeg fully decoded it. Cancelling another native job removed only its partial file and kept
+the completed output. The three original hashes stayed unchanged. The native check uses generated
+media only. Test fixtures, CLI reports and source hashes are outside Git.
+
+The environment has no physical sound output or GPU export device. These checks establish the
+software path and hardware-failure contract, not real-device sound, GPU throughput, Windows/macOS
+UI behavior or parity on reference gaming hardware. GIF/codec/export oracles remain external
+verification tools, never shipped product dependencies.

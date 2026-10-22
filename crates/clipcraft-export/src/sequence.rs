@@ -1,4 +1,5 @@
 //! A bounded gapless sequence, rendered sequentially through FilmCraft's Rust codecs.
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -17,7 +18,10 @@ use filmcraft_media::reader::{FileReader, open_reader_within};
 use filmcraft_media::{FrameRequest, SharedReader, SharedSource};
 use serde::{Deserialize, Serialize};
 
-use crate::compress::{Temporary, check_cancel, source_size, write_video};
+use crate::ExportPreset;
+use crate::compress::{Temporary, check_cancel, source_size, video_budget, write_video};
+use crate::hardware::{FastEncoder, FastOpener, FastPacket, FastRequest};
+use crate::text::TextRaster;
 use crate::{ExportError, ExportReport, io_error, mp4_error};
 
 const RATE: FrameRate = FrameRate { num: 30, den: 1 };
@@ -194,6 +198,13 @@ impl SequenceText {
 }
 
 impl SegmentLook {
+    /// Linear gain shared by preview and exported audio. Editing volume stays unchanged.
+    pub fn audio_gain_at(&self, local: Tick, duration: Tick, volume_percent: u16) -> f32 {
+        let fade = self
+            .fade_at(local, duration)
+            .map_or(1.0, |(_, amount)| 1.0 - amount);
+        f32::from(volume_percent.min(100)) / 100.0 * fade
+    }
     /// The fade colour and how much of it covers the picture (`0.0..=1.0`) `local` into a clip
     /// that lasts `duration`.
     pub fn fade_at(&self, local: Tick, duration: Tick) -> Option<(Fade, f32)> {
@@ -240,7 +251,60 @@ pub struct SequenceRequest {
     /// Text layers on the track above the video.
     #[serde(default)]
     pub texts: Vec<SequenceText>,
+    /// An estimated file-size target. Absent preserves the normal 720p/30 fps export.
+    #[serde(default)]
+    pub preset: Option<ExportPreset>,
     pub output: PathBuf,
+}
+
+/// The settings and actual result of a sequence export. File-size targets are estimates.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SequenceReport {
+    pub clip: ExportReport,
+    pub target_bytes: Option<u64>,
+    pub within_target: bool,
+    pub width: u32,
+    pub height: u32,
+    pub encoder: String,
+    pub hardware_decode: bool,
+}
+
+fn sequence_budget(duration: Tick, preset: Option<ExportPreset>) -> Result<u32, ExportError> {
+    if duration <= Tick::ZERO || duration > Tick::from_units(1800, 1) {
+        return Err(ExportError::BadRange);
+    }
+    let Some(preset) = preset else {
+        return Ok(4000);
+    };
+    // One continuous 160 kbps AAC stream, plus padding/priming. The shared estimator reserves
+    // another ten percent and 64 KiB for indexes, mux overhead and bitrate variation.
+    let ticks = i128::from(duration.0);
+    let scale = i128::from(clipcraft_time::TICKS_PER_SECOND);
+    let audio_bytes = ((ticks * 20_000 + scale - 1) / scale) as u64 + 2048;
+    Ok(video_budget(preset.target_bytes()?, audio_bytes, duration)?.min(4000))
+}
+
+/// Canonical sequence canvas, shared by text preview and export. The source is never enlarged;
+/// its pictures fit inside a 16:9 canvas. Small budgets reduce the canvas resolution.
+pub fn sequence_canvas(
+    first_width: u32,
+    first_height: u32,
+    preset: Option<ExportPreset>,
+    duration: Tick,
+) -> Result<(u32, u32), ExportError> {
+    source_size(first_width, first_height)?;
+    let kbps = sequence_budget(duration, preset)?;
+    let cap = if preset.is_none() || kbps >= 2500 {
+        720
+    } else if kbps >= 900 {
+        540
+    } else if kbps >= 350 {
+        480
+    } else {
+        360
+    };
+    let height = (first_height.min(cap) / 2 * 2).max(2);
+    Ok(((height * 16 / 9 / 2 * 2).max(2), height))
 }
 
 fn validate(request: &SequenceRequest) -> Result<Tick, ExportError> {
@@ -279,6 +343,7 @@ fn validate(request: &SequenceRequest) -> Result<Tick, ExportError> {
             return Err(ExportError::InvalidSequence);
         }
     }
+    sequence_budget(Tick(total), request.preset)?;
     Ok(Tick(total))
 }
 
@@ -337,53 +402,310 @@ pub fn sequence_to_mp4(
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
 ) -> Result<ExportReport, ExportError> {
+    sequence_to_mp4_with(request, None, progress, cancel).map(|report| report.clip)
+}
+
+/// Renders a sequence with the requested size estimate, trying the supplied hardware encoder
+/// before software. Device/bitstream failures discard the owned partial and retry from sources.
+/// Cancellation and filesystem failures never start a second attempt.
+pub fn sequence_to_mp4_with(
+    request: &SequenceRequest,
+    hardware: Option<&FastOpener>,
+    progress: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+) -> Result<SequenceReport, ExportError> {
     let duration = validate(request)?;
     if fs::symlink_metadata(&request.output).is_ok() {
         return Err(ExportError::AlreadyExists);
     }
     check_cancel(cancel)?;
+    let mut highest = 0.0_f32;
+    let mut report = |value: f32| {
+        highest = highest.max(value);
+        progress(highest);
+    };
+    if let Some(opener) = hardware {
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            render(request, duration, Some(opener), &mut report, cancel)
+        }))
+        .unwrap_or(Err(ExportError::EncodeFailed));
+        match result {
+            Ok(done) => return Ok(done),
+            Err(ExportError::EncodeFailed) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    check_cancel(cancel)?;
     catch_unwind(AssertUnwindSafe(|| {
-        render(request, duration, progress, cancel)
+        render(request, duration, None, &mut report, cancel)
     }))
     .unwrap_or(Err(ExportError::EncodeFailed))
+}
+
+enum VideoEncoder {
+    Software(Box<Encoder>, (Vec<u8>, Vec<u8>, Vec<u8>)),
+    Hardware(Box<dyn FastEncoder>),
+}
+impl VideoEncoder {
+    fn avcc(&self) -> Vec<u8> {
+        match self {
+            Self::Software(encoder, _) => encoder.avcc(),
+            Self::Hardware(encoder) => encoder.avcc(),
+        }
+    }
+    fn name(&self) -> String {
+        match self {
+            Self::Software(..) => "Software".into(),
+            Self::Hardware(encoder) => encoder.name(),
+        }
+    }
+    fn encode(
+        &mut self,
+        canvas: &image::RgbaImage,
+        index: i64,
+    ) -> Result<Vec<FastPacket>, ExportError> {
+        match self {
+            Self::Hardware(encoder) => encoder
+                .encode(canvas.as_raw(), index as u64)
+                .map_err(|_| ExportError::EncodeFailed),
+            Self::Software(encoder, (y, u, v)) => {
+                filmcraft_export::rgba_to_yuv420_8(
+                    canvas.as_raw(),
+                    canvas.width() as usize,
+                    canvas.height() as usize,
+                    y,
+                    u,
+                    v,
+                );
+                encoder
+                    .encode(
+                        &YuvFrame {
+                            y,
+                            u,
+                            v,
+                            y_stride: canvas.width() as usize,
+                            uv_stride: canvas.width() as usize / 2,
+                        },
+                        index,
+                    )
+                    .map(software_packets)
+                    .map_err(|_| ExportError::EncodeFailed)
+            }
+        }
+    }
+    fn flush(&mut self) -> Result<Vec<FastPacket>, ExportError> {
+        match self {
+            Self::Software(encoder, _) => Ok(software_packets(encoder.flush())),
+            Self::Hardware(encoder) => encoder.flush().map_err(|_| ExportError::EncodeFailed),
+        }
+    }
+}
+fn software_packets(packets: Vec<filmcraft_h264enc::Packet>) -> Vec<FastPacket> {
+    packets
+        .into_iter()
+        .map(|packet| FastPacket {
+            data: packet.data,
+            keyframe: packet.keyframe,
+        })
+        .collect()
+}
+
+fn write_packets(
+    mp4: &mut Mp4Writer<BufWriter<std::fs::File>>,
+    video_id: usize,
+    packets: Vec<FastPacket>,
+    written: &mut i64,
+    expected: i64,
+    duration: Tick,
+) -> Result<(), ExportError> {
+    if packets.len() > expected.saturating_sub(*written) as usize {
+        return Err(ExportError::EncodeFailed);
+    }
+    for packet in packets {
+        if (*written == 0 && !packet.keyframe) || packet.data.len() > 16 * 1024 * 1024 {
+            return Err(ExportError::EncodeFailed);
+        }
+        // The seam uses four-byte length-prefixed NALs. Refuse incomplete/empty packets before
+        // publishing; native adapters also reject reordered picture timestamps.
+        let mut rest = packet.data.as_slice();
+        let mut nal = false;
+        while !rest.is_empty() {
+            let prefix = rest.get(..4).ok_or(ExportError::EncodeFailed)?;
+            let length = u32::from_be_bytes([prefix[0], prefix[1], prefix[2], prefix[3]]) as usize;
+            if length == 0 || length > rest.len().saturating_sub(4) {
+                return Err(ExportError::EncodeFailed);
+            }
+            rest = &rest[4 + length..];
+            nal = true;
+        }
+        if !nal {
+            return Err(ExportError::EncodeFailed);
+        }
+        write_video(
+            mp4,
+            video_id,
+            (&packet.data, packet.keyframe, *written),
+            RATE,
+            duration,
+        )?;
+        *written += 1;
+    }
+    Ok(())
+}
+
+const TEXT_CACHE_BYTES: usize = 16 * 1024 * 1024;
+
+fn paint_texts(
+    request: &SequenceRequest,
+    cache: &mut HashMap<usize, TextRaster>,
+    canvas: &mut image::RgbaImage,
+    time: Tick,
+    cancel: &AtomicBool,
+) -> Result<(), ExportError> {
+    cache.retain(|index, _| {
+        request
+            .texts
+            .get(*index)
+            .is_some_and(|text| time >= text.start && time < text.end)
+    });
+    let mut bytes = cache.values().map(TextRaster::bytes).sum::<usize>();
+    for (index, text) in request.texts.iter().enumerate() {
+        check_cancel(cancel)?;
+        if time < text.start || time >= text.end {
+            continue;
+        }
+        if let std::collections::hash_map::Entry::Vacant(entry) = cache.entry(index)
+            && let Some(raster) = TextRaster::render(text, canvas.width(), canvas.height())?
+        {
+            bytes = bytes
+                .checked_add(raster.bytes())
+                .ok_or(ExportError::InvalidSequence)?;
+            if bytes > TEXT_CACHE_BYTES {
+                return Err(ExportError::InvalidSequence);
+            }
+            entry.insert(raster);
+        }
+        if let Some(raster) = cache.get(&index) {
+            raster.draw(canvas, text, text.opacity_at(time - text.start));
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn picture(
+    request: &SequenceRequest,
+    decoder: &SharedSource,
+    segment: &SequenceSegment,
+    time: Tick,
+    offset: Tick,
+    size: (u32, u32),
+    cache: &mut HashMap<usize, TextRaster>,
+    cancel: &AtomicBool,
+) -> Result<image::RgbaImage, ExportError> {
+    let (width, height) = size;
+    let source_time = segment.start + (time - offset).max(Tick::ZERO);
+    let decoded = decoder
+        .video_frame(FrameRequest::full(source_time))
+        .map_err(|_| ExportError::EncodeFailed)?;
+    source_size(decoded.width, decoded.height)?;
+    let factor = (decoded.width / width).min(decoded.height / height).max(1) as usize;
+    let small = decoded.box_decimated(factor);
+    let frame = small.as_ref().unwrap_or(&decoded);
+    let image = image::RgbaImage::from_raw(frame.width, frame.height, frame.to_rgba8())
+        .ok_or(ExportError::Damaged)?;
+    let mut fitted =
+        image::imageops::thumbnail(&image, width.min(image.width()), height.min(image.height()));
+    segment.look.effect.apply_rgba(&mut fitted);
+    let mut canvas = image::RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 0, 255]));
+    image::imageops::overlay(
+        &mut canvas,
+        &fitted,
+        i64::from((width - fitted.width()) / 2),
+        i64::from((height - fitted.height()) / 2),
+    );
+    if let Some((fade, amount)) = segment
+        .look
+        .fade_at(time - offset, segment.end - segment.start)
+    {
+        blend_fade(&mut canvas, fade, amount);
+    }
+    paint_texts(request, cache, &mut canvas, time, cancel)?;
+    Ok(canvas)
 }
 
 fn render(
     request: &SequenceRequest,
     duration: Tick,
+    hardware: Option<&FastOpener>,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
-) -> Result<ExportReport, ExportError> {
-    let mut height = 720;
-    // Validate every source before creating output. Keep just one decoder/cache open at a time.
+) -> Result<SequenceReport, ExportError> {
+    let mut size = (1280, 720);
+    // Validate every source before creating output. Keep one decoder/cache open at a time.
     for (index, segment) in request.segments.iter().enumerate() {
         check_cancel(cancel)?;
         let decoder = open(segment)?;
         if index == 0 {
-            height = decoder
-                .info()
-                .video
-                .as_ref()
-                .ok_or(ExportError::Damaged)?
-                .height
-                .min(720)
-                / 2
-                * 2;
+            let info = decoder.info();
+            let video = info.video.as_ref().ok_or(ExportError::Damaged)?;
+            size = sequence_canvas(video.width, video.height, request.preset, duration)?;
         }
     }
-    let width = (height * 16 / 9 / 2 * 2).max(2);
-    let mut config = EncoderConfig::new(width, height, 30, 1);
-    config.profile = Profile::Baseline;
-    config.preset = Preset::Speed;
-    config.bframes = 0;
-    config.threads = 2;
-    config.keyint = 60;
-    config.format = PacketFormat::LengthPrefixed;
-    config.rate = RateControl::Vbr {
-        target_kbps: 4000,
-        max_kbps: 8000,
+    let (width, height) = size;
+    let kbps = sequence_budget(duration, request.preset)?;
+    let mut video = if let Some(opener) = hardware {
+        VideoEncoder::Hardware(
+            opener(&FastRequest {
+                width,
+                height,
+                fps: 30,
+                video_kbps: kbps,
+                keyframe_frames: 60,
+            })
+            .map_err(|_| ExportError::EncodeFailed)?,
+        )
+    } else {
+        let mut config = EncoderConfig::new(width, height, 30, 1);
+        config.profile = Profile::Baseline;
+        config.preset = Preset::Speed;
+        config.bframes = 0;
+        config.threads = 2;
+        config.keyint = 60;
+        config.format = PacketFormat::LengthPrefixed;
+        config.rate = RateControl::Vbr {
+            target_kbps: kbps,
+            max_kbps: kbps.saturating_mul(2),
+        };
+        VideoEncoder::Software(
+            Box::new(Encoder::new(config).map_err(|_| ExportError::EncodeFailed)?),
+            (Vec::new(), Vec::new(), Vec::new()),
+        )
     };
-    let mut video = Encoder::new(config).map_err(|_| ExportError::EncodeFailed)?;
+    let name = video.name();
+    let mut text_cache = HashMap::new();
+    // Some native encoders only describe their stream after the first input. If that still
+    // produces no usable description, software is safer than accumulating unknown packets.
+    let mut first = if hardware.is_some() {
+        let segment = request
+            .segments
+            .first()
+            .ok_or(ExportError::InvalidSequence)?;
+        let decoder = open(segment)?;
+        let canvas = picture(
+            request,
+            &decoder,
+            segment,
+            Tick::ZERO,
+            Tick::ZERO,
+            size,
+            &mut text_cache,
+            cancel,
+        )?;
+        Some(video.encode(&canvas, 0)?)
+    } else {
+        None
+    };
     let avc = AvcConfig::parse(&video.avcc()).map_err(|_| ExportError::EncodeFailed)?;
     let mut audio =
         filmcraft_aac::Encoder::new(filmcraft_aac::EncoderConfig::cbr(AUDIO_RATE, 2, 160_000))
@@ -391,9 +713,9 @@ fn render(
     if let Some(parent) = request
         .output
         .parent()
-        .filter(|p| !p.as_os_str().is_empty())
+        .filter(|path| !path.as_os_str().is_empty())
     {
-        fs::create_dir_all(parent).map_err(|e| io_error(&e))?;
+        fs::create_dir_all(parent).map_err(|error| io_error(&error))?;
     }
     let mut partial = request.output.as_os_str().to_owned();
     partial.push(".partial");
@@ -402,11 +724,11 @@ fn render(
         .write(true)
         .create_new(true)
         .open(&partial)
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
                 ExportError::AlreadyExists
             } else {
-                io_error(&e)
+                io_error(&error)
             }
         })?;
     let temporary = Temporary(partial);
@@ -429,13 +751,10 @@ fn render(
         media_rate: 0x0001_0000,
     }];
     let audio_id = mp4.add_track(audio_config).map_err(mp4_error)?;
-    let layers: Vec<Layer> = request
-        .texts
-        .iter()
-        .filter_map(|t| text_layer(t, width, height))
-        .collect();
-    let (mut y, mut u, mut v) = (Vec::new(), Vec::new(), Vec::new());
-    let mut picture = 0_i64;
+    let mut frame = 0_i64;
+    let mut written = 0_i64;
+    let frames =
+        RATE.frame_at(duration) + i64::from(RATE.tick_of(RATE.frame_at(duration)) < duration);
     let mut audio_sample = 0_i64;
     let mut offset = Tick::ZERO;
     for segment in &request.segments {
@@ -443,75 +762,29 @@ fn render(
         let decoder = open(segment)?;
         let end = offset + (segment.end - segment.start);
         let segment_audio_end = ceil_units(end, i64::from(AUDIO_RATE));
-        while RATE.tick_of(picture) < end {
+        while RATE.tick_of(frame) < end {
             check_cancel(cancel)?;
-            let time = RATE.tick_of(picture);
-            let source_time = segment.start + (time - offset).max(Tick::ZERO);
-            let decoded = decoder
-                .video_frame(FrameRequest::full(source_time))
-                .map_err(|_| ExportError::EncodeFailed)?;
-            source_size(decoded.width, decoded.height)?;
-            let factor = (decoded.width / width).min(decoded.height / height).max(1) as usize;
-            let small = decoded.box_decimated(factor);
-            let frame = small.as_ref().unwrap_or(&decoded);
-            let image = image::RgbaImage::from_raw(frame.width, frame.height, frame.to_rgba8())
-                .ok_or(ExportError::Damaged)?;
-            let mut fitted = image::imageops::thumbnail(
-                &image,
-                width.min(image.width()),
-                height.min(image.height()),
-            );
-            segment.look.effect.apply_rgba(&mut fitted);
-            let mut canvas =
-                image::RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 0, 255]));
-            image::imageops::overlay(
-                &mut canvas,
-                &fitted,
-                i64::from((width - fitted.width()) / 2),
-                i64::from((height - fitted.height()) / 2),
-            );
-            if let Some((fade, amount)) = segment
-                .look
-                .fade_at(time - offset, segment.end - segment.start)
+            let time = RATE.tick_of(frame);
+            let packets = if frame == 0
+                && let Some(packets) = first.take()
             {
-                blend_fade(&mut canvas, fade, amount);
-            }
-            for layer in &layers {
-                if time >= layer.start && time < layer.end {
-                    layer.draw(&mut canvas, layer.opacity_at(time - layer.start));
-                }
-            }
-            filmcraft_export::rgba_to_yuv420_8(
-                canvas.as_raw(),
-                width as usize,
-                height as usize,
-                &mut y,
-                &mut u,
-                &mut v,
-            );
-            for packet in video
-                .encode(
-                    &YuvFrame {
-                        y: &y,
-                        u: &u,
-                        v: &v,
-                        y_stride: width as usize,
-                        uv_stride: width as usize / 2,
-                    },
-                    picture,
-                )
-                .map_err(|_| ExportError::EncodeFailed)?
-            {
-                write_video(
-                    &mut mp4,
-                    video_id,
-                    (&packet.data, packet.keyframe, packet.pts),
-                    RATE,
-                    duration,
+                packets
+            } else {
+                let canvas = picture(
+                    request,
+                    &decoder,
+                    segment,
+                    time,
+                    offset,
+                    size,
+                    &mut text_cache,
+                    cancel,
                 )?;
-            }
-            picture += 1;
-            let until = ceil_units(RATE.tick_of(picture).min(end), i64::from(AUDIO_RATE));
+                video.encode(&canvas, frame)?
+            };
+            write_packets(&mut mp4, video_id, packets, &mut written, frames, duration)?;
+            frame += 1;
+            let until = ceil_units(RATE.tick_of(frame).min(end), i64::from(AUDIO_RATE));
             write_audio_until(
                 &decoder,
                 segment,
@@ -523,7 +796,7 @@ fn render(
                 audio_id,
                 cancel,
             )?;
-            progress((RATE.tick_of(picture).0 as f64 / duration.0 as f64 * 0.98).min(0.98) as f32);
+            progress((RATE.tick_of(frame).0 as f64 / duration.0 as f64 * 0.98).min(0.98) as f32);
         }
         write_audio_until(
             &decoder,
@@ -538,15 +811,17 @@ fn render(
         )?;
         offset = end;
     }
-    for packet in video.flush() {
-        check_cancel(cancel)?;
-        write_video(
-            &mut mp4,
-            video_id,
-            (&packet.data, packet.keyframe, packet.pts),
-            RATE,
-            duration,
-        )?;
+    check_cancel(cancel)?;
+    write_packets(
+        &mut mp4,
+        video_id,
+        video.flush()?,
+        &mut written,
+        frames,
+        duration,
+    )?;
+    if written != frames {
+        return Err(ExportError::EncodeFailed);
     }
     for data in audio.flush() {
         check_cancel(cancel)?;
@@ -554,25 +829,38 @@ fn render(
     }
     check_cancel(cancel)?;
     let mut out = mp4.finish().map_err(mp4_error)?;
-    out.flush().map_err(|e| io_error(&e))?;
-    out.get_ref().sync_all().map_err(|e| io_error(&e))?;
-    let bytes = out.get_ref().metadata().map_err(|e| io_error(&e))?.len();
+    out.flush().map_err(|error| io_error(&error))?;
+    out.get_ref().sync_all().map_err(|error| io_error(&error))?;
+    let bytes = out
+        .get_ref()
+        .metadata()
+        .map_err(|error| io_error(&error))?
+        .len();
     drop(out);
     check_cancel(cancel)?;
-    fs::hard_link(&temporary.0, &request.output).map_err(|e| match e.kind() {
+    fs::hard_link(&temporary.0, &request.output).map_err(|error| match error.kind() {
         std::io::ErrorKind::AlreadyExists => ExportError::AlreadyExists,
         std::io::ErrorKind::Unsupported => {
             ExportError::Unsupported("choose a filesystem supporting hard links")
         }
-        _ => io_error(&e),
+        _ => io_error(&error),
     })?;
     progress(1.0);
-    Ok(ExportReport {
-        path: request.output.clone(),
-        duration,
-        pictures: picture as u64,
-        audio_tracks: 1,
-        bytes,
+    let target_bytes = request.preset.map(ExportPreset::target_bytes).transpose()?;
+    Ok(SequenceReport {
+        clip: ExportReport {
+            path: request.output.clone(),
+            duration,
+            pictures: frame as u64,
+            audio_tracks: 1,
+            bytes,
+        },
+        target_bytes,
+        within_target: target_bytes.is_none_or(|target| bytes <= target),
+        width,
+        height,
+        encoder: name,
+        hardware_decode: false,
     })
 }
 
@@ -602,10 +890,11 @@ fn write_audio_until(
             let local = (Tick::from_units(*next, i64::from(AUDIO_RATE)) - offset).max(Tick::ZERO);
             let source_time = segment.start + local;
             // Sound fades with the picture, sampled once per block.
-            let fade_gain = segment
-                .look
-                .fade_at(local, segment.end - segment.start)
-                .map_or(1.0, |(_, amount)| 1.0 - amount);
+            let gain = segment.look.audio_gain_at(
+                local,
+                segment.end - segment.start,
+                segment.volume_percent,
+            );
             let buffer = decoder
                 .audio_stream(
                     0,
@@ -614,7 +903,7 @@ fn write_audio_until(
                     AUDIO_RATE,
                 )
                 .map_err(|_| ExportError::EncodeFailed)?;
-            let factor = f32::from(segment.volume_percent) / 100.0 * fade_gain;
+            let factor = gain;
             if let Some(channel) = buffer.channels.first() {
                 for (out, sample) in left.iter_mut().zip(channel) {
                     *out = if sample.is_finite() {
@@ -658,108 +947,6 @@ fn write_audio_packet(
         },
     )
     .map_err(mp4_error)
-}
-
-/// A rendered text layer: a soft shadow and the letters, rasterised once for the whole export.
-struct Layer {
-    start: Tick,
-    end: Tick,
-    mask: filmcraft_text::Mask,
-    x: i64,
-    y: i64,
-    ink: [f32; 3],
-    shadow: [f32; 3],
-    fade_in: Fade,
-    fade_out: Fade,
-}
-impl Layer {
-    fn opacity_at(&self, local: Tick) -> f32 {
-        fade_amount(self.fade_in, self.fade_out, local, self.end - self.start)
-            .map_or(1.0, |(_, amount)| 1.0 - amount)
-    }
-    fn draw(&self, canvas: &mut image::RgbaImage, opacity: f32) {
-        let shadow = (self.mask.h as f32 / 12.0).clamp(1.0, 4.0) as i64;
-        for (offset, color, strength) in [(shadow, self.shadow, 0.65_f32), (0, self.ink, 1.0)] {
-            for row in 0..self.mask.h {
-                let y = self.y + row as i64 + offset;
-                let Ok(py) = u32::try_from(y) else { continue };
-                if py >= canvas.height() {
-                    continue;
-                }
-                for col in 0..self.mask.w {
-                    let coverage = self
-                        .mask
-                        .a
-                        .get(row * self.mask.w + col)
-                        .copied()
-                        .unwrap_or(0.0)
-                        * strength
-                        * opacity;
-                    if coverage <= 0.0 {
-                        continue;
-                    }
-                    let x = self.x + col as i64 + offset;
-                    let Ok(px) = u32::try_from(x) else { continue };
-                    if px >= canvas.width() {
-                        continue;
-                    }
-                    let pixel = canvas.get_pixel_mut(px, py);
-                    let amount = coverage.clamp(0.0, 1.0);
-                    for (channel, target) in pixel.0.iter_mut().zip(color) {
-                        *channel = (f32::from(*channel) * (1.0 - amount) + target * amount)
-                            .round()
-                            .clamp(0.0, 255.0) as u8;
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn text_layer(text: &SequenceText, width: u32, height: u32) -> Option<Layer> {
-    let line = text.text.trim();
-    if line.is_empty() {
-        return None;
-    }
-    let style = filmcraft_text::TextStyle {
-        size: (height as f32 * f32::from(text.size) / 1000.0).max(8.0),
-        style: "Bold".into(),
-        ..Default::default()
-    };
-    let paragraph = filmcraft_text::ParagraphStyle {
-        align: filmcraft_text::Align::Center,
-        width: Some(width as f32 * 0.9),
-        ..Default::default()
-    };
-    let layout = filmcraft_text::layout(line, &style, &paragraph);
-    let (mask, _, _) =
-        filmcraft_text::render::rasterize(&layout, &filmcraft_text::render::at(0.0, 0.0));
-    // The text is centred on the chosen point, then kept inside the picture.
-    let centre_x = i64::from(width) * i64::from(text.x) / 1000;
-    let centre_y = i64::from(height) * i64::from(text.y) / 1000;
-    let x = (centre_x - mask.w as i64 / 2).clamp(0, (i64::from(width) - mask.w as i64).max(0));
-    let y = (centre_y - mask.h as i64 / 2).clamp(0, (i64::from(height) - mask.h as i64).max(0));
-    // An effect on the layer recolours the letters and their shadow.
-    let recolour = |rgb: [u8; 3]| {
-        let mut pixel = [rgb[0], rgb[1], rgb[2], 255];
-        text.effect.apply_rgba(&mut pixel);
-        [
-            f32::from(pixel[0]),
-            f32::from(pixel[1]),
-            f32::from(pixel[2]),
-        ]
-    };
-    Some(Layer {
-        start: text.start,
-        end: text.end,
-        mask,
-        x,
-        y,
-        ink: recolour(text.color),
-        shadow: recolour([0, 0, 0]),
-        fade_in: text.fade_in,
-        fade_out: text.fade_out,
-    })
 }
 
 fn blend_fade(canvas: &mut image::RgbaImage, fade: Fade, amount: f32) {
