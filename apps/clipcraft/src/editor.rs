@@ -562,7 +562,7 @@ impl EditorState {
         let width = ui.available_width().max(1.0);
         // The preview is 16:9, so it is only as wide as its picture needs to be tall; the Library
         // gets everything else.
-        let picture_height = (top - 106.0).max(40.0);
+        let picture_height = (top - 90.0).max(40.0);
         let browser = if width >= 700.0 {
             let preview = (picture_height * 16.0 / 9.0 + 24.0).clamp(360.0, width - 12.0 - 260.0);
             let auto = (width - 12.0 - preview).max(260.0);
@@ -626,13 +626,13 @@ impl EditorState {
                         .fill(PANEL)
                         .corner_radius(12)
                         .stroke(Stroke::new(1.0_f32, BORDER))
-                        .inner_margin(12)
+                        .inner_margin(egui::Margin::symmetric(12, 8))
                         .show(ui, |ui| {
                             ui.set_width((preview_width - 24.0).max(1.0));
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.title)
                                     .char_limit(100)
-                                    .font(FontId::new(18.0, kit::semibold()))
+                                    .font(FontId::new(13.0, kit::semibold()))
                                     .horizontal_align(Align::Center)
                                     .frame(false)
                                     .desired_width(ui.available_width()),
@@ -644,7 +644,7 @@ impl EditorState {
                                     "Edit title",
                                 )
                             });
-                            let size = Vec2::new(ui.available_width(), (top - 106.0).max(40.0));
+                            let size = Vec2::new(ui.available_width(), (top - 90.0).max(40.0));
                             if let Some(preview) = self.preview.as_mut() {
                                 preview.editor_picture(ui, size);
                             } else {
@@ -658,57 +658,56 @@ impl EditorState {
                                     MUTED,
                                 );
                             }
-                            ui.add_space(6.0);
+                            ui.add_space(4.0);
                             if let Some(time) =
                                 scrub_bar(ui, self.playhead, self.session.duration())
                             {
                                 self.playing = false;
                                 self.seek(time);
                             }
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
-                                let any = !self.session.clips().is_empty();
-                                let playing = self.playing;
-                                if tool(
-                                    ui,
-                                    if playing {
-                                        kit::Icon::Pause
-                                    } else {
-                                        kit::Icon::Play
-                                    },
-                                    if playing { "Pause edit" } else { "Play edit" },
-                                    true,
-                                    any,
-                                )
-                                .clicked()
-                                {
-                                    self.toggle();
-                                }
-                                if tool(ui, kit::Icon::StepBack, "Start", false, any).clicked() {
-                                    self.seek(Tick::ZERO);
-                                }
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    ui.label(
-                                        RichText::new(format!(
-                                            "{}  /  {}",
-                                            stamp(self.playhead),
-                                            stamp(self.session.duration())
-                                        ))
-                                        .size(13.0)
-                                        .color(MUTED)
-                                        .monospace(),
-                                    );
-                                });
-                            });
-                            if let Some(note) =
-                                self.preview.as_ref().and_then(|p| p.editor_audio_note())
-                            {
-                                ui.add(
-                                    egui::Label::new(RichText::new(note).small().color(MUTED))
-                                        .truncate(),
-                                );
-                            }
+                            // Transport centred under the picture, the time at the right edge.
+                            let (row, _) = ui.allocate_exact_size(
+                                Vec2::new(ui.available_width(), 28.0),
+                                Sense::hover(),
+                            );
+                            let any = !self.session.clips().is_empty();
+                            let playing = self.playing;
+                            ui.painter().circle_filled(row.center(), 15.0, kit::CONTROL);
+                            ui.scope_builder(
+                                egui::UiBuilder::new().max_rect(egui::Rect::from_center_size(
+                                    row.center(),
+                                    Vec2::splat(28.0),
+                                )),
+                                |ui| {
+                                    if kit::icon_button(
+                                        ui,
+                                        if playing {
+                                            kit::Icon::Pause
+                                        } else {
+                                            kit::Icon::Play
+                                        },
+                                        28.0,
+                                        true,
+                                        any,
+                                        if playing { "Pause edit" } else { "Play edit" },
+                                    )
+                                    .clicked()
+                                    {
+                                        self.toggle();
+                                    }
+                                },
+                            );
+                            ui.painter().text(
+                                egui::pos2(row.right(), row.center().y),
+                                Align2::RIGHT_CENTER,
+                                format!(
+                                    "{} / {}",
+                                    stamp(self.playhead),
+                                    stamp(self.session.duration())
+                                ),
+                                FontId::monospace(12.0),
+                                MUTED,
+                            );
                         });
                     ui.data_mut(|d| {
                         d.insert_temp(

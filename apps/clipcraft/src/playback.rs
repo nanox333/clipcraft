@@ -86,9 +86,6 @@ impl Playback {
     pub(crate) fn editor_error(&self) -> Option<&str> {
         self.error.as_deref()
     }
-    pub(crate) fn editor_audio_note(&self) -> Option<&str> {
-        self.audio_note.as_deref()
-    }
     pub(crate) fn editor_audio_clock(&self) -> Option<Tick> {
         self.player
             .audio_feed()
