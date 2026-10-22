@@ -110,7 +110,9 @@ and export match.
 
 **Text.** Each piece of text is a **layer on its own track** above the video, like a regular
 layer. **Add text** in the Text tab puts a 3-second layer at the playhead. On the timeline, drag
-its block to move it, drag either end to trim it, click it to select it (Delete removes it).
+its block to move it, drag either end to trim it, click it to select it. With a text layer selected, **Split** (S) cuts it at the playhead into two
+layers (each half keeps its own end of the fades), **Duplicate** (Ctrl/⌘ D) puts a copy right
+after it, and Delete removes it; with a segment selected they act on the video as before.
 Anything it overlaps shows through as a normal layer: it sits above the video, is unaffected by the
 video segment's effect and fades, and can be longer or shorter than any one segment. Text layers
 are clipped to the length of the edit. Its settings are in the Text tab: the text (one line, up to

@@ -111,6 +111,15 @@ pub enum EditorAction {
     DeleteText {
         id: u64,
     },
+    /// Cut a text layer in two at `at` on the timeline.
+    SplitText {
+        id: u64,
+        at: Tick,
+    },
+    /// Copy a text layer to just after itself.
+    DuplicateText {
+        id: u64,
+    },
     /// Set the fades of every segment at once.
     Preset {
         preset: TransitionPreset,
@@ -439,6 +448,39 @@ impl EditorSession {
                     return Err(invalid());
                 }
             }
+            EditorAction::SplitText { id, at } => {
+                let index = self
+                    .texts
+                    .iter()
+                    .position(|t| t.id == id)
+                    .ok_or_else(invalid)?;
+                let layer = self.texts[index].layer.clone();
+                if at - layer.start < MIN_EDITOR_CLIP || layer.end - at < MIN_EDITOR_CLIP {
+                    return Err(invalid());
+                }
+                let mut right = layer;
+                right.start = at;
+                right.fade_in = Fade::None;
+                // A cut inside a layer is not a fade point.
+                self.texts[index].layer.end = at;
+                self.texts[index].layer.fade_out = Fade::None;
+                let id = self.alloc()?;
+                self.texts
+                    .insert(index + 1, EditorText { id, layer: right });
+            }
+            EditorAction::DuplicateText { id } => {
+                let index = self
+                    .texts
+                    .iter()
+                    .position(|t| t.id == id)
+                    .ok_or_else(invalid)?;
+                let mut layer = self.texts[index].layer.clone();
+                let length = layer.duration();
+                layer.start = layer.end;
+                layer.end = layer.start + length;
+                let id = self.alloc()?;
+                self.texts.insert(index + 1, EditorText { id, layer });
+            }
             EditorAction::Reset => {
                 self.clips.clear();
                 self.texts.clear();
@@ -711,6 +753,50 @@ mod tests {
         assert!(reset.clips().is_empty() && reset.texts().is_empty());
         let back = reset.apply(EditorAction::Undo).unwrap();
         assert_eq!((back.clips().len(), back.texts().len()), (1, 1));
+        // Splitting and duplicating a layer.
+        let layer_id = back.texts()[0].id;
+        let (start, end) = (back.texts()[0].layer.start, back.texts()[0].layer.end);
+        let mid = Tick((start.0 + end.0) / 2);
+        assert!(
+            back.clone()
+                .apply(EditorAction::SplitText {
+                    id: layer_id,
+                    at: start
+                })
+                .is_err()
+        );
+        assert!(
+            back.clone()
+                .apply(EditorAction::SplitText {
+                    id: layer_id,
+                    at: end + Tick::from_units(1, 1)
+                })
+                .is_err()
+        );
+        let halves = back
+            .clone()
+            .apply(EditorAction::SplitText {
+                id: layer_id,
+                at: mid,
+            })
+            .unwrap();
+        assert_eq!(halves.texts().len(), 2);
+        assert_eq!(halves.texts()[0].layer.end, mid);
+        assert_eq!(halves.texts()[1].layer.start, mid);
+        assert_eq!(halves.texts()[1].layer.end, end);
+        assert_eq!(halves.texts()[0].layer.fade_out, Fade::None);
+        assert_eq!(halves.texts()[1].layer.fade_in, Fade::None);
+        assert_eq!(halves.texts()[0].layer.fade_in, Fade::Black);
+        assert_ne!(halves.texts()[0].id, halves.texts()[1].id);
+        let copy = back
+            .clone()
+            .apply(EditorAction::DuplicateText { id: layer_id })
+            .unwrap();
+        assert_eq!(copy.texts().len(), 2);
+        assert_eq!(copy.texts()[1].layer.start, end);
+        assert_eq!(copy.texts()[1].layer.duration(), end - start);
+        assert_eq!(copy.texts()[1].layer.text, copy.texts()[0].layer.text);
+        assert_eq!(copy.apply(EditorAction::Undo).unwrap().texts().len(), 1);
         // A layer survives its video being deleted and cuts do not touch it.
         let cut = back
             .apply(EditorAction::Split {

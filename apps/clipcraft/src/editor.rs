@@ -506,7 +506,7 @@ impl EditorState {
             self.toggle();
         }
         if pressed(none, egui::Key::S) {
-            self.edit(EditorAction::Split { at: self.playhead });
+            self.split();
         }
         if pressed(
             egui::Modifiers {
@@ -523,6 +523,9 @@ impl EditorState {
         if let Some(id) = self.selected_text {
             if pressed(none, egui::Key::Delete) {
                 self.edit(EditorAction::DeleteText { id });
+            }
+            if pressed(command, egui::Key::D) {
+                self.duplicate_text(id);
             }
         } else if let Some(id) = self.selected {
             if pressed(none, egui::Key::Delete) {
@@ -804,6 +807,40 @@ impl EditorState {
                     .color(FAINT),
             );
         });
+    }
+    /// Whether Split would cut something at the playhead.
+    fn can_split(&self) -> bool {
+        match self.selected_text_layer() {
+            Some((_, layer)) => {
+                self.playhead - layer.start >= MIN_TEXT && layer.end - self.playhead >= MIN_TEXT
+            }
+            None => self.playhead > Tick::ZERO && self.playhead < self.session.duration(),
+        }
+    }
+    /// Cuts the selected text layer, or else the video segment, at the playhead.
+    fn split(&mut self) {
+        if let Some(id) = self.selected_text {
+            self.edit(EditorAction::SplitText {
+                id,
+                at: self.playhead,
+            });
+            self.select_text_after(id);
+        } else {
+            self.edit(EditorAction::Split { at: self.playhead });
+        }
+    }
+    fn duplicate_text(&mut self, id: u64) {
+        self.edit(EditorAction::DuplicateText { id });
+        self.select_text_after(id);
+    }
+    /// Selects the text layer right after `id`, which is the new half or the copy.
+    fn select_text_after(&mut self, id: u64) {
+        let texts = self.session.texts();
+        if let Some(index) = texts.iter().position(|t| t.id == id)
+            && let Some(next) = texts.get(index + 1)
+        {
+            self.selected_text = Some(next.id);
+        }
     }
     fn selected_text_layer(&self) -> Option<(u64, SequenceText)> {
         self.session
@@ -1636,14 +1673,20 @@ impl EditorState {
                 kit::Icon::Scissors,
                 "Split (S)",
                 false,
-                enabled && self.playhead > Tick::ZERO && self.playhead < self.session.duration(),
+                enabled && self.can_split(),
             )
-            .on_hover_text("Cut the segment at the playhead")
+            .on_hover_text("Cut the selected segment or text layer at the playhead")
             .clicked()
             {
-                self.edit(EditorAction::Split { at: self.playhead });
+                self.split();
             }
             if let Some(id) = self.selected_text {
+                if tool(ui, kit::Icon::Copy, "Duplicate", false, enabled)
+                    .on_hover_text("Copy the selected text layer (Ctrl/\u{2318} D)")
+                    .clicked()
+                {
+                    self.duplicate_text(id);
+                }
                 if tool(ui, kit::Icon::Trash, "Delete", false, enabled)
                     .on_hover_text("Remove the selected text (Del)")
                     .clicked()
@@ -2774,6 +2817,33 @@ mod tests {
         assert!(state.has_clips());
         state.open = true;
         assert_eq!(state.session.duration(), Tick::from_units(2, 1));
+    }
+    #[test]
+    fn split_and_duplicate_act_on_the_selected_text_layer_not_the_video() {
+        let mut state = state();
+        state.edit(EditorAction::AddText {
+            start: Tick::from_units(1, 1),
+            duration: Tick::from_units(2, 1),
+            text: "Hello".into(),
+        });
+        let id = state.session.texts()[0].id;
+        state.selected_text = Some(id);
+        state.selected = None;
+        state.playhead = Tick::from_units(1, 1);
+        assert!(
+            !state.can_split(),
+            "no room to cut at the layer's first frame"
+        );
+        state.playhead = Tick::from_units(2, 1);
+        assert!(state.can_split());
+        state.split();
+        assert_eq!(state.session.texts().len(), 2);
+        assert_eq!(state.session.clips().len(), 1, "the video must not be cut");
+        assert_eq!(state.selected_text, Some(state.session.texts()[1].id));
+        let right = state.session.texts()[1].id;
+        state.duplicate_text(right);
+        assert_eq!(state.session.texts().len(), 3);
+        assert_eq!(state.selected_text, Some(state.session.texts()[2].id));
     }
     #[test]
     fn text_layers_draw_select_and_survive_every_tab_and_size() {
