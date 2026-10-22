@@ -303,30 +303,25 @@ remote render job, or saved editor project. Preserve originals; export a new nor
 **Acceptance:** command-level tests reproduce the UI edit; generated fixtures verify duration,
 frame-accurate cut points, audio sync, metadata, cancellation cleanup, and input-file preservation.
 
-### M4.4 — GIF, clip merge, and loudness evening
+### M4.4 — GIF and loudness evening
 
 **Status:** implemented and tested with generated clips on Linux; no Windows/macOS or real-game
-evidence. Engine commands `clip.export_gif`, `clip.merge` and `clip.normalize`, the CLI
-(`clip gif|merge|normalize`), the trim panel's output menu and the library's **Add to merge** queue
-share one implementation. See [ADR 0017](adr/0017-gif-merge-and-loudness-export.md).
+evidence. Engine commands `clip.export_gif` and `clip.normalize`, the CLI
+(`clip gif|normalize`) and the trim panel's output menu share one implementation. See [ADR 0017](adr/0017-gif-and-loudness-export.md).
 
-**Requirements:** save a short range as a looping GIF; join clips recorded with the same settings
-into one MP4 without re-encoding; bring a range's sound to a common loudness without clipping.
+**Requirements:** save a short range as a looping GIF; bring a range's sound to a common loudness without clipping.
 Preserve originals; never overwrite; cancel leaves nothing behind; work offline.
 
-**Limitations:** GIF is at most 30 s, 960 px wide, 20 fps and has no sound. Merge refuses clips whose
-codec configuration or tracks differ (no re-encoding merge), and sound may drift by under 23 ms per
-join. Loudness evening needs AAC sound, applies one gain to every track, holds the gain back at
+**Limitations:** GIF is at most 30 s, 960 px wide, 20 fps and has no sound. Joining clips is not
+included; it belongs to the planned editor with transitions. Loudness evening needs AAC sound, applies one gain to every track, holds the gain back at
 -1 dBTP, and re-encodes the sound (the picture is copied).
 
-**Acceptance:** generated fixtures verify GIF size, frame count, delay and loop; merged clips show
-the right pictures at the right times (including a clip cut between keyframes), decode cleanly in
-FFmpeg, and refuse unlike clips; normalised output measures at the target within 1 LU, keeps a
+**Acceptance:** generated fixtures verify GIF size, frame count, delay and loop; normalised output measures at the target within 1 LU, keeps a
 click within 50 ms of its place, never exceeds full scale, and decodes cleanly. Bad inputs,
 cancellation and collisions leave no partial file and do not touch the sources.
 
 **Open:** real-game and Windows evidence; speed on representative PCs (see
-[testing.md](testing.md)); merge for mixed-setting clips; WebM/AV1 output.
+[testing.md](testing.md)); a clip editor with joins and transitions; WebM/AV1 output.
 
 ### M4.3 — Local export size and quality presets
 

@@ -95,9 +95,8 @@ not a formal clean-room implementation.
   original is preserved, progress/cancel is shared with the UI, and actual output size is reported.
   Compression uses exclusive temporary-file creation and publishes via a no-replace hard link;
   the output filesystem must support hard links. See [ADR 0013](adr/0013-local-compressed-export.md).
-  The same crate writes looping GIFs (`clip.export_gif`), joins matching clips by copying samples
-  (`clip.merge`), and evens out loudness by decoding, scaling and re-encoding only the sound
-  (`clip.normalize`); see [ADR 0017](adr/0017-gif-merge-and-loudness-export.md).
+  The same crate writes looping GIFs (`clip.export_gif`) and evens out loudness by decoding, scaling and re-encoding only the sound
+  (`clip.normalize`); see [ADR 0017](adr/0017-gif-and-loudness-export.md).
   No multitrack timeline, compositor, or editor-project file is required.
 - **Engine:** owns recording sessions, input validation, local index operations, crash recovery,
   background jobs, and stable typed commands. UI and CLI dispatch these same commands. It does not

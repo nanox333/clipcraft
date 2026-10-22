@@ -145,25 +145,55 @@ fn gif_inner(
     encoder
         .set_repeat(gif::Repeat::Infinite)
         .map_err(|_| ExportError::WriteFailed)?;
-    for index in 0..frames {
+    // Pictures are independent, so a batch of them is decoded, resized and quantised on separate
+    // threads and then written in order. Memory is bounded by the batch size.
+    let workers = i64::try_from(crate::compress::worker_threads()).unwrap_or(2);
+    let mut index = 0;
+    while index < frames {
         check_cancel(cancel)?;
-        let decoded = decoder
-            .video_frame(FrameRequest::full(request.start + rate.tick_of(index)))
-            .map_err(|_| ExportError::EncodeFailed)?;
-        source_size(decoded.width, decoded.height)?;
-        let factor = (decoded.width / width).min(decoded.height / height).max(1) as usize;
-        let small = decoded.box_decimated(factor);
-        let picture = small.as_ref().unwrap_or(&decoded);
-        let image = image::RgbaImage::from_raw(picture.width, picture.height, picture.to_rgba8())
-            .ok_or(ExportError::Damaged)?;
-        let mut resized =
-            image::imageops::resize(&image, width, height, image::imageops::FilterType::Triangle);
-        let mut frame = gif::Frame::from_rgba_speed(w16, h16, resized.as_mut(), 10);
-        frame.delay = delay;
-        encoder
-            .write_frame(&frame)
-            .map_err(|_| ExportError::WriteFailed)?;
-        progress(((index + 1) as f32 / frames as f32 * 0.98).min(0.98));
+        let batch = (frames - index).min(workers);
+        let decoder = &decoder;
+        let made: Vec<Result<gif::Frame<'static>, ExportError>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (index..index + batch)
+                .map(|n| {
+                    scope.spawn(move || -> Result<gif::Frame<'static>, ExportError> {
+                        let decoded = decoder
+                            .video_frame(FrameRequest::full(request.start + rate.tick_of(n)))
+                            .map_err(|_| ExportError::EncodeFailed)?;
+                        source_size(decoded.width, decoded.height)?;
+                        let factor =
+                            (decoded.width / width).min(decoded.height / height).max(1) as usize;
+                        let small = decoded.box_decimated(factor);
+                        let picture = small.as_ref().unwrap_or(&decoded);
+                        let image = image::RgbaImage::from_raw(
+                            picture.width,
+                            picture.height,
+                            picture.to_rgba8(),
+                        )
+                        .ok_or(ExportError::Damaged)?;
+                        let mut resized = if (picture.width, picture.height) == (width, height) {
+                            image
+                        } else {
+                            crate::compress::resize_bilinear(&image, width, height)
+                        };
+                        let mut frame = gif::Frame::from_rgba_speed(w16, h16, resized.as_mut(), 10);
+                        frame.delay = delay;
+                        Ok(frame)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap_or(Err(ExportError::EncodeFailed)))
+                .collect()
+        });
+        for frame in made {
+            encoder
+                .write_frame(&frame?)
+                .map_err(|_| ExportError::WriteFailed)?;
+        }
+        index += batch;
+        progress((index as f32 / frames as f32 * 0.98).min(0.98));
     }
     check_cancel(cancel)?;
     let mut out = encoder.into_inner().map_err(|_| ExportError::WriteFailed)?;

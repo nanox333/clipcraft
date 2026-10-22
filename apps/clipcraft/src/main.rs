@@ -11,7 +11,6 @@ mod capture;
 mod game_scan;
 mod kit;
 mod library_scan;
-mod merge;
 mod organize;
 mod playback;
 mod settings;
@@ -126,8 +125,6 @@ struct ClipCraftApp {
     game_draft: Option<(String, String)>,
     /// Recording: the replay buffer, hotkeys, and the clip being saved.
     capture: capture::CaptureState,
-    /// Clips queued to be joined into one, and the join in flight.
-    merge: merge::MergeState,
 }
 
 /// A thumbnail the worker finished: the clip and its cached JPEG.
@@ -469,21 +466,6 @@ impl ClipCraftApp {
         if wanted != self.window_fullscreen {
             self.window_fullscreen = wanted;
             context.send_viewport_cmd(egui::ViewportCommand::Fullscreen(wanted));
-        }
-        if let Some(event) = self.merge.poll() {
-            let (text, error, path) = match event {
-                merge::MergeEvent::Saved { message, path } => (message, false, Some(path)),
-                merge::MergeEvent::Failed(text) => (text, true, None),
-            };
-            if !error {
-                self.scan_library();
-            }
-            self.capture.notice = Some(capture::Notice {
-                text,
-                error,
-                at: std::time::Instant::now(),
-                path,
-            });
         }
         let mut trimmed = false;
         if let Some(open) = self.playback.as_mut() {
@@ -1016,11 +998,6 @@ impl ClipCraftApp {
             ui.add_space(10.0);
         }
 
-        if self.merge.show(ui)
-            && let Err(message) = self.merge.start(ui.ctx())
-        {
-            self.error = Some(message);
-        }
         let mut card_action = None;
         match self.library.as_ref() {
             Some(result) if result.entries.is_empty() => self.empty_state(ui),
@@ -1044,7 +1021,6 @@ impl ClipCraftApp {
                         &mut self.thumbs,
                         &result.directory,
                         &result.collections,
-                        self.merge.queue(),
                     );
                 }
             }
@@ -1061,9 +1037,6 @@ impl ClipCraftApp {
                     self.edit_library(MetaEdit::SetFavorite { path, favorite });
                 }
                 ClipCardAction::FindFile(path, name, size) => self.start_find(path, name, size),
-                ClipCardAction::ToggleMerge(path) => {
-                    self.merge.toggle(&path);
-                }
                 ClipCardAction::RemoveFromLibrary(path) => {
                     self.edit_library(MetaEdit::RemoveFromLibrary { path });
                 }
@@ -1139,7 +1112,6 @@ impl ClipCraftApp {
         thumbs: &mut thumbs::Thumbnails,
         directory: &str,
         collections: &[String],
-        merge_queue: &[String],
     ) -> Option<ClipCardAction> {
         let available_width = ui.available_width();
         let columns: usize = if available_width < 560.0 {
@@ -1174,7 +1146,6 @@ impl ClipCraftApp {
                         thumbs,
                         game.as_deref(),
                         collections,
-                        merge_queue,
                     ) {
                         action = Some(clicked);
                     }
@@ -1950,8 +1921,6 @@ enum ClipCardAction {
     RemoveFromLibrary(String),
     /// Look for a clip whose file moved: its path, name and size.
     FindFile(String, String, u64),
-    /// Add the clip to the queue of clips to join, or take it out.
-    ToggleMerge(String),
 }
 
 /// Looking for a clip that was moved, on another thread.
@@ -2246,7 +2215,6 @@ fn clip_card(
     thumbs: &mut thumbs::Thumbnails,
     game: Option<&str>,
     collections: &[String],
-    merge_queue: &[String],
 ) -> Option<ClipCardAction> {
     const RADIUS: u8 = 12;
     const BODY_HEIGHT: f32 = 66.0;
@@ -2539,18 +2507,6 @@ fn clip_card(
         if entry.offline && ui.button("Remove from library").clicked() {
             menu_action = Some(ClipCardAction::RemoveFromLibrary(entry.path.clone()));
             ui.close();
-        }
-        if !entry.offline {
-            let queued = merge_queue.contains(&entry.path);
-            let label = if queued {
-                "Remove from merge"
-            } else {
-                "Add to merge"
-            };
-            if ui.button(label).clicked() {
-                menu_action = Some(ClipCardAction::ToggleMerge(entry.path.clone()));
-                ui.close();
-            }
         }
         ui.menu_button("Add to collection", |ui| {
             if collections.is_empty() {

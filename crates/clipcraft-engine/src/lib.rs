@@ -28,8 +28,7 @@ pub use steam_games::{MAX_STEAM_GAMES, SteamGame, SteamGames};
 mod storage;
 
 pub use clipcraft_export::{
-    ExportPreset, GifOptions, LOUDNESS_TARGETS, MAX_GIF_SECONDS, MAX_MERGE_CLIPS,
-    TrimRequest as ExportRange,
+    ExportPreset, GifOptions, LOUDNESS_TARGETS, MAX_GIF_SECONDS, TrimRequest as ExportRange,
 };
 pub use clipcraft_media::MediaProbe;
 
@@ -175,11 +174,6 @@ pub enum Command {
         end_ms: u64,
         target_lufs: i8,
     },
-    /// Joins two to sixteen clips with matching settings into one MP4 without re-encoding.
-    MergeClips {
-        inputs: Vec<PathBuf>,
-        output: PathBuf,
-    },
 }
 
 impl Command {
@@ -207,7 +201,6 @@ impl Command {
             Self::ExportClip { .. } => "clip.export",
             Self::ExportGif { .. } => "clip.export_gif",
             Self::NormalizeClip { .. } => "clip.normalize",
-            Self::MergeClips { .. } => "clip.merge",
             Self::FindMovedFile { .. } => "library.find_file",
         }
     }
@@ -396,21 +389,6 @@ pub fn export_gif_clip(
         .map_err(EngineError::Export)
 }
 
-/// Command `clip.merge`: joins `inputs`, in order, into one MP4 at `output` without re-encoding.
-pub fn merge_clips(
-    inputs: &[PathBuf],
-    output: &std::path::Path,
-    progress: &mut dyn FnMut(f32),
-    cancel: &std::sync::atomic::AtomicBool,
-) -> Result<TrimmedClip, EngineError> {
-    if output.as_os_str().is_empty() || inputs.iter().any(|path| path.as_os_str().is_empty()) {
-        return Err(EngineError::EmptyMediaPath);
-    }
-    clipcraft_export::merge_to_mp4(inputs, output, progress, cancel)
-        .map(trimmed_clip)
-        .map_err(EngineError::Export)
-}
-
 fn trimmed_clip(report: clipcraft_export::ExportReport) -> TrimmedClip {
     TrimmedClip {
         path: report.path.to_string_lossy().into_owned(),
@@ -474,11 +452,6 @@ pub fn normalized_path(input: &std::path::Path) -> Option<PathBuf> {
 /// An unused name for a GIF made from a clip, beside the source.
 pub fn gif_path(input: &std::path::Path) -> Option<PathBuf> {
     copy_path(input, "gif", "gif")
-}
-
-/// An unused name for the merge of `first` with other clips, beside `first`.
-pub fn merged_path(first: &std::path::Path) -> Option<PathBuf> {
-    copy_path(first, "merged", "mp4")
 }
 
 fn copy_path(input: &std::path::Path, suffix: &str, extension: &str) -> Option<PathBuf> {
@@ -818,10 +791,6 @@ pub fn execute_cancellable(
             )
             .map(CommandOutput::Normalized)
         }
-        Command::MergeClips { inputs, output } => {
-            let never = std::sync::atomic::AtomicBool::new(false);
-            merge_clips(&inputs, &output, &mut |_| {}, &never).map(CommandOutput::Trimmed)
-        }
         Command::FindMovedFile {
             name,
             size_bytes,
@@ -1016,7 +985,6 @@ pub const fn command_ids() -> &'static [&'static str] {
         "clip.trim",
         "clip.export",
         "clip.export_gif",
-        "clip.merge",
         "clip.normalize",
         "library.find_file",
         "capture.toggle_microphone",
@@ -1339,11 +1307,11 @@ mod tests {
     }
 
     #[test]
-    fn gif_merge_and_normalize_commands_validate_before_touching_files() {
+    fn gif_and_normalize_commands_validate_before_touching_files() {
         let directory = TestDirectory::new();
         let missing = directory.path().join("missing.mp4");
         let out = directory.path().join("out.mp4");
-        for id in ["clip.export_gif", "clip.merge", "clip.normalize"] {
+        for id in ["clip.export_gif", "clip.normalize"] {
             assert!(super::command_ids().contains(&id));
         }
         let gif = Command::ExportGif {
@@ -1356,22 +1324,6 @@ mod tests {
         };
         assert_eq!(gif.id(), "clip.export_gif");
         assert_eq!(super::execute(gif), Err(EngineError::EmptyMediaPath));
-        let merge = Command::MergeClips {
-            inputs: vec![missing.clone(), PathBuf::new()],
-            output: out.clone(),
-        };
-        assert_eq!(merge.id(), "clip.merge");
-        assert_eq!(super::execute(merge), Err(EngineError::EmptyMediaPath));
-        // One clip is not a merge.
-        assert_eq!(
-            super::execute(Command::MergeClips {
-                inputs: vec![missing.clone()],
-                output: out.clone(),
-            }),
-            Err(EngineError::Export(
-                clipcraft_export::ExportError::BadPreset
-            ))
-        );
         let normalize = |target_lufs| Command::NormalizeClip {
             input: missing.clone(),
             output: out.clone(),
@@ -1397,11 +1349,6 @@ mod tests {
         assert_eq!(
             named.file_name().and_then(|n| n.to_str()),
             Some("run (gif).gif")
-        );
-        let merged = super::merged_path(&directory.path().join("run.mp4")).expect("a free name");
-        assert_eq!(
-            merged.file_name().and_then(|n| n.to_str()),
-            Some("run (merged).mp4")
         );
     }
 }

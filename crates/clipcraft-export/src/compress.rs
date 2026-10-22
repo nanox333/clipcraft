@@ -24,6 +24,8 @@ use crate::{ExportError, ExportReport, Plan, TrimRequest, io_error, mp4_error, p
 
 const VIDEO_TIMESCALE: u32 = 90_000;
 const MAX_FRAMES: i64 = 54_000;
+/// Threads preparing pictures (decode, resize, colour conversion) ahead of the encoder.
+const PREPARERS: u32 = 2;
 
 /// Estimated file-size choices. MB means 1,000,000 bytes, independent of any third-party limit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -99,6 +101,117 @@ impl Drop for Temporary {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
     }
+}
+
+/// Bilinear resize of interleaved 8-bit samples (`channels` per pixel) with fixed-point weights,
+/// about ten times faster than the general resampler for the modest reductions (under 2x) left
+/// after box decimation.
+fn bilinear(
+    raw: &[u8],
+    (sw, sh): (usize, usize),
+    (dw, dh): (usize, usize),
+    channels: usize,
+) -> Vec<u8> {
+    // For each output column: the two source columns and the weight of the second, in 1/256ths.
+    let axis = |from: usize, to: usize| -> Vec<(usize, usize, u32)> {
+        (0..to)
+            .map(|n| {
+                // Pixel centres: (n + 0.5) * from / to - 0.5, in 1/256ths.
+                let position = ((2 * n + 1) * from * 256 / (2 * to)).saturating_sub(128);
+                let low = (position >> 8).min(from.saturating_sub(1));
+                let high = (low + 1).min(from.saturating_sub(1));
+                (low, high, (position & 255) as u32)
+            })
+            .collect()
+    };
+    let columns = axis(sw, dw);
+    let rows = axis(sh, dh);
+    let stride = sw * channels;
+    let mut out = vec![0_u8; dw * dh * channels];
+    if raw.len() < stride * sh || dw == 0 || dh == 0 {
+        return out;
+    }
+    for (y, (low, high, wy)) in rows.iter().enumerate() {
+        let top = &raw[low * stride..(low + 1) * stride];
+        let bottom = &raw[high * stride..(high + 1) * stride];
+        let line = &mut out[y * dw * channels..(y + 1) * dw * channels];
+        for (pixel, (a, b, wx)) in line.chunks_exact_mut(channels).zip(&columns) {
+            for (channel, slot) in pixel.iter_mut().enumerate() {
+                let t = u32::from(top[a * channels + channel]) * (256 - wx)
+                    + u32::from(top[b * channels + channel]) * wx;
+                let u = u32::from(bottom[a * channels + channel]) * (256 - wx)
+                    + u32::from(bottom[b * channels + channel]) * wx;
+                *slot = ((t * (256 - wy) + u * wy + 32_768) >> 16) as u8;
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn resize_bilinear(
+    source: &image::RgbaImage,
+    width: u32,
+    height: u32,
+) -> image::RgbaImage {
+    let size = (source.width() as usize, source.height() as usize);
+    let out = bilinear(source.as_raw(), size, (width as usize, height as usize), 4);
+    image::RgbaImage::from_raw(width, height, out)
+        .unwrap_or_else(|| image::RgbaImage::new(width, height))
+}
+
+/// Scaled 8-bit 4:2:0 planes straight from a decoded BT.709 limited-range picture, skipping the
+/// round trip through RGBA. `None` for any other layout, which then takes the RGBA path.
+fn scale_yuv420(
+    frame: &filmcraft_frame::VideoFrame,
+    width: u32,
+    height: u32,
+) -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    use filmcraft_color::{Matrix, Range};
+    use filmcraft_frame::{Chroma, PixelData};
+    let PixelData::Yuv8 {
+        planes,
+        chroma: Chroma::C420,
+        alpha: None,
+    } = &frame.data
+    else {
+        return None;
+    };
+    if frame.color.matrix != Matrix::Bt709
+        || frame.color.range != Range::Limited
+        || !width.is_multiple_of(2)
+        || !height.is_multiple_of(2)
+    {
+        return None;
+    }
+    let (sw, sh) = (frame.width as usize, frame.height as usize);
+    let (scw, sch) = (sw.div_ceil(2), sh.div_ceil(2));
+    let [luma, blue, red] = planes;
+    if luma.len() < sw * sh || blue.len() < scw * sch || red.len() < scw * sch {
+        return None;
+    }
+    let (dw, dh) = (width as usize, height as usize);
+    let plane = |data: &[u8], from: (usize, usize), to: (usize, usize)| {
+        if from == to {
+            data.to_vec()
+        } else {
+            bilinear(data, from, to, 1)
+        }
+    };
+    let mut y = plane(luma, (sw, sh), (dw, dh));
+    let mut u = plane(blue, (scw, sch), (dw / 2, dh / 2));
+    let mut v = plane(red, (scw, sch), (dw / 2, dh / 2));
+    // The encoder's own conversion keeps samples inside 1..=254; do the same.
+    for sample in y.iter_mut().chain(u.iter_mut()).chain(v.iter_mut()) {
+        *sample = (*sample).clamp(1, 254);
+    }
+    Some((y, u, v))
+}
+
+/// Encoder threads: every core but one (so the app and a running game keep responding), 2 to 8.
+pub(crate) fn worker_threads() -> usize {
+    std::thread::available_parallelism()
+        .map_or(2, |cores| cores.get().saturating_sub(1))
+        .clamp(2, 8)
 }
 
 pub(crate) fn check_cancel(cancel: &AtomicBool) -> Result<(), ExportError> {
@@ -219,7 +332,7 @@ fn export_inner(
     config.profile = Profile::Baseline;
     config.preset = Preset::Speed;
     config.bframes = 0;
-    config.threads = 2;
+    config.threads = worker_threads();
     config.keyint = 60;
     config.format = PacketFormat::LengthPrefixed;
     config.rate = RateControl::Vbr {
@@ -271,48 +384,90 @@ fn export_inner(
         }];
         tracks.push((mp4.add_track(config).map_err(mp4_error)?, p.first));
     }
-    let (mut y, mut u, mut v) = (Vec::new(), Vec::new(), Vec::new());
-    for index in 0..frames {
-        check_cancel(cancel)?;
-        let time = rate.tick_of(index);
-        let decoded = decoder
-            .video_frame(FrameRequest::full(request.start + time))
-            .map_err(|_| ExportError::EncodeFailed)?;
-        source_size(decoded.width, decoded.height)?;
-        let factor = (decoded.width / width).min(decoded.height / height).max(1) as usize;
-        let small = decoded.box_decimated(factor);
-        let frame = small.as_ref().unwrap_or(&decoded);
-        let rgba = frame.to_rgba8();
-        let image = image::RgbaImage::from_raw(frame.width, frame.height, rgba)
-            .ok_or(ExportError::Damaged)?;
-        let resized =
-            image::imageops::resize(&image, width, height, image::imageops::FilterType::Triangle);
-        filmcraft_export::rgba_to_yuv420_8(
-            resized.as_raw(),
-            width as usize,
-            height as usize,
-            &mut y,
-            &mut u,
-            &mut v,
-        );
-        let packets = encoder
-            .encode(
-                &YuvFrame {
-                    y: &y,
-                    u: &u,
-                    v: &v,
-                    y_stride: width as usize,
-                    uv_stride: width as usize / 2,
-                },
-                index,
-            )
-            .map_err(|_| ExportError::EncodeFailed)?;
-        for packet in packets {
-            write_video(&mut mp4, video_id, &packet, rate, duration)?;
+    // Decoding, resizing and colour conversion run on a second thread, a few pictures ahead of
+    // the encoder, so the two overlap. The queue is small, so memory stays bounded.
+    std::thread::scope(|scope| -> Result<(), ExportError> {
+        // Two preparers take every other picture; the encoder reads them back in order.
+        let lanes = i64::from(PREPARERS);
+        let mut receivers = Vec::new();
+        let decoder = &decoder;
+        for lane in 0..lanes {
+            let (sender, receiver) = std::sync::mpsc::sync_channel::<
+                Result<(Vec<u8>, Vec<u8>, Vec<u8>), ExportError>,
+            >(3);
+            receivers.push(receiver);
+            scope.spawn(move || {
+                for index in (lane..frames).step_by(PREPARERS as usize) {
+                    if cancel.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let made = (|| {
+                        let decoded = decoder
+                            .video_frame(FrameRequest::full(request.start + rate.tick_of(index)))
+                            .map_err(|_| ExportError::EncodeFailed)?;
+                        source_size(decoded.width, decoded.height)?;
+                        let factor =
+                            (decoded.width / width).min(decoded.height / height).max(1) as usize;
+                        let small = decoded.box_decimated(factor);
+                        let frame = small.as_ref().unwrap_or(&decoded);
+                        if let Some(planes) = scale_yuv420(frame, width, height) {
+                            return Ok(planes);
+                        }
+                        let image =
+                            image::RgbaImage::from_raw(frame.width, frame.height, frame.to_rgba8())
+                                .ok_or(ExportError::Damaged)?;
+                        // A picture that is already the output size needs no resampling pass.
+                        let resized = if (frame.width, frame.height) == (width, height) {
+                            image
+                        } else {
+                            resize_bilinear(&image, width, height)
+                        };
+                        let (mut y, mut u, mut v) = (Vec::new(), Vec::new(), Vec::new());
+                        filmcraft_export::rgba_to_yuv420_8(
+                            resized.as_raw(),
+                            width as usize,
+                            height as usize,
+                            &mut y,
+                            &mut u,
+                            &mut v,
+                        );
+                        Ok((y, u, v))
+                    })();
+                    let failed = made.is_err();
+                    if sender.send(made).is_err() || failed {
+                        return;
+                    }
+                }
+            });
         }
-        copy_audio(&source, &audio, &mut tracks, &mut mp4, Some(time), cancel)?;
-        progress(((index + 1) as f32 / frames as f32 * 0.98).min(0.98));
-    }
+        for index in 0..frames {
+            check_cancel(cancel)?;
+            let time = rate.tick_of(index);
+            let (y, u, v) = receivers
+                .get((index % lanes) as usize)
+                .ok_or(ExportError::EncodeFailed)?
+                .recv()
+                .map_err(|_| ExportError::EncodeFailed)??;
+            let packets = encoder
+                .encode(
+                    &YuvFrame {
+                        y: &y,
+                        u: &u,
+                        v: &v,
+                        y_stride: width as usize,
+                        uv_stride: width as usize / 2,
+                    },
+                    index,
+                )
+                .map_err(|_| ExportError::EncodeFailed)?;
+            for packet in packets {
+                write_video(&mut mp4, video_id, &packet, rate, duration)?;
+            }
+            copy_audio(&source, &audio, &mut tracks, &mut mp4, Some(time), cancel)?;
+            progress(((index + 1) as f32 / frames as f32 * 0.98).min(0.98));
+        }
+        Ok(())
+    })?;
     check_cancel(cancel)?;
     for packet in encoder.flush() {
         write_video(&mut mp4, video_id, &packet, rate, duration)?;
@@ -480,6 +635,34 @@ mod tests {
             Err(ExportError::TargetTooSmall)
         );
         assert!(video_budget(10_000_000, 960_000, duration).is_ok());
+    }
+
+    #[test]
+    fn bilinear_resize_keeps_flat_colour_and_edges_and_handles_tiny_sources() {
+        let flat = image::RgbaImage::from_pixel(1920, 1080, image::Rgba([10, 120, 250, 255]));
+        let out = resize_bilinear(&flat, 1280, 720);
+        assert_eq!((out.width(), out.height()), (1280, 720));
+        assert!(out.pixels().all(|p| p.0 == [10, 120, 250, 255]));
+        // A black-to-white split stays a split, with only a thin blend between them.
+        let mut split = image::RgbaImage::new(300, 100);
+        for (x, _, p) in split.enumerate_pixels_mut() {
+            *p = if x < 150 {
+                image::Rgba([0, 0, 0, 255])
+            } else {
+                image::Rgba([255, 255, 255, 255])
+            };
+        }
+        let out = resize_bilinear(&split, 200, 66);
+        assert_eq!(out.get_pixel(10, 5).0[0], 0);
+        assert_eq!(out.get_pixel(190, 5).0[0], 255);
+        // One pixel in, many out, and the reverse, never panic or leave the buffer.
+        let one = image::RgbaImage::from_pixel(1, 1, image::Rgba([7, 7, 7, 255]));
+        assert!(
+            resize_bilinear(&one, 8, 8)
+                .pixels()
+                .all(|p| p.0 == [7, 7, 7, 255])
+        );
+        assert_eq!(resize_bilinear(&flat, 2, 2).width(), 2);
     }
 
     #[test]

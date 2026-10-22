@@ -8,8 +8,8 @@ use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use clipcraft_export::{
-    ExportPreset, GifOptions, TrimRequest, compress_to_mp4, export_gif, merge_to_mp4,
-    normalize_to_mp4, trim_to_mp4,
+    ExportPreset, GifOptions, TrimRequest, compress_to_mp4, export_gif, normalize_to_mp4,
+    trim_to_mp4,
 };
 use clipcraft_record::ClipFormat;
 use clipcraft_time::Tick;
@@ -85,17 +85,4 @@ fn export_speed() {
     let t = Instant::now();
     let r = normalize_to_mp4(&request("norm.mp4"), -16.0, &mut |_| {}, &off).unwrap();
     row("even out loudness", t, r.clip.bytes);
-    let t = Instant::now();
-    let r = merge_to_mp4(
-        &[input.clone(), input.clone()],
-        &dir.file("merge.mp4"),
-        &mut |_| {},
-        &off,
-    )
-    .unwrap();
-    println!(
-        "(merge of two: {:.0} s of output)",
-        r.duration.to_units_floor(1_000) as f64 / 1e3
-    );
-    row("merge two (copy)", t, r.bytes);
 }

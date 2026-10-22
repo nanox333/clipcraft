@@ -194,40 +194,41 @@ remaining real-device checks. Timing is informational and is not a flaky CI asse
 Use synthetic fixtures in tests. Large real-media corpora are pinned by commit and SHA-256 and
 fetched into ignored cache directories; never commit captured gameplay or private user media.
 
-## GIF, merge and loudness (M4.4, 2026-10-22)
+## GIF and loudness (M4.4, 2026-10-22)
 
-Run `cargo test -p clipcraft-export --test gif_merge` (GIF size/frames/loop, limits, cancel and
-collision; merge order, a clip cut between keyframes, FFmpeg decode, unlike-clip refusal;
-normalise reaching the target within 1 LU, click timing within 50 ms, no clipping, FFmpeg decode)
-and `cargo test -p clipcraft merge` for the library queue. Speed is a measurement, not a check:
+Run `cargo test -p clipcraft-export --test gif_loudness` (GIF size/frames/loop, limits, cancel and
+collision; normalise reaching the target within 1 LU, click timing within 50 ms, no clipping, FFmpeg
+decode). Speed is a measurement, not a check:
 
 ```sh
 cargo test -p clipcraft-export --release --test timing -- --ignored --nocapture
 # CLIPCRAFT_TIMING_SECONDS=60 CLIPCRAFT_TIMING_SIZE=1920x1080@30 for other clips
 ```
 
-One run on a 4-core Linux container (not a gaming PC) with a generated 1280×720@30, 30 s clip of
-moving noise at a very high bitrate (590 MB, far harder than real footage):
+Measured on a 4-core Linux container (not a gaming PC), release build, a 30 s 1920×1080@60
+H.264/AAC clip (40 MB, FFmpeg test pattern) through the CLI:
 
-| Export | Seconds | × real time |
+| Export | Before (s) | After (s) |
 | --- | ---: | ---: |
-| Trim (sample copy) | 1.1 | 27 |
-| Small file (~10 MB, wrote 9.0 MB) | 42.6 | 0.7 |
-| Medium file (~25 MB, wrote 22.5 MB) | 53.0 | 0.6 |
-| GIF (10 s, 480 wide) | 4.6 | 6.5 |
-| Even out loudness | 4.1 | 7.4 |
-| Merge of two 30 s clips | 6.6 | 4.6 |
+| Small file (~10 MB, wrote 9.0 MB) | 142 | 32 |
+| Medium file (~25 MB, wrote 22.5 MB) | 139 | 34 |
+| GIF, first 10 s | 6.2 | 6.6 |
+| Even out loudness (30 s) | — | 2.0 |
+
+Small-file export got about 4× faster by (1) scaling the decoded Y'CbCr planes directly with an
+integer bilinear filter instead of converting to RGBA, resampling with a general filter and
+converting back, (2) preparing pictures on two threads ahead of the encoder, and (3) giving the
+encoder every core but one. The result stayed within 42 dB PSNR of an FFmpeg bilinear reference at
+the 10 MB target and decodes cleanly. It is still about real time for 1080p, and a harder 720p noise
+clip (590 MB per 30 s) ran slower than real time before and after, so expect long waits on
+very noisy recordings. GIF did not get faster because its time is spent decoding and
+quantising colours; it now uses several threads but the 1080p60 source dominates.
 
 Manual check in the desktop app (Linux, virtual 1440×900 display, FFmpeg-made 1280×720 H.264/AAC
-clips): right-click → Add to merge on two clips → Join clips wrote a 16.0 s MP4 that FFmpeg decodes
-without errors; Trim → Animated GIF wrote a 480×270, 192-frame GIF and offered Show in folder.
+clips): Trim → Animated GIF wrote a 480×270, 192-frame GIF and offered Show in folder.
 `clipcraft-cli clip normalize` on an 8 s clip reported -21.8 LUFS → -16.0 LUFS, and FFmpeg's
-`ebur128` independently measured the output at -16.0 LUFS and decoded it cleanly. Merging clips
-from different encoders and a 40 s GIF were refused with their messages.
-
-The software small-file path was slower than real time on this stress clip, so expect long waits on
-big, noisy recordings until it is measured on real footage and hardware. The earlier table below
-used lighter clips.
+`ebur128` independently measured the output at -16.0 LUFS and decoded it cleanly. A 40 s GIF range
+was refused with its message.
 
 ## Software export sample measurements
 

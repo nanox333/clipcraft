@@ -1,11 +1,9 @@
-//! GIF export and lossless clip merge, checked by decoding what they write.
+//! GIF export and loudness evening, checked by decoding what they write.
 mod support;
 
 use std::sync::atomic::AtomicBool;
 
-use clipcraft_export::{
-    ExportError, GifOptions, TrimRequest, export_gif, merge_to_mp4, trim_to_mp4,
-};
+use clipcraft_export::{ExportError, GifOptions, TrimRequest, export_gif, trim_to_mp4};
 use clipcraft_record::ClipFormat;
 use clipcraft_time::Tick;
 use filmcraft_media::FrameRequest;
@@ -109,141 +107,6 @@ fn gif_limits_collisions_and_cancel_leave_nothing_behind() {
     std::fs::write(&output, b"mine").unwrap();
     assert_eq!(
         run(&request(0, 1_000), fine, &off).unwrap_err(),
-        ExportError::AlreadyExists
-    );
-    assert_eq!(std::fs::read(&output).unwrap(), b"mine");
-}
-
-#[test]
-fn merging_two_clips_plays_both_back_to_back() {
-    let dir = Scratch::new("merge");
-    let one = dir.file("one.mp4");
-    let two = dir.file("two.mp4");
-    fixture(&one, ClipFormat::Mp4, true);
-    fixture(&two, ClipFormat::Mp4, true);
-    // The second clip is cut between keyframes, which needs an edit to hide its first pictures.
-    let cut = dir.file("cut.mp4");
-    trim_to_mp4(
-        &TrimRequest {
-            input: two.clone(),
-            output: cut.clone(),
-            start: secs(1_500),
-            end: secs(3_000),
-        },
-        &mut |_| {},
-        &AtomicBool::new(false),
-    )
-    .unwrap();
-    let before = (std::fs::read(&one).unwrap(), std::fs::read(&cut).unwrap());
-    let output = dir.file("merged.mp4");
-    let mut seen = Vec::new();
-    let report = merge_to_mp4(
-        &[one.clone(), cut.clone()],
-        &output,
-        &mut |p| seen.push(p),
-        &AtomicBool::new(false),
-    )
-    .unwrap();
-    assert_eq!(report.audio_tracks, 2);
-    // 4 s + 1.5 s, to within a picture.
-    let total = report.duration.to_units_floor(1_000);
-    assert!((5_450..=5_550).contains(&total), "{total}");
-    assert_eq!(seen.last(), Some(&1.0));
-    assert!(seen.windows(2).all(|p| p[0] <= p[1]));
-    assert_eq!(
-        (std::fs::read(&one).unwrap(), std::fs::read(&cut).unwrap()),
-        before
-    );
-
-    let merged = source(&output);
-    let info = merged.info();
-    assert_eq!(info.audio_streams.len(), 2);
-    let video = info.video.as_ref().unwrap();
-    assert_eq!((video.width, video.height), (160, 90));
-    // The brightness of the left half steps up each second, so the right clip shows up at each time.
-    let left = |at: i64| {
-        merged
-            .video_frame(FrameRequest::full(secs(at)))
-            .unwrap()
-            .to_rgba8()[0]
-    };
-    let original = |clip: &std::path::Path, at: i64| {
-        source(clip)
-            .video_frame(FrameRequest::full(secs(at)))
-            .unwrap()
-            .to_rgba8()[0]
-    };
-    for (merged_at, clip, clip_at) in [
-        (500, &one, 500),
-        (3_500, &one, 3_500),
-        (4_200, &cut, 200),
-        (5_300, &cut, 1_300),
-    ] {
-        let a = i32::from(left(merged_at));
-        let b = i32::from(original(clip, clip_at));
-        assert!((a - b).abs() < 12, "at {merged_at}: {a} vs {b}");
-    }
-    assert!(!dir.file("merged.mp4.partial").exists());
-    if std::process::Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .is_ok()
-    {
-        let decode = std::process::Command::new("ffmpeg")
-            .args(["-v", "error", "-i"])
-            .arg(&output)
-            .args(["-map", "0", "-f", "null", "-"])
-            .output()
-            .unwrap();
-        assert!(
-            decode.status.success() && decode.stderr.is_empty(),
-            "{}",
-            String::from_utf8_lossy(&decode.stderr)
-        );
-    }
-}
-
-#[test]
-fn merge_refuses_unlike_clips_and_bad_requests() {
-    let dir = Scratch::new("merge-bad");
-    let mp4 = dir.file("a.mp4");
-    let with_sound = dir.file("b.mp4");
-    fixture(&mp4, ClipFormat::Mp4, false);
-    fixture(&with_sound, ClipFormat::Mp4, true);
-    let output = dir.file("out.mp4");
-    let off = AtomicBool::new(false);
-    let merge = |inputs: &[std::path::PathBuf]| merge_to_mp4(inputs, &output, &mut |_| {}, &off);
-    // One clip, or none, is not a merge.
-    assert_eq!(merge(&[]).unwrap_err(), ExportError::BadPreset);
-    assert_eq!(
-        merge(std::slice::from_ref(&mp4)).unwrap_err(),
-        ExportError::BadPreset
-    );
-    // Different tracks cannot be joined without re-encoding.
-    assert_eq!(
-        merge(&[mp4.clone(), with_sound.clone()]).unwrap_err(),
-        ExportError::NotMatching
-    );
-    assert_eq!(
-        merge(&[mp4.clone(), dir.file("missing.mp4")]).unwrap_err(),
-        ExportError::Unreadable
-    );
-    assert!(!output.exists());
-    assert_eq!(
-        merge_to_mp4(
-            &[mp4.clone(), mp4.clone()],
-            &output,
-            &mut |_| {},
-            &AtomicBool::new(true)
-        )
-        .unwrap_err(),
-        ExportError::Cancelled
-    );
-    assert!(!output.exists());
-    assert!(!dir.file("out.mp4.partial").exists());
-    std::fs::write(&output, b"mine").unwrap();
-    assert_eq!(
-        merge(&[mp4.clone(), mp4]).unwrap_err(),
         ExportError::AlreadyExists
     );
     assert_eq!(std::fs::read(&output).unwrap(), b"mine");

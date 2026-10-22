@@ -12,13 +12,11 @@
 
 mod compress;
 mod gif;
-mod merge;
 mod normalize;
 mod source;
 
 pub use compress::{CompressReport, ExportPreset, compress_to_mp4};
 pub use gif::{GifOptions, MAX_GIF_FPS, MAX_GIF_SECONDS, export_gif};
-pub use merge::{MAX_MERGE_CLIPS, merge_to_mp4};
 pub use normalize::{LOUDNESS_TARGETS, NormalizeReport, normalize_to_mp4};
 
 use std::fs::{self, File};
@@ -90,9 +88,6 @@ pub enum ExportError {
     EncodeFailed,
     /// A GIF can cover at most 30 seconds.
     GifTooLong,
-    /// The clips do not share the same codecs, size and tracks, so they cannot be joined
-    /// without re-encoding.
-    NotMatching,
 }
 
 impl std::fmt::Display for ExportError {
@@ -120,9 +115,6 @@ impl std::fmt::Display for ExportError {
                 "The audio and video need more room. Choose a larger target or a shorter range.",
             ),
             Self::GifTooLong => formatter.write_str("A GIF can be at most 30 seconds long."),
-            Self::NotMatching => formatter.write_str(
-                "These clips were recorded with different settings and cannot be joined.",
-            ),
             Self::EncodeFailed => formatter.write_str(
                 "The clip could not be decoded or compressed. The original was preserved.",
             ),

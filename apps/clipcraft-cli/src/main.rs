@@ -96,23 +96,6 @@ fn run_library(arguments: &[OsString]) -> Result<(), CliError> {
 /// `clip trim INPUT OUTPUT START END` cuts INPUT from START to END (seconds) into a new MP4
 /// without re-encoding, and prints what was written.
 fn run_clip(arguments: &[OsString]) -> Result<(), CliError> {
-    // `clip merge OUTPUT INPUT INPUT...` joins matching clips without re-encoding.
-    if arguments.first().and_then(|arg| arg.to_str()) == Some("merge") {
-        let [_, output, inputs @ ..] = arguments else {
-            return Err(CliError::Usage);
-        };
-        if inputs.len() < 2 {
-            return Err(CliError::Usage);
-        }
-        let command = Command::MergeClips {
-            inputs: inputs.iter().map(PathBuf::from).collect(),
-            output: PathBuf::from(output),
-        };
-        return match execute(command).map_err(CliError::Engine)? {
-            CommandOutput::Trimmed(clip) => write_json(&clip),
-            _ => Err(CliError::UnexpectedOutput),
-        };
-    }
     // `clip normalize INPUT OUTPUT START END [LUFS]` evens out the loudness of a range.
     if arguments.first().and_then(|arg| arg.to_str()) == Some("normalize") {
         if !(5..=6).contains(&arguments.len()) {
@@ -494,7 +477,6 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli clip export <input> <output.mp4> <start-seconds> <end-seconds> <target-MB:1..500>\n",
         "  clipcraft-cli clip gif <input> <output.gif> <start-seconds> <end-seconds> [width:160..960 [fps:5..20]]\n",
         "  clipcraft-cli clip normalize <input> <output.mp4> <start-seconds> <end-seconds> [target-LUFS:-30..-8, default -16]\n",
-        "  clipcraft-cli clip merge <output.mp4> <input> <input> [<input>...]\n",
         "  clipcraft-cli diagnose [--json]\n",
         "  clipcraft-cli recording settings\n",
         "  clipcraft-cli capture targets\n",
