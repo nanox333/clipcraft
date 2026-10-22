@@ -247,6 +247,7 @@ fn sequence_cuts_reorder_video_and_reencode_continuous_audio_with_mute_and_gain(
         start: Tick::from_units(start, 1000),
         end: Tick::from_units(end, 1000),
         volume_percent,
+        look: Default::default(),
     };
     let output = dir.file("edit.mp4");
     let request = SequenceRequest {
@@ -326,7 +327,8 @@ fn sequence_fractional_cuts_do_not_accumulate_audio_delay() {
                 input,
                 start: Tick::from_units(1900, 1000),
                 end: Tick::from_units(2101, 1000),
-                volume_percent: 100
+                volume_percent: 100,
+                look: Default::default(),
             };
             10
         ],
@@ -371,6 +373,7 @@ fn sequence_failures_cancellation_and_publication_collisions_preserve_files() {
             start: Tick::ZERO,
             end: Tick::from_units(1, 1),
             volume_percent: 100,
+            look: Default::default(),
         }],
     };
     let cancel = AtomicBool::new(false);
@@ -447,12 +450,14 @@ fn sequence_normalizes_portrait_and_silent_sources_without_stretching() {
                 start: Tick::ZERO,
                 end: Tick::from_units(100, 1000),
                 volume_percent: 100,
+                look: Default::default(),
             },
             SequenceSegment {
                 input: b,
                 start: Tick::ZERO,
                 end: Tick::from_units(100, 1000),
                 volume_percent: 100,
+                look: Default::default(),
             },
         ],
     };
@@ -488,7 +493,8 @@ fn sequence_exports_more_than_thirty_two_segments() {
                 input,
                 start: Tick::ZERO,
                 end: Tick::from_units(1, 30),
-                volume_percent: 0
+                volume_percent: 0,
+                look: Default::default(),
             };
             40
         ],
@@ -506,4 +512,91 @@ fn sequence_exports_more_than_thirty_two_segments() {
             .as_f64(),
         30.0
     );
+}
+
+#[test]
+fn sequence_fades_and_titles_change_the_picture_and_overlong_titles_are_rejected() {
+    use clipcraft_export::{
+        Fade, SegmentLook, SequenceRequest, SequenceSegment, TitlePlace, sequence_to_mp4,
+    };
+    let dir = Scratch::new("sequence-look");
+    let a = dir.file("a.mp4");
+    fixture(&a, ClipFormat::Mp4, true);
+    let segment = |look: SegmentLook| SequenceSegment {
+        input: a.clone(),
+        start: Tick::from_units(1000, 1000),
+        end: Tick::from_units(2000, 1000),
+        volume_percent: 100,
+        look,
+    };
+    let output = dir.file("look.mp4");
+    let request = SequenceRequest {
+        output: output.clone(),
+        segments: vec![segment(SegmentLook {
+            fade_in: Fade::Black,
+            fade_out: Fade::White,
+            title: "Clutch round".into(),
+            title_place: TitlePlace::Bottom,
+        })],
+    };
+    sequence_to_mp4(&request, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    let decoded = source(&output);
+    let frame = |seconds: f64| {
+        let f = decoded
+            .video_frame(FrameRequest::full(Tick::from_units(
+                (seconds * 1000.0) as i64,
+                1000,
+            )))
+            .unwrap();
+        (f.width as usize, f.height as usize, f.to_rgba8())
+    };
+    let mean = |(_, _, rgba): &(usize, usize, Vec<u8>)| {
+        rgba.chunks(4).map(|p| f64::from(p[0])).sum::<f64>() / (rgba.len() / 4) as f64
+    };
+    let start = frame(0.0);
+    let middle = frame(0.5);
+    let end = frame(0.96);
+    assert!(mean(&start) < 12.0, "fade in should start black");
+    assert!(mean(&end) > mean(&middle), "fade out should end near white");
+    assert!(mean(&end) > 150.0, "fade out should end near white");
+    // The title paints near-white letters into the lower part of an unfaded frame.
+    let (w, h, rgba) = &middle;
+    let plain_output = dir.file("plain.mp4");
+    sequence_to_mp4(
+        &SequenceRequest {
+            output: plain_output.clone(),
+            segments: vec![segment(SegmentLook::default())],
+        },
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let plain = source(&plain_output)
+        .video_frame(FrameRequest::full(Tick::from_units(500, 1000)))
+        .unwrap()
+        .to_rgba8();
+    let changed = |rows: std::ops::Range<usize>| {
+        rows.flat_map(|y| (0..*w).map(move |x| (y * w + x) * 4))
+            .filter(|&i| {
+                matches!((rgba.get(i), plain.get(i)), (Some(a), Some(b)) if a.abs_diff(*b) > 60)
+            })
+            .count()
+    };
+    assert!(
+        changed(h * 3 / 4..*h) > 80,
+        "title missing from the lower part"
+    );
+    assert_eq!(changed(0..h / 2), 0, "title leaked into the upper part");
+    let too_long = SequenceRequest {
+        output: dir.file("long.mp4"),
+        segments: vec![segment(SegmentLook {
+            title: "x".repeat(500),
+            ..SegmentLook::default()
+        })],
+    };
+    assert_eq!(
+        sequence_to_mp4(&too_long, &mut |_| {}, &AtomicBool::new(false)),
+        Err(ExportError::InvalidSequence)
+    );
+    assert!(!dir.file("long.mp4").exists());
 }

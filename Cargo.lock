@@ -675,6 +675,7 @@ dependencies = [
  "filmcraft-isobmff",
  "filmcraft-matroska",
  "filmcraft-media",
+ "filmcraft-text",
  "gif",
  "image",
  "serde",

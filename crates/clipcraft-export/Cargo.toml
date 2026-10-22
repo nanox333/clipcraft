@@ -21,6 +21,7 @@ filmcraft-audio-dsp.workspace = true
 filmcraft-matroska.workspace = true
 filmcraft-codecs.workspace = true
 filmcraft-media.workspace = true
+filmcraft-text.workspace = true
 filmcraft-export.workspace = true
 filmcraft-h264enc.workspace = true
 gif.workspace = true

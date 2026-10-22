@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use clipcraft_export::{Fade, MAX_TITLE_CHARS, SegmentLook};
 use clipcraft_time::Tick;
 use filmcraft_project::{ClipId, ItemId, Track, TrackId, TrackItem, TrackKind};
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,9 @@ pub struct EditorClip {
     pub start: Tick,
     pub end: Tick,
     pub volume_percent: u16,
+    /// Fades and the optional title.
+    #[serde(default)]
+    pub look: SegmentLook,
 }
 impl EditorClip {
     pub fn duration(&self) -> Tick {
@@ -71,9 +75,32 @@ pub enum EditorAction {
         id: u64,
         percent: u16,
     },
+    /// Replace a segment's fades and title.
+    Look {
+        id: u64,
+        look: SegmentLook,
+    },
+    /// Set the fades of every segment at once.
+    Preset {
+        preset: TransitionPreset,
+    },
     Undo,
     Redo,
     Reset,
+}
+
+/// Ready-made fade settings for the whole edit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransitionPreset {
+    /// No fades.
+    None,
+    /// Every cut dips to black and back.
+    DipBlack,
+    /// Every cut dips to white and back.
+    DipWhite,
+    /// Fade in from black at the start and out to black at the end.
+    FadeEnds,
 }
 
 fn invalid() -> EngineError {
@@ -84,6 +111,7 @@ fn metadata_bytes(clips: &[EditorClip]) -> usize {
     clips.iter().fold(0_usize, |sum, c| {
         sum.saturating_add(std::mem::size_of::<EditorClip>())
             .saturating_add(c.name.len())
+            .saturating_add(c.look.title.len())
             .saturating_add(c.input.as_os_str().len())
     })
 }
@@ -108,6 +136,8 @@ fn validate(clips: &[EditorClip]) -> Result<(), EngineError> {
             || clip.end <= clip.start
             || clip.duration() < MIN_EDITOR_CLIP
             || clip.volume_percent > 100
+            || clip.look.title.chars().count() > MAX_TITLE_CHARS
+            || clip.look.title.chars().any(char::is_control)
         {
             return Err(invalid());
         }
@@ -228,6 +258,7 @@ impl EditorSession {
                     start: Tick::ZERO,
                     end: duration,
                     volume_percent: 100,
+                    look: SegmentLook::default(),
                 });
             }
             EditorAction::Split { at } => {
@@ -265,6 +296,9 @@ impl EditorSession {
                 // including where FilmCraft's general speed-aware algebra uses floating point.
                 right.start = source_time;
                 self.clips[index].end = source_time;
+                // A cut inside a segment is not a transition point.
+                self.clips[index].look.fade_out = Fade::None;
+                right.look.fade_in = Fade::None;
                 self.clips.insert(index + 1, right);
             }
             EditorAction::Trim { id, start, end } => {
@@ -293,6 +327,30 @@ impl EditorSession {
             EditorAction::Volume { id, percent } => {
                 let index = self.index(id)?;
                 self.clips[index].volume_percent = percent;
+            }
+            EditorAction::Look { id, look } => {
+                let index = self.index(id)?;
+                self.clips[index].look = look;
+            }
+            EditorAction::Preset { preset } => {
+                let last = self.clips.len().saturating_sub(1);
+                for (index, clip) in self.clips.iter_mut().enumerate() {
+                    let (fade_in, fade_out) = match preset {
+                        TransitionPreset::None => (Fade::None, Fade::None),
+                        TransitionPreset::DipBlack => (Fade::Black, Fade::Black),
+                        TransitionPreset::DipWhite => (Fade::White, Fade::White),
+                        TransitionPreset::FadeEnds => (
+                            if index == 0 { Fade::Black } else { Fade::None },
+                            if index == last {
+                                Fade::Black
+                            } else {
+                                Fade::None
+                            },
+                        ),
+                    };
+                    clip.look.fade_in = fade_in;
+                    clip.look.fade_out = fade_out;
+                }
             }
             EditorAction::Reset => self.clips.clear(),
             EditorAction::Undo | EditorAction::Redo => {}
@@ -439,6 +497,69 @@ mod tests {
                 duration: Tick::from_units(2, 1),
             })
             .unwrap()
+    }
+    #[test]
+    fn fades_titles_and_presets_are_undoable_validated_and_split_keeps_them_sensible() {
+        let state = append(append(EditorSession::default()));
+        let (first, second) = (state.clips()[0].id, state.clips()[1].id);
+        let state = state
+            .apply(EditorAction::Preset {
+                preset: TransitionPreset::FadeEnds,
+            })
+            .unwrap();
+        assert_eq!(state.clips()[0].look.fade_in, Fade::Black);
+        assert_eq!(state.clips()[0].look.fade_out, Fade::None);
+        assert_eq!(state.clips()[1].look.fade_out, Fade::Black);
+        let state = state
+            .apply(EditorAction::Preset {
+                preset: TransitionPreset::DipWhite,
+            })
+            .unwrap();
+        assert!(
+            state
+                .clips()
+                .iter()
+                .all(|c| c.look.fade_in == Fade::White && c.look.fade_out == Fade::White)
+        );
+        let look = SegmentLook {
+            title: "Ace".into(),
+            ..state.clips()[0].look.clone()
+        };
+        let state = state.apply(EditorAction::Look { id: first, look }).unwrap();
+        assert_eq!(state.clips()[0].look.title, "Ace");
+        // Cutting a segment keeps the title on both halves but only the outer fades.
+        let state = state
+            .apply(EditorAction::Split {
+                at: Tick::from_units(1, 1),
+            })
+            .unwrap();
+        assert_eq!(state.clips().len(), 3);
+        assert_eq!(state.clips()[0].look.fade_in, Fade::White);
+        assert_eq!(state.clips()[0].look.fade_out, Fade::None);
+        assert_eq!(state.clips()[1].look.fade_in, Fade::None);
+        assert_eq!(state.clips()[1].look.fade_out, Fade::White);
+        assert_eq!(state.clips()[1].look.title, "Ace");
+        for bad in ["x".repeat(MAX_TITLE_CHARS + 1), "two\nlines".into()] {
+            assert!(
+                state
+                    .clone()
+                    .apply(EditorAction::Look {
+                        id: second,
+                        look: SegmentLook {
+                            title: bad,
+                            ..SegmentLook::default()
+                        },
+                    })
+                    .is_err()
+            );
+        }
+        let undone = state.clone().apply(EditorAction::Undo).unwrap();
+        assert_eq!(undone.clips().len(), 2);
+        // Sessions saved before fades existed still load.
+        let mut saved = serde_json::to_value(&state.clips()[0]).unwrap();
+        saved.as_object_mut().unwrap().remove("look");
+        let loaded: EditorClip = serde_json::from_value(saved).unwrap();
+        assert_eq!(loaded.look, SegmentLook::default());
     }
     #[test]
     fn filmcraft_split_reorder_trim_delete_and_history_keep_exact_source_ranges() {

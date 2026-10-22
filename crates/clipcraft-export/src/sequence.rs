@@ -24,12 +24,79 @@ const RATE: FrameRate = FrameRate { num: 30, den: 1 };
 const AUDIO_RATE: u32 = 48_000;
 const MOVIE_SCALE: u32 = 720_000; // Divisible by both 90 kHz video and 48 kHz audio.
 
+/// Longest title, in characters.
+pub const MAX_TITLE_CHARS: usize = 120;
+/// Length of a fade; shorter clips use half their own length.
+pub const FADE_LENGTH: Tick = Tick(clipcraft_time::TICKS_PER_SECOND / 2);
+
+/// What a clip fades to at its start or end.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Fade {
+    #[default]
+    None,
+    Black,
+    White,
+}
+
+/// Where a clip's title sits in the picture.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TitlePlace {
+    Top,
+    Center,
+    #[default]
+    Bottom,
+}
+
+/// Simple per-clip looks: fades at either end and a title shown for the whole clip.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SegmentLook {
+    #[serde(default)]
+    pub fade_in: Fade,
+    #[serde(default)]
+    pub fade_out: Fade,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub title_place: TitlePlace,
+}
+impl SegmentLook {
+    /// The fade colour and how much of it covers the picture (`0.0..=1.0`) `local` into a clip
+    /// that lasts `duration`.
+    pub fn fade_at(&self, local: Tick, duration: Tick) -> Option<(Fade, f32)> {
+        let length = FADE_LENGTH.0.min(duration.0 / 2);
+        if length <= 0 {
+            return None;
+        }
+        let into = (local.0 as f64 / length as f64) as f32;
+        let before_end = ((duration.0 - local.0) as f64 / length as f64) as f32;
+        let from_start =
+            (self.fade_in != Fade::None && into < 1.0).then_some((self.fade_in, 1.0 - into));
+        let to_end = (self.fade_out != Fade::None && before_end < 1.0)
+            .then_some((self.fade_out, 1.0 - before_end));
+        let (kind, amount) = match (from_start, to_end) {
+            (Some(a), Some(b)) => {
+                if a.1 >= b.1 {
+                    a
+                } else {
+                    b
+                }
+            }
+            (a, b) => a.or(b)?,
+        };
+        Some((kind, amount.clamp(0.0, 1.0)))
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SequenceSegment {
     pub input: PathBuf,
     pub start: Tick,
     pub end: Tick,
     pub volume_percent: u16,
+    #[serde(default)]
+    pub look: SegmentLook,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -53,6 +120,8 @@ fn validate(request: &SequenceRequest) -> Result<Tick, ExportError> {
             || segment.start < Tick::ZERO
             || segment.end <= segment.start
             || segment.volume_percent > 100
+            || segment.look.title.chars().count() > MAX_TITLE_CHARS
+            || segment.look.title.chars().any(char::is_control)
         {
             return Err(ExportError::InvalidSequence);
         }
@@ -229,6 +298,7 @@ fn render(
         check_cancel(cancel)?;
         let decoder = open(segment)?;
         let end = offset + (segment.end - segment.start);
+        let title = title_mask(&segment.look, width, height);
         let segment_audio_end = ceil_units(end, i64::from(AUDIO_RATE));
         while RATE.tick_of(picture) < end {
             check_cancel(cancel)?;
@@ -256,6 +326,15 @@ fn render(
                 i64::from((width - fitted.width()) / 2),
                 i64::from((height - fitted.height()) / 2),
             );
+            if let Some(title) = &title {
+                title.draw(&mut canvas);
+            }
+            if let Some((fade, amount)) = segment
+                .look
+                .fade_at(time - offset, segment.end - segment.start)
+            {
+                blend_fade(&mut canvas, fade, amount);
+            }
             filmcraft_export::rgba_to_yuv420_8(
                 canvas.as_raw(),
                 width as usize,
@@ -374,8 +453,13 @@ fn write_audio_until(
         let mut left = vec![0.0; frames];
         let mut right = vec![0.0; frames];
         if segment.volume_percent > 0 && !decoder.info().audio_streams.is_empty() {
-            let source_time = segment.start
-                + (Tick::from_units(*next, i64::from(AUDIO_RATE)) - offset).max(Tick::ZERO);
+            let local = (Tick::from_units(*next, i64::from(AUDIO_RATE)) - offset).max(Tick::ZERO);
+            let source_time = segment.start + local;
+            // Sound fades with the picture, sampled once per block.
+            let fade_gain = segment
+                .look
+                .fade_at(local, segment.end - segment.start)
+                .map_or(1.0, |(_, amount)| 1.0 - amount);
             let buffer = decoder
                 .audio_stream(
                     0,
@@ -384,7 +468,7 @@ fn write_audio_until(
                     AUDIO_RATE,
                 )
                 .map_err(|_| ExportError::EncodeFailed)?;
-            let factor = f32::from(segment.volume_percent) / 100.0;
+            let factor = f32::from(segment.volume_percent) / 100.0 * fade_gain;
             if let Some(channel) = buffer.channels.first() {
                 for (out, sample) in left.iter_mut().zip(channel) {
                     *out = if sample.is_finite() {
@@ -428,4 +512,92 @@ fn write_audio_packet(
         },
     )
     .map_err(mp4_error)
+}
+
+/// A rendered title: a soft shadow and white letters, placed once per clip.
+struct Title {
+    mask: filmcraft_text::Mask,
+    x: i64,
+    y: i64,
+}
+impl Title {
+    fn draw(&self, canvas: &mut image::RgbaImage) {
+        let shadow = (self.mask.h as f32 / 12.0).clamp(1.0, 4.0) as i64;
+        for (dx, dy, color, strength) in [(shadow, shadow, 0.0_f32, 0.65_f32), (0, 0, 255.0, 1.0)] {
+            for row in 0..self.mask.h {
+                let y = self.y + row as i64 + dy;
+                let Ok(py) = u32::try_from(y) else { continue };
+                if py >= canvas.height() {
+                    continue;
+                }
+                for col in 0..self.mask.w {
+                    let coverage = self
+                        .mask
+                        .a
+                        .get(row * self.mask.w + col)
+                        .copied()
+                        .unwrap_or(0.0)
+                        * strength;
+                    if coverage <= 0.0 {
+                        continue;
+                    }
+                    let x = self.x + col as i64 + dx;
+                    let Ok(px) = u32::try_from(x) else { continue };
+                    if px >= canvas.width() {
+                        continue;
+                    }
+                    let pixel = canvas.get_pixel_mut(px, py);
+                    let amount = coverage.clamp(0.0, 1.0);
+                    for channel in pixel.0.iter_mut().take(3) {
+                        *channel = (f32::from(*channel) * (1.0 - amount) + color * amount)
+                            .round()
+                            .clamp(0.0, 255.0) as u8;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn title_mask(look: &SegmentLook, width: u32, height: u32) -> Option<Title> {
+    let text = look.title.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let style = filmcraft_text::TextStyle {
+        size: (height as f32 * 0.075).max(10.0),
+        style: "Bold".into(),
+        ..Default::default()
+    };
+    let paragraph = filmcraft_text::ParagraphStyle {
+        align: filmcraft_text::Align::Center,
+        width: Some(width as f32 * 0.86),
+        ..Default::default()
+    };
+    let layout = filmcraft_text::layout(text, &style, &paragraph);
+    let (mask, left, top) =
+        filmcraft_text::render::rasterize(&layout, &filmcraft_text::render::at(0.0, 0.0));
+    let margin = (height as f32 * 0.08) as i64;
+    let x = (i64::from(width) - mask.w as i64) / 2;
+    let y = match look.title_place {
+        TitlePlace::Top => margin,
+        TitlePlace::Center => (i64::from(height) - mask.h as i64) / 2,
+        TitlePlace::Bottom => i64::from(height) - mask.h as i64 - margin,
+    };
+    let _ = (left, top);
+    Some(Title { mask, x, y })
+}
+
+fn blend_fade(canvas: &mut image::RgbaImage, fade: Fade, amount: f32) {
+    let color = match fade {
+        Fade::None => return,
+        Fade::Black => 0.0,
+        Fade::White => 255.0,
+    };
+    let amount = amount.clamp(0.0, 1.0);
+    for pixel in canvas.pixels_mut() {
+        for channel in pixel.0.iter_mut().take(3) {
+            *channel = (f32::from(*channel) * (1.0 - amount) + color * amount).round() as u8;
+        }
+    }
 }

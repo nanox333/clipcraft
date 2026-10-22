@@ -12,7 +12,7 @@ mod diagnose;
 mod editor;
 pub use editor::{
     EditorAction, EditorClip, EditorSession, MAX_EDITOR_DURATION, MAX_EDITOR_HISTORY,
-    MIN_EDITOR_CLIP,
+    MIN_EDITOR_CLIP, TransitionPreset,
 };
 mod game_catalog;
 mod game_detection;
@@ -35,7 +35,9 @@ mod storage;
 pub use clipcraft_export::{
     ExportPreset, GifOptions, LOUDNESS_TARGETS, MAX_GIF_SECONDS, TrimRequest as ExportRange,
 };
-pub use clipcraft_export::{SequenceRequest, SequenceSegment};
+pub use clipcraft_export::{
+    FADE_LENGTH, Fade, MAX_TITLE_CHARS, SegmentLook, SequenceRequest, SequenceSegment, TitlePlace,
+};
 pub use clipcraft_media::MediaProbe;
 use clipcraft_record::{HardwareEncoder, HardwareProvider, HardwareRequest};
 

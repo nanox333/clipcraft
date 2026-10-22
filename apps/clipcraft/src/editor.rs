@@ -5,8 +5,8 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use clipcraft_engine::{
-    Command, CommandOutput, EditorAction, EditorSession, MediaEntry, SequenceRequest,
-    SequenceSegment, TrimmedClip, execute,
+    Command, CommandOutput, EditorAction, EditorSession, Fade, MediaEntry, SequenceRequest,
+    SequenceSegment, TitlePlace, TransitionPreset, TrimmedClip, execute,
 };
 use clipcraft_time::{FrameRate, Tick};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, RichText, Sense, Stroke, Vec2};
@@ -50,6 +50,7 @@ pub struct EditorState {
     job: Option<ExportJob>,
     saved: Option<PathBuf>,
     /// Width the person dragged the Library to; `None` lets it follow the 16:9 preview.
+    title_draft: (u64, String),
     library_width: Option<f32>,
     /// Height the person dragged the preview row to; `None` gives it all the room there is.
     top_height: Option<f32>,
@@ -77,6 +78,7 @@ impl Default for EditorState {
             message: None,
             job: None,
             saved: None,
+            title_draft: (0, String::new()),
             library_width: None,
             top_height: None,
         }
@@ -422,6 +424,7 @@ impl EditorState {
                     start: c.start,
                     end: c.end,
                     volume_percent: c.volume_percent,
+                    look: c.look.clone(),
                 })
                 .collect(),
         };
@@ -507,18 +510,6 @@ impl EditorState {
         self.keys(ui);
         ui.horizontal(|ui| {
             ui.set_min_height(44.0);
-            ui.label(
-                RichText::new("Editor")
-                    .size(28.0)
-                    .family(kit::semibold())
-                    .color(kit::TEXT),
-            );
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new("Arrange clips. Keep the best moments.")
-                    .size(14.0)
-                    .color(MUTED),
-            );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if tool(
                     ui,
@@ -550,7 +541,7 @@ impl EditorState {
         } else {
             0.0
         };
-        let full_top = (ui.available_height() - 372.0 - status_height).max(120.0);
+        let full_top = (ui.available_height() - 420.0 - status_height).max(120.0);
         let top = self
             .top_height
             .filter(|height| height.is_finite())
@@ -645,8 +636,10 @@ impl EditorState {
                                 )
                             });
                             let size = Vec2::new(ui.available_width(), (top - 78.0).max(40.0));
+                            let area = egui::Rect::from_min_size(ui.cursor().min, size);
                             if let Some(preview) = self.preview.as_mut() {
                                 preview.editor_picture(ui, size);
+                                self.paint_look(ui, area);
                             } else {
                                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
                                 ui.painter().rect_filled(rect, 12, Color32::BLACK);
@@ -931,13 +924,29 @@ impl EditorState {
                                                         title,
                                                         TEXT,
                                                     );
-                                                ui.painter().text(
-                                                    rect.left_bottom() + Vec2::new(0.0, 22.0),
-                                                    Align2::LEFT_TOP,
-                                                    crate::format_bytes(entry.size_bytes),
-                                                    FontId::new(10.5, kit::medium()),
-                                                    MUTED,
-                                                );
+                                                let meta = match entry
+                                                    .probe
+                                                    .as_ref()
+                                                    .and_then(|p| p.width.zip(p.height))
+                                                {
+                                                    Some((w, h)) => format!(
+                                                        "{w}\u{00d7}{h} \u{00b7} {}",
+                                                        crate::format_bytes(entry.size_bytes)
+                                                    ),
+                                                    None => crate::format_bytes(entry.size_bytes),
+                                                };
+                                                ui.painter()
+                                                    .with_clip_rect(egui::Rect::from_min_max(
+                                                        rect.left_bottom(),
+                                                        card.right_bottom(),
+                                                    ))
+                                                    .text(
+                                                        rect.left_bottom() + Vec2::new(0.0, 22.0),
+                                                        Align2::LEFT_TOP,
+                                                        meta,
+                                                        FontId::new(10.5, kit::medium()),
+                                                        MUTED,
+                                                    );
                                                 if response.clicked() {
                                                     response.request_focus();
                                                 }
@@ -1036,6 +1045,50 @@ impl EditorState {
             }
         }
     }
+    /// Shows the playhead segment's title and fade over the picture, as the export will.
+    fn paint_look(&self, ui: &egui::Ui, area: egui::Rect) {
+        let Some((clip, source_time)) = self.session.at(self.playhead) else {
+            return;
+        };
+        let (width, height) = if area.width() / area.height().max(1.0) > 16.0 / 9.0 {
+            (area.height() * 16.0 / 9.0, area.height())
+        } else {
+            (area.width(), area.width() * 9.0 / 16.0)
+        };
+        let canvas = egui::Rect::from_center_size(area.center(), Vec2::new(width, height));
+        let painter = ui.painter().with_clip_rect(canvas);
+        let title = clip.look.title.trim();
+        if !title.is_empty() {
+            let galley = painter.layout(
+                title.to_owned(),
+                FontId::new((height * 0.075).max(8.0), kit::semibold()),
+                Color32::WHITE,
+                width * 0.86,
+            );
+            let margin = height * 0.08;
+            let top = match clip.look.title_place {
+                TitlePlace::Top => canvas.top() + margin,
+                TitlePlace::Center => canvas.center().y - galley.size().y / 2.0,
+                TitlePlace::Bottom => canvas.bottom() - margin - galley.size().y,
+            };
+            let at = egui::pos2(canvas.center().x - galley.size().x / 2.0, top);
+            let shadow = (height * 0.01).clamp(1.0, 3.0);
+            painter.galley_with_override_text_color(
+                at + Vec2::splat(shadow),
+                galley.clone(),
+                Color32::from_black_alpha(170),
+            );
+            painter.galley(at, galley, Color32::WHITE);
+        }
+        if let Some((fade, amount)) = clip.look.fade_at(source_time - clip.start, clip.duration()) {
+            let color = if fade == Fade::White { 255 } else { 0 };
+            painter.rect_filled(
+                canvas,
+                0,
+                Color32::from_rgba_unmultiplied(color, color, color, (amount * 255.0) as u8),
+            );
+        }
+    }
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
@@ -1097,6 +1150,26 @@ impl EditorState {
                     }
                 }
             }
+            separator(ui);
+            ui.add_enabled_ui(enabled && !self.session.clips().is_empty(), |ui| {
+                let mut chosen = None;
+                kit::pill_menu(ui, "Transitions", "Fade presets for every segment", |ui| {
+                    for (name, preset) in [
+                        ("Dip to black at every cut", TransitionPreset::DipBlack),
+                        ("Dip to white at every cut", TransitionPreset::DipWhite),
+                        ("Fade in and out", TransitionPreset::FadeEnds),
+                        ("No transitions", TransitionPreset::None),
+                    ] {
+                        if ui.button(name).clicked() {
+                            chosen = Some(preset);
+                            ui.close();
+                        }
+                    }
+                });
+                if let Some(preset) = chosen {
+                    self.edit(EditorAction::Preset { preset });
+                }
+            });
             // Zoom and reset sit at the right edge.
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if tool(
@@ -1288,6 +1361,44 @@ impl EditorState {
                         FontId::monospace(10.0),
                         Color32::WHITE,
                     );
+                    for (fade, left) in [(clip.look.fade_in, true), (clip.look.fade_out, false)] {
+                        if fade == Fade::None || card.width() < 30.0 {
+                            continue;
+                        }
+                        let shade = if fade == Fade::White {
+                            Color32::from_white_alpha(150)
+                        } else {
+                            Color32::from_black_alpha(170)
+                        };
+                        let (edge, inner) = if left {
+                            (card.left(), card.left() + 18.0)
+                        } else {
+                            (card.right(), card.right() - 18.0)
+                        };
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![
+                                egui::pos2(edge, card.top()),
+                                egui::pos2(edge, card.bottom()),
+                                egui::pos2(inner, card.bottom()),
+                            ],
+                            shade,
+                            Stroke::NONE,
+                        ));
+                    }
+                    if !clip.look.title.trim().is_empty() && card.width() > 40.0 {
+                        let badge = egui::Rect::from_min_size(
+                            card.right_top() + Vec2::new(-26.0, 4.0),
+                            Vec2::new(22.0, 16.0),
+                        );
+                        painter.rect_filled(badge, 4, Color32::from_black_alpha(190));
+                        painter.text(
+                            badge.center(),
+                            Align2::CENTER_CENTER,
+                            "T",
+                            FontId::new(11.0, kit::semibold()),
+                            LIME,
+                        );
+                    }
                     if self.selected == Some(clip.id) {
                         painter.rect_stroke(
                             card,
@@ -1477,15 +1588,97 @@ impl EditorState {
                                 percent: if clip.volume_percent == 0 { 100 } else { 0 },
                             });
                         }
-                        ui.label(
-                            RichText::new("First audio track · linked to video")
-                                .size(12.0)
-                                .color(FAINT),
+                    });
+                    ui.add_space(6.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+                        let mut look = clip.look.clone();
+                        ui.label(RichText::new("Transitions").size(13.0).color(MUTED));
+                        if let Some(fade) = fade_menu(ui, "In", clip.look.fade_in) {
+                            look.fade_in = fade;
+                        }
+                        if let Some(fade) = fade_menu(ui, "Out", clip.look.fade_out) {
+                            look.fade_out = fade;
+                        }
+                        separator(ui);
+                        ui.label(RichText::new("Text").size(13.0).color(MUTED));
+                        if self.title_draft.0 != clip.id {
+                            self.title_draft = (clip.id, clip.look.title.clone());
+                        }
+                        let field = ui.add(
+                            egui::TextEdit::singleline(&mut self.title_draft.1)
+                                .hint_text("Title on this segment")
+                                .char_limit(clipcraft_engine::MAX_TITLE_CHARS)
+                                .margin(egui::Margin::symmetric(10, 6))
+                                .desired_width(220.0),
                         );
+                        field.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::TextEdit,
+                                true,
+                                "Segment title",
+                            )
+                        });
+                        if field.lost_focus() {
+                            look.title = self.title_draft.1.replace(char::is_control, " ");
+                        }
+                        let place = match clip.look.title_place {
+                            TitlePlace::Top => "Top",
+                            TitlePlace::Center => "Middle",
+                            TitlePlace::Bottom => "Bottom",
+                        };
+                        kit::pill_menu(ui, place, "Where the text sits", |ui| {
+                            for (name, value) in [
+                                ("Top", TitlePlace::Top),
+                                ("Middle", TitlePlace::Center),
+                                ("Bottom", TitlePlace::Bottom),
+                            ] {
+                                if ui
+                                    .selectable_label(clip.look.title_place == value, name)
+                                    .clicked()
+                                {
+                                    look.title_place = value;
+                                    ui.close();
+                                }
+                            }
+                        });
+                        if look != clip.look {
+                            self.edit(EditorAction::Look { id: clip.id, look });
+                        }
                     });
                 });
         });
     }
+}
+
+fn fade_name(fade: Fade) -> &'static str {
+    match fade {
+        Fade::None => "None",
+        Fade::Black => "Black",
+        Fade::White => "White",
+    }
+}
+
+/// A small menu to pick what a segment fades from or to; returns the new choice.
+fn fade_menu(ui: &mut egui::Ui, side: &str, current: Fade) -> Option<Fade> {
+    let mut picked = None;
+    kit::pill_menu(
+        ui,
+        &format!("{side}: {}", fade_name(current)),
+        "Fade from or to a colour over half a second",
+        |ui| {
+            for fade in [Fade::None, Fade::Black, Fade::White] {
+                if ui
+                    .selectable_label(current == fade, fade_name(fade))
+                    .clicked()
+                {
+                    picked = Some(fade);
+                    ui.close();
+                }
+            }
+        },
+    );
+    picked
 }
 
 /// Quiet or lime text button. Standard egui buttons keep keyboard activation and the app's

@@ -88,6 +88,24 @@ There is no separate segment-count limit. Export remains bounded to 30 minutes t
 existing MKV adapter does not accept reordered video/B-frames. HDR and non-square pixels are
 refused. The destination filesystem must support hard links for safe output publication.
 
+## Transitions and text
+
+Each segment can fade in from, and out to, **black** or **white** over half a second (or half the
+segment if it is shorter). Pick it per segment in the bar under the timeline (**In** / **Out**), or
+use **Transitions** in the toolbar for a preset on every segment: dip to black at every cut, dip to
+white at every cut, fade in and out (first and last segments only) or none. The picture and the
+segment's sound fade together, in the preview and in the export. Cutting a segment keeps only the
+outer fades. These are dips, not cross-dissolves: segments never overlap, so the length of the edit
+does not change.
+
+The same bar has a **Text** field: one line (up to 120 characters) shown over the whole segment,
+at the top, middle or bottom of the picture, in white bold Inter with a soft shadow. Press Enter
+or click away to apply it; to show it only part of the time, cut the segment first. Text is laid
+out by FilmCraft's text engine in the export and drawn approximately the same in the preview.
+Timeline segments show a triangle at a faded end and a **T** badge when they carry text.
+
+The Library shows each clip's resolution and file size under its name.
+
 ## Sessions and command line
 
 Navigating away retains edits and imported media; return with the **Editor** rail icon. Closing ClipCraft discards the in-memory draft;
