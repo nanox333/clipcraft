@@ -6,7 +6,9 @@
 //! by the ClipCraft maintainer. Bundled recognition metadata lives in game_catalog;
 //! callers of this matcher provide custom rules and process metadata.
 
+use crate::DesktopCaptureMode;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// A configured game process that currently has a capturable game window.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,7 +24,7 @@ pub struct GameProcessMatch {
 pub enum GameArmingDecision {
     /// Start capture for this game's process.
     Start(GameProcessMatch),
-    /// Continue on a desktop only after an actual, successfully captured game exited.
+    /// Start desktop replay when the explicitly chosen desktop policy permits it.
     StartDesktop,
     /// Stop the current game-managed capture because its process is no longer present.
     Stop,
@@ -35,6 +37,7 @@ pub struct GameArmingState {
     recording: Option<GameProcessMatch>,
     paused: bool,
     desktop: bool,
+    desktop_since: Option<Duration>,
 }
 
 impl GameArmingState {
@@ -43,59 +46,117 @@ impl GameArmingState {
         self.observe_with_desktop(matches, false)
     }
 
-    /// `allow_desktop` must be false for errors, settings changes and still-running processes.
+    /// Legacy caller: explicitly permit an untimed continuation after the captured game exits.
     pub fn observe_with_desktop(
         &mut self,
         matches: &[GameProcessMatch],
         allow_desktop: bool,
     ) -> Option<GameArmingDecision> {
-        self.observed = matches.first().cloned();
+        self.observe_automatic(
+            matches,
+            if allow_desktop {
+                DesktopCaptureMode::AfterGame
+            } else {
+                DesktopCaptureMode::Never
+            },
+            true,
+        )
+    }
 
+    /// Observations are successful process snapshots only. `game_exited` must be false when a
+    /// rule was removed, not when a process actually disappeared. Scanner errors never call this.
+    pub fn observe_automatic(
+        &mut self,
+        matches: &[GameProcessMatch],
+        mode: DesktopCaptureMode,
+        game_exited: bool,
+    ) -> Option<GameArmingDecision> {
+        self.observed = matches.first().cloned();
+        if self.paused {
+            // Constant desktop mode must stay paused even while no game is running.
+            if mode != DesktopCaptureMode::Never || self.observed.is_some() {
+                return None;
+            }
+            self.paused = false;
+        }
         if self
             .recording
             .as_ref()
-            .is_some_and(|recording| !matches.iter().any(|detected| detected == recording))
+            .is_some_and(|recording| !matches.iter().any(|found| found == recording))
         {
             self.recording = None;
-            if self.observed.is_none() {
-                self.paused = false;
+            if let Some(game) = self.observed.clone() {
+                return Some(GameArmingDecision::Start(game));
             }
             return Some(
-                if allow_desktop && self.observed.is_none() && !self.paused {
+                if mode == DesktopCaptureMode::Always
+                    || (mode == DesktopCaptureMode::AfterGame && game_exited)
+                {
                     GameArmingDecision::StartDesktop
                 } else {
                     GameArmingDecision::Stop
                 },
             );
         }
-
         if self.desktop {
-            if !allow_desktop {
-                return Some(GameArmingDecision::Stop);
+            if let Some(game) = self.observed.clone() {
+                return Some(GameArmingDecision::Start(game));
             }
-            return self.observed.clone().map(GameArmingDecision::Start);
+            return (mode == DesktopCaptureMode::Never).then_some(GameArmingDecision::Stop);
         }
+        if let Some(game) = self.observed.clone() {
+            return self
+                .recording
+                .is_none()
+                .then_some(GameArmingDecision::Start(game));
+        }
+        (mode == DesktopCaptureMode::Always).then_some(GameArmingDecision::StartDesktop)
+    }
 
-        let Some(current) = self.observed.as_ref() else {
-            self.paused = false;
+    pub fn desktop_remaining(
+        &self,
+        now: Duration,
+        mode: DesktopCaptureMode,
+        seconds: u32,
+    ) -> Option<Duration> {
+        if !self.desktop || mode != DesktopCaptureMode::AfterGame {
             return None;
-        };
-        if self.recording.is_none() && !self.paused {
-            return Some(GameArmingDecision::Start(current.clone()));
         }
-        None
+        let elapsed = now.saturating_sub(self.desktop_since?);
+        Some(Duration::from_secs(u64::from(seconds.clamp(15, 3600))).saturating_sub(elapsed))
+    }
+
+    pub fn desktop_timeout(
+        &self,
+        now: Duration,
+        mode: DesktopCaptureMode,
+        seconds: u32,
+    ) -> Option<GameArmingDecision> {
+        self.desktop_remaining(now, mode, seconds)
+            .filter(Duration::is_zero)
+            .map(|_| GameArmingDecision::Stop)
+    }
+
+    pub fn resume(&mut self) {
+        self.paused = false;
     }
 
     /// Records that capture successfully started for a detected or manually resumed game.
     pub fn capture_started(&mut self, game: GameProcessMatch) {
         self.recording = Some(game);
         self.desktop = false;
+        self.desktop_since = None;
         self.paused = false;
     }
 
     pub fn desktop_started(&mut self) {
+        self.desktop_started_at(Duration::ZERO);
+    }
+
+    pub fn desktop_started_at(&mut self, now: Duration) {
         self.recording = None;
         self.desktop = true;
+        self.desktop_since = Some(now);
         self.paused = false;
     }
 
@@ -107,7 +168,7 @@ impl GameArmingState {
     pub fn capture_stopped_by_user(&mut self) {
         self.recording = None;
         self.desktop = false;
-        self.paused = self.observed.is_some();
+        self.paused = true;
     }
 
     /// Clears a failed start so the next process scan can retry.
@@ -297,6 +358,124 @@ mod tests {
     use super::*;
 
     #[test]
+    fn timed_desktop_returns_to_reopened_game_and_each_exit_gets_a_fresh_timer() {
+        use DesktopCaptureMode::AfterGame;
+        let game = GameProcessMatch {
+            game_name: "Test game".into(),
+            process_id: 42,
+        };
+        let mut state = GameArmingState::default();
+        assert_eq!(state.observe_automatic(&[], AfterGame, false), None);
+        assert_eq!(
+            state.observe_automatic(std::slice::from_ref(&game), AfterGame, false),
+            Some(GameArmingDecision::Start(game.clone()))
+        );
+        state.capture_started(game.clone());
+        assert_eq!(
+            state.observe_automatic(&[], AfterGame, true),
+            Some(GameArmingDecision::StartDesktop)
+        );
+        state.desktop_started_at(Duration::from_secs(100));
+        assert_eq!(
+            state.desktop_remaining(Duration::from_secs(130), AfterGame, 60),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            state.observe_automatic(std::slice::from_ref(&game), AfterGame, false),
+            Some(GameArmingDecision::Start(game.clone()))
+        );
+        state.capture_started(game.clone());
+        assert_eq!(
+            state.desktop_remaining(Duration::from_secs(160), AfterGame, 60),
+            None
+        );
+        assert_eq!(
+            state.observe_automatic(&[], AfterGame, true),
+            Some(GameArmingDecision::StartDesktop)
+        );
+        state.desktop_started_at(Duration::from_secs(200));
+        assert_eq!(
+            state.desktop_remaining(Duration::from_secs(210), AfterGame, 60),
+            Some(Duration::from_secs(50))
+        );
+        assert_eq!(
+            state.desktop_timeout(Duration::from_secs(259), AfterGame, 60),
+            None
+        );
+        assert_eq!(
+            state.desktop_timeout(Duration::from_secs(260), AfterGame, 60),
+            Some(GameArmingDecision::Stop)
+        );
+        state.capture_stopped_automatically();
+        assert_eq!(state.observe_automatic(&[], AfterGame, false), None);
+    }
+
+    #[test]
+    fn constant_desktop_switches_both_ways_without_a_timer_and_stop_stays_paused() {
+        use DesktopCaptureMode::Always;
+        let game = GameProcessMatch {
+            game_name: "Test game".into(),
+            process_id: 42,
+        };
+        let mut state = GameArmingState::default();
+        assert_eq!(
+            state.observe_automatic(&[], Always, false),
+            Some(GameArmingDecision::StartDesktop)
+        );
+        state.desktop_started_at(Duration::ZERO);
+        assert_eq!(
+            state.desktop_timeout(Duration::from_secs(100_000), Always, 60),
+            None
+        );
+        assert_eq!(
+            state.observe_automatic(std::slice::from_ref(&game), Always, false),
+            Some(GameArmingDecision::Start(game.clone()))
+        );
+        state.capture_started(game.clone());
+        assert_eq!(
+            state.observe_automatic(&[], Always, true),
+            Some(GameArmingDecision::StartDesktop)
+        );
+        state.desktop_started_at(Duration::from_secs(2));
+        state.capture_stopped_by_user();
+        state.capture_stopped_automatically();
+        assert_eq!(state.observe_automatic(&[], Always, false), None);
+        assert_eq!(state.observe_automatic(&[game], Always, false), None);
+        state.resume();
+        assert_eq!(
+            state.observe_automatic(&[], Always, false),
+            Some(GameArmingDecision::StartDesktop)
+        );
+    }
+
+    #[test]
+    fn removal_of_a_rule_or_capture_failure_cannot_authorize_temporary_desktop() {
+        let game = GameProcessMatch {
+            game_name: "Game".into(),
+            process_id: 42,
+        };
+        let mut state = GameArmingState::default();
+        state.observe_automatic(
+            std::slice::from_ref(&game),
+            DesktopCaptureMode::AfterGame,
+            false,
+        );
+        state.capture_start_failed();
+        assert_eq!(
+            state.observe_automatic(&[], DesktopCaptureMode::AfterGame, true),
+            None
+        );
+        state.capture_started(game);
+        assert_eq!(
+            state.observe_automatic(&[], DesktopCaptureMode::AfterGame, false),
+            Some(GameArmingDecision::Stop)
+        );
+        assert_eq!(
+            state.observe_automatic(&[], DesktopCaptureMode::AfterGame, true),
+            None
+        );
+    }
+    #[test]
     fn the_longest_match_wins_over_a_generic_executable_name() {
         let rules = [
             GameMatchRule::new("Unreal Game", ["client-win64-shipping.exe"]),
@@ -483,11 +662,9 @@ mod tests {
         arming.capture_started(original);
         assert_eq!(
             arming.observe(std::slice::from_ref(&replacement)),
-            Some(GameArmingDecision::Stop)
+            Some(GameArmingDecision::Start(replacement.clone()))
         );
-        assert_eq!(
-            arming.observe(std::slice::from_ref(&replacement)),
-            Some(GameArmingDecision::Start(replacement))
-        );
+        arming.capture_started(replacement.clone());
+        assert_eq!(arming.observe(std::slice::from_ref(&replacement)), None);
     }
 }

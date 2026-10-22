@@ -200,8 +200,9 @@ platform breadth, backup safety, and optional integrations. Project comparisons 
 not permission to copy code, assets, or proprietary interfaces.
 
 - **Game-aware capture:** default to Game-only mode: detect an explicitly allowlisted game and arm
-  the replay buffer only while it runs. Do not capture the desktop while idle. A separate, deliberate
-  one-session desktop-capture action may be available. Detection must not read process memory,
+  the replay buffer only while it runs. Desktop capture while idle requires an explicit choice:
+  timed continuation after game exit or continuous desktop replay between games. Reopening a game
+  switches back to its window; the next exit starts a fresh temporary timer. Detection must not read process memory,
   inject code, install drivers, or bypass anti-cheat.
 - **Platform breadth:** target tested Windows, Linux, and macOS desktop workflows through shared
   Rust core APIs. Android is a feasibility study only until screen-capture permission, foreground
@@ -414,5 +415,6 @@ no-required-hosted-service rule; optional backup is governed by the M9 design AD
 The automatic known-game catalog now contains every title in Vice's pinned 347-game list plus
 ClipCraft's existing Minecraft Bedrock entry. Source and permission provenance, exact-match
 adaptations, stable exclusions, and platform limits are recorded in
-[the catalog guide](docs/game-catalog.md). Larger Steam metadata is research-only; local installed
-Steam manifests are a possible future extension, not a runtime database dependency.
+[the catalog guide](docs/game-catalog.md). Larger Steam metadata is research-only. Local installed Steam manifests now extend recognition
+through a bounded Rust worker and shared engine/CLI command, without a runtime database dependency.
+Automatic desktop/game switching and temporary continuation are explicit opt-ins; see ADR 0016.

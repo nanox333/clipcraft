@@ -387,8 +387,9 @@ These are identification candidates, not a tested capture compatibility list.
   substring lookalikes and launcher/helper processes. Custom rules expose an **Exact** switch;
   existing custom rules keep their prior substring matching unless the user changes it.
 - Custom rules are checked before built-ins. Within either layer, exact Steam IDs take precedence
-  over executable matches when available on Linux. IDs do not establish Linux/Proton/anti-cheat
-  support. Windows uses executable matching.
+  over executable matches. Linux can read numeric Steam IDs from process metadata; verified local
+  installation paths supply IDs on other platforms too. IDs do not establish capture, Proton or
+  anti-cheat compatibility.
 - Generic runtimes/launchers (`java.exe`, `javaw.exe`, Wine, Steam, Epic, Riot clients) are not
   catalog executable rules. Minecraft is listed via its `minecraft` identifier, but a generic Java
   process alone cannot identify it. Vice window-class-only aliases cannot identify a process with
@@ -408,13 +409,16 @@ These are identification candidates, not a tested capture compatibility list.
   capture, protected games and real-game evidence remain subject to the existing platform gaps.
 - Recognition does not retroactively tag existing videos. Newly saved game-managed clips use
   the matched custom or built-in name through the captured-game metadata path.
-- Vice also checks window classes/compositor metadata and installed Steam manifests for names
-  outside its bundled list. Those fallbacks are not implemented in ClipCraft yet.
+- Local Steam manifests now supply names and exact IDs beyond the bundled list. Vice-style
+  window-class/compositor matching remains unavailable; Steam metadata does not bypass the need
+  for a capturable window. Exited zombie processes are ignored when deciding whether a game runs.
 
 ## Local CLI
 
 ```sh
 clipcraft-cli recording games list
+clipcraft-cli recording games installed
+clipcraft-cli recording games installed /absolute/path/to/Steam
 clipcraft-cli recording games disable cs2 wow
 clipcraft-cli recording games enable cs2
 clipcraft-cli recording games automatic off
@@ -425,8 +429,10 @@ clipcraft-cli recording settings
 `list` prints the shipped metadata. `enable`/`disable` change built-in exclusions through the same
 `recording.set_builtin_games` engine command as the UI; `all` may replace the ID list. `automatic`
 sets the global built-in switch. Custom rules and the game-only/manual-mode choice are preserved.
-CLI changes apply when preferences are next loaded; no control server is used. No game files,
-installation paths, process memory, network service or account is queried by these commands.
+CLI changes apply when preferences are next loaded; no control server is used. `installed` reads
+local Steam installation metadata through `recording.scan_steam_games`; it accepts up to 64
+explicit absolute roots, or uses platform defaults. It does not inspect game assets, process
+memory, a network service or an account.
 
 Generated matching tests check every executable variant and Steam ID, case handling, launcher
 lookalikes, custom-rule preservation, custom precedence, malformed/duplicate exclusions, global-off, migration and
@@ -439,6 +445,32 @@ save/reload behavior. These tests verify matching behavior, not a live capture r
 catalog rows, a 353 MB minified JSON dump and Steam IDs/titles, but no executable-identification
 fields. It declares GPL-3.0 and aggregates third-party metadata. It is not bundled or queried;
 the permission reported for Vice/ClipRecorder does not establish permission for this separate
-source. No store artwork, descriptions, prices or publisher assets are imported. A future local
-Steam-manifest adapter could resolve installed Steam IDs/names without this database; it remains
-unimplemented, and Windows still needs process-to-game identification for such an adapter.
+source. No store artwork, descriptions, prices or publisher assets are imported. The local
+Steam adapter below resolves installed IDs and names without this database.
+
+
+## Installed Steam discovery and automatic switching
+
+**Recognize installed Steam games** is enabled under automatic recognition. One background worker
+reads local `steamapps/libraryfolders.vdf` and `appmanifest_*.acf` files, caches the catalog for
+30 seconds and refreshes it on request. It also runs process matching and the running-app picker;
+UI rendering does not enumerate processes or parse manifests. One pending request replaces older
+requests, and results from obsolete settings cannot start recording.
+
+Custom rules take priority, followed by enabled bundled matches, then installed Steam IDs. The
+global recognition switch and both bundled and installed-ID exclusions remain effective. Verified
+executable paths beneath installed game directories can supply Steam IDs locally; full process
+paths are not returned or stored. Generic launchers/crash helpers are excluded from this inference.
+Linux Steam process IDs take precedence over path inference. Discovery checks standard Windows
+Steam roots, Linux native/Flatpak roots and the macOS default root; custom Windows installations
+are not located through the registry. macOS capture itself remains unavailable.
+
+Parsing is bounded to 64 roots/libraries, 4,096 entries, 1,024 games, 12 nesting levels and 100,000
+tokens per metadata file. Library indexes are at most 1 MiB; manifests at most 64 KiB. Install
+folders must exist beneath the library's `common` directory, manifest IDs must agree with their
+filenames, and individual manifest symlinks are skipped. Invalid manifests are counted and skipped;
+an invalid library index or exceeded whole-scan budget returns an error and keeps the prior catalog.
+Filesystem calls already blocked on an unavailable drive cannot be interrupted.
+
+See [settings.md](settings.md#automatic-recording-behavior) for **Games only**,
+timed desktop continuation, continuous desktop/game switching, and manual pause behavior.

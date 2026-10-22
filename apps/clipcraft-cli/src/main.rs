@@ -220,6 +220,17 @@ fn run_recording(arguments: &[OsString]) -> Result<(), CliError> {
         if operation == Some("list") && arguments.len() == 2 {
             return write_json(&clipcraft_engine::built_in_games());
         }
+        if operation == Some("installed") && arguments.len() <= 66 {
+            let roots = if arguments.len() == 2 {
+                clipcraft_platform::steam_installation_roots()
+            } else {
+                arguments[2..].iter().map(PathBuf::from).collect()
+            };
+            return match execute(Command::ScanSteamGames { roots }).map_err(CliError::Engine)? {
+                CommandOutput::SteamGames(found) => write_json(&found),
+                _ => Err(CliError::UnexpectedOutput),
+            };
+        }
         let path = clipcraft_engine::default_settings_path().ok_or(CliError::Usage)?;
         let CommandOutput::RecordingSettings(mut settings) =
             execute(Command::LoadRecordingSettings { path: path.clone() })
@@ -394,7 +405,7 @@ fn print_help() -> Result<(), CliError> {
         "\n",
         "Usage:\n",
         "  clipcraft-cli commands\n",
-        "  clipcraft-cli recording games list\n",
+        "  clipcraft-cli recording games list | recording games installed [STEAM_ROOT ...]\n",
         "  clipcraft-cli recording games automatic on|off\n",
         "  clipcraft-cli recording games enable|disable <game-id...|all>\n",
         "  clipcraft-cli library scan <folder>\n",

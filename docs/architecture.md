@@ -99,20 +99,26 @@ not a formal clean-room implementation.
 - **Engine:** owns recording sessions, input validation, local index operations, crash recovery,
   background jobs, and stable typed commands. UI and CLI dispatch these same commands. It does not
   yet provide a persistent editor project, autosaved edit sessions, or general undo/redo history.
-- **Game-aware capture:** `clipcraft-engine` owns the user-rule matcher and deterministic arming
-  state; `clipcraft-platform` observes local processes and resolves X11/Windows game windows by
-  process ID. The app polls every two seconds only when Game-only mode is enabled, arms the bounded
-  replay buffer for a matching process, and stops it when that process exits. Rules are local and
-  custom-first: explicit custom rules override the automatic 348-game catalog. Built-in matching
-  checks exact Linux Steam IDs then exact executable basenames. `detect_built_in_games` defaults
-  on; `disabled_builtin_games` stores per-entry exclusions changed through `recording.set_builtin_games`.
-  Legacy custom substring rules remain valid. All 347 Vice titles are bundled as Rust identification
-  data with existing ClipCraft variants and the Bedrock entry; launcher/generic aliases are omitted.
-  Bulk exclusions are capped at 1,024 IDs, independently of the 64 custom-rule limit. See
-  [ADR 0015](adr/0015-automatic-known-game-recognition.md) for defaults/migration and
-  [game-catalog.md](game-catalog.md) for provenance and limits.
-  Wayland process-to-window lookup and macOS
-  capture are not supported yet, and real Windows/game evidence remains open in `gaps.md`.
+- **Game-aware capture:** the engine owns matching, desktop policy and monotonic timer math;
+  platform adapters expose process metadata and verified game windows. One desktop worker owns
+  the reusable process observer and a bounded local Steam catalog, reads VDF/ACF files through
+  `recording.scan_steam_games`, and returns snapshots via one replaceable pending request. A
+  settings-key change drops obsolete result receivers. Worker failures are errors, never empty
+  game-exit snapshots. UI-driven running-app refresh uses the same worker.
+  Custom rules override automatic matches; Steam exclusions, built-in exclusions and global-off
+  precede local-manifest fallback. Linux Steam environment IDs or paths inside canonical installed
+  game directories identify running Steam games; full process paths are not retained.
+  Games-only remains the default. Opt-in policies continue desktop replay for a bounded duration
+  after actual game exit, or maintain desktop replay between games including startup. Games always
+  select their verified window; desktop policy selects an exposed monitor and skips portal chooser
+  targets. A new game cancels the desktop timer; its next exit starts another. Stop pauses desktop
+  policies until Start. Desktop-policy source changes/timeout preserve the final replay through one active save
+  and one queued job; a full queue halts frame production while retaining the bounded buffer.
+  Output names avoid in-flight collisions and remain exclusively written. Desktop clips do not
+  inherit the previous game's recorded label. See [ADR 0016](adr/0016-background-steam-and-exit-fallback.md),
+  [settings.md](settings.md) and [game-catalog.md](game-catalog.md).
+  Wayland automatic game-window matching and macOS capture remain unsupported; Windows/live-game
+  runtime evidence is still required.
 - **Audio timeline policy:** `clipcraft-record::audio_timeline` aligns timestamped native audio
   packets. The current `AudioSource` mixer remains clock-driven and does not call this helper until
   a timestamped platform source is connected.
@@ -132,7 +138,8 @@ fixture generators; they are never linked or shipped.
 
 Small source-to-Rust ports from Vice and ClipRecorder are tracked with their upstream revisions,
 scope, and permission provenance in [`upstream-ports.md`](upstream-ports.md). Those ports add no
-non-Rust runtime; they do not include either upstream UI, app, bundled game database, or assets.
+non-Rust runtime or upstream UI, app or artwork. Vice identification metadata is the explicit
+bundled-data exception recorded in the provenance guide.
 
 The platform boundary may call native operating-system APIs through Rust bindings. It must report
 capability failures cleanly and keep portable crates buildable without the OS-specific provider.

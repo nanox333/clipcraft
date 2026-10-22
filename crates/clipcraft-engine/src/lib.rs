@@ -44,9 +44,10 @@ pub use library_meta::{
     clean_name, game_of, games, guess_game_from_file_name,
 };
 pub use recording::{
-    AUDIO_KBPS, CaptureSource, Container, EncoderPreset, FRAME_RATES, HEIGHTS, KEYFRAME_SECONDS,
-    POST_ROLL_SECONDS, QualityMode, REPLAY_SECONDS, RateControl, RecordingSettings, SAMPLE_RATES,
-    VIDEO_KBPS, VideoCodec, VideoEncoder, default_settings_path, estimated_bytes, format_bytes,
+    AUDIO_KBPS, CaptureSource, Container, DesktopCaptureMode, EncoderPreset, FRAME_RATES, HEIGHTS,
+    KEYFRAME_SECONDS, POST_ROLL_SECONDS, QualityMode, REPLAY_SECONDS, RateControl,
+    RecordingSettings, SAMPLE_RATES, VIDEO_KBPS, VideoCodec, VideoEncoder, default_settings_path,
+    estimated_bytes, format_bytes,
 };
 pub use recovery::{Recovery, recover_interrupted};
 pub use relink::{SearchResult, find_moved_file};

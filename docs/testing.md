@@ -48,6 +48,47 @@ edits; implementation changes require both.
 
 ## Required evidence by area
 
+### M7.1b — Background discovery and desktop/game switching (2026-10-22)
+
+Engine fixtures cover bounded VDF/ACF parsing, alternate Steam libraries, invalid IDs/paths,
+corrupt and oversized metadata, cancellation, custom-first matching, exclusions and safe settings
+migration. One blocked discovery worker accepts 50 replacement requests while retaining just one
+pending request. Failure, panic and obsolete-settings results cannot be mistaken for game exits
+or start capture. A Linux regression test launches the Rust test binary as a child, kills it and
+leaves it unreaped during observation: its zombie entry must no longer count as a running game.
+
+Generated capture providers exercise game launch → save → desktop → reopened game → second exit
+→ fresh timer → expiry. Four valid MP4s result, with two captured-game labels and two untagged
+desktop clips; an existing sentinel file stays unchanged. Additional checks cover continuous
+startup, manual Stop/Start, rule removal, failed game opens, bounded saving and a game that exits
+while both save slots are occupied. The last case retains and saves the desktop buffer rather
+than discarding it when the pending destination disappears. UI tests activate the three recording
+modes and duration controls with Tab/Enter, preserve durations across modes, and exercise existing
+layout extremes. `cargo xtask ci` and the branch documentation gate pass on Linux.
+
+The actual desktop build ran on private Xvfb display `:84` at 1440×900. A second Rust app binary,
+renamed as a generated game, supplied a real PID and X11 window; a small test-only Rust helper set
+`_NET_CLIENT_LIST`, which a window manager normally supplies. The production process observer,
+window provider, software encoder, desktop provider, save jobs and library metadata handled:
+
+- Game exit → desktop countdown → reopening within 15 seconds → game clipping → second exit →
+  fresh 15-second countdown → idle at expiry. Four replay outputs decoded without errors using
+  external FFmpeg/ffprobe; metadata contained two game labels and two absent desktop game labels.
+- An unreaped generated child exiting → desktop continuation and expiry.
+- Continuous desktop → generated game → desktop, followed by explicit Stop staying paused across
+  subsequent process scans.
+
+Screenshots stay outside Git under `.clipcraft-local/game-switching/`: `before.png`, `after.png`,
+`game-running.png`, `desktop-countdown.png`, `reopened.png`, `second-countdown.png`,
+`timer-ended.png`, and `always-{desktop,game,return,paused}.png`. The final settings view wraps help
+text without overlap. Six X11 provider integration tests also pass with Xvfb explicitly on PATH,
+including exact PID selection, monitor/window capture, window loss and global hotkeys.
+
+These are generated-window Linux checks, not real-game, Windows, GPU-performance or audio-device
+results. X11 can return black frames for an obscured window in this virtual display; valid files
+alone do not prove visual capture quality for games. Wayland process-to-window mapping and macOS
+capture remain unsupported. No reference footage, test helper or external oracle ships in the app.
+
 ### M4.1b — Recursive library and captured-game labels (2026-10-22)
 
 Built on performance branch revision `4dd91a7`. Engine/desktop tests cover nested game folders,
