@@ -14,11 +14,14 @@ layer = 2
 clipcraft-media.workspace = true
 clipcraft-time.workspace = true
 filmcraft-isobmff.workspace = true
+filmcraft-aac.workspace = true
+filmcraft-audio-dsp.workspace = true
 filmcraft-matroska.workspace = true
 filmcraft-codecs.workspace = true
 filmcraft-media.workspace = true
 filmcraft-export.workspace = true
 filmcraft-h264enc.workspace = true
+gif.workspace = true
 image.workspace = true
 serde.workspace = true
 

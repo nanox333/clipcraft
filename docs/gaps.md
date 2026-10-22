@@ -201,6 +201,17 @@ touches ClipCraft's own clips.
 - **Changing a quality setting while recording** needs a restart; the Settings page offers it.
 - **A resize** restarts the stream and drops the buffered video.
 
+### M4.4: GIF, merge and loudness (implemented; generated-clip evidence only)
+
+The trim panel's output menu now also offers **Animated GIF** (up to 30 s) and **Even out
+loudness** (-16 LUFS), and the library's right-click menu queues clips for **Join clips**. They
+share `clip.export_gif`, `clip.normalize` and `clip.merge` with the CLI. Merge needs clips recorded
+with identical settings and refuses the rest; it does not re-encode. Evidence is Rust-generated
+clips decoded back (and checked with FFmpeg when present); nothing was run on Windows, macOS or
+with real games, and the UI was only exercised through its headless draw tests. Speed numbers are
+in [testing.md](testing.md); they come from a stress clip on a 4-core container, not a gaming PC.
+See [ADR 0017](adr/0017-gif-merge-and-loudness-export.md).
+
 ### M4.3: local export size presets (implemented, broader controls open)
 
 The player trim panel and CLI `clip export INPUT OUTPUT START END TARGET_MB` now offer local

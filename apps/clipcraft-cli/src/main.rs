@@ -96,6 +96,94 @@ fn run_library(arguments: &[OsString]) -> Result<(), CliError> {
 /// `clip trim INPUT OUTPUT START END` cuts INPUT from START to END (seconds) into a new MP4
 /// without re-encoding, and prints what was written.
 fn run_clip(arguments: &[OsString]) -> Result<(), CliError> {
+    // `clip merge OUTPUT INPUT INPUT...` joins matching clips without re-encoding.
+    if arguments.first().and_then(|arg| arg.to_str()) == Some("merge") {
+        let [_, output, inputs @ ..] = arguments else {
+            return Err(CliError::Usage);
+        };
+        if inputs.len() < 2 {
+            return Err(CliError::Usage);
+        }
+        let command = Command::MergeClips {
+            inputs: inputs.iter().map(PathBuf::from).collect(),
+            output: PathBuf::from(output),
+        };
+        return match execute(command).map_err(CliError::Engine)? {
+            CommandOutput::Trimmed(clip) => write_json(&clip),
+            _ => Err(CliError::UnexpectedOutput),
+        };
+    }
+    // `clip normalize INPUT OUTPUT START END [LUFS]` evens out the loudness of a range.
+    if arguments.first().and_then(|arg| arg.to_str()) == Some("normalize") {
+        if !(5..=6).contains(&arguments.len()) {
+            return Err(CliError::Usage);
+        }
+        let millis = |index: usize| -> Result<u64, CliError> {
+            let value: f64 = arguments[index]
+                .to_str()
+                .and_then(|text| text.parse().ok())
+                .ok_or(CliError::Usage)?;
+            if !(0.0..=1.0e9).contains(&value) {
+                return Err(CliError::Usage);
+            }
+            Ok((value * 1000.0).round() as u64)
+        };
+        let target_lufs: i8 = match arguments.get(5) {
+            None => -16,
+            Some(text) => text
+                .to_str()
+                .and_then(|text| text.parse().ok())
+                .filter(|value| clipcraft_engine::LOUDNESS_TARGETS.contains(&f64::from(*value)))
+                .ok_or(CliError::Usage)?,
+        };
+        let command = Command::NormalizeClip {
+            input: PathBuf::from(&arguments[1]),
+            output: PathBuf::from(&arguments[2]),
+            start_ms: millis(3)?,
+            end_ms: millis(4)?,
+            target_lufs,
+        };
+        return match execute(command).map_err(CliError::Engine)? {
+            CommandOutput::Normalized(clip) => write_json(&clip),
+            _ => Err(CliError::UnexpectedOutput),
+        };
+    }
+    // `clip gif INPUT OUTPUT.gif START END [WIDTH [FPS]]` saves a range of up to 30 seconds.
+    if arguments.first().and_then(|arg| arg.to_str()) == Some("gif") {
+        if !(5..=7).contains(&arguments.len()) {
+            return Err(CliError::Usage);
+        }
+        let number = |index: usize| -> Option<f64> { arguments.get(index)?.to_str()?.parse().ok() };
+        let millis = |index: usize| -> Result<u64, CliError> {
+            let value = number(index).ok_or(CliError::Usage)?;
+            if !(0.0..=1.0e9).contains(&value) {
+                return Err(CliError::Usage);
+            }
+            Ok((value * 1000.0).round() as u64)
+        };
+        let defaults = clipcraft_engine::GifOptions::default();
+        let whole = |index: usize, default: u32| -> Result<u32, CliError> {
+            match arguments.get(index) {
+                None => Ok(default),
+                Some(text) => text
+                    .to_str()
+                    .and_then(|text| text.parse().ok())
+                    .ok_or(CliError::Usage),
+            }
+        };
+        let command = Command::ExportGif {
+            input: PathBuf::from(&arguments[1]),
+            output: PathBuf::from(&arguments[2]),
+            start_ms: millis(3)?,
+            end_ms: millis(4)?,
+            max_width: whole(5, defaults.max_width)?,
+            fps: whole(6, defaults.fps)?,
+        };
+        return match execute(command).map_err(CliError::Engine)? {
+            CommandOutput::Trimmed(clip) => write_json(&clip),
+            _ => Err(CliError::UnexpectedOutput),
+        };
+    }
     let exporting = arguments.first().and_then(|arg| arg.to_str()) == Some("export");
     if !((exporting && arguments.len() == 6)
         || (arguments.len() == 5 && arguments[0].to_str() == Some("trim")))
@@ -404,6 +492,9 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli library thumbnail <file>\n",
         "  clipcraft-cli clip trim <input> <output.mp4> <start-seconds> <end-seconds>\n",
         "  clipcraft-cli clip export <input> <output.mp4> <start-seconds> <end-seconds> <target-MB:1..500>\n",
+        "  clipcraft-cli clip gif <input> <output.gif> <start-seconds> <end-seconds> [width:160..960 [fps:5..20]]\n",
+        "  clipcraft-cli clip normalize <input> <output.mp4> <start-seconds> <end-seconds> [target-LUFS:-30..-8, default -16]\n",
+        "  clipcraft-cli clip merge <output.mp4> <input> <input> [<input>...]\n",
         "  clipcraft-cli diagnose [--json]\n",
         "  clipcraft-cli recording settings\n",
         "  clipcraft-cli capture targets\n",

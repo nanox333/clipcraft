@@ -41,6 +41,13 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   software H.264 encoder, preserves AAC audio tracks, and reduces video to at most 720p/30 fps
   without upscaling. Both paths preserve the source and support progress/cancel; compressed exports
   report their actual size. No upload or Discord account is involved.
+- **GIF, merge and loudness:** the same Trim panel can save a range of up to 30 seconds as a looping
+  GIF (480 px wide, 12 fps, no sound) or even out its loudness to -16 LUFS (the picture is copied,
+  the sound is re-encoded, and the result is never pushed into clipping). In the library, a clip's
+  right-click menu has **Add to merge**; queue two to sixteen clips recorded with the same settings
+  and **Join clips** writes one MP4 without re-encoding. Clips recorded with different settings are
+  refused. See [ADR 0017](docs/adr/0017-gif-merge-and-loudness-export.md); checked on Linux with
+  generated clips only.
 - **Settings and diagnostics:** recording, quality, audio, hotkey, storage, game allowlist, and
   general settings are stored locally. [348 known games](docs/game-catalog.md) are recognized
   automatically, with per-game exclusions and a global switch in Settings › Games. The toggle at
@@ -137,6 +144,9 @@ cargo run --package clipcraft-cli -- library scan /path/to/clips
 cargo run --package clipcraft-cli -- library probe /path/to/clip.mp4
 cargo run --package clipcraft-cli -- clip trim input.mp4 output.mp4 2 8
 cargo run --package clipcraft-cli -- clip export input.mp4 smaller.mp4 2 8 10
+cargo run --package clipcraft-cli -- clip gif input.mp4 clip.gif 2 8
+cargo run --package clipcraft-cli -- clip normalize input.mp4 even.mp4 0 30 -16
+cargo run --package clipcraft-cli -- clip merge joined.mp4 first.mp4 second.mp4
 cargo run --package clipcraft-cli -- diagnose
 ```
 

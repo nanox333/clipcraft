@@ -1,0 +1,229 @@
+//! Animated GIF export of a short range. GIF is large and limited to 256 colours per picture, so
+//! the range, frame rate and width are bounded; frames are decoded, written and dropped one at a
+//! time so memory use does not grow with the clip.
+
+use std::fs::{self, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
+use clipcraft_time::{FrameRate, Tick};
+use filmcraft_media::reader::{FileReader, open_reader_within};
+use filmcraft_media::{FrameRequest, SharedReader};
+
+use crate::compress::{Temporary, check_cancel, source_size};
+use crate::{ExportError, ExportReport, TrimRequest, io_error};
+
+/// Longest range accepted, in seconds.
+pub const MAX_GIF_SECONDS: i64 = 30;
+/// Highest frame rate accepted.
+pub const MAX_GIF_FPS: u32 = 20;
+
+/// How a GIF is made.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GifOptions {
+    /// Widest picture, in pixels. The picture is never enlarged. 160 to 960.
+    pub max_width: u32,
+    /// Pictures per second, 5 to 20.
+    pub fps: u32,
+}
+
+impl Default for GifOptions {
+    fn default() -> Self {
+        Self {
+            max_width: 480,
+            fps: 12,
+        }
+    }
+}
+
+impl GifOptions {
+    fn check(self) -> Result<(), ExportError> {
+        if (160..=960).contains(&self.max_width) && (5..=MAX_GIF_FPS).contains(&self.fps) {
+            Ok(())
+        } else {
+            Err(ExportError::BadPreset)
+        }
+    }
+}
+
+/// Writes `request.start..request.end` of the input as a looping GIF at `request.output`.
+///
+/// The range must be from 0.1 to 30 seconds. The input is only read, an existing output is never
+/// replaced, and a cancelled or failed export leaves no file behind.
+pub fn export_gif(
+    request: &TrimRequest,
+    options: GifOptions,
+    progress: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+) -> Result<ExportReport, ExportError> {
+    options.check()?;
+    if request.start < Tick::ZERO || request.end <= request.start {
+        return Err(ExportError::BadRange);
+    }
+    let duration = request.end - request.start;
+    if duration < Tick::from_units(100, 1_000) {
+        return Err(ExportError::BadRange);
+    }
+    if duration > Tick::from_units(MAX_GIF_SECONDS, 1) {
+        return Err(ExportError::GifTooLong);
+    }
+    if fs::symlink_metadata(&request.output).is_ok() {
+        return Err(ExportError::AlreadyExists);
+    }
+    check_cancel(cancel)?;
+    catch_unwind(AssertUnwindSafe(|| {
+        gif_inner(request, options, duration, progress, cancel)
+    }))
+    .unwrap_or(Err(ExportError::EncodeFailed))
+}
+
+fn gif_inner(
+    request: &TrimRequest,
+    options: GifOptions,
+    duration: Tick,
+    progress: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+) -> Result<ExportReport, ExportError> {
+    let reader: SharedReader =
+        Arc::new(FileReader::open(&request.input).map_err(|_| ExportError::Unreadable)?);
+    let name = request
+        .input
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let decoder = open_reader_within(
+        &name,
+        reader,
+        &filmcraft_codecs::reader_openers(),
+        &filmcraft_codecs::openers(),
+        64 * 1024 * 1024,
+    )
+    .map_err(|_| ExportError::Unreadable)?;
+    let info = decoder.info().video.as_ref().ok_or(ExportError::Damaged)?;
+    source_size(info.width, info.height)?;
+    let (width, height) = gif_size(info.width, info.height, options.max_width);
+    let rate = FrameRate {
+        num: i64::from(options.fps),
+        den: 1,
+    };
+    let frames =
+        rate.frame_at(duration) + i64::from(rate.tick_of(rate.frame_at(duration)) < duration);
+    if frames < 1 {
+        return Err(ExportError::BadRange);
+    }
+    let delay = u16::try_from((100 / options.fps).max(2)).unwrap_or(8);
+
+    if let Some(folder) = request
+        .output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+    {
+        fs::create_dir_all(folder).map_err(|e| io_error(&e))?;
+    }
+    let mut partial = request.output.as_os_str().to_owned();
+    partial.push(".partial");
+    let partial = PathBuf::from(partial);
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&partial)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                ExportError::AlreadyExists
+            } else {
+                io_error(&e)
+            }
+        })?;
+    let temporary = Temporary(partial);
+    let w16 = u16::try_from(width).map_err(|_| ExportError::BadPreset)?;
+    let h16 = u16::try_from(height).map_err(|_| ExportError::BadPreset)?;
+    let mut encoder = gif::Encoder::new(BufWriter::new(file), w16, h16, &[])
+        .map_err(|_| ExportError::WriteFailed)?;
+    encoder
+        .set_repeat(gif::Repeat::Infinite)
+        .map_err(|_| ExportError::WriteFailed)?;
+    for index in 0..frames {
+        check_cancel(cancel)?;
+        let decoded = decoder
+            .video_frame(FrameRequest::full(request.start + rate.tick_of(index)))
+            .map_err(|_| ExportError::EncodeFailed)?;
+        source_size(decoded.width, decoded.height)?;
+        let factor = (decoded.width / width).min(decoded.height / height).max(1) as usize;
+        let small = decoded.box_decimated(factor);
+        let picture = small.as_ref().unwrap_or(&decoded);
+        let image = image::RgbaImage::from_raw(picture.width, picture.height, picture.to_rgba8())
+            .ok_or(ExportError::Damaged)?;
+        let mut resized =
+            image::imageops::resize(&image, width, height, image::imageops::FilterType::Triangle);
+        let mut frame = gif::Frame::from_rgba_speed(w16, h16, resized.as_mut(), 10);
+        frame.delay = delay;
+        encoder
+            .write_frame(&frame)
+            .map_err(|_| ExportError::WriteFailed)?;
+        progress(((index + 1) as f32 / frames as f32 * 0.98).min(0.98));
+    }
+    check_cancel(cancel)?;
+    let mut out = encoder.into_inner().map_err(|_| ExportError::WriteFailed)?;
+    out.flush().map_err(|e| io_error(&e))?;
+    out.get_ref().sync_all().map_err(|e| io_error(&e))?;
+    let bytes = out.get_ref().metadata().map_err(|e| io_error(&e))?.len();
+    drop(out);
+    fs::hard_link(&temporary.0, &request.output).map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => ExportError::AlreadyExists,
+        std::io::ErrorKind::Unsupported => ExportError::Unsupported(
+            "choose an output folder on a filesystem supporting hard links",
+        ),
+        _ => io_error(&e),
+    })?;
+    progress(1.0);
+    Ok(ExportReport {
+        path: request.output.clone(),
+        duration,
+        pictures: frames as u64,
+        audio_tracks: 0,
+        bytes,
+    })
+}
+
+/// Output size: at most `max_width` wide, never enlarged, aspect kept.
+fn gif_size(width: u32, height: u32, max_width: u32) -> (u32, u32) {
+    let w = width.min(max_width).max(2);
+    let h = (u64::from(height) * u64::from(w) / u64::from(width.max(1))) as u32;
+    (w, h.max(2))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn size_keeps_aspect_and_never_enlarges() {
+        assert_eq!(gif_size(1920, 1080, 480), (480, 270));
+        assert_eq!(gif_size(320, 180, 480), (320, 180));
+        assert_eq!(gif_size(1080, 1920, 480), (480, 853));
+    }
+
+    #[test]
+    fn options_are_bounded() {
+        assert!(GifOptions::default().check().is_ok());
+        assert!(
+            GifOptions {
+                max_width: 100,
+                fps: 12
+            }
+            .check()
+            .is_err()
+        );
+        assert!(
+            GifOptions {
+                max_width: 480,
+                fps: 60
+            }
+            .check()
+            .is_err()
+        );
+    }
+}

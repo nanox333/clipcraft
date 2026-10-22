@@ -6,11 +6,17 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, mpsc};
 
-use clipcraft_engine::{ExportPreset, ExportRange, TrimmedClip, format_bytes};
+use clipcraft_engine::{
+    Command, ExportPreset, ExportRange, GifOptions, MAX_GIF_SECONDS, TrimmedClip, execute,
+    format_bytes,
+};
 use eframe::egui;
 use egui::{Color32, RichText};
 
 use crate::kit::{self, DANGER, Icon, LIME, MUTED, TEXT};
+
+/// What "even out loudness" aims for, in LUFS: the usual level for clips shared online.
+const LOUDNESS_TARGET: i8 = -16;
 
 /// The shortest cut that can be saved, in seconds.
 const MIN_SECONDS: f64 = 0.1;
@@ -24,6 +30,8 @@ struct Job {
 struct Finished {
     clip: TrimmedClip,
     target: Option<u64>,
+    /// Extra words for the result line, such as how the loudness changed.
+    note: Option<String>,
 }
 
 /// The trim controls and the export in flight.
@@ -42,6 +50,12 @@ pub struct TrimState {
     size_of: Option<(String, Option<u64>)>,
     /// None preserves the existing lossless trim workflow.
     preset: Option<ExportPreset>,
+    /// Save the range as a looping GIF instead (no sound, at most 30 seconds).
+    gif: bool,
+    /// Save the range with its loudness evened out (the picture is copied).
+    normalize: bool,
+    /// The file saved last, so it can be shown in the file manager.
+    last_saved: Option<PathBuf>,
 }
 
 impl Drop for Job {
@@ -61,7 +75,13 @@ impl TrimState {
     /// True when the range is long enough to save.
     pub fn valid(&self, duration: f64) -> bool {
         let (start, end) = self.range(duration);
-        end - start >= MIN_SECONDS
+        end - start >= MIN_SECONDS && !self.too_long_for_gif(duration)
+    }
+
+    /// True when a GIF was chosen and the range is past what a GIF can hold.
+    fn too_long_for_gif(&self, duration: f64) -> bool {
+        let (start, end) = self.range(duration);
+        self.gif && end - start > MAX_GIF_SECONDS as f64
     }
 
     /// Marks where the new clip starts. A start at or after the end clears the end.
@@ -113,7 +133,13 @@ impl TrimState {
         }
         let input = PathBuf::from(input);
         let preset = self.preset;
-        let output = if preset.is_some() {
+        let gif = self.gif;
+        let normalize = self.normalize;
+        let output = if normalize {
+            clipcraft_engine::normalized_path(&input)
+        } else if gif {
+            clipcraft_engine::gif_path(&input)
+        } else if preset.is_some() {
             clipcraft_engine::exported_path(&input)
         } else {
             clipcraft_engine::trimmed_path(&input)
@@ -143,7 +169,37 @@ impl TrimState {
                     thread_progress.store(fraction.to_bits(), Ordering::Relaxed);
                     wake.request_repaint();
                 };
-                let result = if let Some(preset) = preset {
+                let result = if normalize {
+                    clipcraft_engine::normalize_clip(
+                        &input,
+                        &output,
+                        start_ms,
+                        end_ms,
+                        LOUDNESS_TARGET,
+                        &mut report,
+                        &thread_cancel,
+                    )
+                    .map(|done| Finished {
+                        note: Some(loudness_note(&done)),
+                        clip: done.clip,
+                        target: None,
+                    })
+                } else if gif {
+                    clipcraft_engine::export_gif_clip(
+                        &input,
+                        &output,
+                        start_ms,
+                        end_ms,
+                        GifOptions::default(),
+                        &mut report,
+                        &thread_cancel,
+                    )
+                    .map(|clip| Finished {
+                        clip,
+                        target: None,
+                        note: None,
+                    })
+                } else if let Some(preset) = preset {
                     let request = ExportRange {
                         input,
                         output,
@@ -160,6 +216,7 @@ impl TrimState {
                         .map(|report| Finished {
                             clip: report.clip,
                             target: Some(report.target_bytes),
+                            note: None,
                         })
                 } else {
                     clipcraft_engine::trim_clip(
@@ -170,7 +227,11 @@ impl TrimState {
                         &mut report,
                         &thread_cancel,
                     )
-                    .map(|clip| Finished { clip, target: None })
+                    .map(|clip| Finished {
+                        clip,
+                        target: None,
+                        note: None,
+                    })
                 }
                 .map_err(|error| error.to_string());
                 let _ = sender.send(result);
@@ -201,7 +262,7 @@ impl TrimState {
         };
         self.job = None;
         match result {
-            Ok(Finished { clip, target }) => {
+            Ok(Finished { clip, target, note }) => {
                 let name = std::path::Path::new(&clip.path)
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
@@ -213,7 +274,9 @@ impl TrimState {
                         format!(" · above the {target_size} estimate; choose a smaller target to reduce it further")
                     } else { format!(" · target {target_size}") }
                 }).unwrap_or_default();
-                self.message = Some((format!("Saved {name} · {size}{detail}"), false));
+                let note = note.map(|note| format!(" · {note}")).unwrap_or_default();
+                self.message = Some((format!("Saved {name} · {size}{detail}{note}"), false));
+                self.last_saved = Some(PathBuf::from(&clip.path));
                 self.saved = Some(PathBuf::from(clip.path));
             }
             // Cancelling is the person's own choice, not a failure to report.
@@ -294,31 +357,54 @@ impl TrimState {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("Export").color(MUTED).size(13.0));
                 egui::ComboBox::from_id_salt("export-preset")
-                    .selected_text(preset_label(self.preset))
+                    .height(320.0)
+                    .selected_text(preset_label(self.preset, self.gif, self.normalize))
                     .show_ui(ui, |ui| {
                         let custom = match self.preset {
                             Some(value @ ExportPreset::Custom { .. }) => value,
                             _ => ExportPreset::Custom { megabytes: 10 },
                         };
                         let options = [
-                            (None, "Original quality"),
-                            (Some(ExportPreset::Small), "Small file · ~10 MB"),
-                            (Some(ExportPreset::Medium), "Medium file · ~25 MB"),
-                            (Some(custom), "Custom size"),
+                            (None, false, false, "Original quality"),
+                            (
+                                Some(ExportPreset::Small),
+                                false,
+                                false,
+                                "Small file · ~10 MB",
+                            ),
+                            (
+                                Some(ExportPreset::Medium),
+                                false,
+                                false,
+                                "Medium file · ~25 MB",
+                            ),
+                            (Some(custom), false, false, "Custom size"),
+                            (None, true, false, "Animated GIF"),
+                            (None, false, true, "Even out loudness"),
                         ];
-                        for (value, label) in options {
-                            let selected = self.preset == value;
+                        for (value, gif, normalize, label) in options {
+                            let selected = self.preset == value
+                                && self.gif == gif
+                                && self.normalize == normalize;
                             let response = ui.selectable_label(selected, label);
                             if response.clicked() {
                                 self.preset = value;
+                                self.gif = gif;
+                                self.normalize = normalize;
                                 ui.close();
                             }
                         }
                     });
-                if let Some(ExportPreset::Custom { megabytes }) = &mut self.preset {
+                if let (false, Some(ExportPreset::Custom { megabytes })) =
+                    (self.gif, &mut self.preset)
+                {
                     ui.add(egui::DragValue::new(megabytes).range(1..=500).suffix(" MB"));
                 }
-                let hint = if self.preset.is_some() {
+                let hint = if self.normalize {
+                    "Sets the sound to -16 LUFS. The picture is not re-encoded."
+                } else if self.gif {
+                    "Looping picture, no sound, up to 30 seconds."
+                } else if self.preset.is_some() {
                     "Estimated size. Resolution and frame rate may be reduced."
                 } else {
                     "Keeps the original picture and sound quality."
@@ -369,11 +455,23 @@ impl TrimState {
                 } else if kit::labelled_button(
                     ui,
                     Icon::Scissors,
-                    if self.preset.is_some() { "Export clip" } else { "Save trimmed clip" },
+                    if self.normalize {
+                        "Save evened-out clip"
+                    } else if self.gif {
+                        "Save GIF"
+                    } else if self.preset.is_some() {
+                        "Export clip"
+                    } else {
+                        "Save trimmed clip"
+                    },
                     true,
                     self.valid(duration),
                 )
-                .on_hover_text(if self.preset.is_some() {
+                .on_hover_text(if self.normalize {
+                    "Saves a new MP4 next to the original with its sound evened out. The source is preserved."
+                } else if self.gif {
+                    "Saves a looping GIF next to the original. The source is preserved."
+                } else if self.preset.is_some() {
                     "Saves a compressed MP4 next to the original. The source is preserved. Up to 30 minutes per export."
                 } else { "Saves a new MP4 next to the original. Nothing is re-encoded." })
                 .clicked()
@@ -382,7 +480,12 @@ impl TrimState {
                 }
             });
         });
+        let too_long = self.too_long_for_gif(duration);
         let note = match self.message.as_ref() {
+            _ if too_long => Some((
+                "A GIF can be at most 30 seconds. Move the handles closer together.",
+                DANGER,
+            )),
             Some((text, error)) => Some((text.as_str(), if *error { DANGER } else { MUTED })),
             None if self.start.is_none() && self.end.is_none() => Some((
                 "Drag the handles, or play to a moment and press I or O.",
@@ -390,9 +493,30 @@ impl TrimState {
             )),
             None => None,
         };
-        if let Some((text, color)) = note {
+        let saved = self
+            .last_saved
+            .clone()
+            .filter(|_| idle && self.message.as_ref().is_some_and(|(_, error)| !error));
+        if note.is_some() || saved.is_some() {
             ui.add_space(6.0);
-            ui.label(RichText::new(text).color(color).size(12.5));
+            ui.horizontal_wrapped(|ui| {
+                if let Some((text, color)) = note {
+                    ui.label(RichText::new(text).color(color).size(12.5));
+                }
+                if let Some(path) = saved
+                    && ui
+                        .add(
+                            egui::Label::new(
+                                RichText::new("Show in folder").color(LIME).size(12.5),
+                            )
+                            .sense(egui::Sense::click()),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                {
+                    let _ = execute(Command::RevealInFileManager { path });
+                }
+            });
         }
         seek
     }
@@ -407,7 +531,30 @@ impl TrimState {
     }
 }
 
-fn preset_label(preset: Option<ExportPreset>) -> &'static str {
+/// How the loudness changed, for the line after a save.
+fn loudness_note(done: &clipcraft_engine::NormalizedClip) -> String {
+    let lufs = |tenths: i32| format!("{:.1}", f64::from(tenths) / 10.0).replace('-', "\u{2212}");
+    let gain = f64::from(done.gain_db_tenths) / 10.0;
+    let after = done.measured_lufs_tenths + done.gain_db_tenths;
+    let held = if done.peak_limited {
+        " (held back to avoid clipping)"
+    } else {
+        ""
+    };
+    format!(
+        "{} \u{2192} {} LUFS, {gain:+.1} dB{held}",
+        lufs(done.measured_lufs_tenths),
+        lufs(after)
+    )
+}
+
+fn preset_label(preset: Option<ExportPreset>, gif: bool, normalize: bool) -> &'static str {
+    if normalize {
+        return "Even out loudness";
+    }
+    if gif {
+        return "Animated GIF";
+    }
     match preset {
         None => "Original quality",
         Some(ExportPreset::Small) => "Small file · ~10 MB",
@@ -628,6 +775,8 @@ mod tests {
                 let mut trim = TrimState {
                     open: true,
                     preset,
+                    gif: preset.is_none() && width > 900.0 && width < 1_000.0,
+                    normalize: preset.is_none() && width > 1_000.0,
                     ..Default::default()
                 };
                 let _ = context.run(
@@ -646,6 +795,43 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_loudness_note_shows_before_after_and_gain() {
+        let done = clipcraft_engine::NormalizedClip {
+            clip: TrimmedClip {
+                path: String::new(),
+                duration_ms: 0,
+                pictures: 0,
+                audio_tracks: 0,
+                bytes: 0,
+            },
+            measured_lufs_tenths: -213,
+            gain_db_tenths: 53,
+            peak_limited: false,
+        };
+        assert_eq!(
+            loudness_note(&done),
+            "\u{2212}21.3 \u{2192} \u{2212}16.0 LUFS, +5.3 dB"
+        );
+        let held = clipcraft_engine::NormalizedClip {
+            peak_limited: true,
+            ..done
+        };
+        assert!(loudness_note(&held).ends_with("(held back to avoid clipping)"));
+    }
+
+    #[test]
+    fn a_gif_cannot_be_longer_than_thirty_seconds() {
+        let mut trim = TrimState::default();
+        assert!(trim.valid(120.0));
+        trim.gif = true;
+        assert!(!trim.valid(120.0));
+        trim.set_end(30.0, 120.0);
+        assert!(trim.valid(120.0));
+        trim.set_end(30.5, 120.0);
+        assert!(!trim.valid(120.0));
     }
 
     #[test]
