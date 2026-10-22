@@ -550,7 +550,7 @@ impl EditorState {
         } else {
             0.0
         };
-        let full_top = (ui.available_height() - 404.0 - status_height).max(120.0);
+        let full_top = (ui.available_height() - 372.0 - status_height).max(120.0);
         let top = self
             .top_height
             .filter(|height| height.is_finite())
@@ -562,7 +562,7 @@ impl EditorState {
         let width = ui.available_width().max(1.0);
         // The preview is 16:9, so it is only as wide as its picture needs to be tall; the Library
         // gets everything else.
-        let picture_height = (top - 90.0).max(40.0);
+        let picture_height = (top - 78.0).max(40.0);
         let browser = if width >= 700.0 {
             let preview = (picture_height * 16.0 / 9.0 + 24.0).clamp(360.0, width - 12.0 - 260.0);
             let auto = (width - 12.0 - preview).max(260.0);
@@ -644,7 +644,7 @@ impl EditorState {
                                     "Edit title",
                                 )
                             });
-                            let size = Vec2::new(ui.available_width(), (top - 90.0).max(40.0));
+                            let size = Vec2::new(ui.available_width(), (top - 78.0).max(40.0));
                             if let Some(preview) = self.preview.as_mut() {
                                 preview.editor_picture(ui, size);
                             } else {
@@ -658,13 +658,7 @@ impl EditorState {
                                     MUTED,
                                 );
                             }
-                            ui.add_space(4.0);
-                            if let Some(time) =
-                                scrub_bar(ui, self.playhead, self.session.duration())
-                            {
-                                self.playing = false;
-                                self.seek(time);
-                            }
+                            ui.add_space(6.0);
                             // Transport centred under the picture, the time at the right edge.
                             let (row, _) = ui.allocate_exact_size(
                                 Vec2::new(ui.available_width(), 28.0),
@@ -826,7 +820,7 @@ impl EditorState {
                     .max(20.0);
                 // Thumbnails are 16:9, so wider cards get taller ones.
                 let thumb_height = (card_width * 9.0 / 16.0).clamp(48.0, 150.0);
-                let card_height = thumb_height + 24.0;
+                let card_height = thumb_height + 36.0;
                 egui::ScrollArea::vertical()
                     .id_salt("editor-browser")
                     .max_height((height - 174.0).max(30.0))
@@ -937,6 +931,13 @@ impl EditorState {
                                                         title,
                                                         TEXT,
                                                     );
+                                                ui.painter().text(
+                                                    rect.left_bottom() + Vec2::new(0.0, 22.0),
+                                                    Align2::LEFT_TOP,
+                                                    crate::format_bytes(entry.size_bytes),
+                                                    FontId::new(10.5, kit::medium()),
+                                                    MUTED,
+                                                );
                                                 if response.clicked() {
                                                     response.request_focus();
                                                 }
@@ -1036,7 +1037,7 @@ impl EditorState {
         }
     }
     fn toolbar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
+        ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
             let enabled = !self.busy();
             if tool(
@@ -1096,44 +1097,41 @@ impl EditorState {
                     }
                 }
             }
-            separator(ui);
-            if button(ui, "Fit", self.fit, true)
-                .on_hover_text("Show the whole edit")
+            // Zoom and reset sit at the right edge.
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if tool(
+                    ui,
+                    kit::Icon::Restart,
+                    "Reset edit",
+                    false,
+                    enabled && !self.session.clips().is_empty(),
+                )
+                .on_hover_text("Clear the timeline")
                 .clicked()
-            {
-                self.fit = true;
-            }
-            if button(ui, "\u{2212}", false, true)
-                .on_hover_text("Zoom out")
-                .clicked()
-            {
-                self.fit = false;
-                self.zoom = (self.zoom / 1.5).max(4.0);
-            }
-            if button(ui, "+", false, true)
-                .on_hover_text("Zoom in")
-                .clicked()
-            {
-                self.fit = false;
-                self.zoom = (self.zoom * 1.5).min(160.0);
-            }
-            ui.label(
-                RichText::new(segments(self.session.clips().len()))
-                    .size(13.0)
-                    .color(MUTED),
-            );
-            if tool(
-                ui,
-                kit::Icon::Restart,
-                "Reset edit",
-                false,
-                enabled && !self.session.clips().is_empty(),
-            )
-            .on_hover_text("Clear the timeline")
-            .clicked()
-            {
-                self.edit(EditorAction::Reset);
-            }
+                {
+                    self.edit(EditorAction::Reset);
+                }
+                if button(ui, "Fit", self.fit, true)
+                    .on_hover_text("Show the whole edit")
+                    .clicked()
+                {
+                    self.fit = true;
+                }
+                if button(ui, "+", false, true)
+                    .on_hover_text("Zoom in")
+                    .clicked()
+                {
+                    self.fit = false;
+                    self.zoom = (self.zoom * 1.5).min(160.0);
+                }
+                if button(ui, "\u{2212}", false, true)
+                    .on_hover_text("Zoom out")
+                    .clicked()
+                {
+                    self.fit = false;
+                    self.zoom = (self.zoom / 1.5).max(4.0);
+                }
+            });
         });
         ui.add_space(8.0);
     }
@@ -1493,14 +1491,14 @@ impl EditorState {
 /// Quiet or lime text button. Standard egui buttons keep keyboard activation and the app's
 /// focus/hover states; the colours match the rest of the app.
 fn button(ui: &mut egui::Ui, label: &str, primary: bool, enabled: bool) -> egui::Response {
-    let text = RichText::new(label).family(kit::medium()).size(13.0);
+    let text = RichText::new(label).family(kit::medium()).size(12.5);
     let mut button = egui::Button::new(if primary && enabled {
         text.color(Color32::BLACK)
     } else {
         text
     })
-    .corner_radius(18)
-    .min_size(Vec2::new(36.0, 36.0));
+    .corner_radius(15)
+    .min_size(Vec2::new(30.0, 30.0));
     if primary && enabled {
         button = button.fill(LIME).stroke(Stroke::NONE);
     } else {
@@ -1519,7 +1517,42 @@ fn tool(
     primary: bool,
     enabled: bool,
 ) -> egui::Response {
-    kit::labelled_button(ui, icon, label, primary, enabled)
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        FontId::new(12.5, kit::medium()),
+        Color32::PLACEHOLDER,
+    );
+    let size = Vec2::new(galley.size().x + 38.0, 28.0);
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(size, sense);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    let hovered = response.hovered() && enabled;
+    let (fill, content) = match (primary, enabled, hovered) {
+        (_, false, _) => (CARD, FAINT),
+        (true, _, _) => (LIME, Color32::BLACK),
+        (false, _, true) => (kit::CONTROL_HOVER, kit::TEXT),
+        (false, _, false) => (kit::CONTROL, kit::TEXT),
+    };
+    ui.painter().rect_filled(rect, 14, fill);
+    kit::draw_icon(
+        ui.painter(),
+        egui::pos2(rect.left() + 15.0, rect.center().y),
+        icon,
+        content,
+        0.55,
+    );
+    ui.painter().text(
+        egui::pos2(rect.left() + 27.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::new(12.5, kit::medium()),
+        content,
+    );
+    response
 }
 
 /// The grip drawn in the gap between two panels that can be dragged to resize them.
@@ -1546,49 +1579,6 @@ fn separator(ui: &mut egui::Ui) {
         ],
         Stroke::new(1.0_f32, kit::CONTROL_BORDER),
     );
-}
-
-/// A slim position bar under the preview. Returns the time the person clicked or dragged to.
-fn scrub_bar(ui: &mut egui::Ui, position: Tick, total: Tick) -> Option<Tick> {
-    let (rect, response) = ui.allocate_exact_size(
-        Vec2::new(ui.available_width().max(1.0), 18.0),
-        Sense::click_and_drag(),
-    );
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Slider, !total.0.eq(&0), "Edit position")
-    });
-    let track = egui::Rect::from_center_size(rect.center(), Vec2::new(rect.width(), 4.0));
-    let fraction = (position.0 as f64 / total.0.max(1) as f64).clamp(0.0, 1.0) as f32;
-    ui.painter().rect_filled(track, 2, kit::CONTROL);
-    let filled = egui::Rect::from_min_max(
-        track.min,
-        egui::pos2(track.left() + track.width() * fraction, track.bottom()),
-    );
-    ui.painter().rect_filled(filled, 2, LIME);
-    let hot = response.hovered() || response.dragged();
-    ui.painter().circle_filled(
-        egui::pos2(filled.right(), track.center().y),
-        if hot { 7.0 } else { 5.0 },
-        LIME,
-    );
-    if total.0 > 0
-        && (response.clicked() || response.dragged())
-        && let Some(point) = response.interact_pointer_pos()
-    {
-        let ratio = ((point.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
-        let frame = (ratio * RATE.frame_at(total) as f32).round() as i64;
-        return Some(RATE.tick_of(frame));
-    }
-    None
-}
-
-/// Words for a count of segments.
-fn segments(count: usize) -> String {
-    if count == 1 {
-        "1 segment".to_owned()
-    } else {
-        format!("{count} segments")
-    }
 }
 
 fn stamp(time: Tick) -> String {

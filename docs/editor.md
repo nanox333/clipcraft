@@ -6,8 +6,9 @@ this does not immediately add it to the timeline or move the source file. The no
 quick trim remain in Clips. The workspace uses the same charcoal surfaces, lime actions,
 embedded Inter typefaces and keyboard focus styling as the rest of ClipCraft. Controls are
 icon-and-label pills like the rest of the app, with quiet outlined buttons for secondary actions
-and lime for the main one. The preview panel is kept minimal: a small title, the picture, a position bar you can click or
-drag to scrub the edit, a round Play/Pause button in the centre and the time at the right. The timeline has a ruler with minor ticks, a
+and lime for the main one. The preview panel is kept minimal: a small title, the picture, a round Play/Pause button in the
+centre and the time at the right (scrub on the timeline ruler). Library cards show the file size;
+the toolbar keeps edit actions at the left and zoom, Fit and Reset at the right. The timeline has a ruler with minor ticks, a
 triangular playhead, grips on the selected segment, and a bar under it with the source in/out,
 volume and mute for that segment. A footer lists the keyboard shortcuts. The preview panel is only as wide as a 16:9 picture needs, so the Library takes the rest and
 shows as many thumbnail columns as fit (2 to 6); the two panels keep the same height. Both can be resized: drag the gap between the Library and
