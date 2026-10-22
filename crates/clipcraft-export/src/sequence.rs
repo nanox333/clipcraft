@@ -117,31 +117,64 @@ impl Effect {
     }
 }
 
-/// Where a clip's title sits in the picture.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TitlePlace {
-    Top,
-    Center,
-    #[default]
-    Bottom,
-}
+/// Smallest and largest title size, in thousandths of the picture height.
+pub const TITLE_SIZE_RANGE: std::ops::RangeInclusive<u16> = 20..=250;
 
-/// Simple per-clip looks: fades at either end and a title shown for the whole clip.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+/// Simple per-clip looks: fades at either end, a colour effect and a free-floating title shown
+/// for the whole clip.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SegmentLook {
     #[serde(default)]
     pub fade_in: Fade,
     #[serde(default)]
     pub fade_out: Fade,
     #[serde(default)]
-    pub title: String,
-    #[serde(default)]
-    pub title_place: TitlePlace,
-    #[serde(default)]
     pub effect: Effect,
+    #[serde(default)]
+    pub title: String,
+    /// Centre of the title across the picture, in thousandths (`0..=1000`).
+    #[serde(default = "default_title_x")]
+    pub title_x: u16,
+    /// Centre of the title down the picture, in thousandths (`0..=1000`).
+    #[serde(default = "default_title_y")]
+    pub title_y: u16,
+    /// Letter height as thousandths of the picture height.
+    #[serde(default = "default_title_size")]
+    pub title_size: u16,
+    #[serde(default = "default_title_color")]
+    pub title_color: [u8; 3],
+}
+fn default_title_x() -> u16 {
+    500
+}
+fn default_title_y() -> u16 {
+    880
+}
+fn default_title_size() -> u16 {
+    75
+}
+fn default_title_color() -> [u8; 3] {
+    [255, 255, 255]
+}
+impl Default for SegmentLook {
+    fn default() -> Self {
+        Self {
+            fade_in: Fade::None,
+            fade_out: Fade::None,
+            effect: Effect::None,
+            title: String::new(),
+            title_x: default_title_x(),
+            title_y: default_title_y(),
+            title_size: default_title_size(),
+            title_color: default_title_color(),
+        }
+    }
 }
 impl SegmentLook {
+    /// True when the title position and size are within what the export accepts.
+    pub fn title_in_range(&self) -> bool {
+        self.title_x <= 1000 && self.title_y <= 1000 && TITLE_SIZE_RANGE.contains(&self.title_size)
+    }
     /// The fade colour and how much of it covers the picture (`0.0..=1.0`) `local` into a clip
     /// that lasts `duration`.
     pub fn fade_at(&self, local: Tick, duration: Tick) -> Option<(Fade, f32)> {
@@ -202,6 +235,7 @@ fn validate(request: &SequenceRequest) -> Result<Tick, ExportError> {
             || segment.volume_percent > 100
             || segment.look.title.chars().count() > MAX_TITLE_CHARS
             || segment.look.title.chars().any(char::is_control)
+            || !segment.look.title_in_range()
         {
             return Err(ExportError::InvalidSequence);
         }
@@ -600,11 +634,15 @@ struct Title {
     mask: filmcraft_text::Mask,
     x: i64,
     y: i64,
+    color: [u8; 3],
 }
 impl Title {
     fn draw(&self, canvas: &mut image::RgbaImage) {
         let shadow = (self.mask.h as f32 / 12.0).clamp(1.0, 4.0) as i64;
-        for (dx, dy, color, strength) in [(shadow, shadow, 0.0_f32, 0.65_f32), (0, 0, 255.0, 1.0)] {
+        let ink = self.color.map(f32::from);
+        for (dx, dy, color, strength) in
+            [(shadow, shadow, [0.0_f32; 3], 0.65_f32), (0, 0, ink, 1.0)]
+        {
             for row in 0..self.mask.h {
                 let y = self.y + row as i64 + dy;
                 let Ok(py) = u32::try_from(y) else { continue };
@@ -629,8 +667,8 @@ impl Title {
                     }
                     let pixel = canvas.get_pixel_mut(px, py);
                     let amount = coverage.clamp(0.0, 1.0);
-                    for channel in pixel.0.iter_mut().take(3) {
-                        *channel = (f32::from(*channel) * (1.0 - amount) + color * amount)
+                    for (channel, target) in pixel.0.iter_mut().zip(color) {
+                        *channel = (f32::from(*channel) * (1.0 - amount) + target * amount)
                             .round()
                             .clamp(0.0, 255.0) as u8;
                     }
@@ -646,27 +684,29 @@ fn title_mask(look: &SegmentLook, width: u32, height: u32) -> Option<Title> {
         return None;
     }
     let style = filmcraft_text::TextStyle {
-        size: (height as f32 * 0.075).max(10.0),
+        size: (height as f32 * f32::from(look.title_size) / 1000.0).max(8.0),
         style: "Bold".into(),
         ..Default::default()
     };
     let paragraph = filmcraft_text::ParagraphStyle {
         align: filmcraft_text::Align::Center,
-        width: Some(width as f32 * 0.86),
+        width: Some(width as f32 * 0.9),
         ..Default::default()
     };
     let layout = filmcraft_text::layout(text, &style, &paragraph);
-    let (mask, left, top) =
+    let (mask, _, _) =
         filmcraft_text::render::rasterize(&layout, &filmcraft_text::render::at(0.0, 0.0));
-    let margin = (height as f32 * 0.08) as i64;
-    let x = (i64::from(width) - mask.w as i64) / 2;
-    let y = match look.title_place {
-        TitlePlace::Top => margin,
-        TitlePlace::Center => (i64::from(height) - mask.h as i64) / 2,
-        TitlePlace::Bottom => i64::from(height) - mask.h as i64 - margin,
-    };
-    let _ = (left, top);
-    Some(Title { mask, x, y })
+    // The title is centred on the chosen point, then kept inside the picture.
+    let centre_x = i64::from(width) * i64::from(look.title_x) / 1000;
+    let centre_y = i64::from(height) * i64::from(look.title_y) / 1000;
+    let x = (centre_x - mask.w as i64 / 2).clamp(0, (i64::from(width) - mask.w as i64).max(0));
+    let y = (centre_y - mask.h as i64 / 2).clamp(0, (i64::from(height) - mask.h as i64).max(0));
+    Some(Title {
+        mask,
+        x,
+        y,
+        color: look.title_color,
+    })
 }
 
 fn blend_fade(canvas: &mut image::RgbaImage, fade: Fade, amount: f32) {

@@ -516,9 +516,7 @@ fn sequence_exports_more_than_thirty_two_segments() {
 
 #[test]
 fn sequence_fades_and_titles_change_the_picture_and_overlong_titles_are_rejected() {
-    use clipcraft_export::{
-        Fade, SegmentLook, SequenceRequest, SequenceSegment, TitlePlace, sequence_to_mp4,
-    };
+    use clipcraft_export::{Fade, SegmentLook, SequenceRequest, SequenceSegment, sequence_to_mp4};
     let dir = Scratch::new("sequence-look");
     let a = dir.file("a.mp4");
     fixture(&a, ClipFormat::Mp4, true);
@@ -536,7 +534,6 @@ fn sequence_fades_and_titles_change_the_picture_and_overlong_titles_are_rejected
             fade_in: Fade::Black,
             fade_out: Fade::White,
             title: "Clutch round".into(),
-            title_place: TitlePlace::Bottom,
             ..SegmentLook::default()
         })],
     };

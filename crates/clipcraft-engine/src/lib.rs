@@ -34,7 +34,7 @@ mod storage;
 
 pub use clipcraft_export::{
     Effect, FADE_LENGTH, Fade, MAX_TITLE_CHARS, SegmentLook, SequenceRequest, SequenceSegment,
-    TitlePlace,
+    TITLE_SIZE_RANGE,
 };
 pub use clipcraft_export::{
     ExportPreset, GifOptions, LOUDNESS_TARGETS, MAX_GIF_SECONDS, TrimRequest as ExportRange,

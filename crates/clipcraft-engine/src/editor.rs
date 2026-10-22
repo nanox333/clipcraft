@@ -138,6 +138,7 @@ fn validate(clips: &[EditorClip]) -> Result<(), EngineError> {
             || clip.volume_percent > 100
             || clip.look.title.chars().count() > MAX_TITLE_CHARS
             || clip.look.title.chars().any(char::is_control)
+            || !clip.look.title_in_range()
         {
             return Err(invalid());
         }
@@ -549,6 +550,26 @@ mod tests {
                             title: bad,
                             ..SegmentLook::default()
                         },
+                    })
+                    .is_err()
+            );
+        }
+        for bad in [
+            SegmentLook {
+                title_size: 0,
+                ..SegmentLook::default()
+            },
+            SegmentLook {
+                title_x: 1001,
+                ..SegmentLook::default()
+            },
+        ] {
+            assert!(
+                state
+                    .clone()
+                    .apply(EditorAction::Look {
+                        id: second,
+                        look: bad
                     })
                     .is_err()
             );

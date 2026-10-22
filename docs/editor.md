@@ -106,11 +106,15 @@ show as triangles on the timeline.
 Contrast, Vivid or Invert, shown on a small colour-bar swatch. It is applied to the picture
 (not to text or fades) in the preview and in the export.
 
-**Text.** One line (up to 120 characters) shown over the whole segment, in white bold Inter with
-a soft shadow. Type it, press Enter or click away to apply, and choose *Title* (middle), *Lower
-third* (bottom) or *Top banner*; *No text* removes it. To show it for only part of the time, cut
-the segment first. The export lays text out with FilmCraft's text engine; the preview draws it
-approximately the same. Segments with text show a **T** badge.
+**Text.** One line (up to 120 characters) shown over the whole segment, in bold Inter with a
+soft shadow. Type it and press Enter or click away to apply. The text is free: drag it anywhere in
+the preview (the selected segment's text shows a lime frame on hover and the move is one undo
+step), change its **Size** with the slider and its **Colour** from the swatches, or snap it with the
+*Title*, *Lower third*, *Top banner* and *Corner tag* presets; *No text* removes it. The position
+is stored as a fraction of the picture, so the export puts it where the preview shows it, kept
+inside the frame. To show text for only part of the time, cut the segment first. The export lays
+text out with FilmCraft's text engine; the preview draws it approximately the same. Segments with
+text show a **T** badge.
 
 The Library shows each clip's resolution and file size under its name.
 

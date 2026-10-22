@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use clipcraft_engine::{
     Command, CommandOutput, EditorAction, EditorSession, Effect, Fade, MediaEntry, SegmentLook,
-    SequenceRequest, SequenceSegment, TitlePlace, TransitionPreset, TrimmedClip, execute,
+    SequenceRequest, SequenceSegment, TransitionPreset, TrimmedClip, execute,
 };
 use clipcraft_time::{FrameRate, Tick};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, RichText, Sense, Stroke, Vec2};
@@ -58,6 +58,7 @@ pub struct EditorState {
     saved: Option<PathBuf>,
     /// Width the person dragged the Library to; `None` lets it follow the 16:9 preview.
     title_draft: (u64, String),
+    title_drag: Option<(u64, u16, u16)>,
     tab: LibraryTab,
     effect_tab: bool,
     library_width: Option<f32>,
@@ -88,6 +89,7 @@ impl Default for EditorState {
             job: None,
             saved: None,
             title_draft: (0, String::new()),
+            title_drag: None,
             tab: LibraryTab::Library,
             effect_tab: false,
             library_width: None,
@@ -949,7 +951,7 @@ impl EditorState {
             self.edit(action);
         }
     }
-    /// A one-line title for the selected segment.
+    /// A one-line title for the selected segment, placed by dragging it in the preview.
     fn text_tab(&mut self, ui: &mut egui::Ui, height: f32) {
         let Some((id, look)) = self.selected_look() else {
             ui.label(
@@ -979,6 +981,48 @@ impl EditorState {
                 next.title = self.title_draft.1.replace(char::is_control, " ");
             }
             ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.label(RichText::new("Size").size(13.0).color(MUTED));
+                let mut size = u32::from(look.title_size);
+                if ui
+                    .add(
+                        egui::Slider::new(&mut size, 20..=250)
+                            .show_value(false)
+                            .trailing_fill(true),
+                    )
+                    .on_hover_text("Letter height")
+                    .changed()
+                {
+                    next.title_size = size.clamp(20, 250) as u16;
+                }
+                separator(ui);
+                ui.label(RichText::new("Colour").size(13.0).color(MUTED));
+                for (name, rgb) in TEXT_COLORS {
+                    let (rect, response) =
+                        ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name)
+                    });
+                    ui.painter().circle_filled(
+                        rect.center(),
+                        9.0,
+                        Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
+                    );
+                    if look.title_color == rgb {
+                        ui.painter()
+                            .circle_stroke(rect.center(), 11.0, Stroke::new(2.0_f32, LIME));
+                    }
+                    if response
+                        .on_hover_text(name)
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        next.title_color = rgb;
+                    }
+                }
+            });
+            ui.add_space(10.0);
             let columns = (((ui.available_width() + 8.0) / 118.0).floor() as usize).clamp(2, 6);
             let card = Vec2::new(
                 ((ui.available_width() - 8.0 * (columns - 1) as f32) / columns as f32).max(20.0),
@@ -986,34 +1030,35 @@ impl EditorState {
             );
             egui::ScrollArea::vertical()
                 .id_salt("editor-text")
-                .max_height((height - 150.0).max(30.0))
+                .max_height((height - 190.0).max(30.0))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
                     ui.horizontal_wrapped(|ui| {
-                        for (name, place, sample) in [
-                            ("Title", TitlePlace::Center, "Aa"),
-                            ("Lower third", TitlePlace::Bottom, "Aa"),
-                            ("Top banner", TitlePlace::Top, "Aa"),
+                        for (name, x, y) in [
+                            ("Title", 500_u16, 500_u16),
+                            ("Lower third", 500, 880),
+                            ("Top banner", 500, 120),
+                            ("Corner tag", 150, 900),
                         ] {
-                            let active = !look.title.is_empty() && look.title_place == place;
+                            let active = !look.title.is_empty()
+                                && look.title_x.abs_diff(x) < 25
+                                && look.title_y.abs_diff(y) < 25;
                             let response =
                                 preset_card(ui, card, name, active, true, |painter, rect| {
                                     painter.rect_filled(rect, 0, Color32::from_gray(72));
-                                    let y = match place {
-                                        TitlePlace::Top => rect.top() + 10.0,
-                                        TitlePlace::Center => rect.center().y,
-                                        TitlePlace::Bottom => rect.bottom() - 10.0,
-                                    };
                                     painter.text(
-                                        egui::pos2(rect.center().x, y),
+                                        egui::pos2(
+                                            rect.left() + rect.width() * f32::from(x) / 1000.0,
+                                            rect.top() + rect.height() * f32::from(y) / 1000.0,
+                                        ),
                                         Align2::CENTER_CENTER,
-                                        sample,
+                                        "Aa",
                                         FontId::new(15.0, kit::semibold()),
                                         Color32::WHITE,
                                     );
                                 });
                             if response.clicked() {
-                                next.title_place = place;
+                                (next.title_x, next.title_y) = (x, y);
                                 if next.title.trim().is_empty() {
                                     next.title = "Your title".into();
                                     self.title_draft.1 = next.title.clone();
@@ -1036,6 +1081,11 @@ impl EditorState {
                         }
                     });
                 });
+            ui.label(
+                RichText::new("Drag the text in the preview to move it anywhere.")
+                    .size(12.0)
+                    .color(FAINT),
+            );
         });
         if next != look {
             self.edit(EditorAction::Look { id, look: next });
@@ -1336,11 +1386,14 @@ impl EditorState {
             }
         }
     }
-    /// Shows the playhead segment's title and fade over the picture, as the export will.
-    fn paint_look(&self, ui: &egui::Ui, area: egui::Rect) {
+    /// Shows the playhead segment's title and fade over the picture, as the export will. The
+    /// title of the selected segment can be dragged to place it anywhere.
+    fn paint_look(&mut self, ui: &mut egui::Ui, area: egui::Rect) {
         let Some((clip, source_time)) = self.session.at(self.playhead) else {
             return;
         };
+        let (id, mut look) = (clip.id, clip.look.clone());
+        let (local, length) = (source_time - clip.start, clip.duration());
         let (width, height) = if area.width() / area.height().max(1.0) > 16.0 / 9.0 {
             (area.height() * 16.0 / 9.0, area.height())
         } else {
@@ -1348,30 +1401,77 @@ impl EditorState {
         };
         let canvas = egui::Rect::from_center_size(area.center(), Vec2::new(width, height));
         let painter = ui.painter().with_clip_rect(canvas);
-        let title = clip.look.title.trim();
+        if let Some((dragged, x, y)) = self.title_drag
+            && dragged == id
+        {
+            (look.title_x, look.title_y) = (x, y);
+        }
+        let title = look.title.trim();
         if !title.is_empty() {
+            let [r, g, b] = look.title_color;
+            let color = Color32::from_rgb(r, g, b);
             let galley = painter.layout(
                 title.to_owned(),
-                FontId::new((height * 0.075).max(8.0), kit::semibold()),
-                Color32::WHITE,
-                width * 0.86,
+                FontId::new(
+                    (height * f32::from(look.title_size) / 1000.0).max(8.0),
+                    kit::semibold(),
+                ),
+                color,
+                width * 0.9,
             );
-            let margin = height * 0.08;
-            let top = match clip.look.title_place {
-                TitlePlace::Top => canvas.top() + margin,
-                TitlePlace::Center => canvas.center().y - galley.size().y / 2.0,
-                TitlePlace::Bottom => canvas.bottom() - margin - galley.size().y,
-            };
-            let at = egui::pos2(canvas.center().x - galley.size().x / 2.0, top);
+            let size = galley.size();
+            let centre = egui::pos2(
+                canvas.left() + width * f32::from(look.title_x) / 1000.0,
+                canvas.top() + height * f32::from(look.title_y) / 1000.0,
+            );
+            let at = egui::pos2(
+                (centre.x - size.x / 2.0)
+                    .clamp(canvas.left(), (canvas.right() - size.x).max(canvas.left())),
+                (centre.y - size.y / 2.0)
+                    .clamp(canvas.top(), (canvas.bottom() - size.y).max(canvas.top())),
+            );
             let shadow = (height * 0.01).clamp(1.0, 3.0);
             painter.galley_with_override_text_color(
                 at + Vec2::splat(shadow),
                 galley.clone(),
                 Color32::from_black_alpha(170),
             );
-            painter.galley(at, galley, Color32::WHITE);
+            painter.galley(at, galley, color);
+            if self.selected == Some(id) && !self.busy() {
+                let rect = egui::Rect::from_min_size(at, size).expand(6.0);
+                let response = ui
+                    .interact(rect, egui::Id::new("editor-title-drag"), Sense::drag())
+                    .on_hover_cursor(egui::CursorIcon::Grab)
+                    .on_hover_text("Drag to move the text");
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Move text")
+                });
+                if response.hovered() || response.dragged() {
+                    painter.rect_stroke(
+                        rect,
+                        4,
+                        Stroke::new(1.0_f32, LIME),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+                if response.dragged() {
+                    let delta = response.drag_delta();
+                    let x = (f32::from(look.title_x) + delta.x / width.max(1.0) * 1000.0)
+                        .clamp(0.0, 1000.0);
+                    let y = (f32::from(look.title_y) + delta.y / height.max(1.0) * 1000.0)
+                        .clamp(0.0, 1000.0);
+                    self.title_drag = Some((id, x.round() as u16, y.round() as u16));
+                }
+                if response.drag_stopped()
+                    && let Some((_, x, y)) = self.title_drag.take()
+                {
+                    let mut moved = look.clone();
+                    (moved.title_x, moved.title_y) = (x, y);
+                    self.edit(EditorAction::Look { id, look: moved });
+                }
+            }
         }
-        if let Some((fade, amount)) = clip.look.fade_at(source_time - clip.start, clip.duration()) {
+        if let Some((fade, amount)) = look.fade_at(local, length) {
             let color = if fade == Fade::White { 255 } else { 0 };
             painter.rect_filled(
                 canvas,
@@ -1864,6 +1964,16 @@ impl EditorState {
         });
     }
 }
+
+/// Text colours offered in the Text tab.
+const TEXT_COLORS: [(&str, [u8; 3]); 6] = [
+    ("White", [255, 255, 255]),
+    ("Black", [0, 0, 0]),
+    ("Lime", [190, 255, 0]),
+    ("Yellow", [255, 220, 40]),
+    ("Red", [255, 70, 60]),
+    ("Sky", [90, 200, 255]),
+];
 
 #[derive(Clone, Copy)]
 enum TransitionKind {
