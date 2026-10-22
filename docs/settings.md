@@ -23,7 +23,7 @@ notice when an active replay session needs new capture settings.
 1. Enable **Show advanced settings** at the bottom of General.
 2. Open Games and scroll below the searchable built-in catalog to **Advanced settings**.
 3. In **Add a custom game**, optionally press **Refresh apps** and choose a running app to fill
-   the process name and available Linux Steam ID. You can also enter the details yourself.
+   the process name and available Steam ID. You can also enter the details yourself.
 4. Enter the display name and one or more comma-separated process names or Steam app IDs.
    **Match whole process names** selects exact executable matching; when off, process names
    use the existing substring matching. Steam IDs always match exactly.
@@ -46,6 +46,34 @@ name. The app shows a summary of active custom rules while their advanced editor
 Limits remain 64 custom rules, up to eight process aliases/Steam IDs per rule and at most 512
 unique entries in the running-app picker. Name/process/ID inputs are bounded and the engine's
 existing settings validation still applies. Refreshing apps is explicit; merely hiding/revealing
-advanced settings does not start a process refresh or recording. Steam process metadata is
-Linux-only. Identification still needs a capturable game window and does not establish live-game
+advanced settings does not start a process refresh or recording. Steam IDs can come from Linux
+process metadata or verified local installation paths. Identification still needs a capturable game window and does not establish live-game
 or platform compatibility. See [game-catalog.md](game-catalog.md) and [gaps.md](gaps.md).
+
+## Automatic recording behavior
+
+Games has a **Switch recording automatically** switch and three choices:
+
+| Mode | When no game is running | When a recognized game opens/closes |
+| --- | --- | --- |
+| Games only (default) | Idle | Record the verified game window; stop when it exits |
+| Games, then desktop briefly | Idle until a game has been captured | Switch to desktop after exit/crash, for the chosen duration; return to a game as soon as detected |
+| Desktop and games | Maintain desktop replay, including startup | Switch to each game's window and return to desktop when it closes |
+
+The temporary mode offers 30 seconds, 1/2/5/10 minutes or a custom 15–3,600 seconds. Its default is
+one minute. The timer is cancelled when a game opens; closing that game starts a fresh timer. The
+top bar shows desktop capture and time remaining. Stop pauses either desktop mode until Start.
+Turning automatic switching off returns to manual source selection; it stops any managed session.
+
+These are bounded replay buffers, not unlimited recordings of an entire session. Automatic source
+changes and timer expiry save the final replay using the configured replay length and storage
+policy. Game clips retain their game name; desktop clips do not inherit it. One transition save
+may wait behind one running save; if both are occupied, capture pauses until space is available.
+Existing media is never overwritten. Desktop capture may include other apps, so both desktop
+modes require an explicit choice. No monitor/permission or a failed game open leaves capture idle
+with an error; a Wayland chooser is not opened automatically to work around this.
+
+**Recognize installed Steam games** reads local installation metadata in a background worker,
+subject to the main automatic-recognition switch. **Refresh games** refreshes the catalog and
+running apps; installed games have per-Steam-ID exclusions. The shared search above also filters
+that list. Custom overrides still win. See the catalog guide for root/platform and parsing limits.

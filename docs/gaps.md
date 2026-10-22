@@ -29,23 +29,71 @@ behavior reference only because its GPL-3.0-only non-Rust/FFmpeg runtime is outs
 M5.2 plans a Rust-native GPU-surface path and requires real per-device measurements before any
 compositor, GPU-vendor, or CPU-use claim.
 
-Settings › Games recognizes [348 known games](game-catalog.md) automatically, following
-Vice's custom-first approach. Users can exclude built-in games or turn built-in recognition off.
-Known games use exact executable basenames or exact Linux Steam IDs; custom rules take priority
-and retain their matching mode. Matching fixtures cover every bundled variant, lookalikes, duplicate/malformed exclusions,
-settings limits and persistence. Executable/storefront changes and live identification/capture for these games are
-not verified. All 347 Vice titles plus the existing Bedrock entry are included (672 exact process
-identifiers, 311 Steam IDs); seven launcher/generic aliases are omitted. A generic Java process
-alone cannot identify Minecraft. The 1,024-ID exclusion limit supports disabling the full list.
-The larger leinstay/steamdb dataset was assessed but is not imported: it lacks executable mappings
-and declares GPL-3.0. Local installed-Steam-manifest recognition remains unimplemented.
+Settings › Games recognizes [348 bundled games](game-catalog.md) plus games discovered from local
+Steam installation manifests. One background worker handles process refresh/matching and the
+running-app picker, with one replaceable pending request and stale-result rejection. Local Steam
+metadata refreshes about every 30 seconds or on **Refresh games**; processes refresh about two
+seconds after each completed scan. No network catalog, account or service is used.
+Custom rules win; global automatic-recognition off, built-in exclusions and Steam-ID exclusions
+remain effective. Linux reads exact Steam process IDs; installed-directory path matching also
+works without retaining full process paths. Default Windows Steam locations are searched; custom
+Steam installation roots need an explicit CLI root and are not auto-found through the registry.
+Corrupt individual manifests are skipped and counted; a failed library-list refresh retains the
+previous catalog and shows a warning. Identification remains metadata-based and unverified for
+real games, changed executables, protected processes or anti-cheat.
+
+Automatic recording offers **Games only** (default), **Games, then desktop briefly** with a bounded
+15–3,600 second timer, and **Desktop and games** for continuous desktop replay between games,
+including startup. A game opening during the timer switches to its verified window on the next
+successful process scan; its next exit starts a new timer. The top bar identifies desktop capture
+and shows a countdown for temporary capture. Capture-open failures and scan errors never authorize
+a temporary desktop fallback. Explicit Stop pauses the two desktop modes until Start; mode changes
+and timer expiry are handled without changing source files. Automatic transitions in the desktop modes save the prior
+replay (up to the configured replay length, not the entire session), with game labels only on game
+captures. One save and one queued transition save are allowed; a full save queue pauses frame
+production rather than growing without limit. Pending paths are kept distinct.
+
+Generated-source tests cover timed/constant modes, reopening, timer reset/expiry, pause, failures,
+source switching, saved-media validity and labels. Native X11 evidence and remaining platform checks are listed
+in [testing.md](testing.md); Windows and real-game behavior remain unverified here. Automatic desktop
+continuation requires an exposed monitor and cannot bypass Wayland's chooser or permissions.
+The proposed leinstay/steamdb download remains unused; local manifests avoid that dependency.
 
 Reference behavior from Vice now drives the engine's longest-match rule, user-managed game allowlist,
-process observation, and automatic replay arming. The process watcher polls every two seconds only
-in Game-only mode; it stores executable basenames and exact Steam IDs, not command lines or paths.
+process observation, and automatic replay arming. The process watcher polls about every two seconds while
+automatic switching is enabled; it stores executable basenames and exact Steam IDs, not command lines or paths.
 ClipRecorder's timestamped audio-gap policy is also ported in `clipcraft-record`, but the current
 untimestamped `AudioSource` mixer does not use it. Upstream revisions, permission provenance, and
 exact source files are recorded in [`upstream-ports.md`](upstream-ports.md).
+
+## Small sequence editor (M11.1a)
+
+The user-requested editor slice is implemented using FilmCraft's pinned track/cut algebra, media
+readers, H.264 and AAC codecs. The browser/preview/timeline workflow appends local library media,
+splits at the playhead, trims source ranges, reorders, duplicates and ripple-deletes segments.
+Per-segment volume/mute affects preview and export; source audio stays linked to its video.
+The editor uses the shared charcoal/lime palette and embedded Inter Regular/Medium/SemiBold
+faces, with keyboard focus, thumbnail hover states and compact controls. Its own rail icon opens
+an independent browser; Import clips and Send to editor add references, while right-click offers
+Details/Add to timeline. Undo/redo retains at most 64 edits within an 8 MiB budget. Quick trim remains available, and media is never overwritten.
+
+Limits: one gapless track, no separate segment-count limit, 30-minute total, minimum segment 1/30 second, no persisted
+draft/project format. Returning to the library retains edits until app exit. Export re-encodes
+SDR H.264/AAC MP4/MOV or recorder-compatible MKV into H.264 MP4 at 30 fps, with a 16:9 canvas
+whose height follows the first source up to 720p. Pictures fit with black bars and no upscaling.
+Only the first source audio track is used (first two channels, mono repeated); it becomes one
+48 kHz stereo AAC track, including silence for muted/silent segments. Additional audio tracks,
+HDR, non-square pixels, effects/text/transitions, detached audio and arbitrary rendering controls
+are not implemented. Cuts in the exported video are sampled on its 30 fps grid; audio follows the
+integer timeline without per-cut encoder priming. Playback speed controls in quick trim are not
+sequence speed edits. No small-file size target applies to sequence export.
+
+Preview opens one source at a time and can pause briefly while opening the next source; real-time
+4K playback and export speed on reference machines remain unmeasured. Export preserves drafts
+and sources, supports progress/cancel, and uses exclusive temporary output/no-replace publication;
+the destination filesystem must support hard links. The CLI uses the same `editor.import`, `editor.edit` and
+`editor.export` engine paths over bounded local JSON. See [editor.md](editor.md) and
+[testing.md](testing.md) for controls, evidence and remaining platform checks.
 
 ## Performance review (2026-10-21)
 
@@ -214,7 +262,7 @@ shows decoding the source limits it to about a third faster. FilmCraft's OS hard
 now registered (off for playback, on for GPU-allowed exports) to lift that limit; untested on a
 real GPU. Small-file export was also made much faster (see [testing.md](testing.md)); the numbers are
 from a 4-core Linux container, not a gaming PC. See
-[ADR 0017](adr/0017-gif-and-loudness-export.md).
+[ADR 0018](adr/0018-gif-and-loudness-export.md).
 
 ### M4.3: local export size presets (implemented, broader controls open)
 

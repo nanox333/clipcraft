@@ -48,6 +48,47 @@ edits; implementation changes require both.
 
 ## Required evidence by area
 
+### M7.1b — Background discovery and desktop/game switching (2026-10-22)
+
+Engine fixtures cover bounded VDF/ACF parsing, alternate Steam libraries, invalid IDs/paths,
+corrupt and oversized metadata, cancellation, custom-first matching, exclusions and safe settings
+migration. One blocked discovery worker accepts 50 replacement requests while retaining just one
+pending request. Failure, panic and obsolete-settings results cannot be mistaken for game exits
+or start capture. A Linux regression test launches the Rust test binary as a child, kills it and
+leaves it unreaped during observation: its zombie entry must no longer count as a running game.
+
+Generated capture providers exercise game launch → save → desktop → reopened game → second exit
+→ fresh timer → expiry. Four valid MP4s result, with two captured-game labels and two untagged
+desktop clips; an existing sentinel file stays unchanged. Additional checks cover continuous
+startup, manual Stop/Start, rule removal, failed game opens, bounded saving and a game that exits
+while both save slots are occupied. The last case retains and saves the desktop buffer rather
+than discarding it when the pending destination disappears. UI tests activate the three recording
+modes and duration controls with Tab/Enter, preserve durations across modes, and exercise existing
+layout extremes. `cargo xtask ci` and the branch documentation gate pass on Linux.
+
+The actual desktop build ran on private Xvfb display `:84` at 1440×900. A second Rust app binary,
+renamed as a generated game, supplied a real PID and X11 window; a small test-only Rust helper set
+`_NET_CLIENT_LIST`, which a window manager normally supplies. The production process observer,
+window provider, software encoder, desktop provider, save jobs and library metadata handled:
+
+- Game exit → desktop countdown → reopening within 15 seconds → game clipping → second exit →
+  fresh 15-second countdown → idle at expiry. Four replay outputs decoded without errors using
+  external FFmpeg/ffprobe; metadata contained two game labels and two absent desktop game labels.
+- An unreaped generated child exiting → desktop continuation and expiry.
+- Continuous desktop → generated game → desktop, followed by explicit Stop staying paused across
+  subsequent process scans.
+
+Screenshots stay outside Git under `.clipcraft-local/game-switching/`: `before.png`, `after.png`,
+`game-running.png`, `desktop-countdown.png`, `reopened.png`, `second-countdown.png`,
+`timer-ended.png`, and `always-{desktop,game,return,paused}.png`. The final settings view wraps help
+text without overlap. Six X11 provider integration tests also pass with Xvfb explicitly on PATH,
+including exact PID selection, monitor/window capture, window loss and global hotkeys.
+
+These are generated-window Linux checks, not real-game, Windows, GPU-performance or audio-device
+results. X11 can return black frames for an obscured window in this virtual display; valid files
+alone do not prove visual capture quality for games. Wayland process-to-window mapping and macOS
+capture remain unsupported. No reference footage, test helper or external oracle ships in the app.
+
 ### M4.1b — Recursive library and captured-game labels (2026-10-22)
 
 Built on performance branch revision `4dd91a7`. Engine/desktop tests cover nested game folders,
@@ -289,3 +330,32 @@ the source SHA-256 stayed unchanged and the completion message displayed the act
 target. T opens trim, I/O mark boundaries, text entry changes the custom target, and playback
 shortcuts are suppressed while the export popup is open. A regression test covers that popup
 conflict, and UI smoke tests draw all size choices at narrow and desktop widths.
+
+## Small sequence editor evidence (2026-10-22)
+
+`cargo xtask ci` covers exact FilmCraft-adapted splits, trim/reorder/delete/history, hostile ranges
+and identifiers, media import bounds, and failed-edit immutability. Generated Rust fixtures cover
+ordered MP4/MKV cuts, portrait fitting, silent sources, gain/mute, ten fractional-duration cuts
+without accumulated AAC delay, cancellation/publication collisions, source preservation and a
+40-segment export. The UI harness checks separate Editor navigation/media references, context
+menus on a second-row thumbnail, double-click/Enter append, Tab/Enter activation, rapid command-key
+undo/redo, split/delete and narrow/extreme layouts.
+
+The native Linux app was opened on an isolated Xvfb display at 1440×900 and 1080×760 using three
+generated 640×360 clips. Checks exercised Send to editor, the separate rail destination,
+Details/Add to timeline menus, source references without per-card Add buttons, cuts, reorder,
+volume/mute, title editing, keyboard actions and MP4 export. The shared charcoal/lime palette,
+Inter Regular/Medium/SemiBold, thumbnail truncation, unstretched timeline thumbnails, focus states
+and lower controls were inspected. Before/after and context/empty/narrow screenshots are kept
+under ignored `.clipcraft-local/editor/`; generated media stays outside Git.
+
+An app export produced a 12-second, 640×360/30 fps H.264 MP4 with 48 kHz stereo AAC (6,256,881 bytes).
+FFprobe inspected its streams and FFmpeg decoded the full file solely as external test oracles.
+All three original SHA-256 hashes were unchanged. A separate local CLI smoke check imported and
+deduplicated references, rejected a batch with a missing source, applied split/delete/undo/redo,
+reordered/muted, exported and decoded 360 pictures/12 seconds, and refused an existing destination.
+
+These are software/virtual-display checks. Native file-picker integration on installed desktop
+portal backends, physical audio output, Windows/macOS UI behavior, reference-machine 4K playback
+and real capture hardware remain unverified here. The existing platform evidence/limitations
+still apply; this editor work does not establish additional capture support or performance.

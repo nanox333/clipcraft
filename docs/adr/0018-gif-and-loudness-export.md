@@ -1,4 +1,4 @@
-# ADR 0017: GIF output and loudness evening
+# ADR 0018: GIF output and loudness evening
 
 **Status:** accepted · **Work:** M4.4 · **Date:** 2026-10-22
 

@@ -307,7 +307,7 @@ frame-accurate cut points, audio sync, metadata, cancellation cleanup, and input
 
 **Status:** implemented and tested with generated clips on Linux; no Windows/macOS or real-game
 evidence. Engine commands `clip.export_gif` and `clip.normalize`, the CLI
-(`clip gif|normalize`) and the trim panel's output menu share one implementation. See [ADR 0017](adr/0017-gif-and-loudness-export.md).
+(`clip gif|normalize`) and the trim panel's output menu share one implementation. See [ADR 0018](adr/0018-gif-and-loudness-export.md).
 
 **Requirements:** save a short range as a looping GIF; bring a range's sound to a common loudness without clipping.
 Preserve originals; never overwrite; cancel leaves nothing behind; work offline.
@@ -573,7 +573,7 @@ while no selected game is running. Add fake process-event tests and real platfor
 every supported OS.
 
 **Limitations and fallback:** 348 built-in games are recognized automatically (M7.1a);
-no upstream game database is bundled. Users can use custom rules from the running-process picker or enter
+the pinned Vice catalog is bundled as Rust data. Users can use custom rules from the running-process picker or enter
 executable names and Steam app IDs. Steam IDs are read only on Linux. Process names
 can be ambiguous, elevated or sandboxed games may be hidden, and anti-cheat/protected games can deny
 capture. Windows mapping is compile-only here; Wayland does not expose game-window process IDs, and
@@ -615,8 +615,8 @@ searchable known-game list plus custom overrides. UI/CLI share `recording.set_bu
 atomic exclusion changes. Keep game-only start/stop, manual capture and pause behavior.
 
 **Limits:** identification fixtures do not establish actual per-game/capture support. Steam process
-IDs are Linux-only; generic Java runtimes and Vice's local installed-Steam-name fallback
-are outside this slice. No artwork, runtime database downloads, network service or launcher runtime is added.
+IDs from process environments are Linux-only; M7.1b adds local Steam manifests and installation-path
+mapping. Generic Java runtimes still cannot identify an arbitrary game by basename alone. No artwork, runtime database downloads, network service or launcher runtime is added.
 Omit seven launcher/generic aliases; retain their titles and other identifiers.
 Missing new preference fields default automatic recognition on, preserving the old game-only/manual
 mode and custom rules; explicit off/exclusions remain off. See ADR 0015. Custom rules are capped at
@@ -633,16 +633,17 @@ gaps, architecture, testing and catalog provenance together. **Dependencies:** M
 
 ### M7.1b — Background discovery, local Steam games and desktop continuation
 
-**User outcome / evidence:** process matching currently runs on the interface thread; games beyond
-the bundled list need custom setup. The user requested the proposed background/local-Steam work
+**User outcome / evidence:** before this issue, process matching ran on the interface thread; games
+beyond the bundled list needed custom setup. The user requested the proposed background/local-Steam work
 and an opt-in desktop continuation when a running game closes or crashes.
 
 **Scope / requirements:** one persistent bounded worker for process discovery, matching and local
 Steam manifests; obsolete generations cannot change capture. UI/CLI share an offline Steam scan
-command. Preserve custom priority and exclusions. Desktop continuation is off by default, only
-follows a successfully started game whose process exited, preserves its final replay and starts a
-fresh desktop buffer without a game label. Re-entry returns to game capture. Stop, disable and
-errors must not silently start desktop recording. Show the active source in the top bar.
+command. Preserve custom priority and exclusions. Games-only stays the default. Add a timed desktop mode (15–3,600 seconds after a successfully
+captured game exits) and an explicitly chosen constant desktop/game mode. Re-entry cancels the
+timer and switches to the game; its next exit gets a fresh timer. Preserve final replay on automatic
+source changes/expiry; use fresh buffers and no old game label on desktop clips. Stop pauses both
+desktop modes until Start. Show the active source/countdown and keep source/capture errors safe.
 
 **Limits:** bounded VDF parsing, library/manifest/process counts and one pending worker request;
 no network, code injection, game-file inspection or added runtime. Unknown roots, unavailable
@@ -655,7 +656,9 @@ source precedence/exclusions, stale worker results, responsiveness while blocked
 launch/arm/save/exit/crash/default-off/fallback/return/pause/disable flows and saved-game labels.
 Inspect UI at 1440×900, exercise keyboard toggles, and run `cargo xtask ci` plus documentation gate.
 Update README, gaps, roadmap, architecture, testing, settings/catalog guides and ADR/provenance.
-**Dependencies:** M7.1/M7.1a, M4.1c. **Estimate:** multi-part change. **Status:** in progress.
+**Dependencies:** M7.1/M7.1a, M4.1c. **Estimate:** multi-part change. **Status:** implemented and verified on Linux with generated sources, native X11 switching,
+keyboard/screenshots, valid saved media and the full gate; Windows/live-game validation remains open.
+See [testing.md](testing.md#m71b--background-discovery-and-desktopgame-switching-2026-10-22).
 
 ## M8 — Desktop platform parity and Android feasibility
 
@@ -834,7 +837,7 @@ capability behavior. **Dependencies:** M10.3 and stable engine command API. **Es
 
 ### M11.1 — One-track editor expansion evaluation
 
-**Status:** proposed; the current editor remains a basic no-reencode trim.
+**Status:** first bounded slice implemented under M11.1a; further editing features remain proposed.
 
 **User problem:** the user wants a more complete inbuilt editor in the spirit of Medal or a small
 CapCut/Clipchamp workflow while keeping capture and library as the main product.
@@ -858,6 +861,42 @@ preserves source files and meets measured performance limits. The decision may b
 **Verification:** prototype screenshots/video, command-level edit tests, generated A/V sync tests,
 and a written continue/defer decision. **Dependencies:** M8.1 and M10.3. **Estimate:** TBD after UX
 spike.
+
+### M11.1a — Small sequence editor: cuts, arrangement and local export
+
+**Status:** implemented and software/virtual-display verified (2026-10-22); target hardware and
+installed desktop portal checks remain open as documented in testing/gaps.
+
+**Outcome / evidence:** quick trim currently exports only one range. The user requested a small
+editor, reuse of FilmCraft editing features, and a reference layout with a left media browser,
+large preview and bottom timeline. Build the portable single-track slice now; M8/M10 validation
+remains required for broader platform or overlay claims, not a blocker for this local slice.
+
+**Scope / requirements:** append library clips, select/scrub, split at the playhead, trim selected
+source ranges, duplicate, reorder, ripple-delete and undo/redo. Keep source audio attached and
+allow per-segment volume/mute. Reuse pinned FilmCraft track/cut algebra and media/codecs; preserve
+quick trim. Export the ordered cuts as an ordinary MP4 on a bounded worker with progress/cancel.
+Commands and CLI use the shared engine. Follow the reference's browser/preview/timeline hierarchy
+with original controls/assets; no dead Effects/Text tabs. The editor has its own rail icon and
+media library, Import clips, Send to editor from Clips, and Details/Add to timeline context menus.
+Do not add per-thumbnail Add buttons or an artificial segment-count cap. Match the shared
+charcoal/lime palette, embedded Inter font weights, compact controls and keyboard focus states.
+
+**Limits:** one gapless video/audio sequence, at most 30 minutes, no separate segment-count cap, bounded
+64-step/8 MiB history; edits are in-memory and disappear on app exit. No custom project format, transitions,
+text, overlays, detached/multiple audio lanes, arbitrary effects, HDR or speed changes in this
+slice. Export is SDR H.264/AAC, at most 720p/30 FPS, first source audio track only; normalize to
+48 kHz stereo and preserve originals. Missing/unsupported media must fail with an actionable
+message without replacing output; no required server or external encoder.
+
+**Acceptance / verification:** typed command tests for exact cuts, history, bounds, invalid input
+and immutable failed edits. Generated multi-clip fixtures prove order, cuts, duration, audio
+continuity/mute, cancellation, no-overwrite collisions and source preservation. Inspect actual UI
+at 1440×900; test keyboard actions and narrow/layout extremes. Run `cargo xtask ci` and docs gate.
+
+**Docs:** README, gaps, roadmap, architecture, testing, editor guide and FilmCraft reuse ADR.
+**Dependencies:** existing player/export stack; user authorizes this bounded slice before M8/M10.
+**Estimate:** multi-part implementation.
 
 ### M11.2 — Local CLI and MCP footage-management adapter
 

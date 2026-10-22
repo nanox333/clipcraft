@@ -6,10 +6,11 @@ use std::time::Duration;
 
 use clipcraft_audio_out::{DeviceNames, MicMeter, list_devices};
 use clipcraft_engine::{
-    AUDIO_KBPS, CaptureSource, Command, CommandOutput, Container, EncoderPreset, FRAME_RATES,
-    Framing, GameMatchRule, HEIGHTS, HotkeyAction, KEYFRAME_SECONDS, OutputShape,
-    POST_ROLL_SECONDS, QualityMode, REPLAY_SECONDS, RateControl, RecordingSettings, SAMPLE_RATES,
-    StorageUsage, VIDEO_KBPS, VideoCodec, VideoEncoder, execute, format_bytes, normalize_hotkey,
+    AUDIO_KBPS, CaptureSource, Command, CommandOutput, Container, DesktopCaptureMode,
+    EncoderPreset, FRAME_RATES, Framing, GameMatchRule, HEIGHTS, HotkeyAction, KEYFRAME_SECONDS,
+    OutputShape, POST_ROLL_SECONDS, QualityMode, REPLAY_SECONDS, RateControl, RecordingSettings,
+    SAMPLE_RATES, StorageUsage, VIDEO_KBPS, VideoCodec, VideoEncoder, execute, format_bytes,
+    normalize_hotkey,
 };
 use eframe::egui;
 use egui::{Color32, RichText, Stroke, Vec2};
@@ -371,8 +372,22 @@ pub(crate) fn info_row(ui: &mut egui::Ui, label: &str, value: &str, last: bool) 
 
 /// One option of a radio list: a circle, a title, and a description. True when clicked.
 pub(crate) fn radio_row(ui: &mut egui::Ui, title: &str, help: &str, selected: bool) -> bool {
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), egui::Sense::click());
+    let width = ui.available_width().max(0.0);
+    let text_width = (width - 30.0).max(1.0);
+    let title_galley = ui.painter().layout(
+        title.to_owned(),
+        egui::FontId::new(14.0, kit::medium()),
+        TEXT,
+        text_width,
+    );
+    let help_galley = ui.painter().layout(
+        help.to_owned(),
+        egui::FontId::proportional(12.5),
+        MUTED,
+        text_width,
+    );
+    let height = (title_galley.size().y + help_galley.size().y + 18.0).max(46.0);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, title)
     });
@@ -385,20 +400,14 @@ pub(crate) fn radio_row(ui: &mut egui::Ui, title: &str, help: &str, selected: bo
     if selected {
         ui.painter().circle_filled(center, 4.5, LIME);
     }
-    ui.painter().text(
-        egui::pos2(rect.left() + 30.0, rect.top() + 14.0),
-        egui::Align2::LEFT_CENTER,
-        title,
-        egui::FontId::new(14.0, kit::medium()),
+    let help_top = rect.top() + 10.0 + title_galley.size().y;
+    ui.painter().galley(
+        egui::pos2(rect.left() + 30.0, rect.top() + 5.0),
+        title_galley,
         TEXT,
     );
-    ui.painter().text(
-        egui::pos2(rect.left() + 30.0, rect.top() + 33.0),
-        egui::Align2::LEFT_CENTER,
-        help,
-        egui::FontId::proportional(12.5),
-        MUTED,
-    );
+    ui.painter()
+        .galley(egui::pos2(rect.left() + 30.0, help_top), help_galley, MUTED);
     response.clicked() && !selected
 }
 
@@ -940,28 +949,81 @@ pub fn games_tab(
     state: &mut SettingsState,
 ) -> bool {
     let mut refresh_processes = false;
-    card(ui, "Game-aware capture", |ui| {
+    card(ui, "Recording behavior", |ui| {
         toggle_row(
             ui,
-            "Arm replay only for recognized games",
-            "The replay buffer stays stopped until a matching game process and capturable window are found.",
+            "Switch recording automatically",
+            "Turn off to choose a screen or window manually in Capture.",
             &mut settings.game_only_capture,
             true,
         );
-        if settings.game_only_capture && !settings.has_game_rules() {
-            ui.label(
-                RichText::new(if settings.show_advanced { "Enable built-in recognition or add a custom game below." } else { "Enable built-in recognition, or turn on advanced settings in General to add a custom game." })
-                    .color(FAINT)
-                    .size(12.5),
-            );
-        }
-        if settings.game_only_capture && settings.record_on_launch {
-            ui.add_space(5.0);
-            ui.label(
-                RichText::new("Start on launch is ignored while game-only capture is enabled.")
-                    .color(MUTED)
-                    .size(12.5),
-            );
+        if settings.game_only_capture {
+            for (mode, label, help) in [
+                (
+                    DesktopCaptureMode::Never,
+                    "Games only",
+                    "Keep replay stopped until a recognized game opens. Stop when the game closes.",
+                ),
+                (
+                    DesktopCaptureMode::AfterGame,
+                    "Games, then desktop briefly",
+                    "When a game closes or crashes, record the desktop for the duration below. Reopening a game switches straight back to game clipping.",
+                ),
+                (
+                    DesktopCaptureMode::Always,
+                    "Desktop and games",
+                    "Keep a desktop replay running whenever no recognized game is open, including at startup. Switch to each game when it opens and back to desktop when it closes.",
+                ),
+            ] {
+                if radio_row(ui, label, help, settings.desktop_capture_mode == mode) {
+                    settings.desktop_capture_mode = mode;
+                    settings.record_desktop_after_game = false;
+                }
+            }
+            if settings.desktop_capture_mode == DesktopCaptureMode::AfterGame {
+                setting_row(
+                    ui,
+                    "Desktop recording duration",
+                    "A fresh timer starts each time a game closes. A new game cancels the timer and takes over recording.",
+                    true,
+                    |ui| {
+                        for (seconds, label) in [
+                            (30, "30 sec"),
+                            (60, "1 min"),
+                            (120, "2 min"),
+                            (300, "5 min"),
+                            (600, "10 min"),
+                        ] {
+                            if choice(
+                                ui,
+                                label,
+                                settings.desktop_after_game_seconds == seconds,
+                                true,
+                                "Desktop recording duration",
+                            ) {
+                                settings.desktop_after_game_seconds = seconds;
+                            }
+                        }
+                        ui.label("Custom:");
+                        let response = ui.add(
+                            egui::DragValue::new(&mut settings.desktop_after_game_seconds)
+                                .range(15..=3600)
+                                .suffix(" sec"),
+                        );
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::DragValue,
+                                true,
+                                "Desktop recording duration in seconds",
+                            )
+                        });
+                    },
+                );
+            }
+            if settings.desktop_capture_mode != DesktopCaptureMode::Never {
+                ui.add_space(8.0);
+                ui.label(RichText::new("Desktop capture can include other apps. These modes keep a bounded replay buffer; the final replay is saved when switching sources or when the desktop timer ends. Stop pauses automatic recording until you press Start again.").color(MUTED).size(12.5));
+            }
         }
     });
 
@@ -1039,6 +1101,67 @@ pub fn games_tab(
         );
     });
 
+    card(ui, "Installed Steam games", |ui| {
+        toggle_row(
+            ui,
+            "Recognize installed Steam games",
+            "Read the game names and IDs in your local Steam libraries. No account or download is needed. The automatic-recognition switch above must also be on.",
+            &mut settings.detect_installed_steam_games,
+            true,
+        );
+        if kit::labelled_button(ui, kit::Icon::Loop, "Refresh games", false, true).clicked() {
+            refresh_processes = true;
+        }
+        if let Some(warning) = &state.steam_warning {
+            ui.label(RichText::new(warning).color(DANGER).size(12.5));
+        }
+        if state.steam_games.skipped > 0 {
+            ui.label(
+                RichText::new(format!(
+                    "{} library entries could not be read. Existing game files are untouched.",
+                    state.steam_games.skipped
+                ))
+                .color(MUTED)
+                .size(12.5),
+            );
+        }
+        if state.steam_games.games.is_empty() {
+            ui.label(RichText::new("No installed Steam games found yet. Refresh after opening Steam or adding a library.").color(MUTED).size(12.5));
+        } else {
+            let query = state.builtin_game_search.trim().to_lowercase();
+            egui::ScrollArea::vertical()
+                .id_salt("installed-steam-games")
+                .max_height(180.0)
+                .show(ui, |ui| {
+                    for game in &state.steam_games.games {
+                        if !game.name.to_lowercase().contains(&query)
+                            && !game.app_id.contains(&query)
+                        {
+                            continue;
+                        }
+                        let mut enabled = !settings.disabled_steam_app_ids.contains(&game.app_id);
+                        if ui
+                            .checkbox(
+                                &mut enabled,
+                                format!("{} · Steam {}", game.name, game.app_id),
+                            )
+                            .changed()
+                        {
+                            if enabled {
+                                settings
+                                    .disabled_steam_app_ids
+                                    .retain(|id| id != &game.app_id);
+                            } else if settings.disabled_steam_app_ids.len()
+                                < clipcraft_engine::MAX_STEAM_GAMES
+                            {
+                                settings.disabled_steam_app_ids.push(game.app_id.clone());
+                            }
+                        }
+                    }
+                });
+        }
+    });
+
     if !settings.show_advanced && !settings.game_rules.is_empty() {
         ui.label(
             RichText::new(format!(
@@ -1051,7 +1174,7 @@ pub fn games_tab(
     }
     if settings.show_advanced {
         advanced_heading(ui);
-        refresh_processes = custom_games(ui, settings, state);
+        refresh_processes |= custom_games(ui, settings, state);
     }
     refresh_processes
 }
@@ -2409,6 +2532,42 @@ mod preset_tests {
             }
         }
         panic!("{target} was not reachable with Tab");
+    }
+
+    #[test]
+    fn recording_modes_and_duration_are_keyboard_accessible() {
+        let mut app = crate::ClipCraftApp {
+            page: crate::Page::Settings,
+            settings_tab: crate::SettingsTab::Games,
+            ..Default::default()
+        };
+        keyboard_activate(&mut app, "Games, then desktop briefly");
+        assert_eq!(
+            app.recording.desktop_capture_mode,
+            DesktopCaptureMode::AfterGame
+        );
+        assert!(
+            category_controls(&mut app)
+                .iter()
+                .any(|name| name == "Desktop recording duration in seconds")
+        );
+        app.recording.desktop_after_game_seconds = 120;
+        keyboard_activate(&mut app, "Desktop and games");
+        assert_eq!(
+            app.recording.desktop_capture_mode,
+            DesktopCaptureMode::Always
+        );
+        assert!(
+            !category_controls(&mut app)
+                .iter()
+                .any(|name| name == "Desktop recording duration in seconds")
+        );
+        keyboard_activate(&mut app, "Games only");
+        assert_eq!(
+            app.recording.desktop_capture_mode,
+            DesktopCaptureMode::Never
+        );
+        assert_eq!(app.recording.desktop_after_game_seconds, 120);
     }
 
     #[test]

@@ -8,6 +8,7 @@ use clipcraft_engine::{
     default_thumbnail_dir, execute, game_of,
 };
 mod capture;
+mod editor;
 mod game_scan;
 mod kit;
 mod library_scan;
@@ -125,6 +126,7 @@ struct ClipCraftApp {
     game_draft: Option<(String, String)>,
     /// Recording: the replay buffer, hotkeys, and the clip being saved.
     capture: capture::CaptureState,
+    editor: editor::EditorState,
 }
 
 /// A thumbnail the worker finished: the clip and its cached JPEG.
@@ -193,6 +195,7 @@ impl SettingsTab {
 enum Page {
     #[default]
     Library,
+    Editor,
     Settings,
 }
 
@@ -213,6 +216,10 @@ impl eframe::App for ClipCraftApp {
         self.thumbs.begin_frame();
         self.capture_frame(context);
         self.sync_playback(context);
+        self.editor.poll(context);
+        if self.editor.take_saved().is_some() {
+            self.scan_library();
+        }
         self.poll_find(context);
         self.draw_screen(context);
         self.draw_focus_ring(context);
@@ -302,7 +309,12 @@ impl ClipCraftApp {
                     .inner_margin(egui::Margin::same(16)),
             )
             .show(context, |ui| {
-                if let Some(selected) = self.selected.clone() {
+                if self.editor.open {
+                    self.editor.show(ui, &mut self.thumbs);
+                    if !self.editor.open {
+                        self.selected = None;
+                    }
+                } else if let Some(selected) = self.selected.clone() {
                     self.clip_details(ui, &selected);
                 } else if self.page == Page::Settings {
                     self.settings(ui);
@@ -440,6 +452,10 @@ impl ClipCraftApp {
 
     /// Keeps exactly one player alive for the clip open in the detail view.
     fn sync_playback(&mut self, context: &egui::Context) {
+        if self.editor.open {
+            self.remember_playback_prefs();
+            return;
+        }
         let wanted_path = self.selected.as_ref().map(|entry| entry.path.clone());
         match wanted_path {
             Some(path)
@@ -685,14 +701,21 @@ impl ClipCraftApp {
                 ui.vertical_centered(|ui| {
                     ui.spacing_mut().item_spacing.y = 10.0;
                     if nav_button(ui, Icon::Library, "Clips", self.page == Page::Library) {
+                        self.editor.close();
                         self.page = Page::Library;
                         self.selected = None;
+                    }
+                    if nav_button(ui, Icon::Scissors, "Editor", self.page == Page::Editor) {
+                        self.page = Page::Editor;
+                        self.selected = None;
+                        self.editor.open = true;
                     }
                 });
                 // Settings sits at the bottom of the rail.
                 ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
                     ui.add_space(18.0);
                     if nav_button(ui, Icon::Gear, "Settings", self.page == Page::Settings) {
+                        self.editor.close();
                         self.page = Page::Settings;
                         self.selected = None;
                     }
@@ -1029,6 +1052,7 @@ impl ClipCraftApp {
         if let Some(action) = card_action {
             match action {
                 ClipCardAction::Open(entry) => self.selected = Some(*entry),
+                ClipCardAction::SendToEditor(entry) => self.send_to_editor(*entry),
                 ClipCardAction::CopyPath(path) => {
                     self.copy_media_path(ui.ctx(), PathBuf::from(path));
                 }
@@ -1164,6 +1188,12 @@ impl ClipCraftApp {
                 back = true;
             }
             ui.add_space(6.0);
+            if kit::labelled_button(ui, Icon::Scissors, "Send to editor", false, !entry.offline)
+                .clicked()
+            {
+                self.send_to_editor(entry.clone());
+            }
+
             ui.add(
                 egui::Label::new(
                     RichText::new(&entry.title)
@@ -1859,6 +1889,13 @@ impl ClipCraftApp {
         }
     }
 
+    fn send_to_editor(&mut self, entry: MediaEntry) {
+        self.editor.receive(entry);
+        self.editor.open = true;
+        self.page = Page::Editor;
+        self.selected = None;
+    }
+
     fn copy_media_path(&mut self, context: &egui::Context, path: PathBuf) {
         match execute(Command::LocalMediaPath { path }) {
             Ok(CommandOutput::LocalMediaPath { path }) => context.copy_text(path),
@@ -1906,6 +1943,7 @@ impl ClipCraftApp {
 
 enum ClipCardAction {
     Open(Box<MediaEntry>),
+    SendToEditor(Box<MediaEntry>),
     CopyPath(String),
     Reveal(String),
     SetFavorite {
@@ -2248,7 +2286,7 @@ fn clip_card(
             if entry.offline {
                 format!("Find the file for {}", entry.title)
             } else {
-                format!("Copy the path of {}", entry.title)
+                format!("Send {} to editor", entry.title)
             },
         )
     });
@@ -2423,7 +2461,7 @@ fn clip_card(
         ((Icon::Search, "Find file"), (Icon::Trash, "Remove"))
     } else {
         (
-            (Icon::Copy, "Copy path"),
+            (Icon::Scissors, "Send to editor"),
             (Icon::Folder, open_in_file_manager_label()),
         )
     };
@@ -2484,6 +2522,14 @@ fn clip_card(
 
     let mut menu_action = None;
     response.context_menu(|ui| {
+        if !entry.offline && ui.button("Send to editor").clicked() {
+            menu_action = Some(ClipCardAction::SendToEditor(Box::new(entry.clone())));
+            ui.close();
+        }
+        if ui.button("Copy path").clicked() {
+            menu_action = Some(ClipCardAction::CopyPath(entry.path.clone()));
+            ui.close();
+        }
         let label = if entry.favorite {
             "Remove from favorites"
         } else {
@@ -2536,7 +2582,7 @@ fn clip_card(
         Some(if entry.offline {
             ClipCardAction::FindFile(entry.path.clone(), entry.title.clone(), entry.size_bytes)
         } else {
-            ClipCardAction::CopyPath(entry.path.clone())
+            ClipCardAction::SendToEditor(Box::new(entry.clone()))
         })
     } else if reveal.clicked() {
         Some(if entry.offline {

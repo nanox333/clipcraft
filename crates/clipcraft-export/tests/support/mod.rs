@@ -197,3 +197,8 @@ pub fn fixture_sized(
     )
     .unwrap();
 }
+
+/// A 4 s, 60 fps clip of the given picture size.
+pub fn fixture_size(path: &Path, format: ClipFormat, audio: bool, width: u32, height: u32) {
+    fixture_sized(path, format, audio, (width, height, 60), 4);
+}

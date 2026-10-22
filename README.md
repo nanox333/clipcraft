@@ -1,7 +1,7 @@
 # ClipCraft
 
 **A local-first Rust desktop app for instant game clips, playback, a searchable clip library, and
-quick trims.** The current build captures and manages clips offline; it has no account, hosted
+quick trims and small clip sequences.** The current build captures and manages clips offline; it has no account, hosted
 backend, backup, upload, sync, or share-link service.
 
 > **Status: active prototype.** The screen-capture/replay/save pipeline, playback, local library,
@@ -22,8 +22,11 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   replay length, post-roll, and storage limits. Linux/X11 has end-to-end synthetic-screen evidence;
   Windows/AMD has generated-window capture-to-MP4 evidence, including a native D3D11 path. Game-only
   mode is on by default: replay stays stopped until a recognized game process and capturable window
-  are found, then stops when that process exits. Manual capture mode is available by turning the
-  setting off.
+  are found, then stops when that process exits. Games settings also offer a timed desktop replay
+  after a game closes (15 seconds–1 hour), or continuous desktop replay that automatically switches
+  to game windows and back. Reopening a game cancels the timer; its next exit starts a fresh timer.
+  Automatic source changes in the desktop modes save the final replay; buffers remain bounded.
+  Manual capture is also available.
 - **Audio:** synchronized system audio and microphone recording, mixed or on separate AAC tracks,
   with levels, mute, push-to-talk, and device-loss handling. The recorder path is tested with
   generated sources; real microphone and speaker hardware has not been tested here.
@@ -42,20 +45,29 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   without upscaling. Both paths preserve the source and support progress/cancel; compressed exports
   report their actual size. When recording is set to the GPU encoder, small-file export tries it
   first, and the GPU decoder too, falling back to software on any trouble (untested on a real GPU
-  so far). No
-  upload or Discord account is involved.
+  so far). No upload or Discord account is involved.
 - **GIF and loudness:** the same Trim panel can save a range of up to 30 seconds as a looping GIF
   (480 px wide, 12 fps, no sound) or even out its loudness to -16 LUFS (the picture is copied, the
   sound is re-encoded, and the result is never pushed into clipping). See
-  [ADR 0017](docs/adr/0017-gif-and-loudness-export.md); checked on Linux with generated clips only.
-  Joining clips and transitions are left for the planned editor.
+  [ADR 0018](docs/adr/0018-gif-and-loudness-export.md); checked on Linux with generated clips only.
+  Joining clips is done in the small editor below.
+- **Small sequence editor:** use its own **Editor** rail icon, **Import clips**, or **Send to editor** from Clips.
+  It shares the app’s charcoal/lime theme and embedded Inter typefaces. A left media browser
+  with Details/Add to timeline context actions, large preview and bottom
+  timeline let you append, split, trim, reorder,
+  duplicate or remove cuts, with 64-step undo/redo and per-cut volume/mute. Export joins up to
+  30 minutes into a new H.264 MP4 with stereo AAC, at most 720p/30 fps. It reuses
+  FilmCraft's cut algebra and Rust codecs, keeps originals untouched and runs locally with
+  progress/cancel. Edits stay in memory; quick trim remains available. See [the editor guide](docs/editor.md).
 - **Settings and diagnostics:** recording, quality, audio, hotkey, storage, game allowlist, and
   general settings are stored locally. [348 known games](docs/game-catalog.md) are recognized
   automatically, with per-game exclusions and a global switch in Settings › Games. The toggle at
   the bottom of General reveals clearly headed advanced sections within Games, Capture, Quality
   and Audio. The [custom-game form](docs/settings.md) is a card like every other settings section, with padded,
   responsive fields and is advanced-only. Custom rules take priority over the built-in catalog and can match executable-name substrings and exact
-  Steam app IDs on Linux. The app and CLI expose local diagnostics; the CLI can also list capture
+  Steam IDs. A bounded background worker reads processes and [local Steam manifests](docs/game-catalog.md)
+  to recognize additional installed games without a download; custom rules and exclusions take priority.
+  The app and CLI expose local diagnostics; the CLI can also list capture
   targets, record for a set duration, inspect the library, and trim clips.
 
 ## Known platform and format limits
@@ -78,34 +90,32 @@ they do not establish game-FPS impact or sustained capture performance.
   Windows window-to-process adapters are implemented; this environment verifies X11 with a
   synthetic window, not a real game. Wayland does not expose the
   process-to-window mapping used by Game source, and macOS capture is not available.
-- Hardware encoders are connected but have only been exercised against stand-ins in this
-  environment, not a real GPU. The recorder now has an optional opaque native-surface handoff and
-  CPU-readback fallback, both tested with stand-ins, but no platform capture/encoder uses that route
-  yet. Frames still pass through CPU-owned BGRA memory and CPU-side conversion before encoding, so
-  this is not yet a low-copy, GPU-resident capture-to-encode path. The software encoder is not fast
-  enough for reliable 1080p60 here; performance on a gaming PC still needs measurement. Vice's
-  reported sub-1% CPU use is not a ClipCraft performance claim until measured on named hardware.
+- Linux hardware encoders have only been exercised against stand-ins here. Windows/AMD has the
+  native capture-to-encode evidence described above, with CPU fallback for incompatible settings.
+  Linux frames still pass through CPU-owned memory and conversion. Performance on gaming PCs and
+  other GPUs needs measurement; Vice's reported sub-1% CPU use is not a ClipCraft performance claim.
 - Playback supports more formats than trim/export. Original-quality trim copies samples to MP4;
   small-file export currently accepts H.264/AAC MP4/MOV/MKV, up to 30 minutes per job, and writes
   H.264 MP4. Target sizes are estimates, not guarantees about a changing Discord upload limit.
   Export needs an output filesystem with hard-link support for safe publication; software export
   speed on gaming PCs is unmeasured. H.265 and WebM recording remain disabled.
-- The library's game grouping remains filename-based or manual; recursive scans and automatic
-  capture-game tagging remain open. There is no upload or link workflow.
+- Game labels come from manual overrides, captured-game metadata or folder/filename guesses.
+  Recognition does not retroactively label existing videos. There is no upload or link workflow.
 - Real microphone/speaker capture, Windows device behavior, a real-game performance test, and the
-  release soak remain open. The ranked list is in [`docs/gaps.md`](docs/gaps.md).
+  remaining release checks stay open. The ranked list is in [`docs/gaps.md`](docs/gaps.md).
 
 ## Planned direction (not built)
 
 The next product plan prioritizes Windows/Linux/macOS game-only capture evidence and a low-copy
 GPU capture-to-encode path, then an Android feasibility study. Later proposals include opt-in
 client-side encrypted backups to a user-selected provider, controller shortcuts, Discord Rich Presence,
-keyboard/mouse overlays, safer themes/plugins, a focused one-track editor, and a local CLI/MCP
+keyboard/mouse overlays, safer themes/plugins, further editor evaluation, and a local CLI/MCP
 interface for footage management. These are not available in this build. See the
 [`roadmap`](ROADMAP.md) and [`backlog`](docs/backlog.md) for their requirements and limitations.
 
 ClipCraft already records video plus system/microphone audio. Voice/video calling, social feeds,
-sharing links, and a community layer are not planned.
+sharing links, and a community layer are not planned. The small editor adds cuts and arrangement;
+text, transitions, effects and multitrack editing are not implemented.
 
 ## Rust and local-data design
 

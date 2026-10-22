@@ -175,6 +175,17 @@ impl Worker {
         Ok(Self { mailbox, thread })
     }
 
+    pub(crate) fn is_finished(&self) -> bool {
+        self.thread.is_finished()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fake(
+        scanner: impl FnMut(&DetectionConfig, bool) -> Result<ResultSet, String> + Send + 'static,
+    ) -> Self {
+        Self::with_scanner(scanner).unwrap()
+    }
+
     pub fn submit(
         &self,
         config: DetectionConfig,
@@ -209,5 +220,88 @@ impl Drop for Worker {
         }
         // A blocked OS call cannot be joined on the UI thread. No new worker is created while
         // this one runs; a finished/panicked worker is detected by submit/receiver disconnection.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn empty() -> ResultSet {
+        ResultSet {
+            processes: Vec::new(),
+            matches: Vec::new(),
+            steam: SteamGames::default(),
+            steam_warning: None,
+        }
+    }
+    #[test]
+    fn a_blocked_scan_keeps_one_worker_and_only_the_latest_pending_request() {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let mut first = true;
+        let worker = Worker::fake(move |_, _| {
+            if first {
+                first = false;
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            }
+            Ok(empty())
+        });
+        let context = egui::Context::default();
+        let config = DetectionConfig::from(&RecordingSettings::default());
+        let initial = worker.submit(config.clone(), false, &context).unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let mut latest = None;
+        for _ in 0..50 {
+            latest = Some(worker.submit(config.clone(), false, &context).unwrap());
+        }
+        assert_eq!(
+            worker
+                .mailbox
+                .0
+                .lock()
+                .unwrap()
+                .pending
+                .as_ref()
+                .unwrap()
+                .config,
+            config
+        );
+        release_tx.send(()).unwrap();
+        initial
+            .receiver
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap();
+        latest
+            .unwrap()
+            .receiver
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap();
+    }
+    #[test]
+    fn errors_and_panics_are_reported_and_do_not_become_empty_successful_observations() {
+        let context = egui::Context::default();
+        let config = DetectionConfig::from(&RecordingSettings::default());
+        let worker = Worker::fake(|_, _| Err("scan failed".into()));
+        assert!(
+            worker
+                .submit(config.clone(), false, &context)
+                .unwrap()
+                .receiver
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap()
+                .is_err()
+        );
+        let worker = Worker::fake(|_, _| panic!("synthetic worker failure"));
+        assert!(
+            worker
+                .submit(config, false, &context)
+                .unwrap()
+                .receiver
+                .recv_timeout(Duration::from_secs(3))
+                .is_err()
+        );
     }
 }

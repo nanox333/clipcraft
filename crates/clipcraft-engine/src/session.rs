@@ -275,6 +275,13 @@ impl CaptureSession {
         }
     }
 
+    /// Stops producing frames while retaining the bounded replay until a transition save can run.
+    pub fn halt_for_transition(&self) {
+        if let Some(recorder) = &self.recorder {
+            recorder.halt();
+        }
+    }
+
     /// Stops recording and drops the buffer. Command id `capture.stop`.
     pub fn stop(&mut self) -> Option<RecordStatus> {
         let recorder = self.recorder.take()?;
@@ -392,6 +399,41 @@ impl SaveJob {
         self.recorded_game = game.and_then(crate::library_meta::clean_recorded_game);
         self
     }
+    /// Keep two in-flight transition jobs from choosing the same timestamp-based output name.
+    /// The writer still creates its output exclusively to handle external filesystem races.
+    pub fn avoid_paths(mut self, reserved: &[PathBuf]) -> Result<Self, EngineError> {
+        if reserved.len() > 2 {
+            return Err(EngineError::Record(RecordError::AlreadyExists));
+        }
+        if !reserved.contains(&self.path) {
+            return Ok(self);
+        }
+        let stem = self
+            .path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .ok_or(EngineError::Record(RecordError::AlreadyExists))?;
+        let extension = self
+            .path
+            .extension()
+            .and_then(|value| value.to_str())
+            .ok_or(EngineError::Record(RecordError::AlreadyExists))?;
+        for suffix in 1..=1024 {
+            let path = self
+                .path
+                .with_file_name(format!("{stem}-{suffix}.{extension}"));
+            if !reserved.contains(&path)
+                && !path
+                    .try_exists()
+                    .map_err(|_| EngineError::Record(RecordError::AlreadyExists))?
+            {
+                self.path = path;
+                return Ok(self);
+            }
+        }
+        Err(EngineError::Record(RecordError::AlreadyExists))
+    }
+
     /// The file that will be written.
     pub fn path(&self) -> &Path {
         &self.path

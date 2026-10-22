@@ -25,8 +25,9 @@ choose capture source → keep a bounded replay buffer → press the clip hotkey
 → save the last N seconds (+ optional post-roll) → make a quick cut or trim → export locally
 ```
 
-Capture and the local clip library are the product. The first editor is a quick trim/cut tool; a
-more capable but still focused one-track editor is a later proposal, not an MVP dependency. ClipCraft
+Capture and the local clip library are the product. Quick trim remains available; the user-authorized small
+one-track editor now adds cuts, arrangement, linked audio volume and local MP4 export. Further
+editor features remain proposals, not capture MVP dependencies. ClipCraft
 is an offline-first desktop app: capture, library, editing, settings, and export work without an
 account, network connection, or server. Recordings stay on the user's computer unless the user
 explicitly configures encrypted backup to a storage provider. There is no community or social feed.
@@ -200,8 +201,9 @@ platform breadth, backup safety, and optional integrations. Project comparisons 
 not permission to copy code, assets, or proprietary interfaces.
 
 - **Game-aware capture:** default to Game-only mode: detect an explicitly allowlisted game and arm
-  the replay buffer only while it runs. Do not capture the desktop while idle. A separate, deliberate
-  one-session desktop-capture action may be available. Detection must not read process memory,
+  the replay buffer only while it runs. Desktop capture while idle requires an explicit choice:
+  timed continuation after game exit or continuous desktop replay between games. Reopening a game
+  switches back to its window; the next exit starts a fresh temporary timer. Detection must not read process memory,
   inject code, install drivers, or bypass anti-cheat.
 - **Platform breadth:** target tested Windows, Linux, and macOS desktop workflows through shared
   Rust core APIs. Android is a feasibility study only until screen-capture permission, foreground
@@ -261,7 +263,9 @@ The app uses FilmCraft's pinned time and media crates for decoding, encoding, co
 hardware encoder adapters ([ADR 0004](docs/adr/0004-filmcraft-crates.md)). ClipCraft owns the UI,
 platform-provider integration, replay buffer, recording/session logic, local index, and trim flow.
 The library index is local and rebuildable; normal video files remain the user's primary artifacts.
-The editor is currently playback plus a basic trim-to-new-MP4 operation. There is no
+The separate Editor workspace now adds an independent media browser, sequence preview, cuts,
+trim, arrangement, undo/redo and linked audio volume, using pinned FilmCraft cut algebra and codecs.
+See [the editor guide](docs/editor.md) for export bounds and session lifetime. There is no
 user-facing `.ccproj`, multitrack timeline, general effect system, or server component.
 
 The exact crate graph is checked with `cargo xtask layers`. Platform adapters expose fallible safe
@@ -414,5 +418,6 @@ no-required-hosted-service rule; optional backup is governed by the M9 design AD
 The automatic known-game catalog now contains every title in Vice's pinned 347-game list plus
 ClipCraft's existing Minecraft Bedrock entry. Source and permission provenance, exact-match
 adaptations, stable exclusions, and platform limits are recorded in
-[the catalog guide](docs/game-catalog.md). Larger Steam metadata is research-only; local installed
-Steam manifests are a possible future extension, not a runtime database dependency.
+[the catalog guide](docs/game-catalog.md). Larger Steam metadata is research-only. Local installed Steam manifests now extend recognition
+through a bounded Rust worker and shared engine/CLI command, without a runtime database dependency.
+Automatic desktop/game switching and temporary continuation are explicit opt-ins; see ADR 0016.

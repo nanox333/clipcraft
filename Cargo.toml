@@ -38,6 +38,8 @@ cpal = "0.16"
 # FilmCraft crates are consumed as git dependencies pinned to one commit (docs/adr/0004).
 filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 gif = { version = "0.14", default-features = false, features = ["std", "color_quant"] }
+filmcraft-edit = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
+filmcraft-project = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 filmcraft-codecs = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-media = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }

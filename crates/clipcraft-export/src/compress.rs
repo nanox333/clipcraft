@@ -922,7 +922,7 @@ fn output_size(width: u32, height: u32, kbps: u32) -> (u32, u32) {
     ((w / 2 * 2).max(2), (h / 2 * 2).max(2))
 }
 
-fn write_video(
+pub(crate) fn write_video(
     mp4: &mut Mp4Writer<BufWriter<File>>,
     id: usize,
     (data, keyframe, pts): (&[u8], bool, i64),

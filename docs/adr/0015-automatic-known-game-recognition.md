@@ -48,3 +48,7 @@ Steam/executable matches, exclusions/global-off, no-rule idle behavior, start/st
 case/launcher lookalikes, malformed and duplicate exclusions, migration, and persistence.
 Keyboard/accessibility and native UI checks exercise the new switches and filtering; isolated CLI
 checks cover the same settings command. Run the canonical gate and documentation check.
+
+M7.1b follow-up: [ADR 0016](0016-background-steam-and-exit-fallback.md) adds original bounded local
+Steam-manifest discovery, background observation and opt-in desktop policies. The exclusions and
+custom-first precedence above remain effective; this does not add Vice window-class adapters.

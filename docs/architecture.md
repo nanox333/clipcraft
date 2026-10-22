@@ -27,7 +27,8 @@ The implemented workspace contains `clipcraft-time` and `clipcraft-frame` (L0),
 Capture, replay recording, playback, local indexing, and trim export are implemented with the
 platform evidence and limits listed in [`gaps.md`](gaps.md). FilmCraft crates are consumed as pinned
 git dependencies ([ADR 0004](adr/0004-filmcraft-crates.md)); this is reviewed open-source reuse,
-not a formal clean-room implementation.
+not a formal clean-room implementation. The small editor additionally consumes pinned
+`filmcraft-edit` and transient `filmcraft-project` track types, without adopting a project-file workflow.
 
 - **Time:** `clipcraft-time` re-exports FilmCraft's exact `Tick` and `FrameRate` and adds validated
   constructors and audio sample positions. Floating-point seconds are display-only.
@@ -96,25 +97,36 @@ not a formal clean-room implementation.
   Compression uses exclusive temporary-file creation and publishes via a no-replace hard link;
   the output filesystem must support hard links. See [ADR 0013](adr/0013-local-compressed-export.md).
   The same crate writes looping GIFs (`clip.export_gif`) and evens out loudness by decoding, scaling and re-encoding only the sound
-  (`clip.normalize`); see [ADR 0017](adr/0017-gif-and-loudness-export.md).
-  No multitrack timeline, compositor, or editor-project file is required.
+  (`clip.normalize`); see [ADR 0018](adr/0018-gif-and-loudness-export.md).
+  `editor.export` renders a bounded ordered range list through FilmCraft H.264/AAC encoders,
+  using one source/cache at a time. One continuous audio encoder avoids per-cut priming gaps;
+  the first source audio track is normalized to 48 kHz stereo. No multitrack compositor or
+  editor-project file is required.
 - **Engine:** owns recording sessions, input validation, local index operations, crash recovery,
   background jobs, and stable typed commands. UI and CLI dispatch these same commands. It does not
-  yet provide a persistent editor project, autosaved edit sessions, or general undo/redo history.
-- **Game-aware capture:** `clipcraft-engine` owns the user-rule matcher and deterministic arming
-  state; `clipcraft-platform` observes local processes and resolves X11/Windows game windows by
-  process ID. The app polls every two seconds only when Game-only mode is enabled, arms the bounded
-  replay buffer for a matching process, and stops it when that process exits. Rules are local and
-  custom-first: explicit custom rules override the automatic 348-game catalog. Built-in matching
-  checks exact Linux Steam IDs then exact executable basenames. `detect_built_in_games` defaults
-  on; `disabled_builtin_games` stores per-entry exclusions changed through `recording.set_builtin_games`.
-  Legacy custom substring rules remain valid. All 347 Vice titles are bundled as Rust identification
-  data with existing ClipCraft variants and the Bedrock entry; launcher/generic aliases are omitted.
-  Bulk exclusions are capped at 1,024 IDs, independently of the 64 custom-rule limit. See
-  [ADR 0015](adr/0015-automatic-known-game-recognition.md) for defaults/migration and
-  [game-catalog.md](game-catalog.md) for provenance and limits.
-  Wayland process-to-window lookup and macOS
-  capture are not supported yet, and real Windows/game evidence remains open in `gaps.md`.
+  provide a persistent editor project or autosaved edit sessions. The new bounded `editor.edit`
+  session owns exact source ranges, sequence order and 64-step undo/redo; FilmCraft track/cut
+  algebra is adapted behind this small public command model (ADR 0017).
+- **Game-aware capture:** the engine owns matching, desktop policy and monotonic timer math;
+  platform adapters expose process metadata and verified game windows. One desktop worker owns
+  the reusable process observer and a bounded local Steam catalog, reads VDF/ACF files through
+  `recording.scan_steam_games`, and returns snapshots via one replaceable pending request. A
+  settings-key change drops obsolete result receivers. Worker failures are errors, never empty
+  game-exit snapshots. UI-driven running-app refresh uses the same worker.
+  Custom rules override automatic matches; Steam exclusions, built-in exclusions and global-off
+  precede local-manifest fallback. Linux Steam environment IDs or paths inside canonical installed
+  game directories identify running Steam games; full process paths are not retained.
+  Games-only remains the default. Opt-in policies continue desktop replay for a bounded duration
+  after actual game exit, or maintain desktop replay between games including startup. Games always
+  select their verified window; desktop policy selects an exposed monitor and skips portal chooser
+  targets. A new game cancels the desktop timer; its next exit starts another. Stop pauses desktop
+  policies until Start. Desktop-policy source changes/timeout preserve the final replay through one active save
+  and one queued job; a full queue halts frame production while retaining the bounded buffer.
+  Output names avoid in-flight collisions and remain exclusively written. Desktop clips do not
+  inherit the previous game's recorded label. See [ADR 0016](adr/0016-background-steam-and-exit-fallback.md),
+  [settings.md](settings.md) and [game-catalog.md](game-catalog.md).
+  Wayland automatic game-window matching and macOS capture remain unsupported; Windows/live-game
+  runtime evidence is still required.
 - **Audio timeline policy:** `clipcraft-record::audio_timeline` aligns timestamped native audio
   packets. The current `AudioSource` mixer remains clock-driven and does not call this helper until
   a timestamped platform source is connected.
@@ -134,7 +146,8 @@ fixture generators; they are never linked or shipped.
 
 Small source-to-Rust ports from Vice and ClipRecorder are tracked with their upstream revisions,
 scope, and permission provenance in [`upstream-ports.md`](upstream-ports.md). Those ports add no
-non-Rust runtime; they do not include either upstream UI, app, bundled game database, or assets.
+non-Rust runtime or upstream UI, app or artwork. Vice identification metadata is the explicit
+bundled-data exception recorded in the provenance guide.
 
 The platform boundary may call native operating-system APIs through Rust bindings. It must report
 capability failures cleanly and keep portable crates buildable without the OS-specific provider.
@@ -150,3 +163,15 @@ capture/library/edit/export path.
 
 See [`PLAN.md`](../PLAN.md) for product direction, capture constraints, and milestones. Changes to
 the library metadata schema or platform safety boundary require an ADR.
+
+## Small editor workspace
+
+The Editor rail destination owns an in-memory media pool independent of the Clips library.
+`editor.import` probes local references on one bounded worker; Send to editor adds a reference
+without placing it on the sequence. `editor.edit` validates integer-tick cuts and keeps at most
+64 history snapshots within 8 MiB, plus a 64 MiB current-metadata budget. Duration/minimum-frame
+bounds replace an arbitrary segment-count cap. UI and CLI use these same commands.
+The editor uses the shared `kit` palette, Inter families and standard keyboard-aware egui buttons.
+A single thumbnail response handles click, drag and context menus to avoid competing hit targets.
+Dense fit views aggregate subpixel cuts, cull offscreen widgets and bound thumbnail painting;
+zooming or ruler seeking still resolves the exact sequence range.

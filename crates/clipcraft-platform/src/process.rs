@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use sysinfo::{ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System, UpdateKind};
 
 /// A running program identified without retaining its full command line or executable path.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -54,6 +54,11 @@ impl ProcessObserver {
         let mut processes = Vec::new();
         let mut live_process_ids = HashSet::new();
         for process in self.system.processes().values() {
+            // An exited child may remain in the OS table until its parent reaps it.
+            // It no longer has a capturable window and must not keep game capture armed.
+            if process.status() == ProcessStatus::Zombie {
+                continue;
+            }
             let executable = process
                 .exe()
                 .and_then(Path::file_name)
@@ -234,6 +239,43 @@ mod tests {
     use super::steam_app_id_from_environment;
 
     #[test]
+    fn exited_unreaped_process_is_not_a_running_game() {
+        use std::time::{Duration, Instant};
+        const CHILD_FLAG: &str = "CLIPCRAFT_TEST_UNREAPED_CHILD";
+        if std::env::var_os(CHILD_FLAG).is_some() {
+            std::thread::sleep(Duration::from_secs(30));
+            return;
+        }
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "process::tests::exited_unreaped_process_is_not_a_running_game",
+            ])
+            .env(CHILD_FLAG, "1")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let mut observer = super::ProcessObserver::default();
+        assert!(observer.refresh(false).iter().any(|p| p.process_id == pid));
+        child.kill().unwrap();
+        // Deliberately leave the child unreaped while observing its exit.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let absent = loop {
+            if !observer.refresh(false).iter().any(|p| p.process_id == pid) {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        child.wait().unwrap();
+        assert!(absent, "an exited unreaped child kept game capture armed");
+    }
+
+    #[test]
     fn extracts_only_steam_ids_and_prefers_steam_app_id() {
         assert_eq!(
             steam_app_id_from_environment(b"TOKEN=private\0SteamGameId=440\0SteamAppId=570\0"),
@@ -255,5 +297,53 @@ mod tests {
         ] {
             assert_eq!(steam_app_id_from_environment(bytes), None);
         }
+    }
+}
+
+#[cfg(test)]
+mod installation_tests {
+    use super::*;
+    #[test]
+    fn installation_matching_respects_path_boundaries_and_windows_case() {
+        let installs = vec![
+            ("100".into(), PathBuf::from("/games/Game")),
+            ("200".into(), PathBuf::from("/games/Game/Second")),
+        ];
+        assert_eq!(
+            steam_id_for_path(Path::new("/games/Game/bin/game"), &installs, false),
+            Some("100")
+        );
+        assert_eq!(
+            steam_id_for_path(Path::new("/games/Game/Second/game"), &installs, false),
+            Some("200")
+        );
+        assert_eq!(
+            steam_id_for_path(Path::new("/games/Game2/game"), &installs, false),
+            None
+        );
+        assert_eq!(
+            steam_id_for_path(Path::new("/games/game/game"), &installs, false),
+            None
+        );
+        let installs = vec![(
+            "300".into(),
+            PathBuf::from(r"C:\SteamLibrary\steamapps\common\MyGame"),
+        )];
+        assert_eq!(
+            steam_id_for_path(
+                Path::new(r"c:\steamlibrary\SteamApps\common\mygame\game.exe"),
+                &installs,
+                true
+            ),
+            Some("300")
+        );
+        assert_eq!(
+            steam_id_for_path(
+                Path::new(r"c:\steamlibrary\SteamApps\common\mygame2\game.exe"),
+                &installs,
+                true
+            ),
+            None
+        );
     }
 }

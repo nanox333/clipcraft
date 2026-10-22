@@ -80,6 +80,43 @@ pub struct Playback {
 }
 
 impl Playback {
+    pub(crate) fn editor_ready(&self) -> bool {
+        self.info.is_some()
+    }
+    pub(crate) fn editor_error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+    pub(crate) fn editor_audio_note(&self) -> Option<&str> {
+        self.audio_note.as_deref()
+    }
+    pub(crate) fn editor_audio_clock(&self) -> Option<Tick> {
+        self.player
+            .audio_feed()
+            .filter(|feed| feed.driving())
+            .map(|feed| feed.position())
+    }
+    pub(crate) fn editor_transport(&mut self, position: Option<Tick>, playing: bool, volume: u16) {
+        self.prefs.volume = f32::from(volume) / 100.0;
+        self.prefs.muted = volume == 0;
+        self.prefs.looping = false;
+        self.player.set_loop(false);
+        self.apply_volume();
+        if let Some(position) = position {
+            self.position = position;
+            self.player.seek(position);
+        }
+        if self.playing != playing {
+            if playing {
+                self.player.play();
+            } else {
+                self.player.pause();
+            }
+            self.playing = playing;
+        }
+    }
+    pub(crate) fn editor_picture(&mut self, ui: &mut egui::Ui, size: Vec2) {
+        self.picture(ui, size, true, false);
+    }
     /// Opens `path` and starts playing it.
     pub fn start(path: &str, context: &egui::Context, prefs: Prefs) -> Self {
         let wake = context.clone();
@@ -415,6 +452,16 @@ impl Playback {
 
     /// Draws the picture area and fills it. Returns the response for clicks.
     fn draw_picture(&mut self, ui: &mut egui::Ui, size: Vec2, rounded: bool) -> egui::Response {
+        self.picture(ui, size, rounded, true)
+    }
+
+    fn picture(
+        &mut self,
+        ui: &mut egui::Ui,
+        size: Vec2,
+        rounded: bool,
+        interactive: bool,
+    ) -> egui::Response {
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         let corner = if rounded { 14 } else { 0 };
         ui.painter()
@@ -449,10 +496,10 @@ impl Playback {
                 MUTED,
             );
         }
-        if response.clicked() && self.error.is_none() {
+        if interactive && response.clicked() && self.error.is_none() {
             self.toggle();
         }
-        if response.double_clicked() {
+        if interactive && response.double_clicked() {
             self.toggle_fullscreen();
         }
         response

@@ -11,6 +11,8 @@ description = "Local library commands and domain types for ClipCraft"
 layer = 4
 
 [dependencies]
+filmcraft-edit.workspace = true
+filmcraft-project.workspace = true
 clipcraft-capture.workspace = true
 clipcraft-export.workspace = true
 clipcraft-media.workspace = true

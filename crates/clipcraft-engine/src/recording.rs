@@ -20,6 +20,16 @@ pub const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
 /// Version of the settings file format.
 pub const SETTINGS_VERSION: u32 = 1;
 
+/// Desktop replay behavior between recognized games. Games-only is the privacy-preserving default.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopCaptureMode {
+    #[default]
+    Never,
+    AfterGame,
+    Always,
+}
+
 /// The file format a clip is saved in.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -369,10 +379,14 @@ pub struct RecordingSettings {
     pub capture_target_name: String,
     /// Start recording into the replay buffer when ClipCraft opens.
     pub record_on_launch: bool,
-    /// Start the replay buffer only while a process in the game allowlist is running.
+    /// Switch replay sources automatically using game recognition and the chosen desktop policy.
     pub game_only_capture: bool,
-    /// Save the game replay and continue on the desktop after its process exits. Off by default.
+    /// Legacy WIP setting migrated to AfterGame; new callers use desktop_capture_mode.
     pub record_desktop_after_game: bool,
+    /// Desktop recording policy for automatic source switching.
+    pub desktop_capture_mode: DesktopCaptureMode,
+    /// How long temporary desktop replay runs after a game, bounded to 15 seconds–1 hour.
+    pub desktop_after_game_seconds: u32,
     /// Resolve running Steam IDs from local installation manifests as well as the bundled list.
     pub detect_installed_steam_games: bool,
     /// Exact Steam IDs excluded from automatic recognition. Custom overrides still win.
@@ -447,6 +461,8 @@ impl Default for RecordingSettings {
             record_on_launch: false,
             game_only_capture: true,
             record_desktop_after_game: false,
+            desktop_capture_mode: DesktopCaptureMode::Never,
+            desktop_after_game_seconds: 60,
             detect_installed_steam_games: true,
             disabled_steam_app_ids: Vec::new(),
             game_rules: Vec::new(),
@@ -552,6 +568,12 @@ impl RecordingSettings {
         }
         if !self.codec.is_available() {
             self.codec = VideoCodec::H264;
+        }
+        self.desktop_after_game_seconds = self.desktop_after_game_seconds.clamp(15, 3600);
+        // Compatibility with the earlier WIP boolean. UI choices clear this field.
+        if self.record_desktop_after_game && self.desktop_capture_mode == DesktopCaptureMode::Never
+        {
+            self.desktop_capture_mode = DesktopCaptureMode::AfterGame;
         }
         self.hotkeys = self.hotkeys.sanitized();
         self.disabled_steam_app_ids = self

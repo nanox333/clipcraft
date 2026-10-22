@@ -10,7 +10,7 @@ documented below.
 
 | Upstream | Source revision and file | Rust port | Scope and current use |
 | --- | --- | --- | --- |
-| [Vice](https://github.com/splitshotz/Vice) | [`vice/main.py` at `7e4b2a3`](https://github.com/splitshotz/Vice/blob/7e4b2a3bccc6e43285d095afe95d0d7fe3d0c84c/vice/main.py), `_best_game_match` and `_match_game`; [`vice/active_window.py`](https://github.com/splitshotz/Vice/blob/7e4b2a3bccc6e43285d095afe95d0d7fe3d0c84c/vice/active_window.py), `read_steam_app_id` | [`game_detection.rs`](../crates/clipcraft-engine/src/game_detection.rs), [`process.rs`](../crates/clipcraft-platform/src/process.rs), and X11/Windows process-window adapters | Longest matching executable substring wins; exact Steam IDs distinguish shared binaries on Linux; custom rules are user-managed and override the automatic catalog adapted from Vice's bundled identification data. The app polls locally every two seconds only while Game-only mode is enabled, and stops the replay buffer when the selected process exits. It does not inspect command lines, process memory, or game files. Upstream project license: GPL-3.0-or-later; the selected source ports rely on the permission reported above. |
+| [Vice](https://github.com/splitshotz/Vice) | [`vice/main.py` at `7e4b2a3`](https://github.com/splitshotz/Vice/blob/7e4b2a3bccc6e43285d095afe95d0d7fe3d0c84c/vice/main.py), `_best_game_match` and `_match_game`; [`vice/active_window.py`](https://github.com/splitshotz/Vice/blob/7e4b2a3bccc6e43285d095afe95d0d7fe3d0c84c/vice/active_window.py), `read_steam_app_id` | [`game_detection.rs`](../crates/clipcraft-engine/src/game_detection.rs), [`process.rs`](../crates/clipcraft-platform/src/process.rs), and X11/Windows process-window adapters | Longest matching executable substring wins; exact Steam IDs distinguish shared binaries on Linux; custom rules are user-managed and override the automatic catalog adapted from Vice's bundled identification data. A bounded worker polls locally every two seconds while automatic switching is enabled. Games-only stops when the process exits; opt-in policies switch to timed or continuous desktop replay. It does not inspect command lines, process memory, or game files. Upstream project license: GPL-3.0-or-later; the selected source ports rely on the permission reported above. |
 | [ClipRecorder](https://github.com/By183/ClipRecorder) | [`src/audio_timeline.h` at `153025b`](https://github.com/By183/ClipRecorder/blob/153025b4c88ed42a23a97e030ce140c2fc54949d/src/audio_timeline.h) | [`audio_timeline.rs`](../crates/clipcraft-record/src/audio_timeline.rs) | Timestamp gap, packet gap, overlap, microphone grace, and recovery policy, with a one-second cap on synthetic loopback silence per poll. Arithmetic is bounded against overflow and the missing-interval start uses `Option`. This utility is for timestamped native audio adapters; the current `AudioSource` mixer does not use native timestamps. The upstream README states that the C++ project is unlicensed; this selected port relies on the permission reported above. |
 
 Each port keeps tests for its behavior. Do not copy unrelated upstream code, additional bundled data,
@@ -33,8 +33,8 @@ helpers, and measure CPU/GPU/game-frame impact before making performance claims.
 
 Process enumeration uses [`sysinfo` 0.39.6](https://github.com/GuillaumeGomez/sysinfo), an MIT-licensed
 Rust dependency. Vice's Python window/compositor adapters were not copied; ClipCraft uses its own
-safe Rust X11 and Windows window providers. Steam IDs are read only from the Linux process
-environment and only the numeric `SteamAppId`/`SteamGameId` values are retained.
+safe Rust X11 and Windows window providers. Linux process environments supply only numeric `SteamAppId`/`SteamGameId` values. Verified
+local installation paths can also supply exact Steam IDs; full process paths are not retained.
 
 ## Bundled game identification metadata
 
@@ -55,7 +55,8 @@ icons or game footage is included. Compiled Rust data needs no parser, service o
 The default/custom precedence was rechecked against Vice `7e4b2a3` `_match_game`: custom definitions
 precede the automatically loaded bundled list. ClipCraft follows that model with per-game exclusions
 and a global switch (ADR 0015), but keeps exact built-in basenames instead of substring defaults.
-Vice's installed-Steam-name fallback and window-class adapters are not included. Tests check all
+An original bounded Rust adapter now supplies local installed-Steam names/IDs (ADR 0016);
+no additional Vice source or database was imported for it. Window-class adapters remain absent. Tests check all
 348 resulting entries, 672 process aliases and 311 Steam IDs; source/title parity is also compared
 against the pinned upstream JSON during verification. These are matching checks, not live-game proof.
 
@@ -66,4 +67,4 @@ against the pinned upstream JSON during verification. These are matching checks,
 titles and third-party store metadata, but no executable mapping. It declares GPL-3.0; no data or
 code from it is imported and no runtime request is made. The permission for Vice/ClipRecorder is
 not treated as permission for this repository. Local installed-Steam-manifest recognition is a
-separate future path described in game-catalog.md.
+separate implemented Rust path described in [game-catalog.md](game-catalog.md).
