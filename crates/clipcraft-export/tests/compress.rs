@@ -251,6 +251,7 @@ fn sequence_cuts_reorder_video_and_reencode_continuous_audio_with_mute_and_gain(
     };
     let output = dir.file("edit.mp4");
     let request = SequenceRequest {
+        texts: Vec::new(),
         output: output.clone(),
         segments: vec![
             segment(a.clone(), 1500, 2500, 100),
@@ -321,6 +322,7 @@ fn sequence_fractional_cuts_do_not_accumulate_audio_delay() {
     let input = dir.file("source.mp4");
     fixture(&input, ClipFormat::Mp4, true);
     let request = SequenceRequest {
+        texts: Vec::new(),
         output: dir.file("edit.mp4"),
         segments: vec![
             SequenceSegment {
@@ -367,6 +369,7 @@ fn sequence_failures_cancellation_and_publication_collisions_preserve_files() {
     let original = std::fs::read(&input).unwrap();
     let output = dir.file("edit.mp4");
     let mut request = SequenceRequest {
+        texts: Vec::new(),
         output: output.clone(),
         segments: vec![SequenceSegment {
             input: input.clone(),
@@ -443,6 +446,7 @@ fn sequence_normalizes_portrait_and_silent_sources_without_stretching() {
     fixture_size(&a, ClipFormat::Mp4, false, 160, 90);
     fixture_size(&b, ClipFormat::Mp4, false, 90, 160);
     let request = SequenceRequest {
+        texts: Vec::new(),
         output: dir.file("edit.mp4"),
         segments: vec![
             SequenceSegment {
@@ -487,6 +491,7 @@ fn sequence_exports_more_than_thirty_two_segments() {
     let input = dir.file("source.mp4");
     fixture(&input, ClipFormat::Mp4, false);
     let request = SequenceRequest {
+        texts: Vec::new(),
         output: dir.file("edit.mp4"),
         segments: vec![
             SequenceSegment {
@@ -515,8 +520,10 @@ fn sequence_exports_more_than_thirty_two_segments() {
 }
 
 #[test]
-fn sequence_fades_and_titles_change_the_picture_and_overlong_titles_are_rejected() {
-    use clipcraft_export::{Fade, SegmentLook, SequenceRequest, SequenceSegment, sequence_to_mp4};
+fn sequence_fades_and_text_layers_change_the_picture_and_bad_text_is_rejected() {
+    use clipcraft_export::{
+        Fade, SegmentLook, SequenceRequest, SequenceSegment, SequenceText, sequence_to_mp4,
+    };
     let dir = Scratch::new("sequence-look");
     let a = dir.file("a.mp4");
     fixture(&a, ClipFormat::Mp4, true);
@@ -527,19 +534,32 @@ fn sequence_fades_and_titles_change_the_picture_and_overlong_titles_are_rejected
         volume_percent: 100,
         look,
     };
-    let output = dir.file("look.mp4");
-    let request = SequenceRequest {
-        output: output.clone(),
-        segments: vec![segment(SegmentLook {
-            fade_in: Fade::Black,
-            fade_out: Fade::White,
-            title: "Clutch round".into(),
-            ..SegmentLook::default()
-        })],
+    let text = |from: i64, to: i64| {
+        let mut layer = SequenceText::new(
+            Tick::from_units(from, 1000),
+            Tick::from_units(to - from, 1000),
+            "Clutch round",
+        );
+        layer.y = 880;
+        layer
     };
-    sequence_to_mp4(&request, &mut |_| {}, &AtomicBool::new(false)).unwrap();
-    let decoded = source(&output);
-    let frame = |seconds: f64| {
+    let render = |name: &str, look: SegmentLook, texts: Vec<SequenceText>| {
+        let output = dir.file(name);
+        let request = SequenceRequest {
+            texts,
+            output: output.clone(),
+            segments: vec![segment(look)],
+        };
+        sequence_to_mp4(&request, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        source(&output)
+    };
+    let fades = SegmentLook {
+        fade_in: Fade::Black,
+        fade_out: Fade::White,
+        ..SegmentLook::default()
+    };
+    let decoded = render("look.mp4", fades, vec![]);
+    let frame = |decoded: &filmcraft_media::SharedSource, seconds: f64| {
         let f = decoded
             .video_frame(FrameRequest::full(Tick::from_units(
                 (seconds * 1000.0) as i64,
@@ -551,52 +571,58 @@ fn sequence_fades_and_titles_change_the_picture_and_overlong_titles_are_rejected
     let mean = |(_, _, rgba): &(usize, usize, Vec<u8>)| {
         rgba.chunks(4).map(|p| f64::from(p[0])).sum::<f64>() / (rgba.len() / 4) as f64
     };
-    let start = frame(0.0);
-    let middle = frame(0.5);
-    let end = frame(0.96);
-    assert!(mean(&start) < 12.0, "fade in should start black");
-    assert!(mean(&end) > mean(&middle), "fade out should end near white");
-    assert!(mean(&end) > 150.0, "fade out should end near white");
-    // The title paints near-white letters into the lower part of an unfaded frame.
-    let (w, h, rgba) = &middle;
-    let plain_output = dir.file("plain.mp4");
-    sequence_to_mp4(
-        &SequenceRequest {
-            output: plain_output.clone(),
-            segments: vec![segment(SegmentLook::default())],
-        },
-        &mut |_| {},
-        &AtomicBool::new(false),
-    )
-    .unwrap();
-    let plain = source(&plain_output)
-        .video_frame(FrameRequest::full(Tick::from_units(500, 1000)))
-        .unwrap()
-        .to_rgba8();
-    let changed = |rows: std::ops::Range<usize>| {
-        rows.flat_map(|y| (0..*w).map(move |x| (y * w + x) * 4))
-            .filter(|&i| {
-                matches!((rgba.get(i), plain.get(i)), (Some(a), Some(b)) if a.abs_diff(*b) > 60)
-            })
-            .count()
-    };
+    let middle = frame(&decoded, 0.5);
     assert!(
-        changed(h * 3 / 4..*h) > 80,
-        "title missing from the lower part"
+        mean(&frame(&decoded, 0.0)) < 12.0,
+        "fade in should start black"
     );
-    assert_eq!(changed(0..h / 2), 0, "title leaked into the upper part");
-    let too_long = SequenceRequest {
-        output: dir.file("long.mp4"),
-        segments: vec![segment(SegmentLook {
-            title: "x".repeat(500),
-            ..SegmentLook::default()
-        })],
-    };
+    assert!(
+        mean(&frame(&decoded, 0.96)) > 150.0,
+        "fade out should end near white"
+    );
+    assert!(mean(&frame(&decoded, 0.96)) > mean(&middle));
+    // A text layer paints letters into the lower part of the frames it spans, and only those.
+    let plain = render("plain.mp4", SegmentLook::default(), vec![]);
+    let lettered = render("text.mp4", SegmentLook::default(), vec![text(0, 600)]);
+    let changed =
+        |a: &(usize, usize, Vec<u8>), b: &(usize, usize, Vec<u8>), rows: std::ops::Range<usize>| {
+            let (w, _, left) = a;
+            rows.flat_map(|y| (0..*w).map(move |x| (y * w + x) * 4))
+            .filter(
+                |&i| matches!((left.get(i), b.2.get(i)), (Some(p), Some(q)) if p.abs_diff(*q) > 60),
+            )
+            .count()
+        };
+    let (h, with, without) = (middle.1, frame(&lettered, 0.3), frame(&plain, 0.3));
+    assert!(changed(&with, &without, h * 3 / 4..h) > 80, "text missing");
+    assert_eq!(changed(&with, &without, 0..h / 2), 0, "text leaked upwards");
     assert_eq!(
-        sequence_to_mp4(&too_long, &mut |_| {}, &AtomicBool::new(false)),
-        Err(ExportError::InvalidSequence)
+        changed(&frame(&lettered, 0.8), &frame(&plain, 0.8), 0..h),
+        0,
+        "text outside its range"
     );
-    assert!(!dir.file("long.mp4").exists());
+    // Its own fade ramps its opacity; an effect recolours it.
+    let mut faded = text(0, 1000);
+    faded.fade_in = Fade::Black;
+    let ramp = render("ramp.mp4", SegmentLook::default(), vec![faded]);
+    assert_eq!(changed(&frame(&ramp, 0.0), &frame(&plain, 0.0), 0..h), 0);
+    assert!(changed(&frame(&ramp, 0.6), &frame(&plain, 0.6), h * 3 / 4..h) > 80);
+    let mut bad = text(0, 600);
+    bad.text = "x".repeat(500);
+    let mut too_big = text(0, 600);
+    too_big.size = 0;
+    for layer in [bad, too_big] {
+        let request = SequenceRequest {
+            texts: vec![layer],
+            output: dir.file("bad.mp4"),
+            segments: vec![segment(SegmentLook::default())],
+        };
+        assert_eq!(
+            sequence_to_mp4(&request, &mut |_| {}, &AtomicBool::new(false)),
+            Err(ExportError::InvalidSequence)
+        );
+    }
+    assert!(!dir.file("bad.mp4").exists());
 }
 
 #[test]
@@ -610,6 +636,7 @@ fn sequence_effects_recolour_the_picture_and_leave_the_source_alone() {
     let original = std::fs::read(&a).unwrap();
     let output = dir.file("gray.mp4");
     let request = SequenceRequest {
+        texts: Vec::new(),
         output: output.clone(),
         segments: vec![SequenceSegment {
             input: a.clone(),

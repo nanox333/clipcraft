@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use clipcraft_engine::{
     Command, CommandOutput, EditorAction, EditorSession, Effect, Fade, MediaEntry, SegmentLook,
-    SequenceRequest, SequenceSegment, TransitionPreset, TrimmedClip, execute,
+    SequenceRequest, SequenceSegment, SequenceText, TransitionPreset, TrimmedClip, execute,
 };
 use clipcraft_time::{FrameRate, Tick};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, RichText, Sense, Stroke, Vec2};
@@ -57,8 +57,10 @@ pub struct EditorState {
     job: Option<ExportJob>,
     saved: Option<PathBuf>,
     /// Width the person dragged the Library to; `None` lets it follow the 16:9 preview.
+    selected_text: Option<u64>,
     title_draft: (u64, String),
     title_drag: Option<(u64, u16, u16)>,
+    text_drag: Option<(u64, Tick, Tick)>,
     tab: LibraryTab,
     effect_tab: bool,
     library_width: Option<f32>,
@@ -88,8 +90,10 @@ impl Default for EditorState {
             message: None,
             job: None,
             saved: None,
+            selected_text: None,
             title_draft: (0, String::new()),
             title_drag: None,
+            text_drag: None,
             tab: LibraryTab::Library,
             effect_tab: false,
             library_width: None,
@@ -198,8 +202,15 @@ impl EditorState {
                     self.selected = self.session.at(self.playhead).map(|(clip, _)| clip.id);
                 }
                 if self
-                    .selected
-                    .is_none_or(|id| !self.session.clips().iter().any(|c| c.id == id))
+                    .selected_text
+                    .is_some_and(|id| !self.session.texts().iter().any(|t| t.id == id))
+                {
+                    self.selected_text = None;
+                }
+                if self.selected_text.is_none()
+                    && self
+                        .selected
+                        .is_none_or(|id| !self.session.clips().iter().any(|c| c.id == id))
                 {
                     self.selected = self.session.clips().first().map(|c| c.id);
                 }
@@ -230,6 +241,7 @@ impl EditorState {
         });
         if self.session.clips().len() > count {
             self.selected = self.session.clips().last().map(|c| c.id);
+            self.selected_text = None;
             self.playhead = offset;
         }
     }
@@ -430,6 +442,12 @@ impl EditorState {
             return;
         };
         let request = SequenceRequest {
+            texts: self
+                .session
+                .texts()
+                .iter()
+                .map(|t| t.layer.clone())
+                .collect(),
             output,
             segments: self
                 .session
@@ -502,7 +520,11 @@ impl EditorState {
         } else if pressed(command, egui::Key::Z) {
             self.edit(EditorAction::Undo);
         }
-        if let Some(id) = self.selected {
+        if let Some(id) = self.selected_text {
+            if pressed(none, egui::Key::Delete) {
+                self.edit(EditorAction::DeleteText { id });
+            }
+        } else if let Some(id) = self.selected {
             if pressed(none, egui::Key::Delete) {
                 self.edit(EditorAction::Delete { id });
             }
@@ -557,7 +579,7 @@ impl EditorState {
         } else {
             0.0
         };
-        let full_top = (ui.available_height() - 420.0 - status_height).max(120.0);
+        let full_top = (ui.available_height() - 454.0 - status_height).max(120.0);
         let top = self
             .top_height
             .filter(|height| height.is_finite())
@@ -783,6 +805,13 @@ impl EditorState {
             );
         });
     }
+    fn selected_text_layer(&self) -> Option<(u64, SequenceText)> {
+        self.session
+            .texts()
+            .iter()
+            .find(|t| Some(t.id) == self.selected_text)
+            .map(|t| (t.id, t.layer.clone()))
+    }
     fn selected_look(&self) -> Option<(u64, SegmentLook)> {
         self.session
             .clips()
@@ -802,17 +831,26 @@ impl EditorState {
         });
         ui.add_space(10.0);
         let selected = self.selected_look();
+        let target_text = self.selected_text_layer();
+        let has_target = selected.is_some() || target_text.is_some();
         let enabled = !self.busy();
-        if selected.is_none() && !self.effect_tab {
+        if target_text.is_some() {
+            ui.label(
+                RichText::new("Applies to the selected text layer.")
+                    .size(12.0)
+                    .color(FAINT),
+            );
+            ui.add_space(6.0);
+        } else if selected.is_none() && !self.effect_tab {
             ui.label(
                 RichText::new("Pick a segment on the timeline, or use a preset for every segment.")
                     .size(12.0)
                     .color(FAINT),
             );
             ui.add_space(6.0);
-        } else if selected.is_none() {
+        } else if !has_target {
             ui.label(
-                RichText::new("Pick a segment on the timeline first.")
+                RichText::new("Pick a segment or text layer on the timeline first.")
                     .size(12.0)
                     .color(FAINT),
             );
@@ -832,13 +870,17 @@ impl EditorState {
                 ui.horizontal_wrapped(|ui| {
                     if self.effect_tab {
                         for effect in Effect::ALL {
-                            let active = selected.as_ref().is_some_and(|(_, l)| l.effect == effect);
+                            let active = match (&target_text, &selected) {
+                                (Some((_, t)), _) => t.effect == effect,
+                                (None, Some((_, l))) => l.effect == effect,
+                                _ => false,
+                            };
                             let response = preset_card(
                                 ui,
                                 card,
                                 effect.name(),
                                 active,
-                                enabled && selected.is_some(),
+                                enabled && has_target,
                                 |painter, rect| {
                                     let bars = [
                                         [255, 40, 20],
@@ -863,19 +905,35 @@ impl EditorState {
                                     }
                                 },
                             );
-                            if response.clicked()
-                                && let Some((id, look)) = &selected
-                            {
-                                let mut look = look.clone();
-                                look.effect = if active { Effect::None } else { effect };
-                                action = Some(EditorAction::Look { id: *id, look });
+                            if response.clicked() {
+                                let value = if active { Effect::None } else { effect };
+                                if let Some((id, layer)) = &target_text {
+                                    let mut layer = layer.clone();
+                                    layer.effect = value;
+                                    action = Some(EditorAction::UpdateText { id: *id, layer });
+                                } else if let Some((id, look)) = &selected {
+                                    let mut look = look.clone();
+                                    look.effect = value;
+                                    action = Some(EditorAction::Look { id: *id, look });
+                                }
                             }
                         }
                     } else {
-                        for item in TRANSITIONS {
-                            let active = match (&selected, item.kind) {
-                                (Some((_, l)), TransitionKind::In(f)) => l.fade_in == f,
-                                (Some((_, l)), TransitionKind::Out(f)) => l.fade_out == f,
+                        for item in TRANSITIONS.iter().filter(|item| {
+                            target_text.is_none()
+                                || matches!(
+                                    item.kind,
+                                    TransitionKind::In(Fade::Black)
+                                        | TransitionKind::Out(Fade::Black)
+                                )
+                        }) {
+                            let active = match (&target_text, &selected, item.kind) {
+                                (Some((_, t)), _, TransitionKind::In(_)) => t.fade_in != Fade::None,
+                                (Some((_, t)), _, TransitionKind::Out(_)) => {
+                                    t.fade_out != Fade::None
+                                }
+                                (None, Some((_, l)), TransitionKind::In(f)) => l.fade_in == f,
+                                (None, Some((_, l)), TransitionKind::Out(f)) => l.fade_out == f,
                                 _ => false,
                             };
                             let local = !matches!(item.kind, TransitionKind::All(_));
@@ -884,7 +942,7 @@ impl EditorState {
                                 card,
                                 item.name,
                                 active,
-                                enabled && (selected.is_some() || !local),
+                                enabled && (has_target || !local),
                                 |painter, rect| {
                                     painter.rect_filled(rect, 0, Color32::from_gray(72));
                                     let (left, right, color) = match item.kind {
@@ -930,6 +988,22 @@ impl EditorState {
                                     (TransitionKind::All(preset), _) => {
                                         action = Some(EditorAction::Preset { preset });
                                     }
+                                    (TransitionKind::In(_) | TransitionKind::Out(_), _)
+                                        if target_text.is_some() =>
+                                    {
+                                        if let Some((id, layer)) = &target_text {
+                                            let mut layer = layer.clone();
+                                            let fade =
+                                                if active { Fade::None } else { Fade::Black };
+                                            if matches!(item.kind, TransitionKind::In(_)) {
+                                                layer.fade_in = fade;
+                                            } else {
+                                                layer.fade_out = fade;
+                                            }
+                                            action =
+                                                Some(EditorAction::UpdateText { id: *id, layer });
+                                        }
+                                    }
                                     (TransitionKind::In(f), Some((id, look))) => {
                                         let mut look = look.clone();
                                         look.fade_in = if active { Fade::None } else { f };
@@ -951,40 +1025,106 @@ impl EditorState {
             self.edit(action);
         }
     }
-    /// A one-line title for the selected segment, placed by dragging it in the preview.
+    /// Text layers: add one at the playhead, then style it. Each lives on its own track above the
+    /// video, can be moved and trimmed on the timeline and takes effects and fades like a layer.
     fn text_tab(&mut self, ui: &mut egui::Ui, height: f32) {
-        let Some((id, look)) = self.selected_look() else {
+        let enabled = !self.busy();
+        ui.horizontal(|ui| {
+            if tool(
+                ui,
+                kit::Icon::Plus,
+                "Add text",
+                true,
+                enabled && self.has_clips(),
+            )
+            .on_hover_text("Put a text layer on the text track at the playhead")
+            .clicked()
+            {
+                let total = self.session.duration();
+                let length = Tick::from_units(3, 1).min(total);
+                let start = self.playhead.min(total - length).max(Tick::ZERO);
+                self.edit(EditorAction::AddText {
+                    start,
+                    duration: length,
+                    text: "Your title".into(),
+                });
+                if let Some(layer) = self.session.texts().last() {
+                    self.selected_text = Some(layer.id);
+                    self.selected = None;
+                }
+            }
+        });
+        ui.add_space(10.0);
+        let Some((id, layer)) = self.selected_text_layer() else {
             ui.label(
-                RichText::new("Pick a segment on the timeline to add text to it.")
-                    .size(12.0)
-                    .color(FAINT),
+                RichText::new(
+                    "Add text, or pick a text layer on the track above the video. Effects and Transitions apply to it too.",
+                )
+                .size(12.0)
+                .color(FAINT),
             );
             return;
         };
-        let enabled = !self.busy();
         if self.title_draft.0 != id {
-            self.title_draft = (id, look.title.clone());
+            self.title_draft = (id, layer.text.clone());
         }
-        let mut next = look.clone();
+        let mut next = layer.clone();
+        let total = self.session.duration();
         ui.add_enabled_ui(enabled, |ui| {
             let field = ui.add(
                 egui::TextEdit::singleline(&mut self.title_draft.1)
-                    .hint_text("Type a title, then press Enter")
+                    .hint_text("Type the text, then press Enter")
                     .char_limit(clipcraft_engine::MAX_TITLE_CHARS)
                     .margin(egui::Margin::symmetric(10, 8))
                     .desired_width(ui.available_width()),
             );
             field.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Segment title")
+                egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Text layer")
             });
             if field.lost_focus() {
-                next.title = self.title_draft.1.replace(char::is_control, " ");
+                next.text = self.title_draft.1.replace(char::is_control, " ");
             }
-            ui.add_space(10.0);
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.label(RichText::new("Starts").size(13.0).color(MUTED));
+                let mut start = layer.start.seconds();
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut start)
+                            .speed(0.05)
+                            .range(0.0..=total.seconds())
+                            .fixed_decimals(2)
+                            .suffix(" s"),
+                    )
+                    .changed()
+                {
+                    let moved = Tick::from_units((start * 1000.0).round() as i64, 1000);
+                    let length = layer.duration();
+                    next.start = moved.min(total - MIN_TEXT).max(Tick::ZERO);
+                    next.end = (next.start + length).min(total.max(next.start + MIN_TEXT));
+                }
+                ui.label(RichText::new("Lasts").size(13.0).color(MUTED));
+                let mut length = layer.duration().seconds();
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut length)
+                            .speed(0.05)
+                            .range(0.04..=total.seconds().max(0.04))
+                            .fixed_decimals(2)
+                            .suffix(" s"),
+                    )
+                    .changed()
+                {
+                    let ticks = Tick::from_units((length * 1000.0).round() as i64, 1000);
+                    next.end = (layer.start + ticks).min(total.max(layer.start + MIN_TEXT));
+                }
+            });
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 ui.label(RichText::new("Size").size(13.0).color(MUTED));
-                let mut size = u32::from(look.title_size);
+                let mut size = u32::from(layer.size);
                 if ui
                     .add(
                         egui::Slider::new(&mut size, 20..=250)
@@ -994,7 +1134,7 @@ impl EditorState {
                     .on_hover_text("Letter height")
                     .changed()
                 {
-                    next.title_size = size.clamp(20, 250) as u16;
+                    next.size = size.clamp(20, 250) as u16;
                 }
                 separator(ui);
                 ui.label(RichText::new("Colour").size(13.0).color(MUTED));
@@ -1009,7 +1149,7 @@ impl EditorState {
                         9.0,
                         Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
                     );
-                    if look.title_color == rgb {
+                    if layer.color == rgb {
                         ui.painter()
                             .circle_stroke(rect.center(), 11.0, Stroke::new(2.0_f32, LIME));
                     }
@@ -1018,7 +1158,7 @@ impl EditorState {
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
-                        next.title_color = rgb;
+                        next.color = rgb;
                     }
                 }
             });
@@ -1030,7 +1170,7 @@ impl EditorState {
             );
             egui::ScrollArea::vertical()
                 .id_salt("editor-text")
-                .max_height((height - 190.0).max(30.0))
+                .max_height((height - 215.0).max(100.0))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
                     ui.horizontal_wrapped(|ui| {
@@ -1040,9 +1180,7 @@ impl EditorState {
                             ("Top banner", 500, 120),
                             ("Corner tag", 150, 900),
                         ] {
-                            let active = !look.title.is_empty()
-                                && look.title_x.abs_diff(x) < 25
-                                && look.title_y.abs_diff(y) < 25;
+                            let active = layer.x.abs_diff(x) < 25 && layer.y.abs_diff(y) < 25;
                             let response =
                                 preset_card(ui, card, name, active, true, |painter, rect| {
                                     painter.rect_filled(rect, 0, Color32::from_gray(72));
@@ -1058,26 +1196,8 @@ impl EditorState {
                                     );
                                 });
                             if response.clicked() {
-                                (next.title_x, next.title_y) = (x, y);
-                                if next.title.trim().is_empty() {
-                                    next.title = "Your title".into();
-                                    self.title_draft.1 = next.title.clone();
-                                }
+                                (next.x, next.y) = (x, y);
                             }
-                        }
-                        let response = preset_card(
-                            ui,
-                            card,
-                            "No text",
-                            look.title.is_empty(),
-                            !look.title.is_empty(),
-                            |painter, rect| {
-                                painter.rect_filled(rect, 0, Color32::from_gray(72));
-                            },
-                        );
-                        if response.clicked() {
-                            next.title.clear();
-                            self.title_draft.1.clear();
                         }
                     });
                 });
@@ -1087,8 +1207,8 @@ impl EditorState {
                     .color(FAINT),
             );
         });
-        if next != look {
-            self.edit(EditorAction::Look { id, look: next });
+        if next != layer {
+            self.edit(EditorAction::UpdateText { id, layer: next });
         }
     }
     fn browser(&mut self, ui: &mut egui::Ui, thumbs: &mut crate::thumbs::Thumbnails, height: f32) {
@@ -1386,14 +1506,13 @@ impl EditorState {
             }
         }
     }
-    /// Shows the playhead segment's title and fade over the picture, as the export will. The
-    /// title of the selected segment can be dragged to place it anywhere.
+    /// Shows the playhead segment's fade, then every text layer that is on at the playhead, as
+    /// the export will. The selected text layer can be dragged to place it anywhere.
     fn paint_look(&mut self, ui: &mut egui::Ui, area: egui::Rect) {
         let Some((clip, source_time)) = self.session.at(self.playhead) else {
             return;
         };
-        let (id, mut look) = (clip.id, clip.look.clone());
-        let (local, length) = (source_time - clip.start, clip.duration());
+        let fade = clip.look.fade_at(source_time - clip.start, clip.duration());
         let (width, height) = if area.width() / area.height().max(1.0) > 16.0 / 9.0 {
             (area.height() * 16.0 / 9.0, area.height())
         } else {
@@ -1401,19 +1520,46 @@ impl EditorState {
         };
         let canvas = egui::Rect::from_center_size(area.center(), Vec2::new(width, height));
         let painter = ui.painter().with_clip_rect(canvas);
-        if let Some((dragged, x, y)) = self.title_drag
-            && dragged == id
-        {
-            (look.title_x, look.title_y) = (x, y);
+        if let Some((fade, amount)) = fade {
+            let color = if fade == Fade::White { 255 } else { 0 };
+            painter.rect_filled(
+                canvas,
+                0,
+                Color32::from_rgba_unmultiplied(color, color, color, (amount * 255.0) as u8),
+            );
         }
-        let title = look.title.trim();
-        if !title.is_empty() {
-            let [r, g, b] = look.title_color;
-            let color = Color32::from_rgb(r, g, b);
+        let layers: Vec<_> = self
+            .session
+            .texts()
+            .iter()
+            .filter(|t| {
+                let (start, end) = self.live_range(t.id, &t.layer);
+                self.playhead >= start && self.playhead < end
+            })
+            .cloned()
+            .collect();
+        for text in layers {
+            let id = text.id;
+            let mut layer = text.layer;
+            if let Some((dragged, x, y)) = self.title_drag
+                && dragged == id
+            {
+                (layer.x, layer.y) = (x, y);
+            }
+            let line = layer.text.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let (start, _) = self.live_range(id, &layer);
+            let opacity = layer.opacity_at(self.playhead - start);
+            let mut ink = [layer.color[0], layer.color[1], layer.color[2], 255];
+            layer.effect.apply_rgba(&mut ink);
+            let alpha = |a: f32| (opacity * a * 255.0).round().clamp(0.0, 255.0) as u8;
+            let color = Color32::from_rgba_unmultiplied(ink[0], ink[1], ink[2], alpha(1.0));
             let galley = painter.layout(
-                title.to_owned(),
+                line.to_owned(),
                 FontId::new(
-                    (height * f32::from(look.title_size) / 1000.0).max(8.0),
+                    (height * f32::from(layer.size) / 1000.0).max(8.0),
                     kit::semibold(),
                 ),
                 color,
@@ -1421,8 +1567,8 @@ impl EditorState {
             );
             let size = galley.size();
             let centre = egui::pos2(
-                canvas.left() + width * f32::from(look.title_x) / 1000.0,
-                canvas.top() + height * f32::from(look.title_y) / 1000.0,
+                canvas.left() + width * f32::from(layer.x) / 1000.0,
+                canvas.top() + height * f32::from(layer.y) / 1000.0,
             );
             let at = egui::pos2(
                 (centre.x - size.x / 2.0)
@@ -1431,13 +1577,15 @@ impl EditorState {
                     .clamp(canvas.top(), (canvas.bottom() - size.y).max(canvas.top())),
             );
             let shadow = (height * 0.01).clamp(1.0, 3.0);
+            let mut shade = [0, 0, 0, 255];
+            layer.effect.apply_rgba(&mut shade);
             painter.galley_with_override_text_color(
                 at + Vec2::splat(shadow),
                 galley.clone(),
-                Color32::from_black_alpha(170),
+                Color32::from_rgba_unmultiplied(shade[0], shade[1], shade[2], alpha(0.65)),
             );
             painter.galley(at, galley, color);
-            if self.selected == Some(id) && !self.busy() {
+            if self.selected_text == Some(id) && !self.busy() {
                 let rect = egui::Rect::from_min_size(at, size).expand(6.0);
                 let response = ui
                     .interact(rect, egui::Id::new("editor-title-drag"), Sense::drag())
@@ -1456,28 +1604,27 @@ impl EditorState {
                 }
                 if response.dragged() {
                     let delta = response.drag_delta();
-                    let x = (f32::from(look.title_x) + delta.x / width.max(1.0) * 1000.0)
-                        .clamp(0.0, 1000.0);
-                    let y = (f32::from(look.title_y) + delta.y / height.max(1.0) * 1000.0)
+                    let x =
+                        (f32::from(layer.x) + delta.x / width.max(1.0) * 1000.0).clamp(0.0, 1000.0);
+                    let y = (f32::from(layer.y) + delta.y / height.max(1.0) * 1000.0)
                         .clamp(0.0, 1000.0);
                     self.title_drag = Some((id, x.round() as u16, y.round() as u16));
                 }
                 if response.drag_stopped()
                     && let Some((_, x, y)) = self.title_drag.take()
                 {
-                    let mut moved = look.clone();
-                    (moved.title_x, moved.title_y) = (x, y);
-                    self.edit(EditorAction::Look { id, look: moved });
+                    let mut moved = layer.clone();
+                    (moved.x, moved.y) = (x, y);
+                    self.edit(EditorAction::UpdateText { id, layer: moved });
                 }
             }
         }
-        if let Some((fade, amount)) = look.fade_at(local, length) {
-            let color = if fade == Fade::White { 255 } else { 0 };
-            painter.rect_filled(
-                canvas,
-                0,
-                Color32::from_rgba_unmultiplied(color, color, color, (amount * 255.0) as u8),
-            );
+    }
+    /// A text layer's range, including a move or trim still being dragged on the timeline.
+    fn live_range(&self, id: u64, layer: &SequenceText) -> (Tick, Tick) {
+        match self.text_drag {
+            Some((dragged, start, end)) if dragged == id => (start, end),
+            _ => (layer.start, layer.end),
         }
     }
     fn toolbar(&mut self, ui: &mut egui::Ui) {
@@ -1496,7 +1643,14 @@ impl EditorState {
             {
                 self.edit(EditorAction::Split { at: self.playhead });
             }
-            if let Some(id) = self.selected {
+            if let Some(id) = self.selected_text {
+                if tool(ui, kit::Icon::Trash, "Delete", false, enabled)
+                    .on_hover_text("Remove the selected text (Del)")
+                    .clicked()
+                {
+                    self.edit(EditorAction::DeleteText { id });
+                }
+            } else if let Some(id) = self.selected {
                 if tool(ui, kit::Icon::Copy, "Duplicate", false, enabled)
                     .on_hover_text("Copy the selected segment (Ctrl/\u{2318} D)")
                     .clicked()
@@ -1594,11 +1748,17 @@ impl EditorState {
         let mut dropped = None;
         let mut seek = None;
         let mut selection = None;
+        let mut text_select: Option<Option<u64>> = None;
+        let mut text_action = None;
+        let mut drag_now = self.text_drag;
+        let mut drag_done = false;
         egui::ScrollArea::horizontal()
             .id_salt("edit-timeline-scroll")
             .show(ui, |ui| {
-                let (rect, response) =
-                    ui.allocate_exact_size(Vec2::new(width, 142.0 + lift), Sense::click_and_drag());
+                let (rect, response) = ui.allocate_exact_size(
+                    Vec2::new(width, 142.0 + TEXT_LANE + lift),
+                    Sense::click_and_drag(),
+                );
                 let painter = ui.painter();
                 painter.rect_filled(rect, 10, CANVAS);
                 painter.line_segment(
@@ -1651,7 +1811,7 @@ impl EditorState {
                     if right - x < 1.0 {
                         if x.floor() != last_thin_pixel {
                             let small = egui::Rect::from_min_size(
-                                egui::pos2(x, rect.top() + 28.0),
+                                egui::pos2(x, rect.top() + 28.0 + TEXT_LANE),
                                 Vec2::new(1.0, 72.0 + card_lift),
                             );
                             if ui.is_rect_visible(small) {
@@ -1663,8 +1823,11 @@ impl EditorState {
                         continue;
                     }
                     let card = egui::Rect::from_min_max(
-                        egui::pos2(x, rect.top() + 28.0),
-                        egui::pos2(right.max(x + 2.0), rect.top() + 100.0 + card_lift),
+                        egui::pos2(x, rect.top() + 28.0 + TEXT_LANE),
+                        egui::pos2(
+                            right.max(x + 2.0),
+                            rect.top() + 100.0 + TEXT_LANE + card_lift,
+                        ),
                     )
                     .shrink(0.5);
                     if !ui.is_rect_visible(card) {
@@ -1756,20 +1919,6 @@ impl EditorState {
                             Stroke::NONE,
                         ));
                     }
-                    if !clip.look.title.trim().is_empty() && card.width() > 40.0 {
-                        let badge = egui::Rect::from_min_size(
-                            card.right_top() + Vec2::new(-26.0, 4.0),
-                            Vec2::new(22.0, 16.0),
-                        );
-                        painter.rect_filled(badge, 4, Color32::from_black_alpha(190));
-                        painter.text(
-                            badge.center(),
-                            Align2::CENTER_CENTER,
-                            "T",
-                            FontId::new(11.0, kit::semibold()),
-                            LIME,
-                        );
-                    }
                     if self.selected == Some(clip.id) {
                         painter.rect_stroke(
                             card,
@@ -1790,8 +1939,11 @@ impl EditorState {
                         }
                     }
                     let audio = egui::Rect::from_min_max(
-                        egui::pos2(x + 1.0, rect.top() + 108.0 + card_lift),
-                        egui::pos2(right.max(x + 2.0) - 1.0, rect.top() + 135.0 + lift),
+                        egui::pos2(x + 1.0, rect.top() + 108.0 + TEXT_LANE + card_lift),
+                        egui::pos2(
+                            right.max(x + 2.0) - 1.0,
+                            rect.top() + 135.0 + TEXT_LANE + lift,
+                        ),
                     );
                     painter.rect_filled(
                         audio,
@@ -1812,6 +1964,7 @@ impl EditorState {
                     if r.clicked() || r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
                     {
                         selection = Some(clip.id);
+                        text_select = Some(None);
                         seek = Some(offset);
                     }
                     if r.drag_started() {
@@ -1832,6 +1985,7 @@ impl EditorState {
                         .round()
                         .max(0.0) as i64;
                     seek = Some(RATE.tick_of(frame));
+                    text_select = Some(None);
                     selection = self
                         .session
                         .at(RATE.tick_of(frame))
@@ -1839,6 +1993,170 @@ impl EditorState {
                 }
                 if let Some(entry) = response.dnd_release_payload::<MediaEntry>() {
                     dropped = Some((*entry).clone());
+                }
+                // The text track sits above the video.
+                let lane = egui::Rect::from_min_size(
+                    egui::pos2(rect.left(), rect.top() + 24.0),
+                    Vec2::new(width, TEXT_LANE - 6.0),
+                );
+                painter.rect_filled(lane, 4, Color32::from_white_alpha(6));
+                if self.session.texts().is_empty() {
+                    painter.text(
+                        lane.left_center() + Vec2::new(8.0, 0.0),
+                        Align2::LEFT_CENTER,
+                        "Text track",
+                        FontId::new(11.0, kit::medium()),
+                        FAINT,
+                    );
+                }
+                let per_second = if total.0 > 0 {
+                    width / total.seconds() as f32
+                } else {
+                    0.0
+                };
+                for text in self.session.texts() {
+                    if per_second <= 0.0 {
+                        break;
+                    }
+                    let (start, end) = match drag_now {
+                        Some((id, start, end)) if id == text.id => (start, end),
+                        _ => (text.layer.start, text.layer.end),
+                    };
+                    let block = egui::Rect::from_min_max(
+                        egui::pos2(
+                            rect.left() + start.seconds() as f32 * per_second,
+                            lane.top() + 2.0,
+                        ),
+                        egui::pos2(
+                            (rect.left() + end.seconds() as f32 * per_second)
+                                .max(rect.left() + start.seconds() as f32 * per_second + 6.0),
+                            lane.bottom() - 2.0,
+                        ),
+                    );
+                    if !ui.is_rect_visible(block) {
+                        continue;
+                    }
+                    let selected = self.selected_text == Some(text.id);
+                    painter.rect_filled(
+                        block,
+                        5,
+                        if selected {
+                            Color32::from_rgb(86, 74, 150)
+                        } else {
+                            Color32::from_rgb(62, 54, 110)
+                        },
+                    );
+                    painter.with_clip_rect(block).text(
+                        block.left_center() + Vec2::new(8.0, 0.0),
+                        Align2::LEFT_CENTER,
+                        &text.layer.text,
+                        FontId::new(11.0, kit::medium()),
+                        TEXT,
+                    );
+                    for (fade, left) in [(text.layer.fade_in, true), (text.layer.fade_out, false)] {
+                        if fade != Fade::None && block.width() > 24.0 {
+                            let (edge, inner) = if left {
+                                (block.left(), block.left() + 12.0)
+                            } else {
+                                (block.right(), block.right() - 12.0)
+                            };
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![
+                                    egui::pos2(edge, block.top()),
+                                    egui::pos2(edge, block.bottom()),
+                                    egui::pos2(inner, block.bottom()),
+                                ],
+                                Color32::from_black_alpha(150),
+                                Stroke::NONE,
+                            ));
+                        }
+                    }
+                    if selected {
+                        painter.rect_stroke(
+                            block,
+                            5,
+                            Stroke::new(2.0_f32, LIME),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                    let busy = self.busy();
+                    let grip = 7.0_f32.min(block.width() / 3.0);
+                    let body = ui.interact(
+                        block.shrink2(Vec2::new(grip, 0.0)),
+                        ui.id().with(("edit-text", text.id)),
+                        Sense::click_and_drag(),
+                    );
+                    body.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::WidgetType::Button,
+                            !busy,
+                            format!("Text layer: {}", text.layer.text),
+                        )
+                    });
+                    let left_edge = ui.interact(
+                        egui::Rect::from_min_size(block.min, Vec2::new(grip, block.height())),
+                        ui.id().with(("edit-text-left", text.id)),
+                        Sense::click_and_drag(),
+                    );
+                    let right_edge = ui.interact(
+                        egui::Rect::from_min_max(
+                            egui::pos2(block.right() - grip, block.top()),
+                            block.max,
+                        ),
+                        ui.id().with(("edit-text-right", text.id)),
+                        Sense::click_and_drag(),
+                    );
+                    let left_edge = left_edge.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+                    let right_edge = right_edge.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+                    let body = body.on_hover_cursor(egui::CursorIcon::Grab);
+                    let shift = |response: &egui::Response| {
+                        Tick::from_units(
+                            (response.drag_delta().x / per_second * 1000.0).round() as i64,
+                            1000,
+                        )
+                    };
+                    let mut now = (start, end);
+                    let mut touched = false;
+                    if !busy && body.dragged() {
+                        let dt = shift(&body);
+                        let length = end - start;
+                        let moved =
+                            (start + dt).clamp(Tick::ZERO, (total - length).max(Tick::ZERO));
+                        now = (moved, moved + length);
+                        touched = true;
+                    } else if !busy && left_edge.dragged() {
+                        let moved = (start + shift(&left_edge)).clamp(Tick::ZERO, end - MIN_TEXT);
+                        now = (moved, end);
+                        touched = true;
+                    } else if !busy && right_edge.dragged() {
+                        let moved = (end + shift(&right_edge)).clamp(start + MIN_TEXT, total);
+                        now = (start, moved);
+                        touched = true;
+                    }
+                    if touched {
+                        drag_now = Some((text.id, now.0, now.1));
+                    }
+                    if body.clicked()
+                        || body.drag_started()
+                        || left_edge.drag_started()
+                        || right_edge.drag_started()
+                    {
+                        text_select = Some(Some(text.id));
+                        if self.playhead < start || self.playhead >= end {
+                            seek = Some(start);
+                        }
+                    }
+                    if body.drag_stopped() || left_edge.drag_stopped() || right_edge.drag_stopped()
+                    {
+                        drag_done = true;
+                        if let Some((id, a, b)) = drag_now
+                            && id == text.id
+                        {
+                            let mut layer = text.layer.clone();
+                            (layer.start, layer.end) = (a, b);
+                            text_action = Some(EditorAction::UpdateText { id, layer });
+                        }
+                    }
                 }
                 let x = rect.left()
                     + width
@@ -1866,6 +2184,16 @@ impl EditorState {
                     );
                 }
             });
+        self.text_drag = if drag_done { None } else { drag_now };
+        if let Some(selected) = text_select {
+            self.selected_text = selected;
+            if selected.is_some() {
+                self.selected = None;
+            }
+        }
+        if let Some(action) = text_action {
+            self.edit(action);
+        }
         if let Some(action) = action {
             self.edit(action);
         }
@@ -1874,6 +2202,7 @@ impl EditorState {
         }
         if let Some(id) = selection {
             self.selected = Some(id);
+            self.selected_text = None;
         }
         if let Some(time) = seek {
             self.playing = false;
@@ -1964,6 +2293,12 @@ impl EditorState {
         });
     }
 }
+
+/// Shortest a text layer can be.
+const MIN_TEXT: Tick = Tick(clipcraft_time::TICKS_PER_SECOND / 30);
+
+/// Height of the text track above the video on the timeline.
+const TEXT_LANE: f32 = 34.0;
 
 /// Text colours offered in the Text tab.
 const TEXT_COLORS: [(&str, [u8; 3]); 6] = [
@@ -2439,6 +2774,42 @@ mod tests {
         assert!(state.has_clips());
         state.open = true;
         assert_eq!(state.session.duration(), Tick::from_units(2, 1));
+    }
+    #[test]
+    fn text_layers_draw_select_and_survive_every_tab_and_size() {
+        for size in [
+            Vec2::new(1.0, 1.0),
+            Vec2::new(320.0, 500.0),
+            Vec2::new(1440.0, 900.0),
+            Vec2::new(6000.0, 4000.0),
+        ] {
+            let context = crate::kit::test_context();
+            let mut state = state();
+            state.edit(EditorAction::AddText {
+                start: Tick::from_units(1, 1),
+                duration: Tick::from_units(2, 1),
+                text: "Hello".into(),
+            });
+            let id = state.session.texts()[0].id;
+            state.selected_text = Some(id);
+            state.selected = None;
+            state.text_drag = Some((id, Tick::ZERO, Tick::from_units(1, 1)));
+            state.title_drag = Some((id, 2000, 0));
+            for tab in [LibraryTab::Library, LibraryTab::Effects, LibraryTab::Text] {
+                for effects in [false, true] {
+                    state.tab = tab;
+                    state.effect_tab = effects;
+                    state.playhead = Tick::from_units(1, 1);
+                    for _ in 0..2 {
+                        frame(&mut state, &context, vec![], size);
+                    }
+                }
+            }
+            // Deleting the selected layer leaves nothing selected and the editor still draws.
+            state.edit(EditorAction::DeleteText { id });
+            assert_eq!(state.selected_text, None);
+            frame(&mut state, &context, vec![], size);
+        }
     }
     #[test]
     fn timeline_layout_extremes_and_named_controls_are_safe() {

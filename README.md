@@ -58,7 +58,7 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   duplicate or remove cuts, with 64-step undo/redo and per-cut volume/mute. Export joins up to
   30 minutes into a new H.264 MP4 with stereo AAC, at most 720p/30 fps. It reuses
   FilmCraft's cut algebra and Rust codecs, keeps originals untouched and runs locally with
-  progress/cancel. Library/Effects/Text tabs: segments can fade in/out through black or white (with presets), take a colour effect and carry a one-line title. Edits stay in memory; quick trim remains available. See [the editor guide](docs/editor.md).
+  progress/cancel. Library/Effects/Text tabs: segments can fade in/out through black or white (with presets), take a colour effect, and text sits on its own layer above the video that can be moved, trimmed, faded and recoloured. Edits stay in memory; quick trim remains available. See [the editor guide](docs/editor.md).
 - **Settings and diagnostics:** recording, quality, audio, hotkey, storage, game allowlist, and
   general settings are stored locally. [348 known games](docs/game-catalog.md) are recognized
   automatically, with per-game exclusions and a global switch in Settings › Games. The toggle at

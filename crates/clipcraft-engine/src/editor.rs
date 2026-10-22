@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use clipcraft_export::{Fade, MAX_TITLE_CHARS, SegmentLook};
+use clipcraft_export::{Fade, MAX_TEXT_LAYERS, SegmentLook, SequenceText};
 use clipcraft_time::Tick;
 use filmcraft_project::{ClipId, ItemId, Track, TrackId, TrackItem, TrackKind};
 use serde::{Deserialize, Serialize};
@@ -37,11 +37,28 @@ impl EditorClip {
     }
 }
 
+/// A text layer on the track above the video.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EditorText {
+    pub id: u64,
+    pub layer: SequenceText,
+}
+
+/// Everything one undo step brings back.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Cut {
+    clips: Vec<EditorClip>,
+    #[serde(default)]
+    texts: Vec<EditorText>,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EditorSession {
     clips: Vec<EditorClip>,
-    undo: Vec<Vec<EditorClip>>,
-    redo: Vec<Vec<EditorClip>>,
+    #[serde(default)]
+    texts: Vec<EditorText>,
+    undo: Vec<Cut>,
+    redo: Vec<Cut>,
     next_id: u64,
 }
 
@@ -75,10 +92,24 @@ pub enum EditorAction {
         id: u64,
         percent: u16,
     },
-    /// Replace a segment's fades and title.
+    /// Replace a segment's fades and effect.
     Look {
         id: u64,
         look: SegmentLook,
+    },
+    /// Put a new text layer on the text track.
+    AddText {
+        start: Tick,
+        duration: Tick,
+        text: String,
+    },
+    /// Replace a text layer's range, text, place and look.
+    UpdateText {
+        id: u64,
+        layer: SequenceText,
+    },
+    DeleteText {
+        id: u64,
     },
     /// Set the fades of every segment at once.
     Preset {
@@ -107,18 +138,31 @@ fn invalid() -> EngineError {
     EngineError::EditorInvalid
 }
 
-fn metadata_bytes(clips: &[EditorClip]) -> usize {
-    clips.iter().fold(0_usize, |sum, c| {
+fn metadata_bytes(cut: &Cut) -> usize {
+    let clips = cut.clips.iter().fold(0_usize, |sum, c| {
         sum.saturating_add(std::mem::size_of::<EditorClip>())
             .saturating_add(c.name.len())
-            .saturating_add(c.look.title.len())
             .saturating_add(c.input.as_os_str().len())
+    });
+    cut.texts.iter().fold(clips, |sum, t| {
+        sum.saturating_add(std::mem::size_of::<EditorText>())
+            .saturating_add(t.layer.text.len())
     })
 }
 
-fn validate(clips: &[EditorClip]) -> Result<(), EngineError> {
-    if clips.len() > MAX_TIMELINE_FRAMES || metadata_bytes(clips) > SESSION_BYTES {
+fn validate(cut: &Cut) -> Result<(), EngineError> {
+    let clips = &cut.clips[..];
+    if clips.len() > MAX_TIMELINE_FRAMES
+        || cut.texts.len() > MAX_TEXT_LAYERS
+        || metadata_bytes(cut) > SESSION_BYTES
+    {
         return Err(invalid());
+    }
+    let mut text_ids = HashSet::new();
+    for text in &cut.texts {
+        if text.id == 0 || !text_ids.insert(text.id) || !text.layer.is_valid() {
+            return Err(invalid());
+        }
     }
     let mut duration = Tick::ZERO;
     let mut ids = HashSet::new();
@@ -136,9 +180,6 @@ fn validate(clips: &[EditorClip]) -> Result<(), EngineError> {
             || clip.end <= clip.start
             || clip.duration() < MIN_EDITOR_CLIP
             || clip.volume_percent > 100
-            || clip.look.title.chars().count() > MAX_TITLE_CHARS
-            || clip.look.title.chars().any(char::is_control)
-            || !clip.look.title_in_range()
         {
             return Err(invalid());
         }
@@ -156,6 +197,15 @@ fn validate(clips: &[EditorClip]) -> Result<(), EngineError> {
 }
 
 impl EditorSession {
+    pub fn texts(&self) -> &[EditorText] {
+        &self.texts
+    }
+    fn cut(&self) -> Cut {
+        Cut {
+            clips: self.clips.clone(),
+            texts: self.texts.clone(),
+        }
+    }
     pub fn clips(&self) -> &[EditorClip] {
         &self.clips
     }
@@ -207,7 +257,7 @@ impl EditorSession {
         {
             return Err(invalid());
         }
-        validate(&self.clips)?;
+        validate(&self.cut())?;
         if self
             .undo
             .iter()
@@ -223,27 +273,37 @@ impl EditorSession {
         if self
             .clips
             .iter()
-            .chain(self.undo.iter().flatten())
-            .chain(self.redo.iter().flatten())
-            .any(|c| c.id > self.next_id)
+            .map(|c| c.id)
+            .chain(self.texts.iter().map(|t| t.id))
+            .chain(self.undo.iter().chain(&self.redo).flat_map(|cut| {
+                cut.clips
+                    .iter()
+                    .map(|c| c.id)
+                    .chain(cut.texts.iter().map(|t| t.id))
+            }))
+            .any(|id| id > self.next_id)
         {
             return Err(invalid());
         }
         if action == EditorAction::Undo {
             if let Some(previous) = self.undo.pop() {
-                self.redo.push(std::mem::replace(&mut self.clips, previous));
+                let now = self.cut();
+                self.redo.push(now);
+                (self.clips, self.texts) = (previous.clips, previous.texts);
             }
             self.cap_history();
             return Ok(self);
         }
         if action == EditorAction::Redo {
             if let Some(next) = self.redo.pop() {
-                self.undo.push(std::mem::replace(&mut self.clips, next));
+                let now = self.cut();
+                self.undo.push(now);
+                (self.clips, self.texts) = (next.clips, next.texts);
             }
             self.cap_history();
             return Ok(self);
         }
-        let before = self.clips.clone();
+        let before = self.cut();
         match action {
             EditorAction::Append {
                 input,
@@ -353,11 +413,41 @@ impl EditorSession {
                     clip.look.fade_out = fade_out;
                 }
             }
-            EditorAction::Reset => self.clips.clear(),
+            EditorAction::AddText {
+                start,
+                duration,
+                text,
+            } => {
+                let id = self.alloc()?;
+                self.texts.push(EditorText {
+                    id,
+                    layer: SequenceText::new(start, duration, &text),
+                });
+            }
+            EditorAction::UpdateText { id, layer } => {
+                let text = self
+                    .texts
+                    .iter_mut()
+                    .find(|t| t.id == id)
+                    .ok_or_else(invalid)?;
+                text.layer = layer;
+            }
+            EditorAction::DeleteText { id } => {
+                let before = self.texts.len();
+                self.texts.retain(|t| t.id != id);
+                if self.texts.len() == before {
+                    return Err(invalid());
+                }
+            }
+            EditorAction::Reset => {
+                self.clips.clear();
+                self.texts.clear();
+            }
             EditorAction::Undo | EditorAction::Redo => {}
         }
-        validate(&self.clips)?;
-        if self.clips != before {
+        let after = self.cut();
+        validate(&after)?;
+        if after != before {
             if self.undo.len() == MAX_EDITOR_HISTORY {
                 self.undo.remove(0);
             }
@@ -500,9 +590,9 @@ mod tests {
             .unwrap()
     }
     #[test]
-    fn fades_titles_and_presets_are_undoable_validated_and_split_keeps_them_sensible() {
+    fn fades_and_presets_are_undoable_and_split_keeps_only_the_outer_fades() {
         let state = append(append(EditorSession::default()));
-        let (first, second) = (state.clips()[0].id, state.clips()[1].id);
+        let first = state.clips()[0].id;
         let state = state
             .apply(EditorAction::Preset {
                 preset: TransitionPreset::FadeEnds,
@@ -523,12 +613,10 @@ mod tests {
                 .all(|c| c.look.fade_in == Fade::White && c.look.fade_out == Fade::White)
         );
         let look = SegmentLook {
-            title: "Ace".into(),
+            effect: clipcraft_export::Effect::Sepia,
             ..state.clips()[0].look.clone()
         };
         let state = state.apply(EditorAction::Look { id: first, look }).unwrap();
-        assert_eq!(state.clips()[0].look.title, "Ace");
-        // Cutting a segment keeps the title on both halves but only the outer fades.
         let state = state
             .apply(EditorAction::Split {
                 at: Tick::from_units(1, 1),
@@ -539,48 +627,97 @@ mod tests {
         assert_eq!(state.clips()[0].look.fade_out, Fade::None);
         assert_eq!(state.clips()[1].look.fade_in, Fade::None);
         assert_eq!(state.clips()[1].look.fade_out, Fade::White);
-        assert_eq!(state.clips()[1].look.title, "Ace");
-        for bad in ["x".repeat(MAX_TITLE_CHARS + 1), "two\nlines".into()] {
-            assert!(
-                state
-                    .clone()
-                    .apply(EditorAction::Look {
-                        id: second,
-                        look: SegmentLook {
-                            title: bad,
-                            ..SegmentLook::default()
-                        },
-                    })
-                    .is_err()
-            );
-        }
-        for bad in [
-            SegmentLook {
-                title_size: 0,
-                ..SegmentLook::default()
-            },
-            SegmentLook {
-                title_x: 1001,
-                ..SegmentLook::default()
-            },
-        ] {
-            assert!(
-                state
-                    .clone()
-                    .apply(EditorAction::Look {
-                        id: second,
-                        look: bad
-                    })
-                    .is_err()
-            );
-        }
-        let undone = state.clone().apply(EditorAction::Undo).unwrap();
+        assert_eq!(
+            state.clips()[1].look.effect,
+            clipcraft_export::Effect::Sepia
+        );
+        let undone = state.apply(EditorAction::Undo).unwrap();
         assert_eq!(undone.clips().len(), 2);
         // Sessions saved before fades existed still load.
-        let mut saved = serde_json::to_value(&state.clips()[0]).unwrap();
+        let mut saved = serde_json::to_value(&undone.clips()[0]).unwrap();
         saved.as_object_mut().unwrap().remove("look");
         let loaded: EditorClip = serde_json::from_value(saved).unwrap();
         assert_eq!(loaded.look, SegmentLook::default());
+    }
+    #[test]
+    fn text_layers_are_their_own_track_with_undo_bounds_and_independent_ids() {
+        let state = append(EditorSession::default());
+        let clip = state.clips()[0].id;
+        let state = state
+            .apply(EditorAction::AddText {
+                start: Tick::from_units(1, 2),
+                duration: Tick::from_units(1, 1),
+                text: "Ace".into(),
+            })
+            .unwrap();
+        assert_eq!(state.texts().len(), 1);
+        let id = state.texts()[0].id;
+        assert_ne!(id, clip);
+        // Text does not change the length of the video track.
+        assert_eq!(state.duration(), Tick::from_units(2, 1));
+        let mut layer = state.texts()[0].layer.clone();
+        layer.x = 120;
+        layer.fade_in = Fade::Black;
+        layer.effect = clipcraft_export::Effect::Invert;
+        let state = state.apply(EditorAction::UpdateText { id, layer }).unwrap();
+        assert_eq!(state.texts()[0].layer.x, 120);
+        assert_eq!(state.texts()[0].layer.fade_in, Fade::Black);
+        let bad_layers = [
+            SequenceText {
+                text: "x".repeat(500),
+                ..state.texts()[0].layer.clone()
+            },
+            SequenceText {
+                text: "two\nlines".into(),
+                ..state.texts()[0].layer.clone()
+            },
+            SequenceText {
+                size: 0,
+                ..state.texts()[0].layer.clone()
+            },
+            SequenceText {
+                x: 1001,
+                ..state.texts()[0].layer.clone()
+            },
+            SequenceText {
+                end: state.texts()[0].layer.start,
+                ..state.texts()[0].layer.clone()
+            },
+        ];
+        for layer in bad_layers {
+            assert!(
+                state
+                    .clone()
+                    .apply(EditorAction::UpdateText { id, layer })
+                    .is_err()
+            );
+        }
+        assert!(
+            state
+                .clone()
+                .apply(EditorAction::DeleteText { id: 999 })
+                .is_err()
+        );
+        let deleted = state
+            .clone()
+            .apply(EditorAction::DeleteText { id })
+            .unwrap();
+        assert!(deleted.texts().is_empty());
+        let restored = deleted.apply(EditorAction::Undo).unwrap();
+        assert_eq!(restored.texts().len(), 1);
+        assert_eq!(restored.texts()[0].layer.x, 120);
+        // Reset clears both tracks and can be undone as one step.
+        let reset = restored.apply(EditorAction::Reset).unwrap();
+        assert!(reset.clips().is_empty() && reset.texts().is_empty());
+        let back = reset.apply(EditorAction::Undo).unwrap();
+        assert_eq!((back.clips().len(), back.texts().len()), (1, 1));
+        // A layer survives its video being deleted and cuts do not touch it.
+        let cut = back
+            .apply(EditorAction::Split {
+                at: Tick::from_units(1, 1),
+            })
+            .unwrap();
+        assert_eq!(cut.texts().len(), 1);
     }
     #[test]
     fn filmcraft_split_reorder_trim_delete_and_history_keep_exact_source_ranges() {

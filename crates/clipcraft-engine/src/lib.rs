@@ -11,7 +11,7 @@ use std::sync::atomic::AtomicBool;
 mod diagnose;
 mod editor;
 pub use editor::{
-    EditorAction, EditorClip, EditorSession, MAX_EDITOR_DURATION, MAX_EDITOR_HISTORY,
+    EditorAction, EditorClip, EditorSession, EditorText, MAX_EDITOR_DURATION, MAX_EDITOR_HISTORY,
     MIN_EDITOR_CLIP, TransitionPreset,
 };
 mod game_catalog;
@@ -33,8 +33,8 @@ pub use steam_games::{MAX_STEAM_GAMES, SteamGame, SteamGames};
 mod storage;
 
 pub use clipcraft_export::{
-    Effect, FADE_LENGTH, Fade, MAX_TITLE_CHARS, SegmentLook, SequenceRequest, SequenceSegment,
-    TITLE_SIZE_RANGE,
+    Effect, FADE_LENGTH, Fade, MAX_TEXT_LAYERS, MAX_TITLE_CHARS, SegmentLook, SequenceRequest,
+    SequenceSegment, SequenceText, TEXT_SIZE_RANGE,
 };
 pub use clipcraft_export::{
     ExportPreset, GifOptions, LOUDNESS_TARGETS, MAX_GIF_SECONDS, TrimRequest as ExportRange,

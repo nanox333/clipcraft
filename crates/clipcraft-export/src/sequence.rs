@@ -117,12 +117,8 @@ impl Effect {
     }
 }
 
-/// Smallest and largest title size, in thousandths of the picture height.
-pub const TITLE_SIZE_RANGE: std::ops::RangeInclusive<u16> = 20..=250;
-
-/// Simple per-clip looks: fades at either end, a colour effect and a free-floating title shown
-/// for the whole clip.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// Simple per-clip looks: fades at either end and a colour effect.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SegmentLook {
     #[serde(default)]
     pub fade_in: Fade,
@@ -130,76 +126,102 @@ pub struct SegmentLook {
     pub fade_out: Fade,
     #[serde(default)]
     pub effect: Effect,
-    #[serde(default)]
-    pub title: String,
-    /// Centre of the title across the picture, in thousandths (`0..=1000`).
-    #[serde(default = "default_title_x")]
-    pub title_x: u16,
-    /// Centre of the title down the picture, in thousandths (`0..=1000`).
-    #[serde(default = "default_title_y")]
-    pub title_y: u16,
+}
+
+/// Smallest and largest text size, in thousandths of the picture height.
+pub const TEXT_SIZE_RANGE: std::ops::RangeInclusive<u16> = 20..=250;
+/// Most text layers in one edit.
+pub const MAX_TEXT_LAYERS: usize = 256;
+
+/// A text layer on its own track above the video: it has a time range, a place and look, and
+/// takes fades and a colour effect like any other layer. A fade on a text layer is an opacity
+/// ramp (black or white make no difference).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SequenceText {
+    /// Where on the edit's timeline the text appears.
+    pub start: Tick,
+    pub end: Tick,
+    pub text: String,
+    /// Centre of the text across the picture, in thousandths (`0..=1000`).
+    pub x: u16,
+    /// Centre of the text down the picture, in thousandths (`0..=1000`).
+    pub y: u16,
     /// Letter height as thousandths of the picture height.
-    #[serde(default = "default_title_size")]
-    pub title_size: u16,
-    #[serde(default = "default_title_color")]
-    pub title_color: [u8; 3],
+    pub size: u16,
+    pub color: [u8; 3],
+    #[serde(default)]
+    pub fade_in: Fade,
+    #[serde(default)]
+    pub fade_out: Fade,
+    #[serde(default)]
+    pub effect: Effect,
 }
-fn default_title_x() -> u16 {
-    500
-}
-fn default_title_y() -> u16 {
-    880
-}
-fn default_title_size() -> u16 {
-    75
-}
-fn default_title_color() -> [u8; 3] {
-    [255, 255, 255]
-}
-impl Default for SegmentLook {
-    fn default() -> Self {
+impl SequenceText {
+    /// A white line in the middle of the picture, from `start` for `length`.
+    pub fn new(start: Tick, length: Tick, text: &str) -> Self {
         Self {
+            start,
+            end: start + length,
+            text: text.to_owned(),
+            x: 500,
+            y: 500,
+            size: 75,
+            color: [255, 255, 255],
             fade_in: Fade::None,
             fade_out: Fade::None,
             effect: Effect::None,
-            title: String::new(),
-            title_x: default_title_x(),
-            title_y: default_title_y(),
-            title_size: default_title_size(),
-            title_color: default_title_color(),
         }
     }
-}
-impl SegmentLook {
-    /// True when the title position and size are within what the export accepts.
-    pub fn title_in_range(&self) -> bool {
-        self.title_x <= 1000 && self.title_y <= 1000 && TITLE_SIZE_RANGE.contains(&self.title_size)
+    pub fn duration(&self) -> Tick {
+        self.end - self.start
     }
+    /// True when the text, place and range are within what the export accepts.
+    pub fn is_valid(&self) -> bool {
+        self.start >= Tick::ZERO
+            && self.end > self.start
+            && self.end <= Tick::from_units(1800, 1)
+            && self.text.chars().count() <= MAX_TITLE_CHARS
+            && !self.text.chars().any(char::is_control)
+            && self.x <= 1000
+            && self.y <= 1000
+            && TEXT_SIZE_RANGE.contains(&self.size)
+    }
+    /// How opaque the layer is `local` into its range (`1.0` when no fade applies).
+    pub fn opacity_at(&self, local: Tick) -> f32 {
+        fade_amount(self.fade_in, self.fade_out, local, self.duration())
+            .map_or(1.0, |(_, amount)| 1.0 - amount)
+    }
+}
+
+impl SegmentLook {
     /// The fade colour and how much of it covers the picture (`0.0..=1.0`) `local` into a clip
     /// that lasts `duration`.
     pub fn fade_at(&self, local: Tick, duration: Tick) -> Option<(Fade, f32)> {
-        let length = FADE_LENGTH.0.min(duration.0 / 2);
-        if length <= 0 {
-            return None;
-        }
-        let into = (local.0 as f64 / length as f64) as f32;
-        let before_end = ((duration.0 - local.0) as f64 / length as f64) as f32;
-        let from_start =
-            (self.fade_in != Fade::None && into < 1.0).then_some((self.fade_in, 1.0 - into));
-        let to_end = (self.fade_out != Fade::None && before_end < 1.0)
-            .then_some((self.fade_out, 1.0 - before_end));
-        let (kind, amount) = match (from_start, to_end) {
-            (Some(a), Some(b)) => {
-                if a.1 >= b.1 {
-                    a
-                } else {
-                    b
-                }
-            }
-            (a, b) => a.or(b)?,
-        };
-        Some((kind, amount.clamp(0.0, 1.0)))
+        fade_amount(self.fade_in, self.fade_out, local, duration)
     }
+}
+
+fn fade_amount(fade_in: Fade, fade_out: Fade, local: Tick, duration: Tick) -> Option<(Fade, f32)> {
+    let length = FADE_LENGTH.0.min(duration.0 / 2);
+    if length <= 0 {
+        return None;
+    }
+    let into = (local.0 as f64 / length as f64) as f32;
+    let before_end = ((duration.0 - local.0) as f64 / length as f64) as f32;
+    let from_start = (fade_in != Fade::None && into < 1.0).then_some((fade_in, 1.0 - into));
+    let to_end =
+        (fade_out != Fade::None && before_end < 1.0).then_some((fade_out, 1.0 - before_end));
+    let (kind, amount) = match (from_start, to_end) {
+        (Some(a), Some(b)) => {
+            if a.1 >= b.1 {
+                a
+            } else {
+                b
+            }
+        }
+        (a, b) => a.or(b)?,
+    };
+    Some((kind, amount.clamp(0.0, 1.0)))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -215,6 +237,9 @@ pub struct SequenceSegment {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SequenceRequest {
     pub segments: Vec<SequenceSegment>,
+    /// Text layers on the track above the video.
+    #[serde(default)]
+    pub texts: Vec<SequenceText>,
     pub output: PathBuf,
 }
 
@@ -226,6 +251,9 @@ fn validate(request: &SequenceRequest) -> Result<Tick, ExportError> {
     {
         return Err(ExportError::InvalidSequence);
     }
+    if request.texts.len() > MAX_TEXT_LAYERS || request.texts.iter().any(|t| !t.is_valid()) {
+        return Err(ExportError::InvalidSequence);
+    }
     let mut total = 0_i64;
     for segment in &request.segments {
         if segment.input.as_os_str().is_empty()
@@ -233,9 +261,6 @@ fn validate(request: &SequenceRequest) -> Result<Tick, ExportError> {
             || segment.start < Tick::ZERO
             || segment.end <= segment.start
             || segment.volume_percent > 100
-            || segment.look.title.chars().count() > MAX_TITLE_CHARS
-            || segment.look.title.chars().any(char::is_control)
-            || !segment.look.title_in_range()
         {
             return Err(ExportError::InvalidSequence);
         }
@@ -404,6 +429,11 @@ fn render(
         media_rate: 0x0001_0000,
     }];
     let audio_id = mp4.add_track(audio_config).map_err(mp4_error)?;
+    let layers: Vec<Layer> = request
+        .texts
+        .iter()
+        .filter_map(|t| text_layer(t, width, height))
+        .collect();
     let (mut y, mut u, mut v) = (Vec::new(), Vec::new(), Vec::new());
     let mut picture = 0_i64;
     let mut audio_sample = 0_i64;
@@ -412,7 +442,6 @@ fn render(
         check_cancel(cancel)?;
         let decoder = open(segment)?;
         let end = offset + (segment.end - segment.start);
-        let title = title_mask(&segment.look, width, height);
         let segment_audio_end = ceil_units(end, i64::from(AUDIO_RATE));
         while RATE.tick_of(picture) < end {
             check_cancel(cancel)?;
@@ -441,14 +470,16 @@ fn render(
                 i64::from((width - fitted.width()) / 2),
                 i64::from((height - fitted.height()) / 2),
             );
-            if let Some(title) = &title {
-                title.draw(&mut canvas);
-            }
             if let Some((fade, amount)) = segment
                 .look
                 .fade_at(time - offset, segment.end - segment.start)
             {
                 blend_fade(&mut canvas, fade, amount);
+            }
+            for layer in &layers {
+                if time >= layer.start && time < layer.end {
+                    layer.draw(&mut canvas, layer.opacity_at(time - layer.start));
+                }
             }
             filmcraft_export::rgba_to_yuv420_8(
                 canvas.as_raw(),
@@ -629,22 +660,28 @@ fn write_audio_packet(
     .map_err(mp4_error)
 }
 
-/// A rendered title: a soft shadow and white letters, placed once per clip.
-struct Title {
+/// A rendered text layer: a soft shadow and the letters, rasterised once for the whole export.
+struct Layer {
+    start: Tick,
+    end: Tick,
     mask: filmcraft_text::Mask,
     x: i64,
     y: i64,
-    color: [u8; 3],
+    ink: [f32; 3],
+    shadow: [f32; 3],
+    fade_in: Fade,
+    fade_out: Fade,
 }
-impl Title {
-    fn draw(&self, canvas: &mut image::RgbaImage) {
+impl Layer {
+    fn opacity_at(&self, local: Tick) -> f32 {
+        fade_amount(self.fade_in, self.fade_out, local, self.end - self.start)
+            .map_or(1.0, |(_, amount)| 1.0 - amount)
+    }
+    fn draw(&self, canvas: &mut image::RgbaImage, opacity: f32) {
         let shadow = (self.mask.h as f32 / 12.0).clamp(1.0, 4.0) as i64;
-        let ink = self.color.map(f32::from);
-        for (dx, dy, color, strength) in
-            [(shadow, shadow, [0.0_f32; 3], 0.65_f32), (0, 0, ink, 1.0)]
-        {
+        for (offset, color, strength) in [(shadow, self.shadow, 0.65_f32), (0, self.ink, 1.0)] {
             for row in 0..self.mask.h {
-                let y = self.y + row as i64 + dy;
+                let y = self.y + row as i64 + offset;
                 let Ok(py) = u32::try_from(y) else { continue };
                 if py >= canvas.height() {
                     continue;
@@ -656,11 +693,12 @@ impl Title {
                         .get(row * self.mask.w + col)
                         .copied()
                         .unwrap_or(0.0)
-                        * strength;
+                        * strength
+                        * opacity;
                     if coverage <= 0.0 {
                         continue;
                     }
-                    let x = self.x + col as i64 + dx;
+                    let x = self.x + col as i64 + offset;
                     let Ok(px) = u32::try_from(x) else { continue };
                     if px >= canvas.width() {
                         continue;
@@ -678,13 +716,13 @@ impl Title {
     }
 }
 
-fn title_mask(look: &SegmentLook, width: u32, height: u32) -> Option<Title> {
-    let text = look.title.trim();
-    if text.is_empty() {
+fn text_layer(text: &SequenceText, width: u32, height: u32) -> Option<Layer> {
+    let line = text.text.trim();
+    if line.is_empty() {
         return None;
     }
     let style = filmcraft_text::TextStyle {
-        size: (height as f32 * f32::from(look.title_size) / 1000.0).max(8.0),
+        size: (height as f32 * f32::from(text.size) / 1000.0).max(8.0),
         style: "Bold".into(),
         ..Default::default()
     };
@@ -693,19 +731,34 @@ fn title_mask(look: &SegmentLook, width: u32, height: u32) -> Option<Title> {
         width: Some(width as f32 * 0.9),
         ..Default::default()
     };
-    let layout = filmcraft_text::layout(text, &style, &paragraph);
+    let layout = filmcraft_text::layout(line, &style, &paragraph);
     let (mask, _, _) =
         filmcraft_text::render::rasterize(&layout, &filmcraft_text::render::at(0.0, 0.0));
-    // The title is centred on the chosen point, then kept inside the picture.
-    let centre_x = i64::from(width) * i64::from(look.title_x) / 1000;
-    let centre_y = i64::from(height) * i64::from(look.title_y) / 1000;
+    // The text is centred on the chosen point, then kept inside the picture.
+    let centre_x = i64::from(width) * i64::from(text.x) / 1000;
+    let centre_y = i64::from(height) * i64::from(text.y) / 1000;
     let x = (centre_x - mask.w as i64 / 2).clamp(0, (i64::from(width) - mask.w as i64).max(0));
     let y = (centre_y - mask.h as i64 / 2).clamp(0, (i64::from(height) - mask.h as i64).max(0));
-    Some(Title {
+    // An effect on the layer recolours the letters and their shadow.
+    let recolour = |rgb: [u8; 3]| {
+        let mut pixel = [rgb[0], rgb[1], rgb[2], 255];
+        text.effect.apply_rgba(&mut pixel);
+        [
+            f32::from(pixel[0]),
+            f32::from(pixel[1]),
+            f32::from(pixel[2]),
+        ]
+    };
+    Some(Layer {
+        start: text.start,
+        end: text.end,
         mask,
         x,
         y,
-        color: look.title_color,
+        ink: recolour(text.color),
+        shadow: recolour([0, 0, 0]),
+        fade_in: text.fade_in,
+        fade_out: text.fade_out,
     })
 }
 

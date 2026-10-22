@@ -88,33 +88,38 @@ There is no separate segment-count limit. Export remains bounded to 30 minutes t
 existing MKV adapter does not accept reordered video/B-frames. HDR and non-square pixels are
 refused. The destination filesystem must support hard links for safe output publication.
 
-## Effects and text
+## Effects, transitions and text
 
 The left panel has three tabs: **Library**, **Effects** and **Text**. Effects and Text apply to
-the segment selected on the timeline; a click applies it and clicking the highlighted one again
-removes it.
+the item selected on the timeline: a video segment, or a text layer on the **text track** above
+the video. A click applies it; clicking the highlighted one again removes it.
 
 **Effects > Transitions.** A segment can fade in from, and out to, black or white over half a
 second (or half the segment if it is shorter): *Fade in*, *Fade out*, *Flash in*, *Flash out*. The
 presets *Dip to black*, *Dip to white*, *Fade in & out* (first and last segments only) and
-*Clear all* set every segment at once. The picture and the segment's sound fade together, in the
-preview and in the export. Cutting a segment keeps only the outer fades. These are dips, not
+*Clear all* set every video segment at once. The picture and the segment's sound fade together, in
+the preview and in the export. Cutting a segment keeps only the outer fades. These are dips, not
 cross-dissolves: segments never overlap, so the length of the edit does not change. Faded ends
-show as triangles on the timeline.
+show as triangles on the timeline. A text layer offers *Fade in* and *Fade out*, which ramp its
+opacity.
 
-**Effects > Effects.** One colour look per segment: Black & white, Sepia, Brighten, Darken,
-Contrast, Vivid or Invert, shown on a small colour-bar swatch. It is applied to the picture
-(not to text or fades) in the preview and in the export.
+**Effects > Effects.** One colour look per item: Black & white, Sepia, Brighten, Darken,
+Contrast, Vivid or Invert, shown on a small colour-bar swatch. On a segment it recolours the
+picture (not text or fades); on a text layer it recolours the letters and their shadow. Preview
+and export match.
 
-**Text.** One line (up to 120 characters) shown over the whole segment, in bold Inter with a
-soft shadow. Type it and press Enter or click away to apply. The text is free: drag it anywhere in
-the preview (the selected segment's text shows a lime frame on hover and the move is one undo
-step), change its **Size** with the slider and its **Colour** from the swatches, or snap it with the
-*Title*, *Lower third*, *Top banner* and *Corner tag* presets; *No text* removes it. The position
-is stored as a fraction of the picture, so the export puts it where the preview shows it, kept
-inside the frame. To show text for only part of the time, cut the segment first. The export lays
-text out with FilmCraft's text engine; the preview draws it approximately the same. Segments with
-text show a **T** badge.
+**Text.** Each piece of text is a **layer on its own track** above the video, like a regular
+layer. **Add text** in the Text tab puts a 3-second layer at the playhead. On the timeline, drag
+its block to move it, drag either end to trim it, click it to select it (Delete removes it).
+Anything it overlaps shows through as a normal layer: it sits above the video, is unaffected by the
+video segment's effect and fades, and can be longer or shorter than any one segment. Text layers
+are clipped to the length of the edit. Its settings are in the Text tab: the text (one line, up to
+120 characters; Enter or clicking away applies it), start and length in seconds, **Size**,
+**Colour**, and the *Title*, *Lower third*, *Top banner* and *Corner tag* position presets. Drag
+the text in the preview to move it anywhere (one undo step); the position is stored as a fraction
+of the picture, so the export puts it where the preview shows it, kept inside the frame. The
+export lays text out with FilmCraft's text engine; the preview draws it approximately the same.
+Text layers are part of the same undo history as the video segments, and Reset clears both tracks.
 
 The Library shows each clip's resolution and file size under its name.
 
