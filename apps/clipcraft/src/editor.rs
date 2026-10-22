@@ -13,6 +13,8 @@ use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, RichText, Sense
 
 use crate::kit::{self, BORDER, CANVAS, CARD, CARD_HOVER, DANGER, FAINT, LIME, MUTED, PANEL, TEXT};
 
+/// The least height the Library and preview row can be dragged down to.
+const MIN_TOP: f32 = 210.0;
 const RATE: FrameRate = FrameRate { num: 30, den: 1 };
 
 struct ExportJob {
@@ -47,6 +49,10 @@ pub struct EditorState {
     message: Option<(String, bool)>,
     job: Option<ExportJob>,
     saved: Option<PathBuf>,
+    /// Width the person dragged the Library to; `None` lets it follow the 16:9 preview.
+    library_width: Option<f32>,
+    /// Height the person dragged the preview row to; `None` gives it all the room there is.
+    top_height: Option<f32>,
 }
 impl Default for EditorState {
     fn default() -> Self {
@@ -71,6 +77,8 @@ impl Default for EditorState {
             message: None,
             job: None,
             saved: None,
+            library_width: None,
+            top_height: None,
         }
     }
 }
@@ -542,20 +550,34 @@ impl EditorState {
         } else {
             0.0
         };
-        let top = (ui.available_height() - 404.0 - status_height).max(120.0);
+        let full_top = (ui.available_height() - 404.0 - status_height).max(120.0);
+        let top = self
+            .top_height
+            .filter(|height| height.is_finite())
+            .map_or(full_top, |height| {
+                height.clamp(MIN_TOP.min(full_top), full_top)
+            });
+        // Room given up by the preview row goes to the timeline.
+        let lift = full_top - top;
         let width = ui.available_width().max(1.0);
         // The preview is 16:9, so it is only as wide as its picture needs to be tall; the Library
         // gets everything else.
         let picture_height = (top - 106.0).max(40.0);
         let browser = if width >= 700.0 {
             let preview = (picture_height * 16.0 / 9.0 + 24.0).clamp(360.0, width - 12.0 - 260.0);
-            (width - 12.0 - preview).max(260.0)
+            let auto = (width - 12.0 - preview).max(260.0);
+            self.library_width
+                .filter(|chosen| chosen.is_finite())
+                .map_or(auto, |chosen| {
+                    chosen.clamp(200.0, (width - 12.0 - 300.0).max(200.0))
+                })
         } else {
             (width * 0.32).max(80.0)
         };
+        let row_left = ui.cursor().left();
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 12.0;
-            ui.allocate_ui_with_layout(
+            let library = ui.allocate_ui_with_layout(
                 Vec2::new(browser, top),
                 Layout::top_down(Align::Min),
                 |ui| {
@@ -566,6 +588,35 @@ impl EditorState {
                     self.browser(ui, thumbs, top.max(preview_height));
                 },
             );
+            // Drag the gap between the Library and the preview to change their widths.
+            if width >= 700.0 {
+                let gap = egui::Rect::from_min_max(
+                    egui::pos2(library.response.rect.right(), library.response.rect.top()),
+                    egui::pos2(
+                        library.response.rect.right() + 12.0,
+                        library.response.rect.top() + top,
+                    ),
+                );
+                let handle = ui
+                    .interact(
+                        gap,
+                        egui::Id::new("editor-split-library"),
+                        Sense::click_and_drag(),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+                    .on_hover_text("Drag to resize the Library. Double-click to reset.");
+                handle.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Resize library")
+                });
+                splitter_grip(ui, gap, true, handle.hovered() || handle.dragged());
+                if handle.double_clicked() {
+                    self.library_width = None;
+                } else if handle.dragged()
+                    && let Some(point) = handle.interact_pointer_pos()
+                {
+                    self.library_width = Some(point.x - row_left - 6.0);
+                }
+            }
             let preview_width = (width - browser - 12.0).max(1.0);
             ui.allocate_ui_with_layout(
                 Vec2::new(preview_width, top),
@@ -668,7 +719,21 @@ impl EditorState {
                 },
             );
         });
-        ui.add_space(12.0);
+        // Drag the gap above the timeline to trade preview height for timeline height.
+        let (gap, handle) = ui.allocate_exact_size(Vec2::new(width, 12.0), Sense::click_and_drag());
+        let handle = handle
+            .on_hover_cursor(egui::CursorIcon::ResizeVertical)
+            .on_hover_text("Drag to resize the preview and timeline. Double-click to reset.");
+        handle.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Resize timeline")
+        });
+        splitter_grip(ui, gap, false, handle.hovered() || handle.dragged());
+        if handle.double_clicked() {
+            self.top_height = None;
+        } else if handle.dragged() {
+            self.top_height =
+                Some((top + handle.drag_delta().y).clamp(MIN_TOP.min(full_top), full_top));
+        }
         egui::Frame::new()
             .fill(PANEL)
             .corner_radius(12)
@@ -677,7 +742,7 @@ impl EditorState {
             .show(ui, |ui| {
                 ui.set_width((width - 24.0).max(1.0));
                 self.toolbar(ui);
-                self.timeline(ui, thumbs);
+                self.timeline(ui, thumbs, lift);
                 self.range_controls(ui);
             });
         if let Some(job) = &self.job {
@@ -1073,7 +1138,9 @@ impl EditorState {
         });
         ui.add_space(8.0);
     }
-    fn timeline(&mut self, ui: &mut egui::Ui, thumbs: &mut crate::thumbs::Thumbnails) {
+    fn timeline(&mut self, ui: &mut egui::Ui, thumbs: &mut crate::thumbs::Thumbnails, lift: f32) {
+        let lift = lift.max(0.0);
+        let card_lift = lift * 0.75;
         let total = self.session.duration();
         let width = if self.fit {
             ui.available_width().max(1.0)
@@ -1090,7 +1157,7 @@ impl EditorState {
             .id_salt("edit-timeline-scroll")
             .show(ui, |ui| {
                 let (rect, response) =
-                    ui.allocate_exact_size(Vec2::new(width, 142.0), Sense::click_and_drag());
+                    ui.allocate_exact_size(Vec2::new(width, 142.0 + lift), Sense::click_and_drag());
                 let painter = ui.painter();
                 painter.rect_filled(rect, 10, CANVAS);
                 painter.line_segment(
@@ -1144,7 +1211,7 @@ impl EditorState {
                         if x.floor() != last_thin_pixel {
                             let small = egui::Rect::from_min_size(
                                 egui::pos2(x, rect.top() + 28.0),
-                                Vec2::new(1.0, 72.0),
+                                Vec2::new(1.0, 72.0 + card_lift),
                             );
                             if ui.is_rect_visible(small) {
                                 painter.rect_filled(small, 0, CARD_HOVER);
@@ -1156,7 +1223,7 @@ impl EditorState {
                     }
                     let card = egui::Rect::from_min_max(
                         egui::pos2(x, rect.top() + 28.0),
-                        egui::pos2(right.max(x + 2.0), rect.top() + 100.0),
+                        egui::pos2(right.max(x + 2.0), rect.top() + 100.0 + card_lift),
                     )
                     .shrink(0.5);
                     if !ui.is_rect_visible(card) {
@@ -1244,8 +1311,8 @@ impl EditorState {
                         }
                     }
                     let audio = egui::Rect::from_min_max(
-                        egui::pos2(x + 1.0, rect.top() + 108.0),
-                        egui::pos2(right.max(x + 2.0) - 1.0, rect.top() + 135.0),
+                        egui::pos2(x + 1.0, rect.top() + 108.0 + card_lift),
+                        egui::pos2(right.max(x + 2.0) - 1.0, rect.top() + 135.0 + lift),
                     );
                     painter.rect_filled(
                         audio,
@@ -1454,6 +1521,20 @@ fn tool(
     enabled: bool,
 ) -> egui::Response {
     kit::labelled_button(ui, icon, label, primary, enabled)
+}
+
+/// The grip drawn in the gap between two panels that can be dragged to resize them.
+fn splitter_grip(ui: &egui::Ui, gap: egui::Rect, vertical: bool, active: bool) {
+    let size = if vertical {
+        Vec2::new(4.0, 40.0)
+    } else {
+        Vec2::new(40.0, 4.0)
+    };
+    ui.painter().rect_filled(
+        egui::Rect::from_center_size(gap.center(), size),
+        2,
+        if active { LIME } else { kit::CONTROL_BORDER },
+    );
 }
 
 /// A thin vertical rule between groups of controls.
@@ -1814,6 +1895,30 @@ mod tests {
                 labels.iter().any(|name| name == label),
                 "missing accessible control: {label}"
             );
+        }
+    }
+    #[test]
+    fn dragged_panel_sizes_are_clamped_and_every_size_still_draws() {
+        for (library, top) in [
+            (None, None),
+            (Some(-500.0), Some(-500.0)),
+            (Some(1.0e9), Some(1.0e9)),
+            (Some(f32::NAN), Some(f32::NAN)),
+            (Some(420.0), Some(260.0)),
+        ] {
+            for size in [
+                Vec2::new(320.0, 500.0),
+                Vec2::new(960.0, 640.0),
+                Vec2::new(1440.0, 900.0),
+            ] {
+                let context = crate::kit::test_context();
+                let mut state = state();
+                state.library_width = library;
+                state.top_height = top;
+                for _ in 0..3 {
+                    frame(&mut state, &context, vec![], size);
+                }
+            }
         }
     }
     #[test]
