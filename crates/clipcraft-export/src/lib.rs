@@ -12,11 +12,13 @@
 
 mod compress;
 mod gif;
+mod hardware;
 mod normalize;
 mod source;
 
-pub use compress::{CompressReport, ExportPreset, compress_to_mp4};
+pub use compress::{CompressReport, ExportPreset, compress_to_mp4, compress_to_mp4_with};
 pub use gif::{GifOptions, MAX_GIF_FPS, MAX_GIF_SECONDS, export_gif};
+pub use hardware::{FastEncoder, FastOpener, FastPacket, FastRequest};
 pub use normalize::{LOUDNESS_TARGETS, NormalizeReport, normalize_to_mp4};
 
 use std::fs::{self, File};

@@ -227,6 +227,19 @@ saved nothing and made the size target less exact. The remaining time is the pur
 encoder (about half), decoding (about a fifth) and scaling; a large further gain needs a faster
 encoder or hardware encoding, not more threads.
 
+Hardware encoding: small-file export now tries the same GPU encoder as recording
+(`recording.video_encoder` = GPU; NVENC, Media Foundation or VA-API) and falls back to the software
+encoder on any trouble: it will not open, fails part-way, returns a different number of pictures,
+reorders, or cannot describe its stream. `cargo test -p clipcraft-export --test hardware` covers
+this with a stand-in encoder behind the same seam (decoded length, size, first and later picture,
+sound timing, FFmpeg decode, each kind of failure, cancel). **No real GPU encoder has been run for
+export** (this container has none), so its speed and quality are unmeasured. As an upper bound the
+timing test also runs the hardware path with a free encoder: 20 s for the 30 s 1080p60 clip, against
+27–30 s with the software encoder, because decoding the 1080p60 source with the pure-Rust decoder
+is then the limit (about 9 ms per source picture, and the decoder serialises concurrent requests).
+Expect a GPU to save roughly a third of the time, and to free the CPU while it runs, not to
+make export several times faster.
+
 Output decodes cleanly. It is still about real time for 1080p, and a harder 720p noise
 clip (590 MB per 30 s) ran slower than real time before and after, so expect long waits on
 very noisy recordings. GIF did not get faster because its time is spent decoding and

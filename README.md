@@ -40,7 +40,9 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   choose an estimated 10 MB, 25 MB, or custom 1–500 MB small-file export. Compression uses the Rust
   software H.264 encoder, preserves AAC audio tracks, and reduces video to at most 720p/30 fps
   without upscaling. Both paths preserve the source and support progress/cancel; compressed exports
-  report their actual size. No upload or Discord account is involved.
+  report their actual size. When recording is set to the GPU encoder, small-file export tries it
+  first and falls back to the software encoder on any trouble (untested on a real GPU so far). No
+  upload or Discord account is involved.
 - **GIF and loudness:** the same Trim panel can save a range of up to 30 seconds as a looping GIF
   (480 px wide, 12 fps, no sound) or even out its loudness to -16 LUFS (the picture is copied, the
   sound is re-encoded, and the result is never pushed into clipping). See

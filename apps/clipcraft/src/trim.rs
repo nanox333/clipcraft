@@ -216,7 +216,7 @@ impl TrimState {
                         .map(|report| Finished {
                             clip: report.clip,
                             target: Some(report.target_bytes),
-                            note: None,
+                            note: (report.encoder != "Software").then_some(report.encoder),
                         })
                 } else {
                     clipcraft_engine::trim_clip(

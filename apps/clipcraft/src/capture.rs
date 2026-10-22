@@ -181,8 +181,13 @@ fn notice(text: impl Into<String>, error: bool, path: Option<PathBuf>) -> Option
 impl ClipCraftApp {
     /// Runs once per frame: hotkeys, status, and a save that finished.
     pub(crate) fn capture_frame(&mut self, context: &egui::Context) {
+        clipcraft_engine::enable_export_hardware(
+            self.recording.video_encoder == clipcraft_engine::VideoEncoder::Gpu,
+        );
         if !self.capture.launched {
             self.capture.launched = true;
+            // Exports may use the same hardware encoder as recording.
+            clipcraft_engine::set_export_hardware(clipcraft_platform::hardware_provider());
             self.recover_after_crash();
             if self.recording.record_on_launch && !self.recording.game_only_capture {
                 self.start_capture();

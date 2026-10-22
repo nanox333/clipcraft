@@ -31,6 +31,7 @@ pub use clipcraft_export::{
     ExportPreset, GifOptions, LOUDNESS_TARGETS, MAX_GIF_SECONDS, TrimRequest as ExportRange,
 };
 pub use clipcraft_media::MediaProbe;
+use clipcraft_record::{HardwareEncoder, HardwareProvider, HardwareRequest};
 
 pub use clipcraft_capture::reframe::{
     Framing, MAX_OUTPUT_EDGE, MIN_OUTPUT_EDGE, OutputShape, PixelRect, Reframe, reframe,
@@ -287,6 +288,8 @@ pub struct ExportedClip {
     pub within_target: bool,
     pub width: u32,
     pub height: u32,
+    /// `Software`, or the hardware encoder that made the picture.
+    pub encoder: String,
 }
 
 /// A clip saved with its loudness evened out. Loudness values are in tenths, so they compare
@@ -335,6 +338,99 @@ pub fn normalize_clip(
     })
 }
 
+/// The hardware encoder exports may use, and whether they may. Exports try it first and fall back
+/// to the software encoder on any trouble.
+static EXPORT_HARDWARE: std::sync::Mutex<Option<(HardwareProvider, bool)>> =
+    std::sync::Mutex::new(None);
+
+/// Registers the hardware encoder provider exports can use, if the computer has one. Off until
+/// [`enable_export_hardware`] turns it on.
+pub fn set_export_hardware(provider: Option<HardwareProvider>) {
+    if let Ok(mut slot) = EXPORT_HARDWARE.lock() {
+        *slot = provider.map(|provider| (provider, false));
+    }
+}
+
+/// Lets exports use the registered hardware encoder, or stops them. Follows the recording
+/// setting that chooses between GPU and CPU encoding.
+pub fn enable_export_hardware(enabled: bool) {
+    if let Ok(mut slot) = EXPORT_HARDWARE.lock()
+        && let Some((_, on)) = slot.as_mut()
+    {
+        *on = enabled;
+    }
+}
+
+/// The registered hardware encoder as the export crate's opener, when it is enabled.
+fn export_hardware() -> Option<clipcraft_export::FastOpener> {
+    let provider = {
+        let slot = EXPORT_HARDWARE.lock().ok()?;
+        match slot.as_ref() {
+            Some((provider, true)) => provider.clone(),
+            _ => return None,
+        }
+    };
+    Some(std::sync::Arc::new(
+        move |request: &clipcraft_export::FastRequest| {
+            let encoder = provider.open(&HardwareRequest {
+                width: request.width,
+                height: request.height,
+                fps: request.fps,
+                video_kbps: request.video_kbps,
+                constant_bitrate: false,
+                keyframe_frames: request.keyframe_frames,
+            })?;
+            Ok(Box::new(HardwareExport(encoder)) as Box<dyn clipcraft_export::FastEncoder>)
+        },
+    ))
+}
+
+/// A recorder hardware encoder seen as an export one. A picture that comes out of order is an
+/// error, which makes the export fall back to the software encoder.
+struct HardwareExport(Box<dyn HardwareEncoder>);
+
+impl HardwareExport {
+    fn packets(
+        packets: Vec<clipcraft_record::HardwarePacket>,
+    ) -> Result<Vec<clipcraft_export::FastPacket>, String> {
+        packets
+            .into_iter()
+            .map(|packet| {
+                if packet.reordered {
+                    Err("the encoder reordered pictures".to_owned())
+                } else {
+                    Ok(clipcraft_export::FastPacket {
+                        data: packet.data,
+                        keyframe: packet.keyframe,
+                    })
+                }
+            })
+            .collect()
+    }
+}
+
+impl clipcraft_export::FastEncoder for HardwareExport {
+    fn encode(
+        &mut self,
+        rgba: &[u8],
+        index: u64,
+    ) -> Result<Vec<clipcraft_export::FastPacket>, String> {
+        Self::packets(self.0.encode(rgba, index)?)
+    }
+
+    fn flush(&mut self) -> Result<Vec<clipcraft_export::FastPacket>, String> {
+        Self::packets(self.0.flush()?)
+    }
+
+    fn avcc(&self) -> Vec<u8> {
+        self.0.avcc()
+    }
+
+    fn name(&self) -> String {
+        self.0.name()
+    }
+}
+
 /// Command `clip.export`: compress a range without modifying or uploading its source.
 pub fn export_clip(
     request: &ExportRange,
@@ -345,8 +441,15 @@ pub fn export_clip(
     if request.input.as_os_str().is_empty() || request.output.as_os_str().is_empty() {
         return Err(EngineError::EmptyMediaPath);
     }
-    let report = clipcraft_export::compress_to_mp4(request, preset, progress, cancel)
-        .map_err(EngineError::Export)?;
+    let hardware = export_hardware();
+    let report = clipcraft_export::compress_to_mp4_with(
+        request,
+        preset,
+        hardware.as_ref(),
+        progress,
+        cancel,
+    )
+    .map_err(EngineError::Export)?;
     Ok(ExportedClip {
         clip: TrimmedClip {
             path: report.clip.path.to_string_lossy().into_owned(),
@@ -359,6 +462,7 @@ pub fn export_clip(
         within_target: report.within_target,
         width: report.width,
         height: report.height,
+        encoder: report.encoder,
     })
 }
 

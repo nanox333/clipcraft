@@ -168,6 +168,19 @@ fn run_clip(arguments: &[OsString]) -> Result<(), CliError> {
         };
     }
     let exporting = arguments.first().and_then(|arg| arg.to_str()) == Some("export");
+    if exporting {
+        // Small-file export uses the GPU encoder when the recording settings say so.
+        clipcraft_engine::set_export_hardware(clipcraft_platform::hardware_provider());
+        let gpu = clipcraft_engine::default_settings_path()
+            .and_then(
+                |path| match execute(Command::LoadRecordingSettings { path }) {
+                    Ok(CommandOutput::RecordingSettings(settings)) => Some(*settings),
+                    _ => None,
+                },
+            )
+            .is_none_or(|settings| settings.video_encoder == clipcraft_engine::VideoEncoder::Gpu);
+        clipcraft_engine::enable_export_hardware(gpu);
+    }
     if !((exporting && arguments.len() == 6)
         || (arguments.len() == 5 && arguments[0].to_str() == Some("trim")))
     {

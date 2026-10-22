@@ -208,7 +208,9 @@ loudness** (-16 LUFS), sharing `clip.export_gif` and `clip.normalize` with the C
 Rust-generated clips decoded back (and checked with FFmpeg when present); nothing was run on
 Windows, macOS or with real games, and the UI was only exercised through its headless draw tests
 and a manual Linux run. Joining clips (and transitions) is deliberately left for the planned
-editor. Small-file export was also made much faster (see [testing.md](testing.md)); the numbers are
+editor. Small-file export also tries the GPU encoder (same choice as recording) and falls back to
+software on any trouble; that path is tested with a stand-in encoder only, and an upper-bound test
+shows decoding the source limits it to about a third faster. Small-file export was also made much faster (see [testing.md](testing.md)); the numbers are
 from a 4-core Linux container, not a gaming PC. See
 [ADR 0017](adr/0017-gif-and-loudness-export.md).
 

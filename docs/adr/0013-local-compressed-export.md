@@ -4,6 +4,12 @@
 
 ## Decision
 
+**Addendum (M4.4):** when the recording setting selects the GPU encoder, `clip.export` first tries the
+hardware encoder behind the recorder's `HardwareProvider` seam (through the export crate's own
+small `FastEncoder` trait, so the export layer does not depend on the recorder). Pictures go in as
+RGBA, packets must come out one per picture in order, and any failure restarts the export with the
+software encoder described below. The report names the encoder used.
+
 Keep the sample-copy trim from ADR 0010 as the default. Add a separate `clip.export` engine
 command, used by the trim panel and local CLI, for estimated 10 MB, 25 MB, and custom 1–500 MB
 exports. MB means 1,000,000 bytes. This creates a normal local MP4; no upload, account, or network
