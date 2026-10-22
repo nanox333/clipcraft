@@ -23,6 +23,8 @@ mod screenshot;
 pub use scan::MAX_SCAN_DEPTH;
 mod session;
 mod startup;
+mod steam_games;
+pub use steam_games::{MAX_STEAM_GAMES, SteamGame, SteamGames};
 mod storage;
 
 pub use clipcraft_export::{ExportPreset, TrimRequest as ExportRange};
@@ -50,7 +52,7 @@ pub use recovery::{Recovery, recover_interrupted};
 pub use relink::{SearchResult, find_moved_file};
 pub use screenshot::{ScreenshotJob, screenshot_name};
 pub use session::{
-    CLIP_PREFIX, CaptureSession, SavedClipReport, clip_format, clip_stem, record_config,
+    CLIP_PREFIX, CaptureSession, SaveJob, SavedClipReport, clip_format, clip_stem, record_config,
 };
 pub use storage::{
     StorageUsage, StoredClip, cleanup_plan, default_capture_folder, list_clips, storage_usage,
@@ -72,6 +74,8 @@ const VIDEO_EXTENSIONS: [&str; 7] = ["avi", "m4v", "mkv", "mov", "mp4", "webm", 
 /// A typed operation exposed by the shared command registry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
+    /// Read only local Steam installation manifests.
+    ScanSteamGames { roots: Vec<PathBuf> },
     /// Enables/disables built-in identifiers while preserving custom rules and the global switch.
     SetBuiltInGames {
         settings: Box<RecordingSettings>,
@@ -157,6 +161,7 @@ impl Command {
     /// Returns this operation's stable command ID.
     pub const fn id(&self) -> &'static str {
         match self {
+            Self::ScanSteamGames { .. } => "recording.scan_steam_games",
             Self::SetBuiltInGames { .. } => "recording.set_builtin_games",
             Self::ScanLibrary { .. } => "library.scan",
             Self::LocalMediaPath { .. } => "library.path",
@@ -353,12 +358,17 @@ fn copy_path(input: &std::path::Path, suffix: &str) -> Option<PathBuf> {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum CommandOutput {
+    SteamGames(SteamGames),
     /// Result of scanning a local directory.
     LibraryScan(LibraryScanResult),
     /// A local file path requested by the library UI or CLI.
-    LocalMediaPath { path: String },
+    LocalMediaPath {
+        path: String,
+    },
     /// A local file was handed to the file manager.
-    Revealed { path: String },
+    Revealed {
+        path: String,
+    },
     /// Container facts read from one clip.
     ClipProbe(MediaProbe),
     /// A clip's thumbnail in the cache.
@@ -377,12 +387,15 @@ pub enum CommandOutput {
         folders_searched: usize,
     },
     /// Whether ClipCraft now launches at sign-in.
-    LaunchAtStartup { enabled: bool },
+    LaunchAtStartup {
+        enabled: bool,
+    },
 }
 
 /// Actionable errors returned by engine commands.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EngineError {
+    SteamMetadataInvalid,
     /// A requested starter game does not exist in the shipped catalog.
     GamePresetInvalid,
     /// A built-in game change is empty or exceeds the bounded request size.
@@ -456,6 +469,7 @@ pub enum EngineError {
 impl fmt::Display for EngineError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::SteamMetadataInvalid => formatter.write_str("Steam library metadata could not be read safely. Check the installation or refresh again; no game files were changed."),
             Self::GamePresetInvalid => formatter.write_str("Choose a game from the built-in catalog, or add a custom game."),
             Self::GameRuleLimit => formatter.write_str("Choose one or more known games, with at most 1024 IDs in a request."),
             Self::DirectoryUnavailable => formatter.write_str(
@@ -549,6 +563,9 @@ pub fn execute_cancellable(
     cancel: &AtomicBool,
 ) -> Result<CommandOutput, EngineError> {
     match command {
+        Command::ScanSteamGames { roots } => {
+            steam_games::scan(&roots, cancel).map(CommandOutput::SteamGames)
+        }
         Command::SetBuiltInGames {
             settings,
             ids,

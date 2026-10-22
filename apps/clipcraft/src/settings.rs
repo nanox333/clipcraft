@@ -54,6 +54,8 @@ pub struct SettingsState {
     game_exact_draft: bool,
     builtin_game_search: String,
     game_preset_error: Option<String>,
+    pub(crate) steam_games: clipcraft_engine::SteamGames,
+    pub(crate) steam_warning: Option<String>,
 }
 
 impl SettingsState {

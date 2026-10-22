@@ -8,6 +8,7 @@ use clipcraft_engine::{
     default_thumbnail_dir, execute, game_of,
 };
 mod capture;
+mod game_scan;
 mod kit;
 mod library_scan;
 mod organize;
@@ -1663,8 +1664,7 @@ impl ClipCraftApp {
             SettingsTab::Games => {
                 let refresh = settings::games_tab(ui, &mut working, &mut self.settings_state);
                 if refresh {
-                    self.settings_state
-                        .set_game_processes(Ok(clipcraft_platform::running_processes(true)));
+                    self.request_game_refresh();
                 }
             }
             SettingsTab::Capture => {

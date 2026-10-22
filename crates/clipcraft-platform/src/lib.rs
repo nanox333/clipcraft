@@ -39,7 +39,7 @@ mod x11;
 pub use hardware::{hardware_provider, probe_hardware_encoder};
 pub use hotkey::{HotkeyBinding, HotkeyEvent, HotkeyListener, parse_shortcut};
 pub use priority::set_background_priority;
-pub use process::{ProcessObserver, RunningProcess, running_processes};
+pub use process::{ProcessObserver, RunningProcess, running_processes, steam_installation_roots};
 
 /// Process-local counters for measuring the Windows native path without media/path logging.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

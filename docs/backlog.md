@@ -611,6 +611,32 @@ keyboard filtering/exclusion controls, isolated CLI and `cargo xtask ci`. Update
 gaps, architecture, testing and catalog provenance together. **Dependencies:** M7.1.
 **Estimate:** one focused change. **Status:** implemented; live-game/Windows evidence remains open.
 
+### M7.1b — Background discovery, local Steam games and desktop continuation
+
+**User outcome / evidence:** process matching currently runs on the interface thread; games beyond
+the bundled list need custom setup. The user requested the proposed background/local-Steam work
+and an opt-in desktop continuation when a running game closes or crashes.
+
+**Scope / requirements:** one persistent bounded worker for process discovery, matching and local
+Steam manifests; obsolete generations cannot change capture. UI/CLI share an offline Steam scan
+command. Preserve custom priority and exclusions. Desktop continuation is off by default, only
+follows a successfully started game whose process exited, preserves its final replay and starts a
+fresh desktop buffer without a game label. Re-entry returns to game capture. Stop, disable and
+errors must not silently start desktop recording. Show the active source in the top bar.
+
+**Limits:** bounded VDF parsing, library/manifest/process counts and one pending worker request;
+no network, code injection, game-file inspection or added runtime. Unknown roots, unavailable
+libraries, malformed metadata and scanner failures report limitations; no false game-exit result.
+Keep capture/window permissions and existing storage limits. Windows/live-game evidence remains
+unavailable here; use synthetic process/source fixtures. See ADR 0016 for privacy/defaults.
+
+**Acceptance / verification:** check alternate Steam libraries, corrupted/oversized metadata,
+source precedence/exclusions, stale worker results, responsiveness while blocked, worker failure,
+launch/arm/save/exit/crash/default-off/fallback/return/pause/disable flows and saved-game labels.
+Inspect UI at 1440×900, exercise keyboard toggles, and run `cargo xtask ci` plus documentation gate.
+Update README, gaps, roadmap, architecture, testing, settings/catalog guides and ADR/provenance.
+**Dependencies:** M7.1/M7.1a, M4.1c. **Estimate:** multi-part change. **Status:** in progress.
+
 ## M8 — Desktop platform parity and Android feasibility
 
 ### M8.1 — Cross-platform desktop support matrix

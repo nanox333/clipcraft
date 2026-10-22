@@ -93,14 +93,18 @@ impl RecordingSettings {
 
     /// Avoid observing processes when neither built-in nor custom recognition is enabled.
     pub fn has_game_rules(&self) -> bool {
-        !self.game_rules.is_empty() || built_in_games().iter().any(|game| game.enabled(self))
+        !self.game_rules.is_empty()
+            || (self.detect_built_in_games && self.detect_installed_steam_games)
+            || built_in_games().iter().any(|game| game.enabled(self))
     }
 
     /// Steam IDs are read only while a permitted rule can use them.
     pub fn needs_steam_game_ids(&self) -> bool {
-        self.game_rules
-            .iter()
-            .any(|rule| !rule.steam_app_ids.is_empty())
+        (self.detect_built_in_games && self.detect_installed_steam_games)
+            || self
+                .game_rules
+                .iter()
+                .any(|rule| !rule.steam_app_ids.is_empty())
             || built_in_games()
                 .iter()
                 .any(|game| game.enabled(self) && !game.steam_app_ids.is_empty())
@@ -287,6 +291,7 @@ mod tests {
             .map(|game| game.id.to_owned())
             .collect();
         let mut all_off = set_games(enabled, &ids, false).unwrap();
+        all_off.detect_installed_steam_games = false;
         assert!(!all_off.has_game_rules());
         assert!(!all_off.needs_steam_game_ids());
         all_off.detect_built_in_games = false;

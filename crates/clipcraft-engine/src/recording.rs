@@ -371,6 +371,12 @@ pub struct RecordingSettings {
     pub record_on_launch: bool,
     /// Start the replay buffer only while a process in the game allowlist is running.
     pub game_only_capture: bool,
+    /// Save the game replay and continue on the desktop after its process exits. Off by default.
+    pub record_desktop_after_game: bool,
+    /// Resolve running Steam IDs from local installation manifests as well as the bundled list.
+    pub detect_installed_steam_games: bool,
+    /// Exact Steam IDs excluded from automatic recognition. Custom overrides still win.
+    pub disabled_steam_app_ids: Vec<String>,
     /// Recognize the bundled game catalog automatically; custom rules still have priority.
     pub detect_built_in_games: bool,
     /// Built-in game IDs explicitly excluded from automatic recognition.
@@ -440,6 +446,9 @@ impl Default for RecordingSettings {
             capture_target_name: String::new(),
             record_on_launch: false,
             game_only_capture: true,
+            record_desktop_after_game: false,
+            detect_installed_steam_games: true,
+            disabled_steam_app_ids: Vec::new(),
             game_rules: Vec::new(),
             detect_built_in_games: true,
             disabled_builtin_games: Vec::new(),
@@ -545,6 +554,14 @@ impl RecordingSettings {
             self.codec = VideoCodec::H264;
         }
         self.hotkeys = self.hotkeys.sanitized();
+        self.disabled_steam_app_ids = self
+            .disabled_steam_app_ids
+            .into_iter()
+            .take(crate::MAX_STEAM_GAMES)
+            .filter(|id| crate::steam_games::valid_app_id(id))
+            .collect();
+        self.disabled_steam_app_ids.sort();
+        self.disabled_steam_app_ids.dedup();
         self.disabled_builtin_games = self
             .disabled_builtin_games
             .into_iter()

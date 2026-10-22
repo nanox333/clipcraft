@@ -1,7 +1,7 @@
 //! Local process metadata used for game-aware replay arming.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
@@ -12,7 +12,7 @@ pub struct RunningProcess {
     pub process_id: u32,
     /// Executable file name, or the operating system's short process name when unavailable.
     pub executable: String,
-    /// Steam's exact numeric application ID when available on Linux and explicitly requested.
+    /// Exact Steam ID from Linux process metadata or a verified local installation path.
     pub steam_app_id: Option<String>,
 }
 
@@ -34,6 +34,15 @@ impl Default for ProcessObserver {
 impl ProcessObserver {
     /// Refreshes process names and executable basenames, with optional exact Steam IDs on Linux.
     pub fn refresh(&mut self, include_steam_app_ids: bool) -> Vec<RunningProcess> {
+        self.refresh_with_installations(include_steam_app_ids, &[])
+    }
+
+    /// Installation paths are only compared locally; full process paths are never returned.
+    pub fn refresh_with_installations(
+        &mut self,
+        include_steam_app_ids: bool,
+        installations: &[(String, PathBuf)],
+    ) -> Vec<RunningProcess> {
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
@@ -81,6 +90,23 @@ impl ProcessObserver {
                 let _ = include_steam_app_ids;
                 None
             };
+            let lower = executable.to_lowercase();
+            let launcher = lower.contains("launcher")
+                || lower.contains("crashreport")
+                || lower.contains("crashhandler")
+                || lower.starts_with("unins")
+                || lower.starts_with("steamwebhelper")
+                || lower == "playgtav.exe"
+                || lower == "leagueclient.exe";
+            let steam_app_id = if include_steam_app_ids && !launcher {
+                steam_app_id.or_else(|| {
+                    process.exe().and_then(|path| {
+                        steam_id_for_path(path, installations, cfg!(windows)).map(str::to_owned)
+                    })
+                })
+            } else {
+                None
+            };
             processes.push(RunningProcess {
                 process_id,
                 executable,
@@ -98,6 +124,59 @@ impl ProcessObserver {
         processes.truncate(16_384);
         processes
     }
+}
+
+/// Default installation roots only; libraryfolders.vdf supplies additional libraries.
+/// Called on the discovery worker, not on the interface thread.
+pub fn steam_installation_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    #[cfg(target_os = "linux")]
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        roots.extend([
+            home.join(".steam/steam"),
+            home.join(".local/share/Steam"),
+            home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"),
+        ]);
+    }
+    #[cfg(windows)]
+    for variable in ["ProgramFiles(x86)", "ProgramFiles"] {
+        if let Some(path) = std::env::var_os(variable) {
+            roots.push(PathBuf::from(path).join("Steam"));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(home) = std::env::var_os("HOME") {
+        roots.push(PathBuf::from(home).join("Library/Application Support/Steam"));
+    }
+    roots
+}
+
+fn steam_id_for_path<'a>(
+    path: &Path,
+    installations: &'a [(String, PathBuf)],
+    windows: bool,
+) -> Option<&'a str> {
+    fn normalize(path: &Path, windows: bool) -> Option<String> {
+        let text = path.to_str()?;
+        if windows {
+            Some(text.replace('\\', "/").to_lowercase())
+        } else {
+            Some(text.to_owned())
+        }
+    }
+    let path = normalize(path, windows)?;
+    installations
+        .iter()
+        .filter_map(|(id, directory)| {
+            let directory = normalize(directory, windows)?;
+            let directory = directory.trim_end_matches('/');
+            path.strip_prefix(directory)
+                .filter(|rest| rest.starts_with('/'))
+                .map(|_| (directory.len(), id.as_str()))
+        })
+        .max_by_key(|(length, _)| *length)
+        .map(|(_, id)| id)
 }
 
 /// Lists running programs. Steam environment variables are read only when at least one configured

@@ -22,6 +22,8 @@ pub struct GameProcessMatch {
 pub enum GameArmingDecision {
     /// Start capture for this game's process.
     Start(GameProcessMatch),
+    /// Continue on a desktop only after an actual, successfully captured game exited.
+    StartDesktop,
     /// Stop the current game-managed capture because its process is no longer present.
     Stop,
 }
@@ -32,11 +34,21 @@ pub struct GameArmingState {
     observed: Option<GameProcessMatch>,
     recording: Option<GameProcessMatch>,
     paused: bool,
+    desktop: bool,
 }
 
 impl GameArmingState {
     /// Updates the detected processes and returns the next capture transition, if any.
     pub fn observe(&mut self, matches: &[GameProcessMatch]) -> Option<GameArmingDecision> {
+        self.observe_with_desktop(matches, false)
+    }
+
+    /// `allow_desktop` must be false for errors, settings changes and still-running processes.
+    pub fn observe_with_desktop(
+        &mut self,
+        matches: &[GameProcessMatch],
+        allow_desktop: bool,
+    ) -> Option<GameArmingDecision> {
         self.observed = matches.first().cloned();
 
         if self
@@ -48,7 +60,20 @@ impl GameArmingState {
             if self.observed.is_none() {
                 self.paused = false;
             }
-            return Some(GameArmingDecision::Stop);
+            return Some(
+                if allow_desktop && self.observed.is_none() && !self.paused {
+                    GameArmingDecision::StartDesktop
+                } else {
+                    GameArmingDecision::Stop
+                },
+            );
+        }
+
+        if self.desktop {
+            if !allow_desktop {
+                return Some(GameArmingDecision::Stop);
+            }
+            return self.observed.clone().map(GameArmingDecision::Start);
         }
 
         let Some(current) = self.observed.as_ref() else {
@@ -64,23 +89,37 @@ impl GameArmingState {
     /// Records that capture successfully started for a detected or manually resumed game.
     pub fn capture_started(&mut self, game: GameProcessMatch) {
         self.recording = Some(game);
+        self.desktop = false;
         self.paused = false;
+    }
+
+    pub fn desktop_started(&mut self) {
+        self.recording = None;
+        self.desktop = true;
+        self.paused = false;
+    }
+
+    pub fn is_desktop(&self) -> bool {
+        self.desktop
     }
 
     /// Records that the user stopped capture, suppressing automatic restart until the game exits.
     pub fn capture_stopped_by_user(&mut self) {
         self.recording = None;
+        self.desktop = false;
         self.paused = self.observed.is_some();
     }
 
     /// Clears a failed start so the next process scan can retry.
     pub fn capture_start_failed(&mut self) {
         self.recording = None;
+        self.desktop = false;
     }
 
     /// Clears a game-managed session after its process exits or game-only mode is disabled.
     pub fn capture_stopped_automatically(&mut self) {
         self.recording = None;
+        self.desktop = false;
     }
 
     /// The game process currently detected by the latest scan.
