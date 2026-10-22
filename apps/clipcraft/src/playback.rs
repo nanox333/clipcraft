@@ -58,6 +58,7 @@ pub struct Playback {
     path: String,
     player: Player,
     texture: Option<egui::TextureHandle>,
+    effect: clipcraft_engine::Effect,
     info: Option<ClipInfoSummary>,
     position: Tick,
     playing: bool,
@@ -80,6 +81,10 @@ pub struct Playback {
 }
 
 impl Playback {
+    /// Sets the colour look for later frames; true when it changed (the picture needs a refresh).
+    pub(crate) fn editor_effect(&mut self, effect: clipcraft_engine::Effect) -> bool {
+        std::mem::replace(&mut self.effect, effect) != effect
+    }
     pub(crate) fn editor_ready(&self) -> bool {
         self.info.is_some()
     }
@@ -124,6 +129,7 @@ impl Playback {
             path: path.to_owned(),
             player,
             texture: None,
+            effect: clipcraft_engine::Effect::None,
             info: None,
             position: Tick::ZERO,
             playing: true,
@@ -248,7 +254,13 @@ impl Playback {
                     self.playing = false;
                     return;
                 }
-                let image = egui::ColorImage::from_rgba_unmultiplied(size, &frame.rgba);
+                let image = if self.effect == clipcraft_engine::Effect::None {
+                    egui::ColorImage::from_rgba_unmultiplied(size, &frame.rgba)
+                } else {
+                    let mut recolored = frame.rgba.to_vec();
+                    self.effect.apply_rgba(&mut recolored);
+                    egui::ColorImage::from_rgba_unmultiplied(size, &recolored)
+                };
                 match self.texture.as_mut() {
                     Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
                     None => {

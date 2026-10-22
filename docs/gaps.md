@@ -71,7 +71,7 @@ exact source files are recorded in [`upstream-ports.md`](upstream-ports.md).
 The user-requested editor slice is implemented using FilmCraft's pinned track/cut algebra, media
 readers, H.264 and AAC codecs. The browser/preview/timeline workflow appends local library media,
 splits at the playhead, trims source ranges, reorders, duplicates and ripple-deletes segments.
-Per-segment volume/mute, fades (black/white dips, with presets) and a one-line title (FilmCraft text engine) affect preview and export; source audio stays linked to its video.
+Per-segment volume/mute, fades (black/white dips, with presets), seven colour effects and a one-line title (FilmCraft text engine), in Library/Effects/Text tabs, affect preview and export; source audio stays linked to its video.
 The editor uses the shared charcoal/lime palette and embedded Inter Regular/Medium/SemiBold
 faces (icon pill controls, a scrub bar, a ruler with ticks and a shortcut footer, checked on Linux/Xvfb only), with keyboard focus, thumbnail hover states and compact controls. Its own rail icon opens
 an independent browser; Import clips and Send to editor add references, while right-click offers

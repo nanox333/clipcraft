@@ -5,8 +5,8 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use clipcraft_engine::{
-    Command, CommandOutput, EditorAction, EditorSession, Fade, MediaEntry, SequenceRequest,
-    SequenceSegment, TitlePlace, TransitionPreset, TrimmedClip, execute,
+    Command, CommandOutput, EditorAction, EditorSession, Effect, Fade, MediaEntry, SegmentLook,
+    SequenceRequest, SequenceSegment, TitlePlace, TransitionPreset, TrimmedClip, execute,
 };
 use clipcraft_time::{FrameRate, Tick};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, RichText, Sense, Stroke, Vec2};
@@ -28,6 +28,13 @@ impl Drop for ExportJob {
     }
 }
 
+/// What the left panel shows.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LibraryTab {
+    Library,
+    Effects,
+    Text,
+}
 pub struct EditorState {
     pub open: bool,
     media: Arc<Vec<MediaEntry>>,
@@ -51,6 +58,8 @@ pub struct EditorState {
     saved: Option<PathBuf>,
     /// Width the person dragged the Library to; `None` lets it follow the 16:9 preview.
     title_draft: (u64, String),
+    tab: LibraryTab,
+    effect_tab: bool,
     library_width: Option<f32>,
     /// Height the person dragged the preview row to; `None` gives it all the room there is.
     top_height: Option<f32>,
@@ -79,6 +88,8 @@ impl Default for EditorState {
             job: None,
             saved: None,
             title_draft: (0, String::new()),
+            tab: LibraryTab::Library,
+            effect_tab: false,
             library_width: None,
             top_height: None,
         }
@@ -289,6 +300,9 @@ impl EditorState {
                 self.message = Some((error.to_owned(), true));
                 self.playing = false;
                 self.clock = None;
+            }
+            if preview.editor_effect(clip.look.effect) {
+                self.seek_pending = true;
             }
             let ready = preview.editor_ready();
             let seek = self.seek_pending.then_some(source_time);
@@ -767,6 +781,266 @@ impl EditorState {
             );
         });
     }
+    fn selected_look(&self) -> Option<(u64, SegmentLook)> {
+        self.session
+            .clips()
+            .iter()
+            .find(|c| Some(c.id) == self.selected)
+            .map(|c| (c.id, c.look.clone()))
+    }
+    /// Transitions and colour effects, applied to the selected segment with one click.
+    fn effects_tab(&mut self, ui: &mut egui::Ui, height: f32) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for (name, effects) in [("Transitions", false), ("Effects", true)] {
+                if tab_pill(ui, name, self.effect_tab == effects).clicked() {
+                    self.effect_tab = effects;
+                }
+            }
+        });
+        ui.add_space(10.0);
+        let selected = self.selected_look();
+        let enabled = !self.busy();
+        if selected.is_none() && !self.effect_tab {
+            ui.label(
+                RichText::new("Pick a segment on the timeline, or use a preset for every segment.")
+                    .size(12.0)
+                    .color(FAINT),
+            );
+            ui.add_space(6.0);
+        } else if selected.is_none() {
+            ui.label(
+                RichText::new("Pick a segment on the timeline first.")
+                    .size(12.0)
+                    .color(FAINT),
+            );
+            ui.add_space(6.0);
+        }
+        let columns = (((ui.available_width() + 8.0) / 118.0).floor() as usize).clamp(2, 6);
+        let card = Vec2::new(
+            ((ui.available_width() - 8.0 * (columns - 1) as f32) / columns as f32).max(20.0),
+            78.0,
+        );
+        let mut action = None;
+        egui::ScrollArea::vertical()
+            .id_salt("editor-effects")
+            .max_height((height - 130.0).max(30.0))
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+                ui.horizontal_wrapped(|ui| {
+                    if self.effect_tab {
+                        for effect in Effect::ALL {
+                            let active = selected.as_ref().is_some_and(|(_, l)| l.effect == effect);
+                            let response = preset_card(
+                                ui,
+                                card,
+                                effect.name(),
+                                active,
+                                enabled && selected.is_some(),
+                                |painter, rect| {
+                                    let bars = [
+                                        [255, 40, 20],
+                                        [20, 200, 20],
+                                        [250, 240, 0],
+                                        [30, 40, 250],
+                                        [250, 40, 250],
+                                        [0, 240, 250],
+                                    ];
+                                    let width = rect.width() / bars.len() as f32;
+                                    for (i, bar) in bars.iter().enumerate() {
+                                        let mut pixel = [bar[0], bar[1], bar[2], 255];
+                                        effect.apply_rgba(&mut pixel);
+                                        painter.rect_filled(
+                                            egui::Rect::from_min_size(
+                                                rect.min + Vec2::new(width * i as f32, 0.0),
+                                                Vec2::new(width + 0.5, rect.height()),
+                                            ),
+                                            0,
+                                            Color32::from_rgb(pixel[0], pixel[1], pixel[2]),
+                                        );
+                                    }
+                                },
+                            );
+                            if response.clicked()
+                                && let Some((id, look)) = &selected
+                            {
+                                let mut look = look.clone();
+                                look.effect = if active { Effect::None } else { effect };
+                                action = Some(EditorAction::Look { id: *id, look });
+                            }
+                        }
+                    } else {
+                        for item in TRANSITIONS {
+                            let active = match (&selected, item.kind) {
+                                (Some((_, l)), TransitionKind::In(f)) => l.fade_in == f,
+                                (Some((_, l)), TransitionKind::Out(f)) => l.fade_out == f,
+                                _ => false,
+                            };
+                            let local = !matches!(item.kind, TransitionKind::All(_));
+                            let response = preset_card(
+                                ui,
+                                card,
+                                item.name,
+                                active,
+                                enabled && (selected.is_some() || !local),
+                                |painter, rect| {
+                                    painter.rect_filled(rect, 0, Color32::from_gray(72));
+                                    let (left, right, color) = match item.kind {
+                                        TransitionKind::In(f) => (true, false, f),
+                                        TransitionKind::Out(f) => (false, true, f),
+                                        TransitionKind::All(TransitionPreset::DipWhite) => {
+                                            (true, true, Fade::White)
+                                        }
+                                        TransitionKind::All(TransitionPreset::None) => {
+                                            (false, false, Fade::None)
+                                        }
+                                        TransitionKind::All(_) => (true, true, Fade::Black),
+                                    };
+                                    let shade = if color == Fade::White {
+                                        Color32::WHITE
+                                    } else {
+                                        Color32::BLACK
+                                    };
+                                    for (on, from_left) in [(left, true), (right, false)] {
+                                        if !on {
+                                            continue;
+                                        }
+                                        let w = rect.width() * 0.45;
+                                        let (edge, inner) = if from_left {
+                                            (rect.left(), rect.left() + w)
+                                        } else {
+                                            (rect.right(), rect.right() - w)
+                                        };
+                                        painter.add(egui::Shape::convex_polygon(
+                                            vec![
+                                                egui::pos2(edge, rect.top()),
+                                                egui::pos2(edge, rect.bottom()),
+                                                egui::pos2(inner, rect.bottom()),
+                                            ],
+                                            shade,
+                                            Stroke::NONE,
+                                        ));
+                                    }
+                                },
+                            );
+                            if response.clicked() {
+                                match (item.kind, &selected) {
+                                    (TransitionKind::All(preset), _) => {
+                                        action = Some(EditorAction::Preset { preset });
+                                    }
+                                    (TransitionKind::In(f), Some((id, look))) => {
+                                        let mut look = look.clone();
+                                        look.fade_in = if active { Fade::None } else { f };
+                                        action = Some(EditorAction::Look { id: *id, look });
+                                    }
+                                    (TransitionKind::Out(f), Some((id, look))) => {
+                                        let mut look = look.clone();
+                                        look.fade_out = if active { Fade::None } else { f };
+                                        action = Some(EditorAction::Look { id: *id, look });
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                });
+            });
+        if let Some(action) = action {
+            self.edit(action);
+        }
+    }
+    /// A one-line title for the selected segment.
+    fn text_tab(&mut self, ui: &mut egui::Ui, height: f32) {
+        let Some((id, look)) = self.selected_look() else {
+            ui.label(
+                RichText::new("Pick a segment on the timeline to add text to it.")
+                    .size(12.0)
+                    .color(FAINT),
+            );
+            return;
+        };
+        let enabled = !self.busy();
+        if self.title_draft.0 != id {
+            self.title_draft = (id, look.title.clone());
+        }
+        let mut next = look.clone();
+        ui.add_enabled_ui(enabled, |ui| {
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut self.title_draft.1)
+                    .hint_text("Type a title, then press Enter")
+                    .char_limit(clipcraft_engine::MAX_TITLE_CHARS)
+                    .margin(egui::Margin::symmetric(10, 8))
+                    .desired_width(ui.available_width()),
+            );
+            field.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Segment title")
+            });
+            if field.lost_focus() {
+                next.title = self.title_draft.1.replace(char::is_control, " ");
+            }
+            ui.add_space(10.0);
+            let columns = (((ui.available_width() + 8.0) / 118.0).floor() as usize).clamp(2, 6);
+            let card = Vec2::new(
+                ((ui.available_width() - 8.0 * (columns - 1) as f32) / columns as f32).max(20.0),
+                78.0,
+            );
+            egui::ScrollArea::vertical()
+                .id_salt("editor-text")
+                .max_height((height - 150.0).max(30.0))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for (name, place, sample) in [
+                            ("Title", TitlePlace::Center, "Aa"),
+                            ("Lower third", TitlePlace::Bottom, "Aa"),
+                            ("Top banner", TitlePlace::Top, "Aa"),
+                        ] {
+                            let active = !look.title.is_empty() && look.title_place == place;
+                            let response =
+                                preset_card(ui, card, name, active, true, |painter, rect| {
+                                    painter.rect_filled(rect, 0, Color32::from_gray(72));
+                                    let y = match place {
+                                        TitlePlace::Top => rect.top() + 10.0,
+                                        TitlePlace::Center => rect.center().y,
+                                        TitlePlace::Bottom => rect.bottom() - 10.0,
+                                    };
+                                    painter.text(
+                                        egui::pos2(rect.center().x, y),
+                                        Align2::CENTER_CENTER,
+                                        sample,
+                                        FontId::new(15.0, kit::semibold()),
+                                        Color32::WHITE,
+                                    );
+                                });
+                            if response.clicked() {
+                                next.title_place = place;
+                                if next.title.trim().is_empty() {
+                                    next.title = "Your title".into();
+                                    self.title_draft.1 = next.title.clone();
+                                }
+                            }
+                        }
+                        let response = preset_card(
+                            ui,
+                            card,
+                            "No text",
+                            look.title.is_empty(),
+                            !look.title.is_empty(),
+                            |painter, rect| {
+                                painter.rect_filled(rect, 0, Color32::from_gray(72));
+                            },
+                        );
+                        if response.clicked() {
+                            next.title.clear();
+                            self.title_draft.1.clear();
+                        }
+                    });
+                });
+        });
+        if next != look {
+            self.edit(EditorAction::Look { id, look: next });
+        }
+    }
     fn browser(&mut self, ui: &mut egui::Ui, thumbs: &mut crate::thumbs::Thumbnails, height: f32) {
         let media = Arc::clone(&self.media);
         let mut add = None;
@@ -779,27 +1053,44 @@ impl EditorState {
             .show(ui, |ui| {
                 ui.set_min_height((height - 24.0).max(0.0));
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("Library")
-                            .size(16.0)
-                            .family(kit::semibold())
-                            .color(kit::TEXT),
-                    );
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if tool(
-                            ui,
-                            kit::Icon::Import,
-                            "Import clips",
-                            false,
-                            self.importing.is_none(),
-                        )
-                        .clicked()
-                        {
-                            self.import(None, ui.ctx());
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    for (tab, name) in [
+                        (LibraryTab::Library, "Library"),
+                        (LibraryTab::Effects, "Effects"),
+                        (LibraryTab::Text, "Text"),
+                    ] {
+                        if tab_pill(ui, name, self.tab == tab).clicked() {
+                            self.tab = tab;
                         }
-                    });
+                    }
+                    if self.tab == LibraryTab::Library {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if tool(
+                                ui,
+                                kit::Icon::Import,
+                                "Import clips",
+                                false,
+                                self.importing.is_none(),
+                            )
+                            .clicked()
+                            {
+                                self.import(None, ui.ctx());
+                            }
+                        });
+                    }
                 });
                 ui.add_space(10.0);
+                match self.tab {
+                    LibraryTab::Effects => {
+                        self.effects_tab(ui, height);
+                        return;
+                    }
+                    LibraryTab::Text => {
+                        self.text_tab(ui, height);
+                        return;
+                    }
+                    LibraryTab::Library => {}
+                }
                 crate::settings::search_box(ui, &mut self.search, "Search clips");
                 ui.add_space(10.0);
                 let query = self.search.to_lowercase();
@@ -1150,26 +1441,6 @@ impl EditorState {
                     }
                 }
             }
-            separator(ui);
-            ui.add_enabled_ui(enabled && !self.session.clips().is_empty(), |ui| {
-                let mut chosen = None;
-                kit::pill_menu(ui, "Transitions", "Fade presets for every segment", |ui| {
-                    for (name, preset) in [
-                        ("Dip to black at every cut", TransitionPreset::DipBlack),
-                        ("Dip to white at every cut", TransitionPreset::DipWhite),
-                        ("Fade in and out", TransitionPreset::FadeEnds),
-                        ("No transitions", TransitionPreset::None),
-                    ] {
-                        if ui.button(name).clicked() {
-                            chosen = Some(preset);
-                            ui.close();
-                        }
-                    }
-                });
-                if let Some(preset) = chosen {
-                    self.edit(EditorAction::Preset { preset });
-                }
-            });
             // Zoom and reset sit at the right edge.
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if tool(
@@ -1589,96 +1860,128 @@ impl EditorState {
                             });
                         }
                     });
-                    ui.add_space(6.0);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
-                        let mut look = clip.look.clone();
-                        ui.label(RichText::new("Transitions").size(13.0).color(MUTED));
-                        if let Some(fade) = fade_menu(ui, "In", clip.look.fade_in) {
-                            look.fade_in = fade;
-                        }
-                        if let Some(fade) = fade_menu(ui, "Out", clip.look.fade_out) {
-                            look.fade_out = fade;
-                        }
-                        separator(ui);
-                        ui.label(RichText::new("Text").size(13.0).color(MUTED));
-                        if self.title_draft.0 != clip.id {
-                            self.title_draft = (clip.id, clip.look.title.clone());
-                        }
-                        let field = ui.add(
-                            egui::TextEdit::singleline(&mut self.title_draft.1)
-                                .hint_text("Title on this segment")
-                                .char_limit(clipcraft_engine::MAX_TITLE_CHARS)
-                                .margin(egui::Margin::symmetric(10, 6))
-                                .desired_width(220.0),
-                        );
-                        field.widget_info(|| {
-                            egui::WidgetInfo::labeled(
-                                egui::WidgetType::TextEdit,
-                                true,
-                                "Segment title",
-                            )
-                        });
-                        if field.lost_focus() {
-                            look.title = self.title_draft.1.replace(char::is_control, " ");
-                        }
-                        let place = match clip.look.title_place {
-                            TitlePlace::Top => "Top",
-                            TitlePlace::Center => "Middle",
-                            TitlePlace::Bottom => "Bottom",
-                        };
-                        kit::pill_menu(ui, place, "Where the text sits", |ui| {
-                            for (name, value) in [
-                                ("Top", TitlePlace::Top),
-                                ("Middle", TitlePlace::Center),
-                                ("Bottom", TitlePlace::Bottom),
-                            ] {
-                                if ui
-                                    .selectable_label(clip.look.title_place == value, name)
-                                    .clicked()
-                                {
-                                    look.title_place = value;
-                                    ui.close();
-                                }
-                            }
-                        });
-                        if look != clip.look {
-                            self.edit(EditorAction::Look { id: clip.id, look });
-                        }
-                    });
                 });
         });
     }
 }
 
-fn fade_name(fade: Fade) -> &'static str {
-    match fade {
-        Fade::None => "None",
-        Fade::Black => "Black",
-        Fade::White => "White",
-    }
+#[derive(Clone, Copy)]
+enum TransitionKind {
+    In(Fade),
+    Out(Fade),
+    All(TransitionPreset),
+}
+struct TransitionItem {
+    name: &'static str,
+    kind: TransitionKind,
+}
+const TRANSITIONS: [TransitionItem; 8] = [
+    TransitionItem {
+        name: "Fade in",
+        kind: TransitionKind::In(Fade::Black),
+    },
+    TransitionItem {
+        name: "Fade out",
+        kind: TransitionKind::Out(Fade::Black),
+    },
+    TransitionItem {
+        name: "Flash in",
+        kind: TransitionKind::In(Fade::White),
+    },
+    TransitionItem {
+        name: "Flash out",
+        kind: TransitionKind::Out(Fade::White),
+    },
+    TransitionItem {
+        name: "Dip to black",
+        kind: TransitionKind::All(TransitionPreset::DipBlack),
+    },
+    TransitionItem {
+        name: "Dip to white",
+        kind: TransitionKind::All(TransitionPreset::DipWhite),
+    },
+    TransitionItem {
+        name: "Fade in & out",
+        kind: TransitionKind::All(TransitionPreset::FadeEnds),
+    },
+    TransitionItem {
+        name: "Clear all",
+        kind: TransitionKind::All(TransitionPreset::None),
+    },
+];
+
+/// A pill tab like the ones above the Library.
+fn tab_pill(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        FontId::new(13.0, kit::medium()),
+        Color32::PLACEHOLDER,
+    );
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(galley.size().x + 28.0, 28.0), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let (fill, text) = if active {
+        (LIME, Color32::BLACK)
+    } else if response.hovered() {
+        (kit::CONTROL_HOVER, TEXT)
+    } else {
+        (kit::CONTROL, MUTED)
+    };
+    ui.painter().rect_filled(rect, 14, fill);
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::new(13.0, kit::medium()),
+        text,
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// A small menu to pick what a segment fades from or to; returns the new choice.
-fn fade_menu(ui: &mut egui::Ui, side: &str, current: Fade) -> Option<Fade> {
-    let mut picked = None;
-    kit::pill_menu(
-        ui,
-        &format!("{side}: {}", fade_name(current)),
-        "Fade from or to a colour over half a second",
-        |ui| {
-            for fade in [Fade::None, Fade::Black, Fade::White] {
-                if ui
-                    .selectable_label(current == fade, fade_name(fade))
-                    .clicked()
-                {
-                    picked = Some(fade);
-                    ui.close();
-                }
-            }
-        },
+/// A square-ish preset: a small picture of what it does, with its name underneath.
+fn preset_card(
+    ui: &mut egui::Ui,
+    size: Vec2,
+    name: &str,
+    active: bool,
+    enabled: bool,
+    swatch: impl FnOnce(&egui::Painter, egui::Rect),
+) -> egui::Response {
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(size, sense);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, name));
+    let picture = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), size.y - 22.0));
+    let painter = ui.painter().with_clip_rect(picture);
+    swatch(&painter, picture);
+    if !enabled {
+        ui.painter()
+            .rect_filled(picture, 0, Color32::from_black_alpha(120));
+    }
+    let outline = if active {
+        LIME
+    } else if response.hovered() && enabled {
+        MUTED
+    } else {
+        BORDER
+    };
+    ui.painter().rect_stroke(
+        picture,
+        0,
+        Stroke::new(if active { 2.0_f32 } else { 1.0_f32 }, outline),
+        egui::StrokeKind::Inside,
     );
-    picked
+    ui.painter().text(
+        egui::pos2(rect.left(), rect.bottom() - 2.0),
+        Align2::LEFT_BOTTOM,
+        name,
+        FontId::new(12.0, kit::medium()),
+        if enabled { TEXT } else { FAINT },
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// Quiet or lime text button. Standard egui buttons keep keyboard activation and the app's

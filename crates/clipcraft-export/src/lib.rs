@@ -17,8 +17,8 @@ mod normalize;
 mod sequence;
 mod source;
 pub use sequence::{
-    FADE_LENGTH, Fade, MAX_TITLE_CHARS, SegmentLook, SequenceRequest, SequenceSegment, TitlePlace,
-    sequence_to_mp4,
+    Effect, FADE_LENGTH, Fade, MAX_TITLE_CHARS, SegmentLook, SequenceRequest, SequenceSegment,
+    TitlePlace, sequence_to_mp4,
 };
 
 pub use compress::{CompressReport, ExportPreset, compress_to_mp4, compress_to_mp4_with};

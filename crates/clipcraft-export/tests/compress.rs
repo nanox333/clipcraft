@@ -537,6 +537,7 @@ fn sequence_fades_and_titles_change_the_picture_and_overlong_titles_are_rejected
             fade_out: Fade::White,
             title: "Clutch round".into(),
             title_place: TitlePlace::Bottom,
+            ..SegmentLook::default()
         })],
     };
     sequence_to_mp4(&request, &mut |_| {}, &AtomicBool::new(false)).unwrap();
@@ -599,4 +600,47 @@ fn sequence_fades_and_titles_change_the_picture_and_overlong_titles_are_rejected
         Err(ExportError::InvalidSequence)
     );
     assert!(!dir.file("long.mp4").exists());
+}
+
+#[test]
+fn sequence_effects_recolour_the_picture_and_leave_the_source_alone() {
+    use clipcraft_export::{
+        Effect, SegmentLook, SequenceRequest, SequenceSegment, sequence_to_mp4,
+    };
+    let dir = Scratch::new("sequence-effect");
+    let a = dir.file("a.mp4");
+    fixture(&a, ClipFormat::Mp4, true);
+    let original = std::fs::read(&a).unwrap();
+    let output = dir.file("gray.mp4");
+    let request = SequenceRequest {
+        output: output.clone(),
+        segments: vec![SequenceSegment {
+            input: a.clone(),
+            start: Tick::from_units(1000, 1000),
+            end: Tick::from_units(2000, 1000),
+            volume_percent: 100,
+            look: SegmentLook {
+                effect: Effect::BlackAndWhite,
+                ..SegmentLook::default()
+            },
+        }],
+    };
+    sequence_to_mp4(&request, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    let frame = source(&output)
+        .video_frame(FrameRequest::full(Tick::from_units(500, 1000)))
+        .unwrap()
+        .to_rgba8();
+    assert!(
+        frame
+            .chunks(4)
+            .all(|p| p[0].abs_diff(p[1]) < 24 && p[1].abs_diff(p[2]) < 24),
+        "picture is not grey"
+    );
+    assert_eq!(std::fs::read(&a).unwrap(), original);
+    let mut pixels = [200, 100, 50, 255];
+    Effect::Invert.apply_rgba(&mut pixels);
+    assert_eq!(pixels, [55, 155, 205, 255]);
+    let mut short = [1, 2, 3];
+    Effect::Sepia.apply_rgba(&mut short);
+    assert_eq!(short, [1, 2, 3]);
 }

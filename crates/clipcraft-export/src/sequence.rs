@@ -39,6 +39,84 @@ pub enum Fade {
     White,
 }
 
+/// A simple colour look applied to a segment's picture.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Effect {
+    #[default]
+    None,
+    BlackAndWhite,
+    Sepia,
+    Brighten,
+    Darken,
+    Contrast,
+    Vivid,
+    Invert,
+}
+impl Effect {
+    pub const ALL: [Effect; 8] = [
+        Effect::None,
+        Effect::BlackAndWhite,
+        Effect::Sepia,
+        Effect::Brighten,
+        Effect::Darken,
+        Effect::Contrast,
+        Effect::Vivid,
+        Effect::Invert,
+    ];
+    pub fn name(self) -> &'static str {
+        match self {
+            Effect::None => "None",
+            Effect::BlackAndWhite => "Black & white",
+            Effect::Sepia => "Sepia",
+            Effect::Brighten => "Brighten",
+            Effect::Darken => "Darken",
+            Effect::Contrast => "Contrast",
+            Effect::Vivid => "Vivid",
+            Effect::Invert => "Invert",
+        }
+    }
+    /// Recolour RGBA pixels in place; alpha is untouched.
+    pub fn apply_rgba(self, pixels: &mut [u8]) {
+        if self == Effect::None {
+            return;
+        }
+        for pixel in pixels.chunks_exact_mut(4) {
+            let (r, g, b) = (
+                f32::from(pixel[0]),
+                f32::from(pixel[1]),
+                f32::from(pixel[2]),
+            );
+            let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+            let out = match self {
+                Effect::None => (r, g, b),
+                Effect::BlackAndWhite => (luma, luma, luma),
+                Effect::Sepia => (
+                    0.393 * r + 0.769 * g + 0.189 * b,
+                    0.349 * r + 0.686 * g + 0.168 * b,
+                    0.272 * r + 0.534 * g + 0.131 * b,
+                ),
+                Effect::Brighten => (r + 40.0, g + 40.0, b + 40.0),
+                Effect::Darken => (r * 0.6, g * 0.6, b * 0.6),
+                Effect::Contrast => (
+                    (r - 128.0) * 1.35 + 128.0,
+                    (g - 128.0) * 1.35 + 128.0,
+                    (b - 128.0) * 1.35 + 128.0,
+                ),
+                Effect::Vivid => (
+                    luma + (r - luma) * 1.5,
+                    luma + (g - luma) * 1.5,
+                    luma + (b - luma) * 1.5,
+                ),
+                Effect::Invert => (255.0 - r, 255.0 - g, 255.0 - b),
+            };
+            pixel[0] = out.0.round().clamp(0.0, 255.0) as u8;
+            pixel[1] = out.1.round().clamp(0.0, 255.0) as u8;
+            pixel[2] = out.2.round().clamp(0.0, 255.0) as u8;
+        }
+    }
+}
+
 /// Where a clip's title sits in the picture.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -60,6 +138,8 @@ pub struct SegmentLook {
     pub title: String,
     #[serde(default)]
     pub title_place: TitlePlace,
+    #[serde(default)]
+    pub effect: Effect,
 }
 impl SegmentLook {
     /// The fade colour and how much of it covers the picture (`0.0..=1.0`) `local` into a clip
@@ -313,11 +393,12 @@ fn render(
             let frame = small.as_ref().unwrap_or(&decoded);
             let image = image::RgbaImage::from_raw(frame.width, frame.height, frame.to_rgba8())
                 .ok_or(ExportError::Damaged)?;
-            let fitted = image::imageops::thumbnail(
+            let mut fitted = image::imageops::thumbnail(
                 &image,
                 width.min(image.width()),
                 height.min(image.height()),
             );
+            segment.look.effect.apply_rgba(&mut fitted);
             let mut canvas =
                 image::RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 0, 255]));
             image::imageops::overlay(
