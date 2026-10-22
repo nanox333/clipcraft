@@ -3,8 +3,8 @@
 //! The longest-needle and stable tie-breaking rule is a Rust adaptation of
 //! Vice's `_best_game_match` in `vice/main.py` at commit
 //! `7e4b2a3bccc6e43285d095afe95d0d7fe3d0c84c`, used with permission reported
-//! by the ClipCraft maintainer. ClipCraft does not include Vice's bundled game
-//! database; callers provide their own allowlist and process metadata.
+//! by the ClipCraft maintainer. Bundled recognition metadata lives in game_catalog;
+//! callers of this matcher provide custom rules and process metadata.
 
 use serde::{Deserialize, Serialize};
 
@@ -110,10 +110,12 @@ impl GameArmingState {
 pub struct GameMatchRule {
     /// Name shown in ClipCraft.
     pub name: String,
-    /// Case-insensitive substrings to look for in candidate metadata.
+    /// Case-insensitive strings, matched as substrings unless `exact_executable` is set.
     pub needles: Vec<String>,
     /// Exact Steam application IDs. Unlike process-name needles, IDs are not substring matched.
     pub steam_app_ids: Vec<String>,
+    /// Match whole executable basenames instead of substrings. False for existing custom rules.
+    pub exact_executable: bool,
 }
 
 impl GameMatchRule {
@@ -126,6 +128,7 @@ impl GameMatchRule {
             name: name.into(),
             needles: needles.into_iter().map(Into::into).collect(),
             steam_app_ids: Vec::new(),
+            exact_executable: false,
         }
     }
 
@@ -183,11 +186,12 @@ impl Default for GameMatchRule {
     }
 }
 
-/// Finds the rule whose longest non-empty needle occurs in any candidate string.
+/// Finds the rule whose longest non-empty needle matches a candidate under that rule's mode.
 ///
 /// Candidate strings commonly include an executable name, window class, and a
 /// store-specific application ID. Equal-length matches keep the earlier rule,
-/// so list order is a stable tie-breaker. Empty needles never match.
+/// so list order is a stable tie-breaker. Empty needles never match. Exact-mode rules require
+/// whole-string equality; the process observer supplies executable basenames.
 pub fn best_game_match<'a>(rules: &'a [GameMatchRule], candidates: &[&str]) -> Option<&'a str> {
     let candidates: Vec<String> = candidates
         .iter()
@@ -205,10 +209,13 @@ pub fn best_game_match<'a>(rules: &'a [GameMatchRule], candidates: &[&str]) -> O
             if length == 0 || best.is_some_and(|(_, best_length)| length <= best_length) {
                 continue;
             }
-            if candidates
-                .iter()
-                .any(|candidate| candidate.contains(&needle))
-            {
+            if candidates.iter().any(|candidate| {
+                if rule.exact_executable {
+                    candidate == &needle
+                } else {
+                    candidate.contains(&needle)
+                }
+            }) {
                 best = Some((&rule.name, length));
             }
         }
@@ -228,7 +235,7 @@ pub fn match_game_with_user_priority<'a>(
     best_game_match(user_rules, candidates).or_else(|| best_game_match(default_rules, candidates))
 }
 
-/// Matches one running process using the executable substring rules and exact Steam IDs.
+/// Matches one running process using exact/substring executable rules and exact Steam IDs.
 /// An exact Steam ID wins over a generic executable match, which handles games that share a
 /// launcher binary.
 pub fn match_game_process<'a>(

@@ -79,8 +79,8 @@ overflow, zero/invalid rates, and boundary trims; generated audio/video share a 
 and cached in a versioned per-user JSON index with bounded fields, atomic saves, rescan recovery,
 offline entries, and preserved metadata. The desktop restores its last folder and shows cached
 thumbnails, favorites, collections, and game groups. Game labels can be guessed from recorder-style
-filenames or set manually. Scanning is non-recursive and only one active folder is shown; automatic
-game-process detection and multi-folder library browsing remain future work. Tags are retained in
+filenames/folders, retained from game-managed saves, or set manually. Scanning is recursive and
+cancellable in the desktop, with one active root. Multi-root browsing remains future work. Tags are retained in
 the index schema but do not have a complete user-facing editing workflow.
 
 **Containers and export:** MKV and WebM are probed as well as MP4/MOV (`clipcraft-media`). A clip can be trimmed and saved as a new MP4 without re-encoding (`clipcraft-export`, command `clip.trim`, [ADR 0010](adr/0010-trim-export.md)).
@@ -173,10 +173,10 @@ measurements within documented rounding.
 
 ### M4.1 — Thumbnail library and storage UI
 
-**Status:** implemented with limits — local folder browsing, bounded non-recursive scans, search,
+**Status:** implemented with limits — local folder browsing, bounded recursive scans, search,
 sorting, decoded/cached thumbnails, probed media metadata, persistent index, favorites, collections,
 game labels, missing-file relink, playback, and local file actions are available. Multi-folder
-browsing, automatic game detection, and a full tagging workflow are open.
+browsing and a full free-form tagging workflow are open; game-managed saves now retain game labels.
 
 **Requirements:** show a dense desktop grid with duration, title, game/source, on-device state, file
 size, and date; support import, new edit, filters, rename, tags, favorites, local collections,
@@ -227,6 +227,66 @@ screenshot-tested; file actions resolve to the correct local path and never call
   cover empty and populated states at 1440×900.
 - **Status:** completed. Its original acceptance evidence describes the first library shell; current
   behavior and additional limits are recorded in M1.2, M4.1, and [`gaps.md`](gaps.md).
+
+#### M4.1b — Recursive scans and captured-game metadata
+
+**User outcome / evidence:** the existing library misses clips in game subfolders, and recorded
+clips lose the game identity already known by automatic arming. Complete this workflow in the
+shared Rust engine, desktop and CLI, without new dependencies or media sidecars.
+
+**Requirements:** traverse one selected root, skip symlinks, limit the entire traversal to 20,000
+entries, 5,000 recognized videos and eight child-folder levels. Run traversal on one desktop worker
+with one replaceable pending request. Cancel/replacement must discard stale results; only the UI
+thread merges scans into the current index. Preserve favorites, collections, probes, manual game
+labels and offline entries. Snapshot the active game when Save is pressed and register it after a
+successful save. A manual game overrides captured metadata, then folder and filename guesses.
+
+**Limitations:** one root is browsed at a time; hard-linked files at distinct paths remain separate
+clips. Non-UTF-8/oversized paths, unreadable children and exceeded limits fail the whole scan with
+an actionable error instead of publishing incomplete results. Cancellation cannot interrupt an OS
+filesystem call already blocked on a disconnected drive. Captured-game metadata belongs to the
+local rebuildable index; deleting it loses those labels, as with manual metadata. No new game
+detection or Windows hardware support is claimed. Missing/invalid game labels must never prevent
+saving the video; index failures keep the media and report a label-persistence warning.
+
+**Acceptance / verification:** generated nested folders appear once, folder game filters/counts
+update, symlink loops are skipped, all global limits are enforced, cancellation/replacement and
+errors preserve the prior view/index, and metadata edits made while scanning survive completion.
+Generated recording tests verify the game snapshot, restart/rescan persistence, manual override
+and restoration of the recorded label when the override is cleared. Check hostile metadata and
+permissions, inspect native before/after screenshots and keyboard access to Cancel, then run
+`cargo xtask ci` and the documentation gate. No Windows machine is required for this slice.
+
+**Documentation:** README, gaps, roadmap, architecture, testing and CLI help ship with this change.
+**Dependencies / estimate:** existing M4.1 and M7.1 engine paths; one focused implementation.
+**Status:** implemented; generated Linux tests and native UI evidence are recorded in `testing.md`.
+
+#### M4.1c — Advanced controls within their categories
+
+**Problem / evidence:** the user found the custom-game form cramped and asked to move it behind
+General's advanced switch. The old switch preceded Startup/Help and added a separate Advanced
+category containing unrelated capture, encoder and audio controls.
+
+**Scope / requirements:** Rust desktop settings only. Make the switch the final General setting;
+keep navigation fixed. Append a divider and **Advanced settings** heading before each relevant
+category's extra controls: custom games in Games, aspect ratio in Capture, encoder effort/keyframes
+in Quality, sample rate/channels in Audio. Use padded, responsive fields directly on the page,
+without a card/background, for adding and editing custom rules; preserve drafts, existing matching modes and the shared settings save command.
+
+**Limits:** disclosure only; hiding controls must preserve their values and active custom rules.
+No new capture capabilities, dependencies, server or process refresh on reveal. Retain the 64-rule
+and bounded-input limits. No empty advanced section for categories with no extra controls. A failed
+or empty app refresh keeps manual entry available; malformed IDs retain an editable draft.
+
+**Acceptance / verification:** Tab/Enter toggles General's bottom switch and adds a custom game;
+all four categories expose the correct controls under the heading with no new nav item. Turning
+advanced settings off preserves a custom rule's detection and other values. Picking a non-Steam
+app clears a previous Steam ID. Draw narrow/large layouts with existing rules, inspect native
+1440×900 before/after screens and a narrow window, and run `cargo xtask ci` plus the docs gate.
+
+**Docs:** README, gaps, roadmap, settings guide, architecture, testing, catalog guide and ADR 0015.
+**Dependencies:** M4.1/M7.1a. **Estimate:** one focused UI change. **Status:** implemented; Linux
+CI, keyboard/accessibility and native 1440×900/960×900 inspection pass. See testing.md for evidence.
 
 ### M4.2 — Basic cut/trim editor and MP4 export
 
@@ -477,11 +537,11 @@ repository review remains open.
 
 **Status:** partial; the user-managed allowlist, process matching, Game-only default, manual pause,
 and X11/Windows process-to-window adapters are implemented. Real-game and Windows runtime evidence,
-Wayland matching, and library auto-tagging remain open.
+and Wayland matching remain open. Library auto-tagging from game-managed saves is implemented (M4.1b).
 
 **User problem and target behavior:** ClipCraft should record only when a game is started, so the app
-must not continuously capture an idle desktop. **Game-only** is the default. Starting an explicitly
-selected game arms the bounded replay buffer; closing its process stops capture and releases the
+must not continuously capture an idle desktop. **Game-only** is the default. Starting a recognized
+game arms the bounded replay buffer; closing its process stops capture and releases the
 buffer. The user can pause capture until all matching games exit, or disable Game-only mode for
 manual capture. Start-on-launch is ignored in Game-only mode.
 
@@ -492,8 +552,9 @@ capture to arm, provide an immediate stop/pause control, and never auto-start at
 while no selected game is running. Add fake process-event tests and real platform evidence for
 every supported OS.
 
-**Limitations and fallback:** no game database is bundled; users add games from the running-process
-picker or enter executable names and Steam app IDs. Steam IDs are read only on Linux. Process names
+**Limitations and fallback:** 348 built-in games are recognized automatically (M7.1a);
+no upstream game database is bundled. Users can use custom rules from the running-process picker or enter
+executable names and Steam app IDs. Steam IDs are read only on Linux. Process names
 can be ambiguous, elevated or sandboxed games may be hidden, and anti-cheat/protected games can deny
 capture. Windows mapping is compile-only here; Wayland does not expose game-window process IDs, and
 macOS capture is not implemented. On unsupported or permission failures show a clear message and
@@ -504,7 +565,7 @@ MediaProjection consent or background-service restrictions.
 `crates/clipcraft-platform`; Windows/Linux/macOS desktop providers. Android remains outside this
 implementation item.
 
-**Acceptance:** with no allowlisted process, Game-only mode leaves capture and the replay ring
+**Acceptance:** with no recognized process, Game-only mode leaves capture and the replay ring
 stopped; starting an allowlisted process arms once; duplicate/matching helper processes do not create
 duplicate sessions; process exit stops capture without corrupting already saved clips; failures and
 permission denial leave capture stopped; the UI identifies the active game and manual stop pauses
@@ -518,6 +579,37 @@ run. Measure idle CPU/GPU use before treating the resource budget as proven.
 
 **Dependencies:** M6 platform providers and M7.0 research. **Estimate:** TBD after platform API
 spikes.
+
+### M7.1a — Automatic known-game recognition
+
+**Problem / evidence:** requiring preset imports adds setup for already-known games. Vice loads its
+bundled list automatically and checks custom rules first (`_match_game`, revision `7e4b2a3`). The
+user requested this behavior, then requested the complete Vice list. Bundle all 347 Vice titles
+as Rust data plus the existing Bedrock entry, preserving existing IDs/variants; record pinned
+source, adaptations and maintainer-reported permission.
+
+**Requirements:** recognize built-ins by default, check custom rules first, support a global switch
+and per-built-in exclusions, and preserve these choices across reloads. Use exact built-in
+executable/Steam identifiers; custom rules retain their existing matching mode. The UI presents a
+searchable known-game list plus custom overrides. UI/CLI share `recording.set_builtin_games` for
+atomic exclusion changes. Keep game-only start/stop, manual capture and pause behavior.
+
+**Limits:** identification fixtures do not establish actual per-game/capture support. Steam process
+IDs are Linux-only; generic Java runtimes and Vice's local installed-Steam-name fallback
+are outside this slice. No artwork, runtime database downloads, network service or launcher runtime is added.
+Omit seven launcher/generic aliases; retain their titles and other identifiers.
+Missing new preference fields default automatic recognition on, preserving the old game-only/manual
+mode and custom rules; explicit off/exclusions remain off. See ADR 0015. Custom rules are capped at
+64; built-in exclusions/batch requests are capped at 1,024 and normalized to known IDs. No idle-performance claim is made.
+
+**Acceptance / verification:** default settings recognize known executable/Steam fixtures without
+custom setup; explicit custom names win even over built-in IDs; global-off/per-game exclusions
+work and persist; unknown/oversized updates have no partial effect; every Vice title is present. Test all-348
+exclusion persistence within the existing settings-file budget, old-settings migration,
+malformed exclusions, matching lookalikes, arming start/stop and no-rule idle. Inspect native UI,
+keyboard filtering/exclusion controls, isolated CLI and `cargo xtask ci`. Update README, roadmap,
+gaps, architecture, testing and catalog provenance together. **Dependencies:** M7.1.
+**Estimate:** one focused change. **Status:** implemented; live-game/Windows evidence remains open.
 
 ## M8 — Desktop platform parity and Android feasibility
 

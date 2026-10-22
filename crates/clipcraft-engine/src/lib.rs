@@ -6,17 +6,21 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::UNIX_EPOCH;
+use std::sync::atomic::AtomicBool;
 
 mod diagnose;
+mod game_catalog;
 mod game_detection;
+pub use game_catalog::{BuiltInGame, MAX_BUILT_IN_GAMES, built_in_games};
 mod hotkeys;
 mod index;
 mod library_meta;
 mod recording;
 mod recovery;
 mod relink;
+mod scan;
 mod screenshot;
+pub use scan::MAX_SCAN_DEPTH;
 mod session;
 mod startup;
 mod storage;
@@ -52,6 +56,7 @@ pub use storage::{
     StorageUsage, StoredClip, cleanup_plan, default_capture_folder, list_clips, storage_usage,
 };
 
+pub use index::merge_entries as merge_library_entries;
 pub use index::{
     INDEX_VERSION, MAX_ENTRIES_PER_FOLDER, MAX_INDEX_BYTES, MAX_INDEXED_FOLDERS,
     default_index_path, default_thumbnail_dir,
@@ -67,7 +72,13 @@ const VIDEO_EXTENSIONS: [&str; 7] = ["avi", "m4v", "mkv", "mov", "mp4", "webm", 
 /// A typed operation exposed by the shared command registry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
-    /// Scans one local directory without recursing into child folders.
+    /// Enables/disables built-in identifiers while preserving custom rules and the global switch.
+    SetBuiltInGames {
+        settings: Box<RecordingSettings>,
+        ids: Vec<String>,
+        enabled: bool,
+    },
+    /// Scans a local folder tree without following symbolic links.
     ScanLibrary { directory: PathBuf },
     /// Returns a local media path for display or clipboard use.
     LocalMediaPath { path: PathBuf },
@@ -75,6 +86,18 @@ pub enum Command {
     RefreshLibrary {
         directory: PathBuf,
         index_path: PathBuf,
+    },
+    /// Merges a completed worker scan on the caller's thread, preserving current metadata.
+    StoreLibraryScan {
+        index_path: PathBuf,
+        scan: LibraryScanResult,
+    },
+    /// Registers a saved recording and its captured game without replacing manual labels.
+    RegisterSavedClip {
+        index_path: PathBuf,
+        directory: PathBuf,
+        path: PathBuf,
+        game: String,
     },
     /// Restores the most recently refreshed folder from the local index without scanning.
     LoadLibrary { index_path: PathBuf },
@@ -134,11 +157,14 @@ impl Command {
     /// Returns this operation's stable command ID.
     pub const fn id(&self) -> &'static str {
         match self {
+            Self::SetBuiltInGames { .. } => "recording.set_builtin_games",
             Self::ScanLibrary { .. } => "library.scan",
             Self::LocalMediaPath { .. } => "library.path",
             Self::RevealInFileManager { .. } => "library.reveal",
             Self::RefreshLibrary { .. } => "library.refresh",
             Self::LoadLibrary { .. } => "library.load",
+            Self::StoreLibraryScan { .. } => "library.store_scan",
+            Self::RegisterSavedClip { .. } => "library.register_recording",
             Self::ProbeClip { .. } => "library.probe",
             Self::EnsureThumbnail { .. } => "library.thumbnail",
             Self::StoreProbes { .. } => "library.store_probes",
@@ -192,6 +218,9 @@ pub struct MediaEntry {
     /// The game the person assigned, overriding the guess from folder and file name.
     #[serde(default)]
     pub game: Option<String>,
+    /// Game active when this recording was saved; a manual game overrides it.
+    #[serde(default)]
+    pub recorded_game: Option<String>,
     /// Collections this clip is in.
     #[serde(default)]
     pub collections: Vec<String>,
@@ -354,6 +383,10 @@ pub enum CommandOutput {
 /// Actionable errors returned by engine commands.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EngineError {
+    /// A requested starter game does not exist in the shipped catalog.
+    GamePresetInvalid,
+    /// A built-in game change is empty or exceeds the bounded request size.
+    GameRuleLimit,
     /// The selected folder does not exist or cannot be read.
     DirectoryUnavailable,
     /// The selected path is not a directory.
@@ -362,6 +395,12 @@ pub enum EngineError {
     DirectoryEntryLimit,
     /// The scan would return more results than the bounded library accepts.
     ResultLimit,
+    /// The scan was cancelled before publishing any result.
+    ScanCancelled,
+    /// A child directory exceeds the bounded traversal depth.
+    ScanDepthLimit,
+    /// A path cannot be represented safely in the local JSON index.
+    LibraryPathInvalid,
     /// A local media path was empty.
     EmptyMediaPath,
     /// The media file no longer exists or cannot be read.
@@ -417,6 +456,8 @@ pub enum EngineError {
 impl fmt::Display for EngineError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::GamePresetInvalid => formatter.write_str("Choose a game from the built-in catalog, or add a custom game."),
+            Self::GameRuleLimit => formatter.write_str("Choose one or more known games, with at most 1024 IDs in a request."),
             Self::DirectoryUnavailable => formatter.write_str(
                 "The selected folder could not be read. Check that it exists and that ClipCraft has permission.",
             ),
@@ -424,6 +465,9 @@ impl fmt::Display for EngineError {
             Self::DirectoryEntryLimit => formatter.write_str(
                 "This folder has too many entries to scan safely. Choose a narrower folder.",
             ),
+            Self::ScanCancelled => formatter.write_str("Library scan cancelled. The previous library is unchanged."),
+            Self::ScanDepthLimit => formatter.write_str("This folder tree is deeper than 8 levels. Choose a narrower folder."),
+            Self::LibraryPathInvalid => formatter.write_str("A library path is too long or is not valid UTF-8. Choose a narrower folder or rename the file."),
             Self::ResultLimit => formatter.write_str(
                 "This folder contains more videos than one scan can show. Choose a narrower folder.",
             ),
@@ -495,17 +539,45 @@ impl std::error::Error for EngineError {}
 
 /// Executes a typed user operation through the shared UI/CLI command path.
 pub fn execute(command: Command) -> Result<CommandOutput, EngineError> {
+    execute_cancellable(command, &AtomicBool::new(false))
+}
+
+/// Executes a command; traversal commands cooperate with cancellation between filesystem calls.
+/// Other commands retain their existing atomic operation semantics.
+pub fn execute_cancellable(
+    command: Command,
+    cancel: &AtomicBool,
+) -> Result<CommandOutput, EngineError> {
     match command {
+        Command::SetBuiltInGames {
+            settings,
+            ids,
+            enabled,
+        } => game_catalog::set_games(*settings, &ids, enabled)
+            .map(|settings| CommandOutput::RecordingSettings(Box::new(settings))),
         Command::ScanLibrary { directory } => {
-            scan_library_directory(&directory).map(CommandOutput::LibraryScan)
+            scan_library_directory_cancellable(&directory, cancel).map(CommandOutput::LibraryScan)
         }
         Command::RefreshLibrary {
             directory,
             index_path,
         } => {
-            let scan = scan_library_directory(&directory)?;
+            let scan = scan_library_directory_cancellable(&directory, cancel)?;
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(EngineError::ScanCancelled);
+            }
             index::refresh_library(scan, &index_path).map(CommandOutput::LibraryScan)
         }
+        Command::StoreLibraryScan { index_path, scan } => {
+            index::refresh_library(scan, &index_path).map(CommandOutput::LibraryScan)
+        }
+        Command::RegisterSavedClip {
+            index_path,
+            directory,
+            path,
+            game,
+        } => index::register_recording(&index_path, &directory, &path, &game)
+            .map(CommandOutput::LibraryScan),
         Command::ProbeClip { path } => {
             if path.as_os_str().is_empty() {
                 return Err(EngineError::EmptyMediaPath);
@@ -689,100 +761,32 @@ fn reveal_in_file_manager(path: &Path) -> Result<String, EngineError> {
     Ok(absolute.to_string_lossy().into_owned())
 }
 
-/// Scans one folder for common local video containers.
+/// Scans a folder tree for common local video containers with bounded work.
 pub fn scan_library_directory(directory: &Path) -> Result<LibraryScanResult, EngineError> {
-    scan_library_directory_with_limit(directory, MAX_DIRECTORY_ENTRIES, MAX_LIBRARY_RESULTS)
+    scan_library_directory_cancellable(directory, &AtomicBool::new(false))
 }
 
+/// Same scanner as `library.scan`, with cooperative cancellation between filesystem operations.
+/// A cancelled or failed traversal never returns partial results or mutates the index.
+pub fn scan_library_directory_cancellable(
+    directory: &Path,
+    cancel: &AtomicBool,
+) -> Result<LibraryScanResult, EngineError> {
+    scan::scan(
+        directory,
+        MAX_DIRECTORY_ENTRIES,
+        MAX_LIBRARY_RESULTS,
+        cancel,
+    )
+}
+
+#[cfg(test)]
 fn scan_library_directory_with_limit(
     directory: &Path,
     max_entries: usize,
     max_results: usize,
 ) -> Result<LibraryScanResult, EngineError> {
-    let directory_metadata =
-        fs::metadata(directory).map_err(|_| EngineError::DirectoryUnavailable)?;
-    if !directory_metadata.is_dir() {
-        return Err(EngineError::NotADirectory);
-    }
-
-    let read_dir = fs::read_dir(directory).map_err(|_| EngineError::DirectoryUnavailable)?;
-    let mut seen_entries = 0usize;
-    let mut media = Vec::new();
-
-    for directory_entry in read_dir {
-        seen_entries = seen_entries
-            .checked_add(1)
-            .ok_or(EngineError::DirectoryEntryLimit)?;
-        if seen_entries > max_entries {
-            return Err(EngineError::DirectoryEntryLimit);
-        }
-
-        let directory_entry = directory_entry.map_err(|_| EngineError::DirectoryUnavailable)?;
-        let path = directory_entry.path();
-        let file_type = directory_entry
-            .file_type()
-            .map_err(|_| EngineError::DirectoryUnavailable)?;
-        if !file_type.is_file() {
-            continue;
-        }
-
-        let metadata =
-            fs::symlink_metadata(&path).map_err(|_| EngineError::DirectoryUnavailable)?;
-        if !metadata.file_type().is_file() {
-            continue;
-        }
-
-        let extension = path
-            .extension()
-            .and_then(|value| value.to_str())
-            .map(str::to_ascii_lowercase);
-        let Some(extension) = extension.filter(|value| VIDEO_EXTENSIONS.contains(&value.as_str()))
-        else {
-            continue;
-        };
-
-        if media.len() >= max_results {
-            return Err(EngineError::ResultLimit);
-        }
-
-        let title = path
-            .file_name()
-            .map(|value| value.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Untitled clip".to_owned());
-        let modified_unix_seconds = metadata
-            .modified()
-            .ok()
-            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-            .map(|duration| duration.as_secs());
-
-        media.push(MediaEntry {
-            path: path.to_string_lossy().into_owned(),
-            title,
-            size_bytes: metadata.len(),
-            modified_unix_seconds,
-            extension,
-            offline: false,
-            favorite: false,
-            tags: Vec::new(),
-            game: None,
-            collections: Vec::new(),
-            probe: None,
-        });
-    }
-
-    media.sort_by(|left, right| {
-        left.title
-            .to_lowercase()
-            .cmp(&right.title.to_lowercase())
-            .then_with(|| left.path.cmp(&right.path))
-    });
-
-    Ok(LibraryScanResult {
-        directory: directory.to_string_lossy().into_owned(),
-        entries: media,
-        persisted: false,
-        collections: Vec::new(),
-    })
+    scan::scan(directory, max_entries, max_results, &AtomicBool::new(false))
 }
 
 /// Lists stable user-facing command IDs available to the first application slice.
@@ -793,6 +797,8 @@ pub const fn command_ids() -> &'static [&'static str] {
         "library.reveal",
         "library.refresh",
         "library.load",
+        "library.store_scan",
+        "library.register_recording",
         "library.probe",
         "library.thumbnail",
         "library.store_probes",
@@ -810,6 +816,7 @@ pub const fn command_ids() -> &'static [&'static str] {
         "capture.toggle_microphone",
         "capture.push_to_talk",
         "recording.save_settings",
+        "recording.set_builtin_games",
     ]
 }
 

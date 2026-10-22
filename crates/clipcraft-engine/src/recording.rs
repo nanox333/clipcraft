@@ -334,7 +334,7 @@ pub struct RecordingSettings {
     pub rate_control: RateControl,
     /// Audio bitrate in kilobits per second.
     pub audio_kbps: u32,
-    /// Whether the Advanced settings are shown.
+    /// Whether extra controls are shown at the bottom of their normal settings categories.
     pub show_advanced: bool,
     /// How hard the encoder works.
     pub encoder_preset: EncoderPreset,
@@ -371,7 +371,11 @@ pub struct RecordingSettings {
     pub record_on_launch: bool,
     /// Start the replay buffer only while a process in the game allowlist is running.
     pub game_only_capture: bool,
-    /// User-managed process and Steam-ID rules that may arm capture.
+    /// Recognize the bundled game catalog automatically; custom rules still have priority.
+    pub detect_built_in_games: bool,
+    /// Built-in game IDs explicitly excluded from automatic recognition.
+    pub disabled_builtin_games: Vec<String>,
+    /// Custom process and Steam-ID rules; these override built-in recognition.
     pub game_rules: Vec<GameMatchRule>,
     /// Capture the game's window even when the game is full screen.
     pub force_window_capture: bool,
@@ -437,6 +441,8 @@ impl Default for RecordingSettings {
             record_on_launch: false,
             game_only_capture: true,
             game_rules: Vec::new(),
+            detect_built_in_games: true,
+            disabled_builtin_games: Vec::new(),
             force_window_capture: false,
             hdr_compatibility: true,
             capture_folder: String::new(),
@@ -539,6 +545,14 @@ impl RecordingSettings {
             self.codec = VideoCodec::H264;
         }
         self.hotkeys = self.hotkeys.sanitized();
+        self.disabled_builtin_games = self
+            .disabled_builtin_games
+            .into_iter()
+            .take(crate::MAX_BUILT_IN_GAMES)
+            .filter(|id| crate::built_in_games().iter().any(|game| game.id == id))
+            .collect();
+        self.disabled_builtin_games.sort();
+        self.disabled_builtin_games.dedup();
         self.game_rules = self
             .game_rules
             .into_iter()

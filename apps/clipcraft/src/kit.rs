@@ -176,6 +176,7 @@ pub enum Icon {
     Library,
     Gear,
     Import,
+    Plus,
     Heart,
     Record,
     Stop,
@@ -343,6 +344,10 @@ pub fn draw_icon(painter: &Painter, c: Pos2, icon: Icon, color: Color32, scale: 
                 );
             }
             painter.circle_stroke(c, 5.6 * scale, Stroke::new(2.4_f32 * scale, color));
+        }
+        Icon::Plus => {
+            line(&[at(-6.0, 0.0), at(6.0, 0.0)]);
+            line(&[at(0.0, -6.0), at(0.0, 6.0)]);
         }
         Icon::Import => {
             line(&[at(-8.0, 2.0), at(-8.0, 7.0), at(8.0, 7.0), at(8.0, 2.0)]);

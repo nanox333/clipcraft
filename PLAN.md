@@ -90,7 +90,7 @@ the ClipCraft maintainer; the exact ports and upstream revisions are tracked in
 | [PhotoCraft](https://github.com/storytold/photocraft) | thin egui shell, one command registry for UI and CLI, versioned local metadata, no-panic input handling, contributor/agent guidance | keep the UI/CLI command model and no-panic rules; do not make a custom edit-project format the center of a clip recorder |
 | [FilmCraft](https://github.com/storytold/filmcraft) (sibling video project) | reusable media/frame/audio abstractions, rational timebase, codecs, export jobs, platform hardware adapters | extract or depend on shared crates only after an API review; do not fork a large editor wholesale |
 | Medal.tv | one-key capture, replay buffer, clip library, quick editing, local storage controls | keep the familiar capture-to-export loop; omit social, account, and link features; evaluate opt-in encrypted backup separately |
-| [Vice](https://github.com/splitshotz/Vice) | Linux instant replay, game labels/playlists, Discord presence, keyboard overlay, and a built-in editor; GPL-3.0-or-later Python app using a separate GPU recorder and web UI | the longest-match game-name rule is ported into Rust for future process detection; no bundled game database, UI, or non-Rust runtime; exclude daemon-at-login and public link/tunnel behavior |
+| [Vice](https://github.com/splitshotz/Vice) | Linux instant replay, game labels/playlists, Discord presence, keyboard overlay, and a built-in editor; GPL-3.0-or-later Python app using a separate GPU recorder and web UI | the longest-match rule, automatic known-game/custom-rule process arming and captured-game library metadata are implemented in Rust; no bundled game database, UI, or non-Rust runtime; exclude daemon-at-login and public link/tunnel behavior |
 | [GPU Screen Recorder](https://git.dec05eba.com/gpu-screen-recorder/) | Linux GPU capture and hardware encoding across vendor/compositor combinations, with driver and permission caveats | implement equivalent behavior independently in Rust against public platform APIs for M5.2; do not translate/copy its GPL-3.0-only source, ship its C/C++/FFmpeg runtime, or require its privileged KMS helper |
 | [ClipRecorder](https://github.com/By183/ClipRecorder) | Windows Graphics Capture → D3D11 conversion → generic Media Foundation H.264 MFT → encoded ring buffer → MP4 save, with WASAPI audio | its timestamped audio gap/overlap policy is ported as a Rust utility; keep the existing Rust capture/encoder path and do not add the C++ app or assets |
 | [Segra](https://segra.tv/) | community and creator-facing product patterns | review for product research; community features are explicitly out of scope |
@@ -410,3 +410,9 @@ extract shared media crates, the first hardware encoder matrix, local library me
 storage quota defaults, and per-platform source-selection/permission behaviour. No custom project
 format is required for the MVP. All decisions must preserve offline core workflows and the
 no-required-hosted-service rule; optional backup is governed by the M9 design ADR.
+
+The automatic known-game catalog now contains every title in Vice's pinned 347-game list plus
+ClipCraft's existing Minecraft Bedrock entry. Source and permission provenance, exact-match
+adaptations, stable exclusions, and platform limits are recorded in
+[the catalog guide](docs/game-catalog.md). Larger Steam metadata is research-only; local installed
+Steam manifests are a possible future extension, not a runtime database dependency.

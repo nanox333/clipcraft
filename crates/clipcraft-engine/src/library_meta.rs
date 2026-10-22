@@ -14,7 +14,7 @@ pub const MAX_COLLECTIONS_PER_CLIP: usize = 16;
 pub enum MetaEdit {
     /// Marks or unmarks a clip as a favorite.
     SetFavorite { path: String, favorite: bool },
-    /// Sets the game a clip belongs to, or `None` to go back to the guessed game.
+    /// Sets the game a clip belongs to, or `None` to restore its recorded/guessed game.
     SetGame { path: String, game: Option<String> },
     /// Makes an empty collection.
     CreateCollection { name: String },
@@ -41,6 +41,13 @@ pub fn clean_name(name: &str) -> Option<String> {
         && name.chars().count() <= MAX_NAME_CHARS
         && !name.chars().any(char::is_control);
     usable.then(|| name.to_owned())
+}
+
+/// Recorded labels follow the existing game-rule byte bound, independently of manual labels.
+pub(crate) fn clean_recorded_game(name: &str) -> Option<String> {
+    let name = name.trim();
+    (!name.is_empty() && name.len() <= 100 && !name.chars().any(char::is_control))
+        .then(|| name.to_owned())
 }
 
 fn same(left: &str, right: &str) -> bool {
@@ -212,10 +219,12 @@ fn starts_like_date(word: &str) -> bool {
             .is_some_and(|separator| matches!(separator, '.' | '-' | '_' | '/'))
 }
 
-/// The game a clip belongs to: the person's choice, else a sub-folder of the library, else the
-/// file name's guess.
+/// The game a clip belongs to: manual choice, recorded game, first child folder, then filename.
 pub fn game_of(entry: &MediaEntry, library_directory: &str) -> Option<String> {
     if let Some(game) = &entry.game {
+        return Some(game.clone());
+    }
+    if let Some(game) = &entry.recorded_game {
         return Some(game.clone());
     }
     let path = std::path::Path::new(&entry.path);
@@ -274,6 +283,7 @@ mod tests {
             favorite: false,
             tags: Vec::new(),
             game: None,
+            recorded_game: None,
             collections: Vec::new(),
             probe: None,
         }

@@ -21,7 +21,7 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   clips with the global hotkey. Recording supports MP4/MKV, configurable quality and framing,
   replay length, post-roll, and storage limits. Linux/X11 has end-to-end synthetic-screen evidence;
   Windows/AMD has generated-window capture-to-MP4 evidence, including a native D3D11 path. Game-only
-  mode is on by default: replay stays stopped until a user-added game process and capturable window
+  mode is on by default: replay stays stopped until a recognized game process and capturable window
   are found, then stops when that process exits. Manual capture mode is available by turning the
   setting off.
 - **Audio:** synchronized system audio and microphone recording, mixed or on separate AAC tracks,
@@ -32,15 +32,21 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   cached locally.
 - **Library:** keep a rebuildable local index, restore the last folder, scan and search clips,
   sort them, view media details, reveal or relink files, and organize clips with favorites,
-  collections, and game labels. Library labels are inferred from some filenames or set by hand;
-  Game-only capture does not yet tag clips in the library. Folder scanning is non-recursive.
+  collections, and game labels. Scans include subfolders (eight levels), skip symlinks, and run on
+  a cancellable desktop worker; the CLI uses the same bounded traversal. Game-managed saves remember
+  the game active when Save was pressed. Manual labels override that captured game, followed by
+  folder/filename guesses; labels survive rescans and restarts in the local index.
 - **Quick trim and export:** mark a range in the player and save an original-quality trim, or
   choose an estimated 10 MB, 25 MB, or custom 1–500 MB small-file export. Compression uses the Rust
   software H.264 encoder, preserves AAC audio tracks, and reduces video to at most 720p/30 fps
   without upscaling. Both paths preserve the source and support progress/cancel; compressed exports
   report their actual size. No upload or Discord account is involved.
 - **Settings and diagnostics:** recording, quality, audio, hotkey, storage, game allowlist, and
-  general settings are stored locally. Game rules can match executable-name substrings and exact
+  general settings are stored locally. [348 known games](docs/game-catalog.md) are recognized
+  automatically, with per-game exclusions and a global switch in Settings › Games. The toggle at
+  the bottom of General reveals clearly headed advanced sections within Games, Capture, Quality
+  and Audio. The [custom-game form](docs/settings.md) sits directly on the page with padded,
+  responsive fields and is advanced-only. Custom rules take priority over the built-in catalog and can match executable-name substrings and exact
   Steam app IDs on Linux. The app and CLI expose local diagnostics; the CLI can also list capture
   targets, record for a set duration, inspect the library, and trim clips.
 
@@ -60,7 +66,7 @@ they do not establish game-FPS impact or sustained capture performance.
   CPU and native paths encoded about 32 fps when requesting 1080p60; this gate remains open.
   See [Windows measurements and reproduction](docs/windows-performance.md). Windows hotkeys and
   real-game behavior remain untested; macOS capture is not implemented.
-- Game-only capture is the default and stays idle until a game is added to the allowlist. X11 and
+- Game-only capture is the default and stays idle until a recognized game is running. X11 and
   Windows window-to-process adapters are implemented; this environment verifies X11 with a
   synthetic window, not a real game. Wayland does not expose the
   process-to-window mapping used by Game source, and macOS capture is not available.

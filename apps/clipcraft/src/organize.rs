@@ -240,7 +240,7 @@ pub fn rail(
             section_header(ui, "Games");
             if groups.is_empty() {
                 ui.label(
-                    RichText::new("Games are found from folder and file names.")
+                    RichText::new("Games appear from recordings, folders and file names.")
                         .color(FAINT)
                         .size(12.0),
                 );

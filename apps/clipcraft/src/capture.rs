@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use clipcraft_capture::{CaptureTarget, TargetKind};
 use clipcraft_engine::{
     CaptureSession, GameArmingDecision, GameArmingState, GameProcessMatch, HotkeyAction,
-    RecordingSettings, SavedClipReport, match_game_process,
+    RecordingSettings, SavedClipReport,
 };
 use clipcraft_platform::{CaptureOptions, HotkeyBinding, HotkeyListener};
 use clipcraft_record::{RecordError, RecordState, RecordStatus};
@@ -403,25 +403,20 @@ impl ClipCraftApp {
     }
 
     fn detect_game_processes(&mut self) -> Vec<GameProcessMatch> {
-        if self.recording.game_rules.is_empty() {
+        if !self.recording.has_game_rules() {
             return Vec::new();
         }
-        let include_steam_app_ids = self
-            .recording
-            .game_rules
-            .iter()
-            .any(|rule| !rule.steam_app_ids.is_empty());
+        let include_steam_app_ids = self.recording.needs_steam_game_ids();
         let processes = self.capture.process_observer.refresh(include_steam_app_ids);
         let mut matches = Vec::new();
         for process in processes {
             if process.process_id == std::process::id() {
                 continue;
             }
-            let Some(game_name) = match_game_process(
-                &self.recording.game_rules,
-                &process.executable,
-                process.steam_app_id.as_deref(),
-            ) else {
+            let Some(game_name) = self
+                .recording
+                .match_game(&process.executable, process.steam_app_id.as_deref())
+            else {
                 continue;
             };
             let game = GameProcessMatch {
@@ -587,10 +582,10 @@ impl ClipCraftApp {
                 Some(game) => Some(game),
                 None => {
                     self.capture.notice = notice(
-                        if self.recording.game_rules.is_empty() {
-                            "Add a game in Settings › Games before automatic capture can start."
+                        if !self.recording.has_game_rules() {
+                            "Enable built-in recognition or add a custom game in Settings › Games."
                         } else {
-                            "Waiting for a selected game. Capture stays idle until its process is running."
+                            "Waiting for a recognized game. Capture stays idle until its process is running."
                         },
                         false,
                         None,
@@ -780,7 +775,17 @@ impl ClipCraftApp {
             self.capture.notice = notice("Choose a capture folder in Settings first.", true, None);
             return;
         };
-        let job = match self.capture.session.prepare_save(&self.recording, &folder) {
+        let game = self
+            .capture
+            .game_session
+            .as_ref()
+            .map(|game| game.game_name.as_str());
+        let job = match self
+            .capture
+            .session
+            .prepare_save(&self.recording, &folder)
+            .map(|job| job.with_game(game))
+        {
             Ok(job) => job,
             Err(error) => {
                 self.capture.notice = notice(error.to_string(), true, None);
@@ -811,6 +816,23 @@ impl ClipCraftApp {
         self.capture.saving_at = None;
         match result {
             Ok(report) => {
+                let mut metadata_warning = false;
+                if let Some(game) = report.recorded_game.as_ref() {
+                    let path = report.clip.path.to_string_lossy().into_owned();
+                    if self.saved_games.len() >= clipcraft_engine::MAX_LIBRARY_RESULTS
+                        && let Some(oldest) = self.saved_games.keys().next().cloned()
+                    {
+                        self.saved_games.remove(&oldest);
+                    }
+                    self.saved_games.insert(path, game.clone());
+                    if let (Some(index_path), Some(directory)) =
+                        (self.index_path.clone(), report.clip.path.parent())
+                    {
+                        metadata_warning = !matches!(clipcraft_engine::execute(clipcraft_engine::Command::RegisterSavedClip {
+                            index_path, directory: directory.to_path_buf(), path: report.clip.path.clone(), game: game.clone(),
+                        }), Ok(clipcraft_engine::CommandOutput::LibraryScan(result)) if result.persisted);
+                    }
+                }
                 let name = report
                     .clip
                     .path
@@ -826,8 +848,15 @@ impl ClipCraftApp {
                     )
                 };
                 self.capture.notice = notice(
-                    format!("Saved {name}{removed}"),
-                    false,
+                    format!(
+                        "Saved {name}{removed}{}",
+                        if metadata_warning {
+                            "; game label could not be saved"
+                        } else {
+                            ""
+                        }
+                    ),
+                    metadata_warning,
                     Some(report.clip.path.clone()),
                 );
                 self.cue(Cue::ClipSaved);
@@ -946,7 +975,7 @@ impl ClipCraftApp {
                 (FAINT, "Game capture paused".to_owned())
             }
             None if self.recording.game_only_capture && !active => {
-                (FAINT, "Waiting for selected game".to_owned())
+                (FAINT, "Waiting for game".to_owned())
             }
             None if self.recording.game_only_capture => {
                 let label = game_name
@@ -1159,4 +1188,78 @@ impl std::fmt::Display for RecordErrorText {
 /// ClipCraft's own window is never the game, even when it has the focus.
 fn is_own_window(window: &CaptureTarget) -> bool {
     window.name.trim() == "ClipCraft"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_completed_save_updates_game_filters_and_metadata_failure_keeps_the_clip() {
+        for persist in [true, false] {
+            let root = crate::tests::temporary_directory();
+            let clips = root.join("clips");
+            std::fs::create_dir(&clips).unwrap();
+            let path = clips.join("ClipCraft 2026-10-22.mp4");
+            std::fs::write(&path, b"saved media").unwrap();
+            let index = root.join("index.json");
+            if !persist {
+                std::fs::create_dir(&index).unwrap();
+            }
+            let mut app = ClipCraftApp {
+                directory_text: clips.to_str().unwrap().into(),
+                index_path: Some(index.clone()),
+                ..Default::default()
+            };
+            app.recording.sound_effects = false;
+            let (sender, receiver) = mpsc::channel();
+            app.capture.saving = Some(receiver);
+            app.capture.saved_into = Some(clips);
+            sender
+                .send(Ok(SavedClipReport {
+                    clip: clipcraft_record::SavedClip {
+                        path: path.clone(),
+                        frames: 30,
+                        duration_frames: 30,
+                        bytes: 11,
+                        audio_tracks: 0,
+                        start_frame: 0,
+                    },
+                    deleted: Vec::new(),
+                    recorded_game: Some("Captured Game".into()),
+                }))
+                .unwrap();
+            app.poll_save();
+            assert_eq!(app.capture.notice.as_ref().unwrap().error, !persist);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while app.scanning.is_some() {
+                assert!(Instant::now() < deadline);
+                app.poll_library_scan(&egui::Context::default());
+                std::thread::yield_now();
+            }
+            let library = app.library.as_ref().unwrap();
+            assert_eq!(
+                clipcraft_engine::games(&library.entries, &library.directory),
+                [clipcraft_engine::GameGroup {
+                    name: "Captured Game".into(),
+                    clips: 1
+                }]
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), b"saved media");
+            if persist {
+                let output = clipcraft_engine::execute(clipcraft_engine::Command::LoadLibrary {
+                    index_path: index,
+                })
+                .unwrap();
+                let clipcraft_engine::CommandOutput::LibraryScan(loaded) = output else {
+                    panic!("library output")
+                };
+                assert_eq!(
+                    loaded.entries[0].recorded_game.as_deref(),
+                    Some("Captured Game")
+                );
+            }
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
 }

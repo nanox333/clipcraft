@@ -215,6 +215,60 @@ fn run_diagnose(arguments: &[OsString]) -> Result<(), CliError> {
 }
 
 fn run_recording(arguments: &[OsString]) -> Result<(), CliError> {
+    if arguments.first().and_then(|value| value.to_str()) == Some("games") {
+        let operation = arguments.get(1).and_then(|value| value.to_str());
+        if operation == Some("list") && arguments.len() == 2 {
+            return write_json(&clipcraft_engine::built_in_games());
+        }
+        let path = clipcraft_engine::default_settings_path().ok_or(CliError::Usage)?;
+        let CommandOutput::RecordingSettings(mut settings) =
+            execute(Command::LoadRecordingSettings { path: path.clone() })
+                .map_err(CliError::Engine)?
+        else {
+            return Err(CliError::UnexpectedOutput);
+        };
+        match operation {
+            Some("automatic") if arguments.len() == 3 => {
+                settings.detect_built_in_games = match arguments[2].to_str() {
+                    Some("on") => true,
+                    Some("off") => false,
+                    _ => return Err(CliError::Usage),
+                };
+            }
+            Some(operation @ ("enable" | "disable"))
+                if (3..=clipcraft_engine::MAX_BUILT_IN_GAMES + 2).contains(&arguments.len()) =>
+            {
+                let ids = if arguments.len() == 3 && arguments[2].to_str() == Some("all") {
+                    clipcraft_engine::built_in_games()
+                        .iter()
+                        .map(|game| game.id.to_owned())
+                        .collect()
+                } else {
+                    arguments[2..]
+                        .iter()
+                        .map(|id| id.to_str().map(str::to_owned).ok_or(CliError::Usage))
+                        .collect::<Result<Vec<_>, _>>()?
+                };
+                let CommandOutput::RecordingSettings(updated) = execute(Command::SetBuiltInGames {
+                    settings,
+                    ids,
+                    enabled: operation == "enable",
+                })
+                .map_err(CliError::Engine)?
+                else {
+                    return Err(CliError::UnexpectedOutput);
+                };
+                settings = updated;
+            }
+            _ => return Err(CliError::Usage),
+        }
+        let CommandOutput::RecordingSettings(settings) =
+            execute(Command::SaveRecordingSettings { path, settings }).map_err(CliError::Engine)?
+        else {
+            return Err(CliError::UnexpectedOutput);
+        };
+        return write_json(&settings);
+    }
     if arguments.len() != 1 || arguments[0].to_str() != Some("settings") {
         return Err(CliError::Usage);
     }
@@ -340,6 +394,9 @@ fn print_help() -> Result<(), CliError> {
         "\n",
         "Usage:\n",
         "  clipcraft-cli commands\n",
+        "  clipcraft-cli recording games list\n",
+        "  clipcraft-cli recording games automatic on|off\n",
+        "  clipcraft-cli recording games enable|disable <game-id...|all>\n",
         "  clipcraft-cli library scan <folder>\n",
         "  clipcraft-cli library path <file>\n",
         "  clipcraft-cli library reveal <file>\n",
@@ -353,7 +410,7 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli capture record --seconds N [--target ID] [--out DIR]\n",
         "  clipcraft-cli version\n",
         "\n",
-        "All commands run locally. A library scan is non-recursive and bounded.\n",
+        "All commands run locally. A library scan includes subfolders (8 levels), skips symlinks, and is bounded.\n",
     );
     write_stdout(help.as_bytes())
 }

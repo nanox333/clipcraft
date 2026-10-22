@@ -67,6 +67,8 @@ pub struct SavedClipReport {
     pub clip: SavedClip,
     /// Older ClipCraft clips removed to make room.
     pub deleted: Vec<PathBuf>,
+    /// Game snapped when Save was pressed, independent of later process/session changes.
+    pub recorded_game: Option<String>,
 }
 
 /// Handles to the live mute and level of each recorded sound source.
@@ -360,6 +362,7 @@ impl CaptureSession {
             return Err(EngineError::Record(RecordError::DiskFull));
         }
         Ok(SaveJob {
+            recorded_game: None,
             recorder,
             format,
             seconds: settings.replay_seconds + settings.post_roll_seconds,
@@ -373,6 +376,7 @@ impl CaptureSession {
 
 /// A clip save that can run on any thread.
 pub struct SaveJob {
+    recorded_game: Option<String>,
     recorder: Arc<Recorder>,
     format: ClipFormat,
     seconds: u32,
@@ -383,6 +387,11 @@ pub struct SaveJob {
 }
 
 impl SaveJob {
+    /// Snapshots a game name before moving threads. Invalid labels never prevent saving media.
+    pub fn with_game(mut self, game: Option<&str>) -> Self {
+        self.recorded_game = game.and_then(crate::library_meta::clean_recorded_game);
+        self
+    }
     /// The file that will be written.
     pub fn path(&self) -> &Path {
         &self.path
@@ -410,7 +419,11 @@ impl SaveJob {
             Some(limit) => trim_to_limit(&self.folder, &clip.path, limit),
             None => Vec::new(),
         };
-        Ok(SavedClipReport { clip, deleted })
+        Ok(SavedClipReport {
+            clip,
+            deleted,
+            recorded_game: self.recorded_game,
+        })
     }
 }
 
@@ -678,7 +691,29 @@ mod tests {
             Some("mp4")
         );
         // Two saves in the same second get different names and nothing is overwritten.
-        let second = session.save_clip(&settings, &dir).unwrap();
+        let mut game = "A game label longer than forty characters from the allowlist".to_owned();
+        let job = session
+            .prepare_save(&settings, &dir)
+            .unwrap()
+            .with_game(Some(&game));
+        game.clear(); // The live process/game can change while a save is pending.
+        assert_eq!(
+            job.recorded_game.as_deref(),
+            Some("A game label longer than forty characters from the allowlist")
+        );
+        let second = job.run().unwrap();
+        assert_eq!(
+            second.recorded_game.as_deref(),
+            Some("A game label longer than forty characters from the allowlist")
+        );
+        assert_eq!(
+            session
+                .prepare_save(&settings, &dir)
+                .unwrap()
+                .with_game(Some("bad\nlabel"))
+                .recorded_game,
+            None
+        );
         assert_ne!(second.clip.path, report.clip.path);
         assert!(report.clip.path.exists() && second.clip.path.exists());
         assert!(session.stop().is_some() && !session.is_active());

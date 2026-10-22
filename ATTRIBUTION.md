@@ -12,3 +12,11 @@ it with its source, author, and license. `cargo xtask assets` checks that each f
 has a sidecar and a matching path in this table. User-provided Medal screenshots and downloaded
 reference images are private planning references, not product assets. Source-code ports are tracked
 separately in [`docs/upstream-ports.md`](docs/upstream-ports.md).
+
+The compiled identification metadata in
+[`game_catalog_data.rs`](crates/clipcraft-engine/src/game_catalog_data.rs) adapts Vice's 347-game
+catalog at `7e4b2a3`, with ClipCraft variants and one Bedrock entry. It contains names/identifiers,
+not publisher artwork. This is the maintainer-requested catalog reuse under reported author
+permission; Vice's project license is GPL-3.0-or-later, not a claimed permissive grant. Exact
+source, hash, omitted aliases and permission provenance are in
+[`docs/upstream-ports.md`](docs/upstream-ports.md).

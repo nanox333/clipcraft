@@ -9,6 +9,7 @@ use crate::{
     apply_edit,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
@@ -87,6 +88,7 @@ pub(crate) fn refresh_library(
     scan: LibraryScanResult,
     index_path: &Path,
 ) -> Result<LibraryScanResult, EngineError> {
+    validate_scan(&scan)?;
     let mut index = match read_index(index_path) {
         Ok(index) => index,
         Err(EngineError::IndexMissing) => LibraryIndex::default(),
@@ -138,20 +140,22 @@ pub(crate) fn refresh_library(
 ///
 /// Scanned files keep the favorite/tags of the same path. Remembered files that are no longer on
 /// disk stay in the list as offline entries so a temporarily unplugged drive does not lose them.
-pub(crate) fn merge_entries(
-    previous: Option<&[MediaEntry]>,
-    scanned: Vec<MediaEntry>,
-) -> Vec<MediaEntry> {
+pub fn merge_entries(previous: Option<&[MediaEntry]>, scanned: Vec<MediaEntry>) -> Vec<MediaEntry> {
     let Some(previous) = previous else {
         return scanned;
     };
+    let old_by_path: HashMap<_, _> = previous
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry))
+        .collect();
     let mut merged: Vec<MediaEntry> = scanned
         .into_iter()
         .map(|mut entry| {
-            if let Some(old) = previous.iter().find(|old| old.path == entry.path) {
+            if let Some(old) = old_by_path.get(entry.path.as_str()) {
                 entry.favorite = old.favorite;
                 entry.tags = old.tags.clone();
                 entry.game = old.game.clone();
+                entry.recorded_game = old.recorded_game.clone().or(entry.recorded_game);
                 entry.collections = old.collections.clone();
                 // A probe stays valid only while the file looks unchanged.
                 if old.size_bytes == entry.size_bytes
@@ -163,11 +167,12 @@ pub(crate) fn merge_entries(
             entry
         })
         .collect();
+    let mut paths: HashSet<String> = merged.iter().map(|entry| entry.path.clone()).collect();
     for old in previous {
         if merged.len() >= MAX_ENTRIES_PER_FOLDER {
             break;
         }
-        if !merged.iter().any(|entry| entry.path == old.path) {
+        if paths.insert(old.path.clone()) {
             // A clip that was relinked to a place outside the scanned folder is still there.
             let mut remembered = old.clone();
             remembered.offline = !Path::new(&old.path).exists();
@@ -175,6 +180,79 @@ pub(crate) fn merge_entries(
         }
     }
     merged
+}
+
+/// Validate the worker handoff before it can replace any persisted metadata.
+fn validate_scan(scan: &LibraryScanResult) -> Result<(), EngineError> {
+    let mut paths = HashSet::new();
+    if scan.entries.len() > MAX_LIBRARY_RESULTS
+        || scan.entries.iter().any(|entry| !paths.insert(&entry.path))
+    {
+        return Err(EngineError::IndexInvalid);
+    }
+    validate(&LibraryIndex {
+        version: INDEX_VERSION,
+        folders: vec![FolderIndex {
+            directory: scan.directory.clone(),
+            entries: scan.entries.clone(),
+        }],
+        collections: scan.collections.clone(),
+    })
+}
+
+/// Register only an existing media file directly inside its capture folder. No scan and no
+/// media mutation are needed; metadata edits on the caller's thread cannot race a scan worker.
+pub(crate) fn register_recording(
+    index_path: &Path,
+    directory: &Path,
+    path: &Path,
+    game: &str,
+) -> Result<LibraryScanResult, EngineError> {
+    let game = crate::library_meta::clean_recorded_game(game).ok_or(EngineError::NameInvalid)?;
+    let metadata = fs::symlink_metadata(path).map_err(|_| EngineError::FileUnavailable)?;
+    if path.parent() != Some(directory) || !metadata.is_file() {
+        return Err(EngineError::FileUnavailable);
+    }
+    let entry = MediaEntry {
+        path: path
+            .to_str()
+            .ok_or(EngineError::LibraryPathInvalid)?
+            .to_owned(),
+        title: path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or(EngineError::LibraryPathInvalid)?
+            .to_owned(),
+        size_bytes: metadata.len(),
+        modified_unix_seconds: metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|time| time.as_secs()),
+        extension: path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(str::to_ascii_lowercase)
+            .filter(|value| crate::VIDEO_EXTENSIONS.contains(&value.as_str()))
+            .ok_or(EngineError::MediaUnsupported)?,
+        offline: false,
+        favorite: false,
+        tags: Vec::new(),
+        game: None,
+        recorded_game: Some(game),
+        collections: Vec::new(),
+        probe: None,
+    };
+    let scan = LibraryScanResult {
+        directory: directory
+            .to_str()
+            .ok_or(EngineError::LibraryPathInvalid)?
+            .to_owned(),
+        entries: vec![entry],
+        persisted: false,
+        collections: Vec::new(),
+    };
+    refresh_library(scan, index_path)
 }
 
 /// Most probe results accepted in one call.
@@ -298,6 +376,11 @@ fn validate(index: &LibraryIndex) -> Result<(), EngineError> {
             let meta_ok = entry.collections.len() <= crate::MAX_COLLECTIONS_PER_CLIP
                 && entry.collections.iter().all(name_ok)
                 && entry.game.as_ref().is_none_or(name_ok);
+            let meta_ok = meta_ok
+                && entry
+                    .recorded_game
+                    .as_ref()
+                    .is_none_or(|name| crate::library_meta::clean_recorded_game(name).is_some());
             if entry.path.len() > MAX_PATH_BYTES
                 || entry.title.len() > MAX_PATH_BYTES
                 || !tags_ok
@@ -380,6 +463,7 @@ mod tests {
             favorite: false,
             tags: Vec::new(),
             game: None,
+            recorded_game: None,
             collections: Vec::new(),
             probe: None,
         }
@@ -392,6 +476,108 @@ mod tests {
             persisted: false,
             collections: Vec::new(),
         }
+    }
+
+    #[test]
+    fn recorded_games_persist_and_manual_labels_take_priority_across_rescans() {
+        let scratch = Scratch::new();
+        let clips = scratch.0.join("clips");
+        fs::create_dir(&clips).unwrap();
+        let path = clips.join("ClipCraft 2026-10-22.mp4");
+        fs::write(&path, b"unchanged clip").unwrap();
+        let index = scratch.index();
+        let directory = clips.to_str().unwrap();
+        let result = register_recording(&index, &clips, &path, "Detected Game").unwrap();
+        assert!(result.persisted);
+        assert_eq!(
+            crate::game_of(&result.entries[0], directory).as_deref(),
+            Some("Detected Game")
+        );
+        edit_meta(
+            &index,
+            directory,
+            &MetaEdit::SetGame {
+                path: path.to_str().unwrap().into(),
+                game: Some("My Label".into()),
+            },
+        )
+        .unwrap();
+        let fresh = crate::scan_library_directory(&clips).unwrap();
+        let after = refresh_library(fresh, &index).unwrap();
+        assert_eq!(
+            crate::game_of(&after.entries[0], directory).as_deref(),
+            Some("My Label")
+        );
+        assert_eq!(
+            after.entries[0].recorded_game.as_deref(),
+            Some("Detected Game")
+        );
+        edit_meta(
+            &index,
+            directory,
+            &MetaEdit::SetGame {
+                path: path.to_str().unwrap().into(),
+                game: None,
+            },
+        )
+        .unwrap();
+        let loaded = load_library(&index).unwrap();
+        assert_eq!(
+            crate::game_of(&loaded.entries[0], directory).as_deref(),
+            Some("Detected Game")
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"unchanged clip");
+        assert_eq!(
+            register_recording(&index, &clips, &path, "invalid\nlabel"),
+            Err(EngineError::NameInvalid)
+        );
+        assert_eq!(
+            register_recording(&index, &scratch.0, &path, "Game"),
+            Err(EngineError::FileUnavailable)
+        );
+    }
+
+    #[test]
+    fn a_completed_scan_merges_the_latest_metadata_and_rejects_duplicate_paths() {
+        let scratch = Scratch::new();
+        let index = scratch.index();
+        let first = scan("/clips", &["/clips/game/a.mp4"]);
+        refresh_library(first.clone(), &index).unwrap();
+        // A worker has already captured its scan while the person edits the current index.
+        let worker_scan = first;
+        edit_meta(
+            &index,
+            "/clips",
+            &MetaEdit::SetFavorite {
+                path: "/clips/game/a.mp4".into(),
+                favorite: true,
+            },
+        )
+        .unwrap();
+        let merged = refresh_library(worker_scan, &index).unwrap();
+        assert!(merged.entries[0].favorite);
+        let before = fs::read(&index).unwrap();
+        let duplicate = scan("/clips", &["/clips/game/a.mp4", "/clips/game/a.mp4"]);
+        assert_eq!(
+            refresh_library(duplicate, &index),
+            Err(EngineError::IndexInvalid)
+        );
+        assert_eq!(fs::read(index).unwrap(), before);
+    }
+
+    #[test]
+    fn old_indexes_without_recorded_game_fields_still_load() {
+        let scratch = Scratch::new();
+        let index = scratch.index();
+        refresh_library(scan("/clips", &["/clips/a.mp4"]), &index).unwrap();
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&index).unwrap()).unwrap();
+        value["folders"][0]["entries"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("recorded_game");
+        fs::write(&index, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(load_library(&index).unwrap().entries[0].recorded_game, None);
     }
 
     #[test]

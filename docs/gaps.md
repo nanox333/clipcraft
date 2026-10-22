@@ -13,7 +13,7 @@ feature's status, workaround, or evidence changes.
 | ---: | --- | --- | --- | --- |
 | G0 | Windows release and broader real-device evidence remain open | Windows/AMD generated-window WGC and native/CPU MF encode have run. Windows hotkeys, game-only arming, real microphone/speaker, device loss and other GPU encoders remain unverified. Linux/X11 capture-to-export is proven against synthetic sources | Limits platform and release claims | M0 evidence close-out; M2/M3/M5 |
 | G1 | Low-copy GPU path is implemented for Windows SDR; performance gates remain open | WGC D3D11 leases and Media Foundation GPU NV12 conversion produced AMD generated-window MP4 clips with zero CPU readbacks. Matching dimensions/original framing and HDR compatibility disabled are required. Both CPU/native runs encoded about 32 fps at requested 1080p60. Other GPUs, HDR/scaling, GPU-use/power and real-game comparisons remain open; see [measurements](windows-performance.md). | 1080p60 throughput and game impact are not established | M5.1/M5.2 |
-| G2 | Game-only capture needs real platform evidence; library scan is non-recursive | Game-only mode, local process matching, exact Steam app IDs on Linux, manual pause, and X11/Windows process-to-window lookup are implemented. The X11 adapter has a synthetic-window test; no real game or Windows runtime has been tested. Wayland game-window matching is unavailable; library labels are not auto-tagged from the active capture game | Game arming is not yet proven on the user's desktop; clips still need manual/library filename game labels | M4/M7 |
+| G2 | Game-only capture still needs real platform evidence | Recursive library scans and captured-game tagging are implemented and tested on Linux. Desktop scans are cancellable; manual labels, favorites and collections survive rescans. Game-managed saves snapshot the game at Save time. Real-game/Windows arming and Wayland process-to-window matching remain unverified or unavailable | The library workflow is usable, but automatic arming still needs desktop evidence | M4.1b/M7 |
 | G3 | Compressed export needs reference-machine measurements; broader output controls remain open | Original-quality trim and software H.264 size presets (10 MB, 25 MB, custom 1–500 MB) are built. Generated MP4/MKV fixtures verify decoding, audio sync, cancellation, actual-size reporting, and collision safety. Compression is at most 720p/30 fps, copies AAC audio, and estimates rather than guarantees size; 30/60-second throughput measurements on representative PCs remain open | Local small-file export is available; broader codec/quality controls and speed claims remain limited | M4.2/M4.3 |
 | G4 | macOS capture/audio is not implemented; Wayland capture is only partly verified | No ScreenCaptureKit/CoreAudio provider; Wayland portal and PipeWire pieces pass component tests but no real desktop chooser has delivered a frame | Limits supported-platform claims | M6 |
 | G5 | Real-device audio and broader performance evidence are incomplete | Windows/AMD passed a two-hour generated-window 1080p30 GPU soak: eight drops, zero restarts, all 24 saved clips decoded. Real audio devices, real-game impact, 1080p60 and device-loss integration remain open; see [results](windows-performance.md) | Limits reliability and release claims | M3/M5 |
@@ -28,6 +28,17 @@ NVIDIA, AMD, and Intel with driver, permission, and compositor caveats; ClipCraf
 behavior reference only because its GPL-3.0-only non-Rust/FFmpeg runtime is outside project rules.
 M5.2 plans a Rust-native GPU-surface path and requires real per-device measurements before any
 compositor, GPU-vendor, or CPU-use claim.
+
+Settings › Games recognizes [348 known games](game-catalog.md) automatically, following
+Vice's custom-first approach. Users can exclude built-in games or turn built-in recognition off.
+Known games use exact executable basenames or exact Linux Steam IDs; custom rules take priority
+and retain their matching mode. Matching fixtures cover every bundled variant, lookalikes, duplicate/malformed exclusions,
+settings limits and persistence. Executable/storefront changes and live identification/capture for these games are
+not verified. All 347 Vice titles plus the existing Bedrock entry are included (672 exact process
+identifiers, 311 Steam IDs); seven launcher/generic aliases are omitted. A generic Java process
+alone cannot identify Minecraft. The 1,024-ID exclusion limit supports disabling the full list.
+The larger leinstay/steamdb dataset was assessed but is not imported: it lacks executable mappings
+and declares GPL-3.0. Local installed-Steam-manifest recognition remains unimplemented.
 
 Reference behavior from Vice now drives the engine's longest-match rule, user-managed game allowlist,
 process observation, and automatic replay arming. The process watcher polls every two seconds only
@@ -62,13 +73,15 @@ See [the performance review](performance.md) for workloads, limitations and rank
 - Global save-clip, long-recording, microphone-mute, push-to-talk, and screenshot hotkeys are registered while clipping; conflict checking and local persistence are implemented. Screenshot behavior is verified on Linux/X11 only.
 - Audio: PC audio and microphone toggles, output and microphone device pickers, a live microphone level test, push to talk, mono microphone, separate tracks, volumes.
 - Storage: capture folder, usage and free space, a storage limit, and a delete-oldest or stop policy. The limit applies only to ClipCraft's own clips; full-disk and cleanup paths have deterministic Linux tests.
-- Capture: cursor, force window capture, HDR compatibility. Aspect ratio (game, stretch, black bars, crop to 16:9) moved to Advanced.
-- General: launch at sign-in (Linux autostart entry, macOS launch agent, Windows Run key) and start minimized. Only the Linux path can be exercised in this container.
+- Capture: cursor, force window capture, HDR compatibility; aspect ratio (game, stretch, black bars, crop to 16:9) appears in its bottom **Advanced settings** section.
+- General: launch at sign-in (Linux autostart entry, macOS launch agent, Windows Run key) and start minimized. **Show advanced settings** is last, after Help; it appends labeled advanced controls to Games, Capture, Quality and Audio instead of adding a category. Custom-game add/edit controls use a flat layout with padded, responsive fields and appear only when advanced settings are on; hidden rules/encoder/audio values remain active. The local preference and 64-rule budget are unchanged. Keyboard disclosure/creation, category visibility, process-picker stale-ID recovery and layout/accessibility checks cover this behavior; see [settings.md](settings.md) and [testing.md](testing.md). Only the Linux startup path and native UI can be exercised in this container.
 
 ### Library organisation
 
 - **Done:** favorites (heart on a card or in the clip view, right-click menu), collections (create, rename, delete from the sidebar; add or remove from a card's right-click menu or the clip view), and games (guessed from a sub-folder of the library or a recorder-style file name such as `Valorant 2024.03.01 - 21.04.mp4`; set by hand in the clip view). The sidebar lists All clips, Favorites, collections, and games with counts. All of it is saved in the local index, kept across rescans, and exposed as the `library.edit` command.
-- **Limits:** the library scan is not recursive, so the sub-folder rule for games only helps once recursive scans exist; today games come from file names or your own choice. A plain file name with no date or ` - ` is not treated as a game. Collections hold clips by path, so a file moved outside ClipCraft leaves its collections.
+- **Recursive scans:** one root and up to eight child-folder levels, 20,000 total entries and 5,000 videos. Symlinks are skipped; distinct hard-link paths remain separate clips. The desktop uses one worker and one replaceable pending request. Cancel/replacement discards partial or stale results; filesystem calls already blocked on a drive cannot be interrupted. Unreadable children, depth/budget limits, and non-UTF-8/oversized paths fail the whole scan with an error; previous metadata is retained. Missing files remain offline entries.
+- **Captured games:** game-managed saves snapshot the active game before post-roll and persist it in the index after a successful save. Manual labels take priority, then recorded labels, first child folder, and filename guesses. Invalid labels never prevent video saving; an index-write failure keeps the clip and reports a warning, with an in-memory fallback (bounded to 5,000 recent labels). Deleting the rebuildable index loses captured/manual metadata; no sidecar or media metadata is written. Manual desktop captures do not infer an active game.
+- **Other limits:** a plain filename with no date or ` - ` is not treated as a game. Collections use paths; files moved outside ClipCraft need relinking. Multi-root browsing and automatic filesystem watching are not implemented.
 
 ### M2: capture and replay buffer
 

@@ -9,6 +9,7 @@ use clipcraft_engine::{
 };
 mod capture;
 mod kit;
+mod library_scan;
 mod organize;
 mod playback;
 mod settings;
@@ -70,6 +71,9 @@ fn main() -> eframe::Result<()> {
 struct ClipCraftApp {
     directory_text: String,
     library: Option<LibraryScanResult>,
+    scanning: Option<library_scan::ScanJob>,
+    scan_worker: Option<library_scan::ScanWorker>,
+    saved_games: std::collections::HashMap<String, String>,
     selected: Option<MediaEntry>,
     error: Option<String>,
     /// A search for a moved clip that is running.
@@ -149,7 +153,6 @@ enum SettingsTab {
     Capture,
     Quality,
     Audio,
-    Advanced,
     About,
 }
 
@@ -163,7 +166,6 @@ impl SettingsTab {
             Self::Capture => "Capture",
             Self::Quality => "Quality",
             Self::Audio => "Audio",
-            Self::Advanced => "Advanced",
             Self::About => "About",
         }
     }
@@ -179,9 +181,6 @@ impl SettingsTab {
             Self::Capture => "What gets recorded.",
             Self::Quality => "How sharp and smooth your clips are, and how big.",
             Self::Audio => "What sound is recorded and how well.",
-            Self::Advanced => {
-                "Fine control over the picture, encoder and audio. The defaults suit most people."
-            }
             Self::About => {
                 "What ClipCraft is, which version you have, and where to find the project."
             }
@@ -203,6 +202,7 @@ impl eframe::App for ClipCraftApp {
             self.needs_probe = false;
             self.start_probing(context);
         }
+        self.poll_library_scan(context);
         self.poll_probes();
         if self.needs_thumbnails {
             self.needs_thumbnails = false;
@@ -346,7 +346,11 @@ impl ClipCraftApp {
             Ok(_) | Err(EngineError::IndexMissing) => {}
             Err(error) => app.error = Some(error.to_string()),
         }
+        let restore_error = app.error.take();
         app.reconcile_clips_folder();
+        if app.error.is_none() {
+            app.error = restore_error;
+        }
         app
     }
 
@@ -570,18 +574,9 @@ impl ClipCraftApp {
         });
     }
 
-    /// Rescans the restored folder so clips deleted since last launch show as offline. If the
-    /// folder cannot be read (for example an unplugged drive), every remembered clip is offline.
+    /// Refresh asynchronously; an unavailable tree retains the previous indexed view.
     fn refresh_restored_library(&mut self) {
         self.scan_library();
-        if self.error.is_none() {
-            return;
-        }
-        if let Some(library) = self.library.as_mut() {
-            for entry in &mut library.entries {
-                entry.offline = true;
-            }
-        }
     }
 
     fn top_bar(&mut self, context: &egui::Context) {
@@ -968,6 +963,16 @@ impl ClipCraftApp {
         });
         ui.add_space(10.0);
 
+        if self.scanning.is_some() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(RichText::new("Scanning clips and subfolders…").color(MUTED));
+                if ui.button("Cancel scan").clicked() {
+                    self.scanning = None;
+                }
+            });
+            ui.add_space(8.0);
+        }
         if let Some(job) = self.finding.as_ref() {
             ui.label(
                 RichText::new(format!("Looking for {}\u{2026}", job.name))
@@ -1486,9 +1491,6 @@ impl ClipCraftApp {
     }
 
     fn settings(&mut self, ui: &mut egui::Ui) {
-        if self.settings_tab == SettingsTab::Advanced && !self.recording.show_advanced {
-            self.settings_tab = SettingsTab::General;
-        }
         let height = ui.available_height().max(0.0);
         let nav_width = 210.0_f32.min(ui.available_width() * 0.35).max(0.0);
         ui.horizontal_top(|ui| {
@@ -1504,6 +1506,7 @@ impl ClipCraftApp {
                 Layout::top_down(Align::Min),
                 |ui| {
                     egui::ScrollArea::vertical()
+                        .id_salt(("settings-content", self.settings_tab.label()))
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             let column = (content_width - 40.0).clamp(0.0, 640.0);
@@ -1524,7 +1527,6 @@ impl ClipCraftApp {
     fn settings_nav(&mut self, ui: &mut egui::Ui) {
         ui.set_width(ui.available_width());
         ui.add_space(8.0);
-        let advanced = self.recording.show_advanced;
         let groups: [(&str, Vec<SettingsTab>); 2] = [
             (
                 "Settings",
@@ -1537,15 +1539,12 @@ impl ClipCraftApp {
             ),
             (
                 "Recording",
-                [
+                vec![
                     SettingsTab::Games,
                     SettingsTab::Capture,
                     SettingsTab::Quality,
                     SettingsTab::Audio,
-                ]
-                .into_iter()
-                .chain(advanced.then_some(SettingsTab::Advanced))
-                .collect(),
+                ],
             ),
         ];
         for (group, tabs) in groups {
@@ -1683,7 +1682,6 @@ impl ClipCraftApp {
             }
             SettingsTab::Quality => settings::quality_tab(ui, &mut working, &self.capture.gpu),
             SettingsTab::Audio => settings::audio_tab(ui, &mut working, &mut self.settings_state),
-            SettingsTab::Advanced => settings::advanced_tab(ui, &mut working),
             SettingsTab::About => settings::about_tab(ui),
         }
         self.apply_recording(before, working);
@@ -1761,15 +1759,6 @@ impl ClipCraftApp {
         if browse {
             self.choose_library_folder();
         }
-        card(ui, "Advanced", |ui| {
-            toggle_row(
-                ui,
-                "Show advanced settings",
-                "Adds an Advanced section with picture, encoder and audio details.",
-                &mut working.show_advanced,
-                true,
-            );
-        });
         settings::startup_card(ui, working);
         card(ui, "Help", |ui| {
             setting_row(
@@ -1792,6 +1781,15 @@ impl ClipCraftApp {
                         self.diagnostics_copied = Some(std::time::Instant::now());
                     }
                 },
+            );
+        });
+        card(ui, "Advanced", |ui| {
+            toggle_row(
+                ui,
+                "Show advanced settings",
+                "Show extra controls at the bottom of Games, Capture, Quality and Audio.",
+                &mut working.show_advanced,
+                true,
             );
         });
     }
@@ -1860,36 +1858,6 @@ impl ClipCraftApp {
         }) {
             Ok(CommandOutput::RecordingSettings(stored)) => self.recording = *stored,
             Ok(_) => {}
-            Err(error) => self.error = Some(error.to_string()),
-        }
-    }
-
-    fn scan_library(&mut self) {
-        self.error = None;
-        let directory = PathBuf::from(self.directory_text.trim());
-        let command = match self.index_path.clone() {
-            Some(index_path) => Command::RefreshLibrary {
-                directory,
-                index_path,
-            },
-            None => Command::ScanLibrary { directory },
-        };
-        match execute(command) {
-            Ok(CommandOutput::LibraryScan(result)) => {
-                if self.index_path.is_some() && !result.persisted {
-                    self.error = Some(EngineError::IndexSaveFailed.to_string());
-                }
-                if self.directory_text != result.directory {
-                    self.probe_attempted.clear();
-                }
-                self.directory_text = result.directory.clone();
-                self.library = Some(result);
-                self.needs_probe = true;
-                self.needs_thumbnails = true;
-            }
-            Ok(_) => {
-                self.error = Some("The library scan returned an unexpected result.".to_owned());
-            }
             Err(error) => self.error = Some(error.to_string()),
         }
     }
@@ -2804,12 +2772,26 @@ mod tests {
             favorite: false,
             tags: Vec::new(),
             game: None,
+            recorded_game: None,
             collections: Vec::new(),
             probe: None,
         }
     }
 
-    fn temporary_directory() -> PathBuf {
+    fn finish_scan(app: &mut ClipCraftApp) {
+        let context = egui::Context::default();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while app.scanning.is_some() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "scan worker timed out"
+            );
+            app.poll_library_scan(&context);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    pub(crate) fn temporary_directory() -> PathBuf {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
         let directory = std::env::temp_dir().join(format!(
             "clipcraft-ui-test-{}-{}",
@@ -2834,6 +2816,7 @@ mod tests {
         let mut app = ClipCraftApp::restored_from(Some(index_path.clone()));
         app.directory_text = clips.to_string_lossy().into_owned();
         app.scan_library();
+        finish_scan(&mut app);
         let hades = clips
             .join("Hades 2024.01.01.mp4")
             .to_string_lossy()
@@ -2892,6 +2875,7 @@ mod tests {
         );
         // Choosing a library folder also chooses where clips are saved.
         app.set_library_folder(Some(directory.clone()));
+        finish_scan(&mut app);
         assert_eq!(app.clips_folder(), Some(directory.clone()));
         assert_eq!(
             PathBuf::from(&app.recording.capture_folder),
@@ -3018,6 +3002,7 @@ mod tests {
 
         let mut app = ClipCraftApp::default();
         app.set_library_folder(Some(directory.clone()));
+        finish_scan(&mut app);
         assert_eq!(app.directory_text, directory.to_string_lossy());
         assert_eq!(
             app.library.as_ref().map(|result| result.entries.len()),
@@ -3027,6 +3012,7 @@ mod tests {
 
         app.error = Some("prior message".to_owned());
         app.set_library_folder(None);
+        finish_scan(&mut app);
         assert_eq!(app.directory_text, directory.to_string_lossy());
         assert_eq!(
             app.library.as_ref().map(|result| result.entries.len()),
@@ -3049,10 +3035,12 @@ mod tests {
         let mut first = ClipCraftApp::restored_from(Some(index_path.clone()));
         assert!(first.library.is_none());
         first.set_library_folder(Some(clips.clone()));
+        finish_scan(&mut first);
         assert_eq!(first.error, None);
 
         fs::remove_file(clips.join("gone.mp4")).expect("remove clip");
-        let second = ClipCraftApp::restored_from(Some(index_path.clone()));
+        let mut second = ClipCraftApp::restored_from(Some(index_path.clone()));
+        finish_scan(&mut second);
         assert_eq!(second.directory_text, clips.to_string_lossy());
         assert_eq!(second.library.as_ref().map(|l| l.entries.len()), Some(2));
         let entries = &second.library.as_ref().expect("library").entries;
@@ -3061,7 +3049,8 @@ mod tests {
 
         // An unreadable folder marks every remembered clip offline instead of hiding them.
         fs::remove_dir_all(&clips).expect("remove clips folder");
-        let unplugged = ClipCraftApp::restored_from(Some(index_path.clone()));
+        let mut unplugged = ClipCraftApp::restored_from(Some(index_path.clone()));
+        finish_scan(&mut unplugged);
         let entries = &unplugged.library.as_ref().expect("library").entries;
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().all(|entry| entry.offline));
@@ -3109,6 +3098,7 @@ mod tests {
 
         let mut app = ClipCraftApp::restored_from(Some(index_path.clone()));
         app.set_library_folder(Some(clips));
+        finish_scan(&mut app);
         let path = clip.to_string_lossy().into_owned();
         app.probe_generation = 7;
 
@@ -3318,8 +3308,12 @@ mod tests {
             app.collection_edit = None;
             app.page = Page::Settings;
 
-            // Every settings tab, with the advanced section on and custom quality shown.
+            // Every settings tab, with its advanced controls on and custom quality shown.
             app.recording.show_advanced = true;
+            app.recording.game_rules = vec![clipcraft_engine::GameMatchRule::new(
+                "A custom game",
+                ["custom-game.exe"],
+            )];
             app.recording.quality = clipcraft_engine::QualityMode::Custom;
             app.recording.push_to_talk = true;
             app.recording.hotkeys.save_clip.clear();
@@ -3327,10 +3321,10 @@ mod tests {
                 SettingsTab::General,
                 SettingsTab::Storage,
                 SettingsTab::Hotkeys,
+                SettingsTab::Games,
                 SettingsTab::Capture,
                 SettingsTab::Quality,
                 SettingsTab::Audio,
-                SettingsTab::Advanced,
                 SettingsTab::About,
             ] {
                 app.settings_tab = tab;
@@ -3416,15 +3410,19 @@ mod tests {
         app.selected = None;
         app.page = Page::Settings;
         app.recording.show_advanced = true;
+        app.recording.game_rules = vec![clipcraft_engine::GameMatchRule::new(
+            "A custom game",
+            ["custom-game.exe"],
+        )];
         app.recording.quality = clipcraft_engine::QualityMode::Custom;
         for tab in [
             SettingsTab::General,
             SettingsTab::Storage,
             SettingsTab::Hotkeys,
+            SettingsTab::Games,
             SettingsTab::Capture,
             SettingsTab::Quality,
             SettingsTab::Audio,
-            SettingsTab::Advanced,
             SettingsTab::About,
         ] {
             app.settings_tab = tab;

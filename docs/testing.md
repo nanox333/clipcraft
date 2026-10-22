@@ -48,6 +48,98 @@ edits; implementation changes require both.
 
 ## Required evidence by area
 
+### M4.1b — Recursive library and captured-game labels (2026-10-22)
+
+Built on performance branch revision `4dd91a7`. Engine/desktop tests cover nested game folders,
+stable ordering, whole-tree entry/result budgets, eight-level depth enforcement, skipped symlink
+cycles/aliases, non-UTF-8 paths, cancellation, duplicate scan payloads, backward-compatible index
+loading, metadata edits during traversal, and captured-game/manual-label priority across rescans
+and restarts. The unreadable-child test exercised actual Unix permission denial as the unprivileged
+Linux user, rather than relying on a privileged run. A generated recording verifies the SaveJob's
+game snapshot even when the original game string changes. Completed-save UI tests verify game
+counts, metadata-write failure warnings, preserved media, and the in-memory label fallback.
+
+The desktop worker replacement test submits 50 scans while retaining one worker thread. An egui
+keyboard/accessibility test traverses the real library controls with Tab, reaches the named
+**Cancel scan** button, activates it with Enter, and checks that cancellation leaves the old library
+intact. Existing UI layout/accessibility and library persistence tests remain enabled.
+
+Native UI evidence uses Xvfb at 1440×900 and four generated H.264 test-pattern clips: one in the
+root, two below `Hades/` (including a second-level session folder), and one below `Celeste/`.
+The previous build shows one clip; the rebuilt desktop and CLI find four. The Hades filter shows
+two. The root clip has a seeded `recorded_game` label solely to inspect its UI presentation;
+actual label assignment is exercised by the generated recording/completed-save tests above, not
+by a real game in this screenshot. Before/after/filter screenshots are kept outside Git at
+`.clipcraft-local/recursive-library/{before,after,filter}.png`.
+
+Run `cargo xtask ci` and `cargo xtask docs-check origin/codex/m2-p1-performance` for this branch.
+The full Linux gate passes. No Windows capture, game process or new Windows hardware result is
+claimed; filesystem traversal cannot interrupt an OS call already blocked on an unavailable drive.
+
+### M7.1a — Automatic known-game recognition (2026-10-22)
+
+The engine checks every catalog executable/Steam ID, case handling and launcher lookalikes.
+Default settings recognize known games with no custom registration. Custom names take priority,
+even over bundled Steam IDs; per-game exclusions and the global-off switch persist and leave
+custom rules intact. Tests cover start/stop arming from a recognized process fixture, no-rule
+idle, bounded/normalized exclusions, unknown/oversized requests, old settings defaults and reloads.
+The Games page participates in layout/accessibility checks; Tab/Enter can exclude CS2.
+
+Native Xvfb evidence at 1440×900 shows the automatic-recognition switch, searchable known-game
+checkboxes and custom override section. Before/after evidence remains ignored at
+`.clipcraft-local/game-catalog/`. Isolated CLI checks cover catalog listing, enable/disable,
+unknown-ID atomicity, bulk changes, and global on/off without modifying custom rules. The full
+Linux quality and documentation gates pass. No installed-game, Windows, anti-cheat, focused-window
+or new per-platform capture result is implied by these matching/UI/settings checks.
+
+### M7.1a — Full Vice catalog expansion (2026-10-22)
+
+All 347 title strings from Vice `7e4b2a3` were compared with the rebuilt CLI's catalog;
+none are missing. The resulting list contains 348 entries including Bedrock, 672 process aliases
+and 311 Steam IDs. The original 20 stable IDs and their existing identification variants remain.
+Seven launcher/generic aliases are omitted as documented in game-catalog.md. No data from
+leinstay/steamdb is imported; its schema/license assessment is recorded in upstream-ports.md.
+
+The Linux `cargo xtask ci` gate passes with every bundled process/Steam identifier checked,
+case and lookalike handling, similar-title separation (Hades/Hades II), exact Steam-ID boundaries,
+custom overrides, global/per-game switches and malformed/oversized changes. A regression test
+excludes all 348 entries, normalizes and saves/reloads settings under the existing 64 KiB limit,
+checks every exclusion, and restores the list while preserving custom rules. The UI Tab/Enter
+checkbox test passes with the larger list. Isolated CLI checks also exercise `disable all`, an
+explicit 348-ID request, reload, unknown-ID atomicity, partial re-enabling and preserving global-off.
+
+Native 1440×900 Xvfb screenshots before/after expansion and a Hades search are ignored at
+`.clipcraft-local/game-catalog/vice-{before,all,search}.png`. They establish layout, the dynamic
+348-game count and search presentation, not installed-game identification or capture compatibility.
+The documentation gate and `git diff --check` pass. Windows/live-game and reference-machine idle
+performance remain unverified; catalog metadata is not a hardware-support claim.
+
+### M4.1c — Category-local advanced settings and custom-game form (2026-10-22)
+
+The persisted General switch now discloses extra controls at the bottom of Games, Capture,
+Quality and Audio; there is no Advanced navigation category. Regression coverage verifies each
+category's controls and **Advanced settings** heading appear only when enabled. Tab/Enter toggles
+the General switch, adds an exact custom rule, hides its editor again and verifies the rule still
+matches. Selecting a non-Steam process after a Steam process clears the stale app ID while keeping
+a manually entered name. Existing all-screen layout/accessibility tests now include saved custom
+rules as well as the add form, covering sizes from 1×1 to 6000×4000. These checks verify safe layout
+and accessible names; they are not a claim that sub-minimum native window sizes are supported.
+
+Native Xvfb inspection at 1440×900 verifies the switch is last in General, the basic Games page
+omits custom editing, and Games/Capture/Quality/Audio each have a divider and heading before their
+extra controls. Before/after screenshots, including the final flat form (`games-flat.png`), existing-rule sections
+and error states are ignored under
+`.clipcraft-local/advanced-settings/`. A 960×900 native screenshot checks the supported narrow
+window; the form uses separate padded fields and spacing in both sizes. Native keyboard interaction
+corrects an invalid Steam ID, sets exact process matching and submits the form. Inspecting the
+isolated saved preferences confirms the rule survives hiding its advanced editor.
+
+`cargo xtask ci`, `cargo xtask docs-check origin/codex/m2-p1-performance`, and `git diff --check`
+pass. This is settings disclosure/layout work; no new capture, Windows, game or audio-hardware
+compatibility evidence is implied. The existing version-1 settings and shared save command remain.
+
+### Other areas
+
 The offline CPU benchmark is `cargo run --release -p clipcraft-record --example performance`.
 It measures patterned-frame conversion, a 60-second encoded-video snapshot and long-GOP replay
 insertion. See [performance.md](performance.md) for the machine, method, measured baseline and

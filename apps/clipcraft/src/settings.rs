@@ -51,9 +51,22 @@ pub struct SettingsState {
     game_name_draft: String,
     game_process_draft: String,
     game_steam_id_draft: String,
+    game_exact_draft: bool,
+    builtin_game_search: String,
+    game_preset_error: Option<String>,
 }
 
 impl SettingsState {
+    fn select_game_process(&mut self, process: &clipcraft_platform::RunningProcess) {
+        self.selected_game_process = Some(process.clone());
+        self.game_process_draft = process.executable.clone();
+        // Selecting an app without Steam metadata must not retain another game's ID.
+        self.game_steam_id_draft = process.steam_app_id.clone().unwrap_or_default();
+        if self.game_name_draft.trim().is_empty() {
+            self.game_name_draft = display_game_name(&process.executable);
+        }
+    }
+
     pub(crate) fn set_game_processes(
         &mut self,
         result: Result<Vec<clipcraft_platform::RunningProcess>, String>,
@@ -646,6 +659,9 @@ pub fn quality_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, gpu: &Gp
             },
         );
     });
+    if settings.show_advanced {
+        advanced_quality(ui, settings);
+    }
 }
 
 /// What the chosen video encoder means on this computer.
@@ -799,6 +815,9 @@ pub fn capture_tab(
             true,
         );
     });
+    if settings.show_advanced {
+        advanced_capture(ui, settings);
+    }
 }
 
 /// Process rules that are allowed to start the replay buffer.
@@ -811,14 +830,14 @@ pub fn games_tab(
     card(ui, "Game-aware capture", |ui| {
         toggle_row(
             ui,
-            "Arm replay only for selected games",
+            "Arm replay only for recognized games",
             "The replay buffer stays stopped until a matching game process and capturable window are found.",
             &mut settings.game_only_capture,
             true,
         );
-        if settings.game_only_capture && settings.game_rules.is_empty() {
+        if settings.game_only_capture && !settings.has_game_rules() {
             ui.label(
-                RichText::new("Add a game below before automatic capture can start.")
+                RichText::new(if settings.show_advanced { "Enable built-in recognition or add a custom game below." } else { "Enable built-in recognition, or turn on advanced settings in General to add a custom game." })
                     .color(FAINT)
                     .size(12.5),
             );
@@ -833,10 +852,180 @@ pub fn games_tab(
         }
     });
 
-    card(ui, "Add a game", |ui| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Running app").color(TEXT).size(13.0));
-            if ui.button("Refresh list").clicked() {
+    card(ui, "Known games", |ui| {
+        toggle_row(
+            ui,
+            "Recognize known games automatically",
+            "Built-in game detection works without adding games manually. Custom rules take priority.",
+            &mut settings.detect_built_in_games,
+            true,
+        );
+        ui.add_space(8.0);
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut state.builtin_game_search)
+                .hint_text("Search known games")
+                .char_limit(100)
+                .desired_width(f32::INFINITY),
+        );
+        kit::name_text_box(&response, "Search known games", &state.builtin_game_search);
+        let query = state.builtin_game_search.trim().to_lowercase();
+        let mut change = None;
+        let mut found = 0;
+        egui::ScrollArea::vertical()
+            .id_salt("known-games-list")
+            .max_height(180.0)
+            .show(ui, |ui| {
+                for game in clipcraft_engine::built_in_games() {
+                    if !game.name.to_lowercase().contains(&query) && !game.id.contains(&query) {
+                        continue;
+                    }
+                    found += 1;
+                    let mut included = !settings
+                        .disabled_builtin_games
+                        .iter()
+                        .any(|id| id == game.id);
+                    if ui.checkbox(&mut included, game.name).changed() {
+                        change = Some((game.id.to_owned(), included));
+                    }
+                }
+            });
+        if found == 0 {
+            ui.label(
+                RichText::new(if settings.show_advanced { "No known games match. You can add a custom rule below." } else { "No known games match. Enable advanced settings in General to add a custom game." })
+                    .color(FAINT)
+                    .size(12.5),
+            );
+        }
+        if let Some((id, enabled)) = change {
+            state.game_preset_error = set_game_presets(settings, vec![id], enabled)
+                .err()
+                .map(|error| error.to_string());
+        }
+        if let Some(error) = &state.game_preset_error {
+            ui.label(RichText::new(error).color(DANGER).size(12.5));
+        }
+        ui.add_space(5.0);
+        ui.label(
+            RichText::new(if settings.detect_built_in_games {
+                format!(
+                    "{} built-in games. Uncheck a game to exclude it from automatic recognition.",
+                    clipcraft_engine::built_in_games().len()
+                )
+            } else {
+                "Built-in recognition is off. Custom rules still apply.".to_owned()
+            })
+            .color(MUTED)
+            .size(12.5),
+        );
+    });
+
+    if !settings.show_advanced && !settings.game_rules.is_empty() {
+        ui.label(
+            RichText::new(format!(
+                "Custom game rules active: {}. Enable advanced settings in General to edit them.",
+                settings.game_rules.len()
+            ))
+            .color(MUTED)
+            .size(12.5),
+        );
+    }
+    if settings.show_advanced {
+        advanced_heading(ui);
+        refresh_processes = custom_games(ui, settings, state);
+    }
+    refresh_processes
+}
+
+/// Flat settings content with room between fields; inputs keep their own borders.
+fn game_form_section(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
+    ui.scope(|ui| {
+        ui.set_width(ui.available_width().max(0.0));
+        ui.spacing_mut().item_spacing = Vec2::new(16.0, 10.0);
+        ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0_f32, BORDER);
+        body(ui);
+    });
+}
+
+fn game_field(ui: &mut egui::Ui, label: &str, hint: &str, value: &mut String, limit: usize) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 7.0;
+        ui.label(
+            RichText::new(label)
+                .color(TEXT)
+                .size(13.0)
+                .family(kit::medium()),
+        );
+        let response = ui.add(
+            egui::TextEdit::singleline(value)
+                .hint_text(hint)
+                .char_limit(limit)
+                .margin(egui::vec2(10.0, 10.0))
+                .desired_width(f32::INFINITY),
+        );
+        kit::name_text_box(&response, label, value);
+    });
+}
+
+fn game_fields(
+    ui: &mut egui::Ui,
+    name: &mut String,
+    processes: &mut String,
+    steam_ids: &mut String,
+) {
+    if ui.available_width() >= 520.0 {
+        ui.columns(2, |columns| {
+            game_field(&mut columns[0], "Game name", "e.g. My game", name, 100);
+            game_field(
+                &mut columns[1],
+                "Process names",
+                "e.g. mygame.exe",
+                processes,
+                1600,
+            );
+        });
+    } else {
+        game_field(ui, "Game name", "e.g. My game", name, 100);
+        game_field(ui, "Process names", "e.g. mygame.exe", processes, 1600);
+    }
+    ui.label(
+        RichText::new("Use executable names, not file paths. Separate multiple names with commas.")
+            .color(MUTED)
+            .size(12.0),
+    );
+    ui.add_space(4.0);
+    game_field(ui, "Steam app IDs (optional)", "e.g. 730", steam_ids, 168);
+    ui.label(
+        RichText::new(
+            "Linux only. An exact Steam ID can distinguish games that share a process name.",
+        )
+        .color(MUTED)
+        .size(12.0),
+    );
+}
+
+fn custom_games(
+    ui: &mut egui::Ui,
+    settings: &mut RecordingSettings,
+    state: &mut SettingsState,
+) -> bool {
+    let mut refresh_processes = false;
+    game_form_section(ui, |ui| {
+        ui.label(
+            RichText::new("Add a custom game")
+                .color(TEXT)
+                .size(16.0)
+                .family(kit::semibold()),
+        );
+        ui.label(RichText::new("Add a game that is missing from the built-in list, or give it your own name. Custom rules take priority.").color(MUTED).size(12.5));
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new("Fill from a running app")
+                    .color(TEXT)
+                    .size(13.0)
+                    .family(kit::medium()),
+            );
+            if kit::labelled_button(ui, kit::Icon::Loop, "Refresh apps", false, true).clicked() {
                 refresh_processes = true;
             }
         });
@@ -844,12 +1033,11 @@ pub fn games_tab(
             ui.label(RichText::new(error).color(DANGER).size(12.5));
         } else if state.game_processes_loaded && state.game_processes.is_empty() {
             ui.label(
-                RichText::new("No running apps were found. You can enter a process name below.")
-                    .color(FAINT)
+                RichText::new("No running apps found. You can enter the details below.")
+                    .color(MUTED)
                     .size(12.5),
             );
         }
-
         let mut unique_processes = Vec::new();
         for process in &state.game_processes {
             if unique_processes
@@ -871,165 +1059,166 @@ pub fn games_tab(
         let selected_label = state
             .selected_game_process
             .as_ref()
-            .map(|process| match process.steam_app_id.as_deref() {
-                Some(id) => format!("{}  ·  Steam {id}", process.executable),
-                None => process.executable.clone(),
-            })
-            .unwrap_or_else(|| "Choose an app".to_owned());
-        egui::ComboBox::from_id_salt("game-process-picker")
-            .selected_text(selected_label)
-            .width(ui.available_width())
-            .show_ui(ui, |ui| {
-                for process in &unique_processes {
-                    let label = match process.steam_app_id.as_deref() {
-                        Some(id) => format!("{}  ·  Steam {id}", process.executable),
-                        None => process.executable.clone(),
-                    };
-                    if ui
-                        .selectable_label(
-                            state
-                                .selected_game_process
-                                .as_ref()
-                                .is_some_and(|selected| {
-                                    selected.executable == process.executable
-                                        && selected.steam_app_id == process.steam_app_id
-                                }),
-                            label,
-                        )
-                        .clicked()
-                    {
-                        state.selected_game_process = Some(process.clone());
-                        state.game_process_draft = process.executable.clone();
-                        if let Some(id) = process.steam_app_id.as_deref() {
-                            state.game_steam_id_draft = id.to_owned();
-                        }
-                        if state.game_name_draft.trim().is_empty() {
-                            state.game_name_draft = display_game_name(&process.executable);
+            .map(|process| process.executable.clone())
+            .unwrap_or_else(|| "Choose an app (optional)".to_owned());
+        ui.scope(|ui| {
+            ui.spacing_mut().interact_size.y = 36.0;
+            egui::ComboBox::from_id_salt("game-process-picker")
+                .selected_text(selected_label)
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    ui.set_max_width(560.0);
+                    if unique_processes.is_empty() {
+                        ui.label("Refresh apps to load the list, or enter a process name below.");
+                    }
+                    for process in &unique_processes {
+                        let label = match process.steam_app_id.as_deref() {
+                            Some(id) => format!("{}  ·  Steam {id}", process.executable),
+                            None => process.executable.clone(),
+                        };
+                        if ui
+                            .selectable_label(
+                                state.selected_game_process.as_ref() == Some(process),
+                                label,
+                            )
+                            .clicked()
+                        {
+                            state.select_game_process(process);
                         }
                     }
-                }
-            });
-
+                });
+        });
         ui.add_space(8.0);
-        ui.label(RichText::new("Game name").color(TEXT).size(13.0));
-        ui.add(
-            egui::TextEdit::singleline(&mut state.game_name_draft)
-                .hint_text("e.g. Counter-Strike 2")
-                .desired_width(f32::INFINITY),
-        );
-        ui.add_space(7.0);
-        ui.label(
-            RichText::new("Process name contains")
-                .color(TEXT)
-                .size(13.0),
-        );
-        ui.add(
-            egui::TextEdit::singleline(&mut state.game_process_draft)
-                .hint_text("e.g. cs2.exe")
-                .desired_width(f32::INFINITY),
-        );
-        ui.add_space(7.0);
-        ui.label(
-            RichText::new("Steam app ID (optional)")
-                .color(TEXT)
-                .size(13.0),
-        );
-        ui.add(
-            egui::TextEdit::singleline(&mut state.game_steam_id_draft)
-                .hint_text("e.g. 730")
-                .desired_width(f32::INFINITY),
-        );
+        divider(ui);
         ui.add_space(8.0);
-        let can_add = settings.game_rules.len() < 64
-            && !state.game_name_draft.trim().is_empty()
-            && (!parse_list(&state.game_process_draft).is_empty()
-                || !parse_list(&state.game_steam_id_draft).is_empty());
-        if ui
-            .add_enabled(can_add, egui::Button::new("Add to game list"))
-            .clicked()
-        {
-            let rule = GameMatchRule::new(
-                state.game_name_draft.trim(),
-                parse_list(&state.game_process_draft),
-            )
-            .with_steam_app_ids(parse_list(&state.game_steam_id_draft))
-            .sanitized();
-            if !rule.name.is_empty() && (!rule.needles.is_empty() || !rule.steam_app_ids.is_empty())
-            {
-                settings.game_rules.push(rule);
-                settings.game_rules.truncate(64);
-                state.game_name_draft.clear();
-                state.game_process_draft.clear();
-                state.game_steam_id_draft.clear();
-                state.selected_game_process = None;
-            }
-        }
-    });
-
-    card(ui, "Allowed games", |ui| {
-        if settings.game_rules.is_empty() {
-            ui.label(
-                RichText::new("No games added. Automatic capture remains idle.")
-                    .color(FAINT)
-                    .size(12.5),
+        ui.push_id("new-game", |ui| {
+            game_fields(
+                ui,
+                &mut state.game_name_draft,
+                &mut state.game_process_draft,
+                &mut state.game_steam_id_draft,
             );
+        });
+        ui.checkbox(&mut state.game_exact_draft, "Match whole process names")
+            .on_hover_text("When off, any process name containing the entered text can match.");
+        ui.add_space(6.0);
+        let mut rule = GameMatchRule::new(
+            state.game_name_draft.trim(),
+            parse_list(&state.game_process_draft),
+        )
+        .with_steam_app_ids(parse_list(&state.game_steam_id_draft))
+        .sanitized();
+        rule.exact_executable = state.game_exact_draft;
+        let invalid_steam_ids = parse_list(&state.game_steam_id_draft)
+            .iter()
+            .any(|id| id == "0" || id.len() > 20 || !id.bytes().all(|byte| byte.is_ascii_digit()));
+        let can_add = !invalid_steam_ids
+            && settings.game_rules.len() < 64
+            && !rule.name.is_empty()
+            && (!rule.needles.is_empty() || !rule.steam_app_ids.is_empty());
+        if kit::labelled_button(ui, kit::Icon::Plus, "Add custom game", true, can_add).clicked() {
+            settings.game_rules.push(rule);
+            state.game_name_draft.clear();
+            state.game_process_draft.clear();
+            state.game_steam_id_draft.clear();
+            state.game_exact_draft = false;
+            state.selected_game_process = None;
         }
         if settings.game_rules.len() >= 64 {
             ui.label(
-                RichText::new("The game list is full. Remove an entry before adding another.")
-                    .color(FAINT)
+                RichText::new(
+                    "The 64-game custom list is full. Remove a rule before adding another.",
+                )
+                .color(MUTED)
+                .size(12.5),
+            );
+        } else if invalid_steam_ids {
+            ui.label(
+                RichText::new("Steam app IDs must be nonzero numbers of at most 20 digits.")
+                    .color(DANGER)
+                    .size(12.5),
+            );
+        } else if !can_add {
+            ui.label(
+                RichText::new("Enter a game name and at least one process name or Steam ID.")
+                    .color(MUTED)
                     .size(12.5),
             );
         }
-        let mut remove = Vec::new();
-        for (index, rule) in settings.game_rules.iter_mut().enumerate() {
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut rule.name)
-                        .desired_width(150.0)
-                        .hint_text("Game name"),
-                );
-                let mut needles = rule.needles.join(", ");
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut needles)
-                            .desired_width(180.0)
-                            .hint_text("Process name"),
-                    )
-                    .changed()
-                {
-                    rule.needles = parse_list(&needles);
-                }
-                let mut app_ids = rule.steam_app_ids.join(", ");
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut app_ids)
-                            .desired_width(100.0)
-                            .hint_text("Steam ID"),
-                    )
-                    .changed()
-                {
-                    rule.steam_app_ids = parse_list(&app_ids);
-                }
-                if ui.small_button("Remove").clicked() {
-                    remove.push(index);
-                }
-            });
+    });
+    ui.add_space(22.0);
+    card(ui, "Custom games and overrides", |ui| {
+        if settings.game_rules.is_empty() {
+            ui.label(
+                RichText::new(
+                    "No custom rules yet. Known games are handled by the built-in list above.",
+                )
+                .color(MUTED)
+                .size(12.5),
+            );
         }
-        for index in remove.into_iter().rev() {
+        let mut remove = None;
+        for (index, rule) in settings.game_rules.iter_mut().enumerate() {
+            if index > 0 {
+                divider(ui);
+                ui.add_space(16.0);
+            }
+            ui.push_id(("custom-game", index), |ui| {
+                game_form_section(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            RichText::new(format!("Custom rule {}", index + 1))
+                                .color(MUTED)
+                                .size(12.5),
+                        );
+                        if kit::labelled_button(ui, kit::Icon::Trash, "Remove rule", false, true)
+                            .clicked()
+                        {
+                            remove = Some(index);
+                        }
+                    });
+                    let mut needles = rule.needles.join(", ");
+                    let mut app_ids = rule.steam_app_ids.join(", ");
+                    let before = (needles.clone(), app_ids.clone());
+                    game_fields(ui, &mut rule.name, &mut needles, &mut app_ids);
+                    if needles != before.0 {
+                        rule.needles = parse_list(&needles);
+                    }
+                    if app_ids != before.1 {
+                        rule.steam_app_ids = parse_list(&app_ids);
+                    }
+                    ui.checkbox(&mut rule.exact_executable, "Match whole process names")
+                        .on_hover_text(
+                            "When off, any process name containing the entered text can match.",
+                        );
+                });
+            });
+            ui.add_space(12.0);
+        }
+        if let Some(index) = remove {
             settings.game_rules.remove(index);
         }
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new(
-                "Process matching uses local executable names. Linux can also match the exact Steam app ID when Steam exposes it. Process names may be shared by more than one game, so prefer an app ID when needed.",
-            )
-            .color(MUTED)
-            .size(12.5),
-        );
     });
     refresh_processes
+}
+
+fn set_game_presets(
+    settings: &mut RecordingSettings,
+    ids: Vec<String>,
+    enabled: bool,
+) -> Result<(), clipcraft_engine::EngineError> {
+    let result = execute(Command::SetBuiltInGames {
+        settings: Box::new(settings.clone()),
+        ids,
+        enabled,
+    })?;
+    match result {
+        CommandOutput::RecordingSettings(updated) => {
+            *settings = *updated;
+            Ok(())
+        }
+        _ => Err(clipcraft_engine::EngineError::SettingsInvalid),
+    }
 }
 
 fn parse_list(value: &str) -> Vec<String> {
@@ -1324,6 +1513,9 @@ pub fn audio_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &mu
             },
         );
     });
+    if settings.show_advanced {
+        advanced_audio(ui, settings);
+    }
 }
 
 /// The microphone test: a button and a live level meter.
@@ -1820,7 +2012,22 @@ pub fn about_tab(ui: &mut egui::Ui) {
     });
 }
 
-pub fn advanced_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
+/// The advanced controls stay within their normal category, below its basic settings.
+fn advanced_heading(ui: &mut egui::Ui) {
+    ui.add_space(8.0);
+    divider(ui);
+    ui.add_space(22.0);
+    ui.label(
+        RichText::new("Advanced settings")
+            .color(TEXT)
+            .size(18.0)
+            .family(kit::semibold()),
+    );
+    ui.add_space(12.0);
+}
+
+fn advanced_capture(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
+    advanced_heading(ui);
     card(ui, "Video aspect ratio", |ui| {
         ui.add_space(8.0);
         let current = match (settings.shape, settings.framing) {
@@ -1871,6 +2078,10 @@ pub fn advanced_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
         }
         ui.add_space(8.0);
     });
+}
+
+fn advanced_quality(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
+    advanced_heading(ui);
     card(ui, "Encoder", |ui| {
         ui.add_space(8.0);
         for preset in EncoderPreset::ALL {
@@ -1904,6 +2115,10 @@ pub fn advanced_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
             },
         );
     });
+}
+
+fn advanced_audio(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
+    advanced_heading(ui);
     card(ui, "Audio", |ui| {
         setting_row(
             ui,
@@ -1938,15 +2153,6 @@ pub fn advanced_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
             },
         );
     });
-    card(ui, "Advanced settings", |ui| {
-        toggle_row(
-            ui,
-            "Show advanced settings",
-            "Turn off to hide this section again.",
-            &mut settings.show_advanced,
-            true,
-        );
-    });
 }
 
 /// The start-up switches shown on the General tab.
@@ -1967,4 +2173,291 @@ pub fn startup_card(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
             true,
         );
     });
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use super::*;
+    fn settings_frame(
+        app: &mut crate::ClipCraftApp,
+        context: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        context.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1440.0, 2400.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |context| {
+                crate::kit::apply_theme(context);
+                app.draw_screen(context);
+            },
+        )
+    }
+
+    fn category_controls(app: &mut crate::ClipCraftApp) -> Vec<String> {
+        let context = crate::kit::test_context();
+        context.enable_accesskit();
+        let mut controls = Vec::new();
+        for _ in 0..3 {
+            if let Some(update) = settings_frame(app, &context, Vec::new())
+                .platform_output
+                .accesskit_update
+            {
+                controls = update
+                    .nodes
+                    .into_iter()
+                    .map(|(_, node)| {
+                        node.label()
+                            .or_else(|| node.value())
+                            .unwrap_or_default()
+                            .to_owned()
+                    })
+                    .collect();
+            }
+        }
+        controls
+    }
+
+    fn keyboard_activate(app: &mut crate::ClipCraftApp, target: &str) {
+        let context = crate::kit::test_context();
+        context.enable_accesskit();
+        let mut names = std::collections::HashMap::new();
+        let mut reached = false;
+        for frame in 0..120 {
+            let key = if reached {
+                egui::Key::Enter
+            } else {
+                egui::Key::Tab
+            };
+            let events = if frame < 3 {
+                Vec::new()
+            } else {
+                [true, false]
+                    .into_iter()
+                    .map(|pressed| egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    })
+                    .collect()
+            };
+            let output = settings_frame(app, &context, events);
+            if reached {
+                return;
+            }
+            if let Some(update) = output.platform_output.accesskit_update {
+                for (id, node) in update.nodes {
+                    names.insert(
+                        id,
+                        node.label()
+                            .or_else(|| node.value())
+                            .unwrap_or_default()
+                            .to_owned(),
+                    );
+                }
+                reached = names.get(&update.focus).is_some_and(|name| name == target);
+            }
+        }
+        panic!("{target} was not reachable with Tab");
+    }
+
+    #[test]
+    fn advanced_controls_are_disclosed_in_their_own_categories_without_a_new_nav_item() {
+        let mut app = crate::ClipCraftApp {
+            page: crate::Page::Settings,
+            ..Default::default()
+        };
+        for show_advanced in [false, true] {
+            app.recording.show_advanced = show_advanced;
+            for (tab, control) in [
+                (crate::SettingsTab::Games, "Game name"),
+                (crate::SettingsTab::Capture, "Game aspect ratio"),
+                (crate::SettingsTab::Quality, EncoderPreset::ALL[0].label()),
+                (crate::SettingsTab::Audio, "48 kHz"),
+            ] {
+                app.settings_tab = tab;
+                let names = category_controls(&mut app);
+                assert_eq!(
+                    names.iter().any(|name| name == control),
+                    show_advanced,
+                    "{tab:?}: {names:?}"
+                );
+                assert_eq!(
+                    names.iter().any(|name| name == "Advanced settings"),
+                    show_advanced,
+                    "{tab:?}: advanced heading missing"
+                );
+                assert!(!names.iter().any(|name| name == "Advanced"));
+            }
+        }
+    }
+
+    #[test]
+    fn general_toggle_and_custom_game_creation_work_with_the_keyboard_and_hiding_preserves_rules() {
+        let mut app = crate::ClipCraftApp {
+            page: crate::Page::Settings,
+            ..Default::default()
+        };
+        keyboard_activate(&mut app, "Show advanced settings");
+        assert!(app.recording.show_advanced);
+        app.settings_tab = crate::SettingsTab::Games;
+        app.settings_state.builtin_game_search = "no-known-game-matches-this".to_owned();
+        app.settings_state.game_name_draft = "My local game".to_owned();
+        app.settings_state.game_process_draft = "local-game.exe".to_owned();
+        app.settings_state.game_exact_draft = true;
+        keyboard_activate(&mut app, "Add custom game");
+        assert_eq!(app.recording.game_rules.len(), 1);
+        assert_eq!(
+            app.recording.match_game("local-game.exe", None),
+            Some("My local game")
+        );
+        assert_eq!(app.recording.match_game("not-local-game.exe", None), None);
+        assert!(app.settings_state.game_name_draft.is_empty());
+        assert!(app.settings_state.game_process_draft.is_empty());
+        let rule = app.recording.game_rules[0].clone();
+        app.settings_tab = crate::SettingsTab::General;
+        keyboard_activate(&mut app, "Show advanced settings");
+        assert!(!app.recording.show_advanced);
+        app.settings_tab = crate::SettingsTab::Games;
+        assert!(
+            !category_controls(&mut app)
+                .iter()
+                .any(|name| name == "Game name")
+        );
+        assert_eq!(app.recording.game_rules, [rule]);
+        assert_eq!(
+            app.recording.match_game("local-game.exe", None),
+            Some("My local game")
+        );
+    }
+
+    #[test]
+    fn choosing_a_non_steam_process_clears_the_previous_games_steam_id() {
+        let mut state = SettingsState::default();
+        let mut process = clipcraft_platform::RunningProcess {
+            process_id: 1,
+            executable: "first-game.exe".to_owned(),
+            steam_app_id: Some("730".to_owned()),
+        };
+        state.select_game_process(&process);
+        assert_eq!(state.game_steam_id_draft, "730");
+        state.game_name_draft = "My chosen name".to_owned();
+        process.executable = "second-game.exe".to_owned();
+        process.steam_app_id = None;
+        state.select_game_process(&process);
+        assert!(state.game_steam_id_draft.is_empty());
+        assert_eq!(state.game_process_draft, "second-game.exe");
+        assert_eq!(state.game_name_draft, "My chosen name");
+    }
+
+    #[test]
+    fn a_known_game_can_be_disabled_with_tab_and_enter() {
+        let context = crate::kit::test_context();
+        context.enable_accesskit();
+        let mut app = crate::ClipCraftApp {
+            page: crate::Page::Settings,
+            settings_tab: crate::SettingsTab::Games,
+            ..Default::default()
+        };
+        let mut names = std::collections::HashMap::new();
+        let mut reached = false;
+        for frame in 0..100 {
+            let key = if reached {
+                egui::Key::Enter
+            } else {
+                egui::Key::Tab
+            };
+            let events = if frame < 3 {
+                Vec::new()
+            } else {
+                vec![
+                    egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: false,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]
+            };
+            let output = context.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1440.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |context| {
+                    crate::kit::apply_theme(context);
+                    app.draw_screen(context);
+                },
+            );
+            if reached {
+                break;
+            }
+            if let Some(update) = output.platform_output.accesskit_update {
+                for (id, node) in update.nodes {
+                    names.insert(
+                        id,
+                        node.label()
+                            .or_else(|| node.value())
+                            .unwrap_or_default()
+                            .to_owned(),
+                    );
+                }
+                reached = names
+                    .get(&update.focus)
+                    .is_some_and(|label| label == "Counter-Strike 2");
+            }
+        }
+        assert!(reached, "Known game checkbox was not reachable with Tab");
+        assert!(
+            app.recording
+                .disabled_builtin_games
+                .iter()
+                .any(|id| id == "cs2")
+        );
+        assert!(app.recording.game_rules.is_empty());
+        assert_eq!(app.recording.match_game("cs2.exe", None), None);
+        assert_eq!(
+            app.recording.match_game("Wow.exe", None),
+            Some("World of Warcraft")
+        );
+    }
+
+    #[test]
+    fn the_settings_action_changes_exclusions_atomically_and_preserves_custom_rules() {
+        let mut settings = RecordingSettings::default();
+        settings
+            .game_rules
+            .push(GameMatchRule::new("My CS name", ["cs2.exe"]));
+        let before = settings.clone();
+        assert!(
+            set_game_presets(&mut settings, vec!["cs2".into(), "bad-id".into()], false).is_err()
+        );
+        assert_eq!(settings, before);
+        set_game_presets(&mut settings, vec!["cs2".into()], false).unwrap();
+        assert_eq!(settings.game_rules, before.game_rules);
+        assert!(settings.disabled_builtin_games.iter().any(|id| id == "cs2"));
+        // Excluding a built-in does not suppress an explicit custom override.
+        assert_eq!(settings.match_game("cs2.exe", None), Some("My CS name"));
+        set_game_presets(&mut settings, vec!["cs2".into()], true).unwrap();
+        assert!(settings.disabled_builtin_games.is_empty());
+    }
 }

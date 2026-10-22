@@ -40,6 +40,12 @@ not a formal clean-room implementation.
   `medium` and `semibold` families (egui has no synthetic bold). egui's own fonts stay behind it
   as fallbacks for symbols and emoji. It covers Latin, Greek and Cyrillic; CJK, Arabic and Thai
   titles are not covered yet (see the shared `craft-fonts` repo for candidates).
+- **Settings disclosure:** General's final `show_advanced` switch reveals bottom sections under
+  an **Advanced settings** heading in Games (custom rules), Capture (framing), Quality (encoder
+  effort/keyframes) and Audio (sample rate/channels). Navigation stays fixed; hidden values and
+  rules are preserved. Categories retain independent scroll state. Custom-game forms share a flat
+  layout with padded, responsive fields and no enclosing card; preferences still use the shared
+  engine save command. See [settings.md](settings.md).
 - **Look and feel:** `apps/clipcraft/src/kit.rs` holds the palette, the egui theme, painted icons and
   shared widgets (buttons, chips, pill menus, sliders, gradients). Icons are drawn from strokes and
   polygons, not text glyphs, because egui's bundled fonts miss many symbols. Every computed width is
@@ -72,7 +78,14 @@ not a formal clean-room implementation.
 - **Media and library:** video files remain normal local media files. A rebuildable, versioned local
   index stores small library metadata such as title, tags, favorites, and thumbnail paths. Caches
   and replay segments are disposable app data. There is no user-facing editor-project format in
-  the MVP.
+  the MVP. Library traversal is bounded to eight child levels, 20,000 entries and 5,000 videos,
+  skipping symlinks. One desktop worker accepts one replaceable pending scan and supports cooperative
+  cancellation; completed scans merge on the UI thread through `library.store_scan`, preserving
+  edits made while traversing. CLI `library.scan` / `library.refresh` use the same scanner.
+  `library.register_recording` stores `recorded_game` separately from the manual game override;
+  `SaveJob` snapshots this label at Save time, including post-roll. Only successful saves register
+  metadata, and metadata errors cannot undo the saved media. The optional index field defaults to
+  absent for existing version-1 indexes. Game priority is manual, recorded, folder, filename.
 - **Replay:** a bounded encoded-segment ring with explicit duration/byte limits. Saving snapshots
   segment references atomically, handles post-roll, and reports any required keyframe re-encode.
 - **Edit/export:** `clipcraft-export` offers sample-copy trim (`clip.trim`) and software H.264
@@ -90,7 +103,15 @@ not a formal clean-room implementation.
   state; `clipcraft-platform` observes local processes and resolves X11/Windows game windows by
   process ID. The app polls every two seconds only when Game-only mode is enabled, arms the bounded
   replay buffer for a matching process, and stops it when that process exits. Rules are local and
-  user-managed; no Vice game database is included. Wayland process-to-window lookup and macOS
+  custom-first: explicit custom rules override the automatic 348-game catalog. Built-in matching
+  checks exact Linux Steam IDs then exact executable basenames. `detect_built_in_games` defaults
+  on; `disabled_builtin_games` stores per-entry exclusions changed through `recording.set_builtin_games`.
+  Legacy custom substring rules remain valid. All 347 Vice titles are bundled as Rust identification
+  data with existing ClipCraft variants and the Bedrock entry; launcher/generic aliases are omitted.
+  Bulk exclusions are capped at 1,024 IDs, independently of the 64 custom-rule limit. See
+  [ADR 0015](adr/0015-automatic-known-game-recognition.md) for defaults/migration and
+  [game-catalog.md](game-catalog.md) for provenance and limits.
+  Wayland process-to-window lookup and macOS
   capture are not supported yet, and real Windows/game evidence remains open in `gaps.md`.
 - **Audio timeline policy:** `clipcraft-record::audio_timeline` aligns timestamped native audio
   packets. The current `AudioSource` mixer remains clock-driven and does not call this helper until
