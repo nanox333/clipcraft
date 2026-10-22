@@ -284,8 +284,9 @@ still needs measurement. Estimate: initial implementation complete, remaining co
 ### M5.1 — Recovery, installer, and performance gate
 
 **Status:** partial — crash and full-disk recovery, Linux package, diagnostics, keyboard access, and
-short resource soak are implemented. Signed Windows/macOS installers, two-hour soak, real screen
-reader, real-device audio, and reference-PC performance evidence remain open; see
+resource soaks are implemented, including a passed two-hour Windows/AMD generated-window 1080p30
+run. Signed Windows/macOS installers, 1080p60, real screen reader, real-device audio, and broader
+reference-PC performance evidence remain open; see
 [`release-checklist.md`](release-checklist.md).
 
 **Requirements:** crash recovery, startup/device diagnostics, signed installer, keyboard access,
@@ -303,7 +304,9 @@ disabled, full disk, device loss, suspend/resume, and measured CPU/GPU/memory/po
 leases and CPU fallback. Generated-window AMD runs confirm zero CPU readbacks at matching dimensions;
 both native and CPU paths still encode about 32 fps when requesting 1080p60. See
 [the measurements](windows-performance.md). HDR/scaling, other GPUs, real-game frame times,
-GPU/power metrics, device-loss integration and the two-hour hardware soak remain open. M5.2 is partial.
+GPU/power comparisons and device-loss integration remain open. The two-hour Windows/AMD generated-window
+1080p30 soak passed with eight drops, zero restarts and 24 decoded clips; 1080p60 remains open.
+M5.2 is partial.
 
 **User problem:** full-frame transfers to CPU memory and CPU-side conversion can use processor time
 and GPU bandwidth while the user is playing. Reduce that work for supported capture and encoder

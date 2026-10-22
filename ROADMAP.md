@@ -1,6 +1,6 @@
 # ClipCraft roadmap
 
-**Stage:** active prototype · **Last reviewed:** 2026-10-21 · **Target:** offline-first, game-aware capture and local editing
+**Stage:** active prototype · **Last reviewed:** 2026-10-22 · **Target:** offline-first, game-aware capture and local editing
 
 ClipCraft is a pure-Rust, offline-first native desktop product. Capture, library, editing, and export
 must work offline. Optional user-configured client-side-encrypted backup is planned, with no
@@ -26,7 +26,8 @@ Performance work M2.P1 has synthetic CPU measurements for shared replay snapshot
 caching and redundant pixel-write removal. [The review](docs/performance.md) records the results
 and priorities across the workspace. Windows/AMD now has generated-window GPU-surface capture and
 encode evidence with zero CPU readbacks; [the report](docs/windows-performance.md) records the
-unresolved 1080p60 throughput limit. Real-game and two-hour hardware soak gates remain open.
+unresolved 1080p60 throughput limit. The two-hour Windows/AMD generated-window 1080p30 soak
+passed (verified 2026-10-22); real-game and 1080p60 release gates remain open.
 
 | ID | Status | Outcome |
 | --- | --- | --- |
@@ -35,7 +36,7 @@ unresolved 1080p60 throughput limit. Real-game and two-hour hardware soak gates 
 | M2 | 🟡 Linux pipeline and Windows generated-window evidence | Capture, replay, H.264 and save are tested on X11; Windows/AMD now has generated-window WGC-to-MP4 runs with generated audio. Windows hotkeys, real games, device loss and sustained 1080p60 remain unverified, so M2 is not complete |
 | M3 | 🟡 In progress | Microphone and system audio as AAC tracks, mixed or separate, mute/level/push-to-talk, sync against the picture clock, device-loss recovery: done and tested with generated sources; Linux system sound (PulseAudio/PipeWire) and post-roll are done too; real-device runs and macOS system sound are open |
 | M4 | 🟡 Partial | The clip-first library has search, sorting, persistence, thumbnails, favorites, collections, and game labels. Original-quality trim and local H.264 compression with estimated 10 MB, 25 MB, and custom targets are built; generated MP4/MKV tests cover decoding, audio sync, cancellation, and file preservation. Recursive scans, automatic game tagging, broader export formats, and reference-machine export measurements remain open |
-| M5 | 🟡 Software partial; hardware gates open | Crash/full-disk safety, resource-budget soak tools, simulated suspend/resume, keyboard focus, accessibility names, diagnostics and Linux packaging are implemented. Windows SDR D3D11 capture-to-MF encode has AMD generated-window evidence; 1080p60, two-hour hardware soak, device loss and broader GPU/platform support remain open. See the [release checklist](docs/release-checklist.md) |
+| M5 | 🟡 Software partial; hardware gates open | Crash/full-disk safety, resource-budget soak tools, simulated suspend/resume, keyboard focus, accessibility names, diagnostics and Linux packaging are implemented. Windows/AMD passed the two-hour generated-window 1080p30 GPU soak; 1080p60, real games, device loss and broader GPU/platform support remain open. See the [release checklist](docs/release-checklist.md) |
 | M6 | 🟡 Linux started | Linux: X11 capture, VA-API encoding, PulseAudio/PipeWire sound, and Wayland capture through the portal and PipeWire (ADR 0012; pieces tested, no real desktop chooser seen yet). macOS: not started |
 | M7 | 🟡 Game-only arming implemented; platform evidence open | Vice-inspired matching, a user-managed allowlist, process observation, and automatic replay arming are implemented. X11 has synthetic window-to-process coverage; Windows runtime, real-game behavior, Wayland matching, and library auto-tagging remain open |
 | M8 | ◷ Planned | Establish tested Windows/Linux/macOS desktop support through the shared Rust platform layer; run an Android screen-capture feasibility study without promising mobile support |

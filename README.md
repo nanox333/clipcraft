@@ -7,7 +7,8 @@ backend, backup, upload, sync, or share-link service.
 > **Status: active prototype.** The screen-capture/replay/save pipeline, playback, local library,
 > and basic trim-to-MP4 workflow are implemented. Their verification varies by platform: the
 > end-to-end capture pipeline is tested on Linux/X11 and with a generated window on Windows/AMD.
-> Windows 1080p60 throughput and the two-hour hardware soak remain open. See [`ROADMAP.md`](ROADMAP.md) and
+> Windows/AMD passed a two-hour generated-window 1080p30 soak; 1080p60 throughput remains open.
+> See [`ROADMAP.md`](ROADMAP.md) and
 > [`docs/gaps.md`](docs/gaps.md) for current evidence and limits.
 
 ClipCraft takes inspiration from Medal's capture-first workflow and compact dark interface. It

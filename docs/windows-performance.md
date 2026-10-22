@@ -98,19 +98,34 @@ A preliminary 1080p30 soak was stopped after 378 seconds to incorporate the expl
 reference fix. At 300 seconds it had encoded 8,981 frames, dropped 11, restarted zero times and
 held 17,045,644 replay bytes; its checkpoint decoded without error. That interrupted run is not
 a two-hour pass. Short comparison results above predate this thread-reference correction.
-The corrected build is running its own two-hour soak (`soak-agile-1080p30.txt`); completion remains
-open. A corrected-build 15-second 60 fps check encoded 473 frames, dropped 353, used zero CPU
-readbacks and reported workload p99 8.896 ms, consistent with the earlier throughput limitation.
-At its first five-minute checkpoint the corrected soak had encoded 8,992 frames, dropped eight,
-restarted zero times and held 17,587,985 replay bytes.
-At ten minutes it had encoded 17,992 frames with eight drops and zero restarts; both five- and
-ten-minute checkpoint clips decoded without error. The running binary's SHA-256 is
+The corrected build completed the full two-hour **1080p30** soak with exit code zero. Results were
+verified on 2026-10-22 from `soak-agile-1080p30.txt` and the saved media:
+
+| Measurement | Result |
+| --- | --- |
+| Captured / encoded / dropped | 216,000 / 215,992 / 8 (0.0037%) |
+| Restarts / capture pool drops | 0 / 0 |
+| CPU readbacks / CPU encoder inputs | 0 / 0 |
+| Native encoder submissions | 215,993 (final pipeline counter; recording status was sampled before stop) |
+| Peak / final sampled RSS | 177.77 / 118.62 MiB |
+| Mean sampled CPU, including generated workload | 33.89% of one logical core |
+| Peak sampled replay payload | 17,684,494 bytes (32 MiB budget) |
+| Saved and independently decoded files | 23 five-minute checkpoints plus final clip: 24 / 24 passed |
+| Largest audio/video duration difference | 14 ms; this does not measure perceptual sync |
+| egui update interval p50 / p95 / p99 | 6.059 / 7.233 / 8.156 ms, 1,187,240 samples |
+
+Every saved file contains 1920×1080 H.264 plus AAC and passed complete `ffmpeg -v error -xerror`
+decoding; `ffprobe` checked stream layouts and durations. This proves periodic replay saves over
+two hours, not a continuous two-hour output file. Resource statistics use 7,177 one-second samples;
+sampling is approximate. The running binary's SHA-256 was
 `08be09d85c1eaf967a2760c593d3f7fb7265a4f1d1ed71632a05a698af4ac336`.
 It predates the recorder drain-error propagation change and the rejection of resolutions that
 would leave a one-slot capture pool. Both have regression coverage; neither changes this 1080p
 capture/conversion/event-delivery path.
-CI and integration checks run concurrently,
-so soak timings are not an unloaded performance comparison.
+CI and integration checks ran concurrently during part of the soak, so its timings are not an
+unloaded performance comparison. A corrected-build 15-second 60 fps check encoded 473 frames,
+dropped 353, used zero CPU readbacks and reported update-interval p99 8.896 ms. The 1080p30
+reliability pass does not close that 1080p60 throughput gap.
 The explicit D3D11 integration test passed on this AMD device, including black/white/RGB/gray NV12
 agreement with the portable BT.709 converter within three code values, held-pixel preservation,
 pool exhaustion/reuse and resize. `ffprobe` identifies the matched native clip as 1920×1080 H.264,
@@ -129,4 +144,5 @@ layer and asset checks, and dependency license/source/ban checks) and
 `cargo xtask docs-check origin/main`. Tests ran serially with a workspace-local temporary directory;
 the pinned `cargo-deny` binary is under ignored `target/performance-tools`. The full gate log is
 `target/windows-performance-ci-reviewed.log`. The real D3D11 test also passed when explicitly run
-on this device. No two-hour, real-game, device-removal or other-vendor pass is implied.
+on this device. The two-hour pass is limited to the generated-window 1080p30 configuration above;
+no 1080p60, real-game, device-removal or other-vendor pass is implied.

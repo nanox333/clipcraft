@@ -1,6 +1,6 @@
 # Known gaps
 
-**Status:** active prototype · **Last reviewed:** 2026-10-21 · **Target:** local Windows capture-to-export alpha
+**Status:** active prototype · **Last reviewed:** 2026-10-22 · **Target:** local Windows capture-to-export alpha
 
 This is the ranked work list, not a parity claim. Capture, replay, playback, local library
 organization, and no-reencode trim export are implemented. Linux/X11 has end-to-end synthetic
@@ -16,7 +16,7 @@ feature's status, workaround, or evidence changes.
 | G2 | Game-only capture needs real platform evidence; library scan is non-recursive | Game-only mode, local process matching, exact Steam app IDs on Linux, manual pause, and X11/Windows process-to-window lookup are implemented. The X11 adapter has a synthetic-window test; no real game or Windows runtime has been tested. Wayland game-window matching is unavailable; library labels are not auto-tagged from the active capture game | Game arming is not yet proven on the user's desktop; clips still need manual/library filename game labels | M4/M7 |
 | G3 | Compressed export needs reference-machine measurements; broader output controls remain open | Original-quality trim and software H.264 size presets (10 MB, 25 MB, custom 1–500 MB) are built. Generated MP4/MKV fixtures verify decoding, audio sync, cancellation, actual-size reporting, and collision safety. Compression is at most 720p/30 fps, copies AAC audio, and estimates rather than guarantees size; 30/60-second throughput measurements on representative PCs remain open | Local small-file export is available; broader codec/quality controls and speed claims remain limited | M4.2/M4.3 |
 | G4 | macOS capture/audio is not implemented; Wayland capture is only partly verified | No ScreenCaptureKit/CoreAudio provider; Wayland portal and PipeWire pieces pass component tests but no real desktop chooser has delivered a frame | Limits supported-platform claims | M6 |
-| G5 | Real-device audio, soak, and performance evidence are incomplete | Windows/AMD capture now has generated-window and generated-audio runs. Real audio devices, real-game impact, two-hour hardware soak and device-loss integration remain open | Limits reliability and release claims | M3/M5 |
+| G5 | Real-device audio and broader performance evidence are incomplete | Windows/AMD passed a two-hour generated-window 1080p30 GPU soak: eight drops, zero restarts, all 24 saved clips decoded. Real audio devices, real-game impact, 1080p60 and device-loss integration remain open; see [results](windows-performance.md) | Limits reliability and release claims | M3/M5 |
 
 The core workflow exists and can be exercised locally on Linux/X11 with synthetic capture and audio.
 Do not mark platform support from compilation alone; attach evidence for the user workflow and
@@ -149,8 +149,10 @@ touches ClipCraft's own clips.
 - **Soak, suspend, and diagnostics** (see [release checklist](release-checklist.md)). A freeze of
   10 s or more in the pictures (the computer slept) starts the replay buffer over rather than
   leaving a frozen stretch in clips; `gap_restart_seconds` sets it. The soak tool measured
-  720p30 + sound at +21 to +26 MB memory after warm-up over 3 to 4 minutes; the two-hour run has
-  not been done. Tab moves a visible focus ring through every control and Enter activates; the
+  720p30 + sound at +21 to +26 MB memory after warm-up over 3 to 4 minutes. Windows/AMD also passed
+  a two-hour generated-window 1080p30 GPU soak: eight drops, zero restarts, 177.77 MiB peak RSS and
+  24 saved clips decoded; [details](windows-performance.md). The 1080p60 release gate remains open.
+  Tab moves a visible focus ring through every control and Enter activates; the
    Tab starts at the top bar, then the navigation rail, then the page.
   `clipcraft-cli diagnose` and Settings › General › Copy report list folders, screens, sound, and
   encoders. Screen-reader names are tested through the accessibility tree, not with a real screen
