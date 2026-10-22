@@ -45,7 +45,7 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   general settings are stored locally. [348 known games](docs/game-catalog.md) are recognized
   automatically, with per-game exclusions and a global switch in Settings › Games. The toggle at
   the bottom of General reveals clearly headed advanced sections within Games, Capture, Quality
-  and Audio. The [custom-game form](docs/settings.md) sits directly on the page with padded,
+  and Audio. The [custom-game form](docs/settings.md) is a card like every other settings section, with padded,
   responsive fields and is advanced-only. Custom rules take priority over the built-in catalog and can match executable-name substrings and exact
   Steam app IDs on Linux. The app and CLI expose local diagnostics; the CLI can also list capture
   targets, record for a set duration, inspect the library, and trim clips.

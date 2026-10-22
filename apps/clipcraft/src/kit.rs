@@ -17,6 +17,10 @@ pub const PANEL: Color32 = Color32::from_rgb(27, 27, 31);
 pub const CARD: Color32 = Color32::from_rgb(32, 32, 37);
 pub const CARD_HOVER: Color32 = Color32::from_rgb(41, 41, 47);
 pub const BORDER: Color32 = Color32::from_rgb(44, 44, 50);
+/// Quiet buttons and menus: lighter than a card so they stand out on one, with an outline.
+pub const CONTROL: Color32 = Color32::from_rgb(46, 46, 53);
+pub const CONTROL_HOVER: Color32 = Color32::from_rgb(58, 58, 66);
+pub const CONTROL_BORDER: Color32 = Color32::from_rgb(64, 64, 73);
 pub const TEXT: Color32 = Color32::from_rgb(240, 240, 244);
 pub const MUTED: Color32 = Color32::from_rgb(150, 150, 161);
 pub const FAINT: Color32 = Color32::from_rgb(92, 92, 102);
@@ -485,10 +489,18 @@ pub fn labelled_button_sized(
         (_, false, _) => (CARD, FAINT),
         (true, _, true) => (Color32::from_rgb(210, 255, 90), Color32::BLACK),
         (true, _, false) => (LIME, Color32::BLACK),
-        (false, _, true) => (CARD_HOVER, TEXT),
-        (false, _, false) => (CARD, TEXT),
+        (false, _, true) => (CONTROL_HOVER, TEXT),
+        (false, _, false) => (CONTROL, TEXT),
     };
     ui.painter().rect_filled(rect, 17.0, fill);
+    if !primary && enabled {
+        ui.painter().rect_stroke(
+            rect,
+            17.0,
+            Stroke::new(1.0_f32, CONTROL_BORDER),
+            egui::StrokeKind::Inside,
+        );
+    }
     draw_icon(
         ui.painter(),
         Pos2::new(rect.left() + 20.0, rect.center().y),
@@ -591,11 +603,17 @@ pub fn pill_menu(
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, label));
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
     let fill = if open || response.hovered() {
-        CARD_HOVER
+        CONTROL_HOVER
     } else {
-        CARD
+        CONTROL
     };
     ui.painter().rect_filled(rect, 16.0, fill);
+    ui.painter().rect_stroke(
+        rect,
+        16.0,
+        Stroke::new(1.0_f32, CONTROL_BORDER),
+        egui::StrokeKind::Inside,
+    );
     ui.painter().text(
         Pos2::new(rect.left() + 14.0, rect.center().y),
         Align2::LEFT_CENTER,

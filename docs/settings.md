@@ -30,10 +30,11 @@ notice when an active replay session needs new capture settings.
 5. Press **Add custom game**. The saved rule appears in an editable section below the form.
    Use **Remove rule** to remove it. Adding/removing rules changes local preferences, not media.
 
-The form sits directly on the settings page with no card background or enclosing border. It uses
-padded inputs, separate labels/help, and a full-width running-app picker. Game and
-process names sit side by side when space permits and stack in narrow windows. Existing rules use
-the same flat layout, separated by dividers rather than cards or a single crowded row. All
+Every settings tab uses one design: a bold heading above a rounded card whose rows are separated by
+dividers, in a centred column up to 720 px wide. The custom-game form is a card too, with padded inputs,
+separate labels/help and a full-width running-app picker; game and process names sit side by side when
+space permits and stack in narrow windows. Existing rules are rows in their own card. Games has a search
+box and a switch list. Checked on Linux (Xvfb) only; Windows and macOS are unverified. All
 controls have accessibility names and are reachable with Tab; Enter activates the General switch and add/remove actions.
 
 The add button stays disabled until a name and usable process/Steam identifier are provided.

@@ -1510,9 +1510,9 @@ impl ClipCraftApp {
                         .id_salt(("settings-content", self.settings_tab.label()))
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            let column = (content_width - 40.0).clamp(0.0, 640.0);
+                            let column = (content_width - 56.0).clamp(0.0, 720.0);
                             ui.horizontal_top(|ui| {
-                                ui.add_space(((content_width - column) / 2.0).clamp(0.0, 48.0));
+                                ui.add_space(((content_width - column) / 2.0).max(0.0));
                                 ui.vertical(|ui| {
                                     ui.set_width(column);
                                     self.settings_content(ui);
@@ -1583,15 +1583,20 @@ impl ClipCraftApp {
     }
 
     fn settings_content(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(14.0);
+        ui.add_space(22.0);
         ui.label(
             RichText::new(self.settings_tab.label())
                 .color(TEXT)
-                .size(24.0)
+                .size(28.0)
                 .family(kit::semibold()),
         );
-        ui.label(RichText::new(self.settings_tab.help()).color(MUTED));
-        ui.add_space(12.0);
+        ui.add_space(2.0);
+        ui.label(
+            RichText::new(self.settings_tab.help())
+                .color(MUTED)
+                .size(14.0),
+        );
+        ui.add_space(24.0);
         if self.capture.is_stale(&self.recording) {
             let mut restart = false;
             egui::Frame::new()
@@ -1685,15 +1690,7 @@ impl ClipCraftApp {
             SettingsTab::About => settings::about_tab(ui),
         }
         self.apply_recording(before, working);
-        ui.add_space(6.0);
-        ui.label(
-            RichText::new(
-                "All clips remain on this device. There is no cloud sync or hosted service.",
-            )
-            .color(FAINT)
-            .size(12.5),
-        );
-        ui.add_space(24.0);
+        ui.add_space(8.0);
     }
 
     fn general_settings(&mut self, ui: &mut egui::Ui, working: &mut RecordingSettings) {

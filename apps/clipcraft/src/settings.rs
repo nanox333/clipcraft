@@ -100,6 +100,41 @@ impl SettingsState {
     }
 }
 
+/// One known game in the list: its name and a switch for whether it is recognised. True when
+/// the row is clicked.
+fn game_row(ui: &mut egui::Ui, name: &str, included: bool) -> bool {
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 42.0), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, included, name)
+    });
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, 0.0, Color32::from_white_alpha(8));
+    }
+    ui.painter().text(
+        egui::pos2(rect.left() + 16.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::FontId::new(14.0, kit::medium()),
+        if included { TEXT } else { MUTED },
+    );
+    let switch = egui::Rect::from_center_size(
+        egui::pos2(rect.right() - 36.0, rect.center().y),
+        Vec2::new(40.0, 22.0),
+    );
+    paint_switch(ui.painter(), switch, included);
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 16.0, rect.bottom() - 1.0),
+            Vec2::new(rect.width() - 32.0, 1.0),
+        ),
+        0.0,
+        BORDER,
+    );
+    response.clicked()
+}
+
 /// One option of a row of choices. True when a different option is clicked. A disabled option
 /// explains itself on hover.
 pub(crate) fn choice(
@@ -166,16 +201,87 @@ pub(crate) fn toggle_chip(
     clicked && enabled
 }
 
-/// A small heading over a group of setting rows.
-pub(crate) fn card(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
+/// The heading over a group of settings.
+fn section_heading(ui: &mut egui::Ui, title: &str) {
     ui.label(
-        RichText::new(title.to_uppercase())
-            .color(FAINT)
-            .size(11.5)
+        RichText::new(title)
+            .color(TEXT)
+            .size(15.5)
             .family(kit::semibold()),
     );
+    ui.add_space(10.0);
+}
+
+/// A titled group of setting rows on a rounded surface. Every settings page is built from these,
+/// so spacing, edges and headings are the same everywhere.
+pub(crate) fn card(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
+    section_heading(ui, title);
+    egui::Frame::new()
+        .fill(kit::CARD)
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .corner_radius(egui::CornerRadius::same(14))
+        .inner_margin(egui::Margin::symmetric(20, 4))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            body(ui);
+        });
+    ui.add_space(28.0);
+}
+
+/// A titled group that draws its own surfaces, such as a row of option tiles.
+pub(crate) fn card_plain(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
+    section_heading(ui, title);
     body(ui);
-    ui.add_space(18.0);
+    ui.add_space(28.0);
+}
+
+/// Paints an on/off switch into `rect` (about 40 x 22).
+fn paint_switch(painter: &egui::Painter, rect: egui::Rect, on: bool) {
+    painter.rect_filled(
+        rect,
+        11.0,
+        if on {
+            LIME
+        } else {
+            Color32::from_rgb(62, 62, 69)
+        },
+    );
+    let knob_x = if on {
+        rect.right() - 11.0
+    } else {
+        rect.left() + 11.0
+    };
+    painter.circle_filled(
+        egui::pos2(knob_x, rect.center().y),
+        8.0,
+        if on { Color32::BLACK } else { Color32::WHITE },
+    );
+}
+
+/// A search box with a magnifying glass, in the same style as the other text inputs.
+pub(crate) fn search_box(ui: &mut egui::Ui, text: &mut String, hint: &str) -> egui::Response {
+    let mut response = None;
+    egui::Frame::new()
+        .fill(Color32::from_rgb(13, 13, 15))
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .corner_radius(egui::CornerRadius::same(10))
+        .inner_margin(egui::Margin::symmetric(12, 8))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (icon, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
+                kit::draw_icon(ui.painter(), icon.center(), kit::Icon::Search, MUTED, 0.75);
+                response = Some(
+                    ui.add(
+                        egui::TextEdit::singleline(text)
+                            .hint_text(hint)
+                            .frame(false)
+                            .char_limit(100)
+                            .desired_width(f32::INFINITY),
+                    ),
+                );
+            });
+        });
+    response.unwrap_or_else(|| ui.allocate_response(Vec2::ZERO, egui::Sense::hover()))
 }
 
 /// A row with a switch on the right.
@@ -198,26 +304,7 @@ pub(crate) fn toggle_row(ui: &mut egui::Ui, title: &str, help: &str, value: &mut
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *value, title)
         });
-        let fill = if *value {
-            LIME
-        } else {
-            Color32::from_rgb(62, 62, 69)
-        };
-        ui.painter().rect_filled(rect, 11.0, fill);
-        let knob_x = if *value {
-            rect.right() - 11.0
-        } else {
-            rect.left() + 11.0
-        };
-        ui.painter().circle_filled(
-            egui::pos2(knob_x, rect.center().y),
-            8.0,
-            if *value {
-                Color32::BLACK
-            } else {
-                Color32::WHITE
-            },
-        );
+        paint_switch(ui.painter(), rect, *value);
         if response.on_hover_text(title).clicked() {
             *value = !*value;
         }
@@ -242,13 +329,15 @@ pub(crate) fn percent_row(
     value: &mut u32,
     enabled: bool,
 ) {
-    ui.add_space(10.0);
+    ui.add_space(14.0);
     ui.label(
         RichText::new(title)
             .color(if enabled { TEXT } else { FAINT })
-            .size(13.5),
+            .size(14.5)
+            .family(kit::semibold()),
     );
     ui.label(RichText::new(help).color(MUTED).size(12.5));
+    ui.add_space(4.0);
     ui.horizontal(|ui| {
         let width = (ui.available_width() - 80.0).max(0.0);
         if let Some(next) = kit::slim_slider(ui, width, *value as f32 / 100.0, enabled, title) {
@@ -257,7 +346,27 @@ pub(crate) fn percent_row(
         ui.add_space(8.0);
         ui.label(RichText::new(format!("{value}%")).color(MUTED));
     });
-    ui.add_space(10.0);
+    ui.add_space(14.0);
+}
+
+/// A label on the left and its value on the right, for facts rather than settings.
+pub(crate) fn info_row(ui: &mut egui::Ui, label: &str, value: &str, last: bool) {
+    ui.add_space(14.0);
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(label)
+                .color(TEXT)
+                .size(14.5)
+                .family(kit::semibold()),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(RichText::new(value).color(MUTED).size(13.5));
+        });
+    });
+    ui.add_space(14.0);
+    if !last {
+        divider(ui);
+    }
 }
 
 /// One option of a radio list: a circle, a title, and a description. True when clicked.
@@ -506,7 +615,7 @@ fn clip_size_note(ui: &mut egui::Ui, settings: &RecordingSettings) {
 }
 
 pub fn quality_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, gpu: &GpuProbe) {
-    card(ui, "Recording quality", |ui| {
+    card_plain(ui, "Recording quality", |ui| {
         ui.add_space(10.0);
         let gap = 10.0;
         let width = (ui.available_width() - gap * 3.0) / 4.0;
@@ -677,7 +786,9 @@ fn encoder_help(chosen: VideoEncoder, gpu: &GpuProbe) -> String {
             format!("{name} encodes the video, which leaves your processor free for the game.")
         }
         (VideoEncoder::Gpu, GpuProbe::Unavailable(why)) => {
-            format!("This computer has no usable graphics-card encoder ({why}), so the processor is used.")
+            let _ = why;
+            "No graphics-card encoder was found on this computer, so the processor is used."
+                .to_owned()
         }
         (VideoEncoder::Gpu, _) => "Checking the graphics card\u{2026}".to_owned(),
     }
@@ -862,35 +973,42 @@ pub fn games_tab(
             &mut settings.detect_built_in_games,
             true,
         );
-        ui.add_space(8.0);
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut state.builtin_game_search)
-                .hint_text("Search known games")
-                .char_limit(100)
-                .desired_width(f32::INFINITY),
-        );
+        ui.add_space(4.0);
+        let response = search_box(ui, &mut state.builtin_game_search, "Search known games");
         kit::name_text_box(&response, "Search known games", &state.builtin_game_search);
+        ui.add_space(12.0);
         let query = state.builtin_game_search.trim().to_lowercase();
         let mut change = None;
         let mut found = 0;
-        egui::ScrollArea::vertical()
-            .id_salt("known-games-list")
-            .max_height(180.0)
+        egui::Frame::new()
+            .fill(Color32::from_rgb(22, 22, 26))
+            .stroke(Stroke::new(1.0_f32, BORDER))
+            .corner_radius(egui::CornerRadius::same(10))
             .show(ui, |ui| {
-                for game in clipcraft_engine::built_in_games() {
-                    if !game.name.to_lowercase().contains(&query) && !game.id.contains(&query) {
-                        continue;
-                    }
-                    found += 1;
-                    let mut included = !settings
-                        .disabled_builtin_games
-                        .iter()
-                        .any(|id| id == game.id);
-                    if ui.checkbox(&mut included, game.name).changed() {
-                        change = Some((game.id.to_owned(), included));
-                    }
-                }
+                ui.set_width(ui.available_width());
+                egui::ScrollArea::vertical()
+                    .id_salt("known-games-list")
+                    .max_height(300.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for game in clipcraft_engine::built_in_games() {
+                            if !game.name.to_lowercase().contains(&query)
+                                && !game.id.contains(&query)
+                            {
+                                continue;
+                            }
+                            found += 1;
+                            let included = !settings
+                                .disabled_builtin_games
+                                .iter()
+                                .any(|id| id == game.id);
+                            if game_row(ui, game.name, included) {
+                                change = Some((game.id.to_owned(), !included));
+                            }
+                        }
+                    });
             });
+        ui.add_space(10.0);
         if found == 0 {
             ui.label(
                 RichText::new(if settings.show_advanced { "No known games match. You can add a custom rule below." } else { "No known games match. Enable advanced settings in General to add a custom game." })
@@ -944,6 +1062,12 @@ fn game_form_section(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
         ui.set_width(ui.available_width().max(0.0));
         ui.spacing_mut().item_spacing = Vec2::new(16.0, 10.0);
         ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0_f32, BORDER);
+        ui.visuals_mut().extreme_bg_color = Color32::from_rgb(13, 13, 15);
+        let rounding = egui::CornerRadius::same(10);
+        ui.visuals_mut().widgets.inactive.corner_radius = rounding;
+        ui.visuals_mut().widgets.hovered.corner_radius = rounding;
+        ui.visuals_mut().widgets.active.corner_radius = rounding;
+        ui.visuals_mut().widgets.open.corner_radius = rounding;
         body(ui);
     });
 }
@@ -1011,113 +1135,115 @@ fn custom_games(
     state: &mut SettingsState,
 ) -> bool {
     let mut refresh_processes = false;
-    game_form_section(ui, |ui| {
-        ui.label(
-            RichText::new("Add a custom game")
-                .color(TEXT)
-                .size(16.0)
-                .family(kit::semibold()),
-        );
-        ui.label(RichText::new("Add a game that is missing from the built-in list, or give it your own name. Custom rules take priority.").color(MUTED).size(12.5));
-        ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
+    card(ui, "Add a custom game", |ui| {
+        game_form_section(ui, |ui| {
+            ui.add_space(14.0);
             ui.label(
-                RichText::new("Fill from a running app")
-                    .color(TEXT)
-                    .size(13.0)
-                    .family(kit::medium()),
+                RichText::new(
+                    "Add a game that is missing from the built-in list, or give it your own name. Custom rules take priority.",
+                )
+                .color(MUTED)
+                .size(12.5),
             );
-            if kit::labelled_button(ui, kit::Icon::Loop, "Refresh apps", false, true).clicked() {
-                refresh_processes = true;
-            }
-        });
-        if let Some(error) = state.game_process_error.as_ref() {
-            ui.label(RichText::new(error).color(DANGER).size(12.5));
-        } else if state.game_processes_loaded && state.game_processes.is_empty() {
-            ui.label(
-                RichText::new("No running apps found. You can enter the details below.")
-                    .color(MUTED)
-                    .size(12.5),
-            );
-        }
-        let mut unique_processes = Vec::new();
-        for process in &state.game_processes {
-            if unique_processes
-                .iter()
-                .any(|existing: &clipcraft_platform::RunningProcess| {
+            ui.add_space(12.0);
+            let mut unique_processes: Vec<clipcraft_platform::RunningProcess> = Vec::new();
+            for process in &state.game_processes {
+                if unique_processes.iter().any(|existing| {
                     existing
                         .executable
                         .eq_ignore_ascii_case(&process.executable)
                         && existing.steam_app_id == process.steam_app_id
+                }) {
+                    continue;
+                }
+                unique_processes.push(process.clone());
+                if unique_processes.len() >= 512 {
+                    break;
+                }
+            }
+            let selected_label = state
+                .selected_game_process
+                .as_ref()
+                .map(|process| process.executable.clone())
+                .unwrap_or_else(|| "Choose an app (optional)".to_owned());
+            let options: Vec<(String, bool)> = unique_processes
+                .iter()
+                .map(|process| {
+                    let label = match process.steam_app_id.as_deref() {
+                        Some(id) => format!("{}  \u{b7}  Steam {id}", process.executable),
+                        None => process.executable.clone(),
+                    };
+                    (label, true)
                 })
-            {
-                continue;
-            }
-            unique_processes.push(process.clone());
-            if unique_processes.len() >= 512 {
-                break;
-            }
-        }
-        let selected_label = state
-            .selected_game_process
-            .as_ref()
-            .map(|process| process.executable.clone())
-            .unwrap_or_else(|| "Choose an app (optional)".to_owned());
-        ui.scope(|ui| {
-            ui.spacing_mut().interact_size.y = 36.0;
-            egui::ComboBox::from_id_salt("game-process-picker")
-                .selected_text(selected_label)
-                .width(ui.available_width())
-                .show_ui(ui, |ui| {
-                    ui.set_max_width(560.0);
-                    if unique_processes.is_empty() {
-                        ui.label("Refresh apps to load the list, or enter a process name below.");
-                    }
-                    for process in &unique_processes {
-                        let label = match process.steam_app_id.as_deref() {
-                            Some(id) => format!("{}  ·  Steam {id}", process.executable),
-                            None => process.executable.clone(),
-                        };
-                        if ui
-                            .selectable_label(
-                                state.selected_game_process.as_ref() == Some(process),
-                                label,
-                            )
-                            .clicked()
-                        {
-                            state.select_game_process(process);
-                        }
+                .collect();
+            ui.horizontal(|ui| {
+                if let Some(index) =
+                    dropdown(ui, "Fill from a running app", &selected_label, &options)
+                    && let Some(process) = unique_processes.get(index)
+                {
+                    state.select_game_process(process);
+                }
+                ui.vertical(|ui| {
+                    ui.add_space(21.0);
+                    if kit::labelled_button(ui, kit::Icon::Loop, "Refresh apps", false, true)
+                        .clicked()
+                    {
+                        refresh_processes = true;
                     }
                 });
+            });
+            if let Some(error) = state.game_process_error.as_ref() {
+                ui.label(RichText::new(error).color(DANGER).size(12.5));
+            } else if state.game_processes_loaded && state.game_processes.is_empty() {
+                ui.label(
+                    RichText::new("No running apps found. You can enter the details below.")
+                        .color(MUTED)
+                        .size(12.5),
+                );
+            } else if unique_processes.is_empty() {
+                ui.label(
+                    RichText::new("Refresh apps to load the list, or enter a process name below.")
+                        .color(MUTED)
+                        .size(12.5),
+                );
+            }
+            ui.add_space(12.0);
+            divider(ui);
+            ui.add_space(14.0);
+            ui.push_id("new-game", |ui| {
+                game_fields(
+                    ui,
+                    &mut state.game_name_draft,
+                    &mut state.game_process_draft,
+                    &mut state.game_steam_id_draft,
+                );
+            });
+            ui.add_space(14.0);
         });
-        ui.add_space(8.0);
         divider(ui);
-        ui.add_space(8.0);
-        ui.push_id("new-game", |ui| {
-            game_fields(
-                ui,
-                &mut state.game_name_draft,
-                &mut state.game_process_draft,
-                &mut state.game_steam_id_draft,
-            );
-        });
-        ui.checkbox(&mut state.game_exact_draft, "Match whole process names")
-            .on_hover_text("When off, any process name containing the entered text can match.");
-        ui.add_space(6.0);
-        let mut rule = GameMatchRule::new(
-            state.game_name_draft.trim(),
-            parse_list(&state.game_process_draft),
-        )
-        .with_steam_app_ids(parse_list(&state.game_steam_id_draft))
-        .sanitized();
-        rule.exact_executable = state.game_exact_draft;
-        let invalid_steam_ids = parse_list(&state.game_steam_id_draft)
-            .iter()
-            .any(|id| id == "0" || id.len() > 20 || !id.bytes().all(|byte| byte.is_ascii_digit()));
-        let can_add = !invalid_steam_ids
-            && settings.game_rules.len() < 64
-            && !rule.name.is_empty()
-            && (!rule.needles.is_empty() || !rule.steam_app_ids.is_empty());
+        toggle_row(
+            ui,
+            "Match whole process names",
+            "When off, any process name containing the entered text can match.",
+            &mut state.game_exact_draft,
+            true,
+        );
+    });
+    let mut rule = GameMatchRule::new(
+        state.game_name_draft.trim(),
+        parse_list(&state.game_process_draft),
+    )
+    .with_steam_app_ids(parse_list(&state.game_steam_id_draft))
+    .sanitized();
+    rule.exact_executable = state.game_exact_draft;
+    let invalid_steam_ids = parse_list(&state.game_steam_id_draft)
+        .iter()
+        .any(|id| id == "0" || id.len() > 20 || !id.bytes().all(|byte| byte.is_ascii_digit()));
+    let can_add = !invalid_steam_ids
+        && settings.game_rules.len() < 64
+        && !rule.name.is_empty()
+        && (!rule.needles.is_empty() || !rule.steam_app_ids.is_empty());
+    ui.horizontal(|ui| {
         if kit::labelled_button(ui, kit::Icon::Plus, "Add custom game", true, can_add).clicked() {
             settings.game_rules.push(rule);
             state.game_name_draft.clear();
@@ -1126,31 +1252,33 @@ fn custom_games(
             state.game_exact_draft = false;
             state.selected_game_process = None;
         }
-        if settings.game_rules.len() >= 64 {
-            ui.label(
-                RichText::new(
-                    "The 64-game custom list is full. Remove a rule before adding another.",
-                )
-                .color(MUTED)
-                .size(12.5),
-            );
+        let (message, color) = if settings.game_rules.len() >= 64 {
+            (
+                "The 64-game custom list is full. Remove a rule before adding another.",
+                MUTED,
+            )
         } else if invalid_steam_ids {
-            ui.label(
-                RichText::new("Steam app IDs must be nonzero numbers of at most 20 digits.")
-                    .color(DANGER)
-                    .size(12.5),
-            );
+            (
+                "Steam app IDs must be nonzero numbers of at most 20 digits.",
+                DANGER,
+            )
         } else if !can_add {
-            ui.label(
-                RichText::new("Enter a game name and at least one process name or Steam ID.")
-                    .color(MUTED)
-                    .size(12.5),
-            );
+            (
+                "Enter a game name and at least one process name or Steam ID.",
+                MUTED,
+            )
+        } else {
+            ("", MUTED)
+        };
+        if !message.is_empty() {
+            ui.add_space(6.0);
+            ui.label(RichText::new(message).color(color).size(12.5));
         }
     });
-    ui.add_space(22.0);
+    ui.add_space(28.0);
     card(ui, "Custom games and overrides", |ui| {
         if settings.game_rules.is_empty() {
+            ui.add_space(14.0);
             ui.label(
                 RichText::new(
                     "No custom rules yet. Known games are handled by the built-in list above.",
@@ -1158,27 +1286,38 @@ fn custom_games(
                 .color(MUTED)
                 .size(12.5),
             );
+            ui.add_space(14.0);
         }
         let mut remove = None;
         for (index, rule) in settings.game_rules.iter_mut().enumerate() {
             if index > 0 {
                 divider(ui);
-                ui.add_space(16.0);
             }
             ui.push_id(("custom-game", index), |ui| {
                 game_form_section(ui, |ui| {
-                    ui.horizontal_wrapped(|ui| {
+                    ui.add_space(14.0);
+                    ui.horizontal(|ui| {
                         ui.label(
                             RichText::new(format!("Custom rule {}", index + 1))
-                                .color(MUTED)
-                                .size(12.5),
+                                .color(TEXT)
+                                .size(14.5)
+                                .family(kit::semibold()),
                         );
-                        if kit::labelled_button(ui, kit::Icon::Trash, "Remove rule", false, true)
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if kit::labelled_button(
+                                ui,
+                                kit::Icon::Trash,
+                                "Remove rule",
+                                false,
+                                true,
+                            )
                             .clicked()
-                        {
-                            remove = Some(index);
-                        }
+                            {
+                                remove = Some(index);
+                            }
+                        });
                     });
+                    ui.add_space(6.0);
                     let mut needles = rule.needles.join(", ");
                     let mut app_ids = rule.steam_app_ids.join(", ");
                     let before = (needles.clone(), app_ids.clone());
@@ -1189,13 +1328,16 @@ fn custom_games(
                     if app_ids != before.1 {
                         rule.steam_app_ids = parse_list(&app_ids);
                     }
-                    ui.checkbox(&mut rule.exact_executable, "Match whole process names")
-                        .on_hover_text(
-                            "When off, any process name containing the entered text can match.",
-                        );
+                    ui.add_space(8.0);
                 });
+                toggle_row(
+                    ui,
+                    "Match whole process names",
+                    "When off, any process name containing the entered text can match.",
+                    &mut rule.exact_executable,
+                    true,
+                );
             });
-            ui.add_space(12.0);
         }
         if let Some(index) = remove {
             settings.game_rules.remove(index);
@@ -1330,7 +1472,7 @@ pub fn audio_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &mu
             &mut settings.output_device,
             &state.outputs,
         );
-        ui.add_space(4.0);
+        divider(ui);
         percent_row(
             ui,
             "Game volume",
@@ -1985,47 +2127,46 @@ pub fn about_tab(ui: &mut egui::Ui) {
             std::env::consts::OS,
             std::env::consts::ARCH
         );
-        for (title, value) in [
-            ("Version", version.as_str()),
-            ("License", "MIT or Apache-2.0, open source"),
-        ] {
-            ui.add_space(10.0);
-            ui.label(
-                RichText::new(title)
-                    .color(TEXT)
-                    .size(14.5)
-                    .family(kit::semibold()),
-            );
-            ui.label(RichText::new(value).color(MUTED).size(12.5));
-        }
-        ui.add_space(6.0);
+        info_row(ui, "Version", &version, false);
+        info_row(ui, "License", "MIT or Apache-2.0, open source", true);
     });
     card(ui, "Project", |ui| {
         let url = "https://github.com/nanox333/clipcraft";
-        ui.add_space(8.0);
-        ui.add(egui::Hyperlink::from_label_and_url(
-            RichText::new("Source code and issues")
-                .color(kit::LIME)
-                .size(14.0),
-            url,
-        ));
-        ui.label(RichText::new(url).color(FAINT).size(12.0));
-        ui.add_space(8.0);
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            ui.add(egui::Hyperlink::from_label_and_url(
+                RichText::new("Source code and issues")
+                    .color(kit::LIME)
+                    .size(14.5)
+                    .family(kit::semibold()),
+                url,
+            ));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(RichText::new(url).color(MUTED).size(13.0));
+            });
+        });
+        ui.add_space(14.0);
     });
 }
 
 /// The advanced controls stay within their normal category, below its basic settings.
 fn advanced_heading(ui: &mut egui::Ui) {
-    ui.add_space(8.0);
+    ui.add_space(4.0);
     divider(ui);
-    ui.add_space(22.0);
+    ui.add_space(26.0);
     ui.label(
         RichText::new("Advanced settings")
             .color(TEXT)
-            .size(18.0)
+            .size(20.0)
             .family(kit::semibold()),
     );
-    ui.add_space(12.0);
+    ui.add_space(2.0);
+    ui.label(
+        RichText::new("Extra controls for fine-tuning. The defaults suit most people.")
+            .color(MUTED)
+            .size(13.5),
+    );
+    ui.add_space(20.0);
 }
 
 fn advanced_capture(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
@@ -2084,7 +2225,7 @@ fn advanced_capture(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
 
 fn advanced_quality(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
     advanced_heading(ui);
-    card(ui, "Encoder", |ui| {
+    card(ui, "Encoder effort", |ui| {
         ui.add_space(8.0);
         for preset in EncoderPreset::ALL {
             if radio_row(
