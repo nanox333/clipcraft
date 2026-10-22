@@ -594,7 +594,7 @@ impl EditorState {
         let width = ui.available_width().max(1.0);
         // The preview is 16:9, so it is only as wide as its picture needs to be tall; the Library
         // gets everything else.
-        let picture_height = (top - 78.0).max(40.0);
+        let picture_height = (top - 90.0).max(40.0);
         let browser = if width >= 700.0 {
             let preview = (picture_height * 16.0 / 9.0 + 24.0).clamp(360.0, width - 12.0 - 260.0);
             let auto = (width - 12.0 - preview).max(260.0);
@@ -613,11 +613,8 @@ impl EditorState {
                 Vec2::new(browser, top),
                 Layout::top_down(Align::Min),
                 |ui| {
-                    // Match the preview panel's real height, measured last frame.
-                    let preview_height = ui
-                        .data(|d| d.get_temp::<f32>(egui::Id::new("editor-preview-height")))
-                        .unwrap_or(top);
-                    self.browser(ui, thumbs, top.max(preview_height));
+                    // Library and preview are always exactly the same height.
+                    self.browser(ui, thumbs, top);
                 },
             );
             // Drag the gap between the Library and the preview to change their widths.
@@ -654,13 +651,14 @@ impl EditorState {
                 Vec2::new(preview_width, top),
                 Layout::top_down(Align::Min),
                 |ui| {
-                    let panel = egui::Frame::new()
+                    egui::Frame::new()
                         .fill(PANEL)
                         .corner_radius(12)
                         .stroke(Stroke::new(1.0_f32, BORDER))
                         .inner_margin(egui::Margin::symmetric(12, 8))
                         .show(ui, |ui| {
                             ui.set_width((preview_width - 24.0).max(1.0));
+                            ui.set_min_height((top - 16.0).max(0.0));
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.title)
                                     .char_limit(100)
@@ -676,7 +674,7 @@ impl EditorState {
                                     "Edit title",
                                 )
                             });
-                            let size = Vec2::new(ui.available_width(), (top - 78.0).max(40.0));
+                            let size = Vec2::new(ui.available_width(), (top - 90.0).max(40.0));
                             let area = egui::Rect::from_min_size(ui.cursor().min, size);
                             if let Some(preview) = self.preview.as_mut() {
                                 preview.editor_picture(ui, size);
@@ -737,12 +735,6 @@ impl EditorState {
                                 MUTED,
                             );
                         });
-                    ui.data_mut(|d| {
-                        d.insert_temp(
-                            egui::Id::new("editor-preview-height"),
-                            panel.response.rect.height(),
-                        );
-                    });
                 },
             );
         });

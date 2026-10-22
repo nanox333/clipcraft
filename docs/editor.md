@@ -11,7 +11,7 @@ centre and the time at the right (scrub on the timeline ruler). Library cards sh
 the toolbar keeps edit actions at the left and zoom, Fit and Reset at the right. The timeline has a ruler with minor ticks, a
 triangular playhead, grips on the selected segment, and a bar under it with the source in/out,
 volume and mute for that segment. A footer lists the keyboard shortcuts. The preview panel is only as wide as a 16:9 picture needs, so the Library takes the rest and
-shows as many thumbnail columns as fit (2 to 6); the two panels keep the same height. Both can be resized: drag the gap between the Library and
+shows as many thumbnail columns as fit (2 to 6); the two panels always have exactly the same height, on every tab. Both can be resized: drag the gap between the Library and
 the preview to change their widths, and the gap above the timeline to trade preview height for a
 taller timeline (the preview row stops at 210 px). Double-click a gap to go back to the automatic
 layout. The sizes last for the session.
