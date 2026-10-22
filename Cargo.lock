@@ -605,6 +605,8 @@ dependencies = [
  "clipcraft-record",
  "clipcraft-time",
  "eframe",
+ "filmcraft-h264enc",
+ "filmcraft-isobmff",
  "image",
  "rfd",
  "sysinfo",
@@ -726,10 +728,12 @@ dependencies = [
  "clipcraft-frame",
  "clipcraft-time",
  "filmcraft-codecs",
+ "filmcraft-frame",
  "filmcraft-h264enc",
  "filmcraft-isobmff",
  "filmcraft-media",
  "image",
+ "serde",
 ]
 
 [[package]]

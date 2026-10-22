@@ -108,9 +108,11 @@ not a formal clean-room implementation. The small editor additionally consumes p
   see [ADR 0019](adr/0019-editor-preview-and-export-presets.md).
 - **Engine:** owns recording sessions, input validation, local index operations, crash recovery,
   background jobs, and stable typed commands. UI and CLI dispatch these same commands. It does not
-  provide a persistent editor project or autosaved edit sessions. The new bounded `editor.edit`
-  session owns exact source ranges, sequence order and 64-step undo/redo; FilmCraft track/cut
-  algebra is adapted behind this small public command model (ADR 0017).
+  provide a user-facing project-file workflow. The bounded `editor.edit` session owns exact source
+  ranges, sequence order and 64-step undo/redo; FilmCraft track/cut algebra is adapted behind this
+  small public command model (ADR 0017). Internal `editor.draft.load/save/discard` commands keep
+  one validated current-state recovery record without history; ADR 0020 supersedes the original
+  session-only lifetime.
 - **Game-aware capture:** the engine owns matching, desktop policy and monotonic timer math;
   platform adapters expose process metadata and verified game windows. One desktop worker owns
   the reusable process observer and a bounded local Steam catalog, reads VDF/ACF files through
@@ -191,3 +193,52 @@ height is capped to the canvas before allocation. Preview
 volume applies the same segment fade envelope as the audio exporter without changing the stored
 volume setting. GIF frame delays derive from cumulative integer centisecond timestamps, avoiding
 per-frame rounding drift at frame rates such as 12 and 13 fps.
+
+`clipcraft-player::timeline` owns read-only source analysis. Engine `editor.timeline` validates a
+typed request and forwards cancellation. Exact Tick bin centres select 1–12 source pictures;
+native decoder thumbnail hints reduce work before RGBA conversion into letterboxed 160×90
+results. First-track audio yields 16–2048 signed i16 min/max envelopes. MP4/MOV reads its first
+audio track packet by packet at native sample rate, discarding PCM after accumulating peaks.
+Before either source open, a bounded MP4 preflight limits aggregate `moov`/`moof` metadata to
+16 MiB, box traversal to 100,000 boxes/eight nested levels, and total declared `stsz`/`stz2`/
+`trun` sample entries across all source tracks to 1,000,000. This whole-source check applies even
+when only a short range is requested. Declared encoded sample sizes are limited to 64 MiB before
+source probing; the tighter audio-packet limits below still apply. PCM sample tables count audio
+frames, so long high-rate PCM sources can be refused although AAC captures fit the same entry budget.
+Encoded audio packets are at most 1 MiB, or 64 KiB for sync-frame MP3/AC-3/E-AC-3 decoding;
+returned decoded packets are checked against 1,048,576 scalars (4 MiB of floats); this post-decode
+check is not a bound on codec scratch allocations. ALAC cookie frames times channels must fit
+that scalar bound before decoder construction. The first-audio packet index also has its own
+1,000,000-entry limit. Packet positions use at most 8 MiB, or 16 MiB while fixed-frame timing is
+rebuilt. MP4/MOV parses its index once for video and once for audio, with the native video source
+dropped before the audio pass. Other containers use an 8 kHz fallback in chunks of
+at most 4096 output frames; the requested range must fit ten seconds and a nominal native PCM
+span of 16 MiB, otherwise analysis reports unsupported. Requests otherwise cover 1/30 second to
+30 minutes, with source duration limited to 24 hours. Result media is at most 699,392 bytes.
+These bounds exclude codec internals: the native video GOP cache uses a separate budget of
+`max(384 MiB, 64 native frames)` plus codec reference state. Cache/result limits are not a total
+process RSS bound or a measured memory-use claim. The existing 64 MiB whole-file fallback cap
+does not cap streamed MP4 indexes or native decoder RSS.
+The desktop owns one retained analysis worker, eight queued requests, one-slot job/result
+channels and a 32 MiB/256-entry cache. Source size/mtime checks invalidate changed files;
+in-flight duplicates and repeated failed requests are suppressed. Uploading at most two textures
+per poll spreads GPU work across frames. Clearing the cache cancels its work without spawning a
+replacement worker. The UI maps returned source positions into visible trimmed ranges and uses
+the existing segment gain/fade math for the linked waveform display.
+
+Sequence preview has a two-player budget across active, prepared and retiring decoders. A prepared
+source decodes paused and opens no audio output device. Promotion uses its ready target frame;
+adjacent same-input ranges reuse playback where safe. Seek/edit/close invalidate stale prepared
+state. `request_stop` is cooperative; retaining stopped players until `worker_finished` prevents
+rapid seeks from creating an unbounded set of detached codec workers. If those slots are occupied
+or the next frame is not ready, preview waits rather than exceeding its budget.
+
+`EditorDraft` stores current validated cuts/text, media references, title, playhead and preset
+without undo/redo. JSON and path validation enforce 16 MiB, the fixed owned basename, no existing
+symlink components and no writes to media paths. Save uses an exclusively created sibling file,
+flush and atomic replacement; invalid existing recovery cannot be silently replaced. One serial
+desktop worker loads, saves and discards the record. Metadata changes are debounced 500 ms;
+normal exit waits at most two seconds for its latest checkpoint. Discard is ordered after any
+in-flight save. Corrupt/unknown recovery stays untouched until explicit discard, and unavailable
+source files remain recoverable references. No media bytes or UI/decoder caches are serialized.
+See [ADR 0020](adr/0020-internal-editor-recovery.md) for the filesystem and crash-window contract.

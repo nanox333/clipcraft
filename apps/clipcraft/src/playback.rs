@@ -61,10 +61,14 @@ pub struct Playback {
     effect: clipcraft_engine::Effect,
     info: Option<ClipInfoSummary>,
     position: Tick,
+    /// The last decoded position, distinct from a seek that has only been requested.
+    frame_pts: Option<Tick>,
     playing: bool,
     error: Option<String>,
     /// The sound device, while one is running.
     audio: Option<AudioOutput>,
+    /// Prepared editor sources never open an output device until promoted.
+    audio_enabled: bool,
     /// Why there is no sound, shown under the controls. The picture keeps playing without it.
     audio_note: Option<String>,
     prefs: Prefs,
@@ -86,7 +90,41 @@ impl Playback {
         std::mem::replace(&mut self.effect, effect) != effect
     }
     pub(crate) fn editor_ready(&self) -> bool {
-        self.info.is_some()
+        self.error.is_none()
+            && self.info.is_some()
+            && self.frame_pts.is_some()
+            && self.texture.is_some()
+    }
+    pub(crate) fn editor_target_ready(&self, target: Tick) -> bool {
+        self.info.as_ref().is_some_and(|info| {
+            let last = (info.duration - info.frame_rate().frame_duration()).max(Tick::ZERO);
+            self.editor_ready() && self.frame_pts == Some(target.clamp(Tick::ZERO, last))
+        })
+    }
+    pub(crate) fn editor_activate(&mut self) {
+        if !self.audio_enabled {
+            self.audio_enabled = true;
+            if self.info.as_ref().is_some_and(|info| info.has_audio) {
+                self.start_audio();
+            }
+        }
+    }
+    pub(crate) fn editor_retire(&mut self) {
+        self.audio_enabled = false;
+        self.audio_retry_at = None;
+        if let Some(feed) = self.player.audio_feed() {
+            feed.set_playing(false);
+        }
+        self.audio = None;
+        self.playing = false;
+        self.player.request_stop();
+    }
+    pub(crate) fn editor_finished(&self) -> bool {
+        self.player.worker_finished()
+    }
+    #[cfg(test)]
+    pub(crate) fn editor_texture_id(&self) -> Option<egui::TextureId> {
+        self.texture.as_ref().map(egui::TextureHandle::id)
     }
     pub(crate) fn editor_error(&self) -> Option<&str> {
         self.error.as_deref()
@@ -104,13 +142,17 @@ impl Playback {
         self.player.set_loop(false);
         self.apply_volume();
         if let Some(position) = position {
+            self.frame_pts = None;
             self.position = position;
             self.player.seek(position);
         }
         if self.playing != playing {
             if playing {
-                self.player.play();
+                self.player.play_from_current();
             } else {
+                if let Some(feed) = self.player.audio_feed() {
+                    feed.set_playing(false);
+                }
                 self.player.pause();
             }
             self.playing = playing;
@@ -121,10 +163,39 @@ impl Playback {
     }
     /// Opens `path` and starts playing it.
     pub fn start(path: &str, context: &egui::Context, prefs: Prefs) -> Self {
+        let mut playback = Self::open(path, context, prefs, true);
+        playback.player.play();
+        playback.playing = true;
+        playback
+    }
+
+    /// Opens and decodes an editor source on its worker, paused and without an audio device.
+    pub(crate) fn prepare_editor(
+        path: &str,
+        start: Tick,
+        effect: clipcraft_engine::Effect,
+        context: &egui::Context,
+    ) -> Self {
+        let mut playback = Self::open(
+            path,
+            context,
+            Prefs {
+                volume: 0.0,
+                muted: true,
+                looping: false,
+            },
+            false,
+        );
+        playback.effect = effect;
+        playback.position = start;
+        playback.player.seek(start);
+        playback
+    }
+
+    fn open(path: &str, context: &egui::Context, prefs: Prefs, audio_enabled: bool) -> Self {
         let wake = context.clone();
         let player = Player::start(PathBuf::from(path), move || wake.request_repaint());
         player.set_loop(prefs.looping);
-        player.play();
         Self {
             path: path.to_owned(),
             player,
@@ -132,9 +203,11 @@ impl Playback {
             effect: clipcraft_engine::Effect::None,
             info: None,
             position: Tick::ZERO,
-            playing: true,
+            frame_pts: None,
+            playing: false,
             error: None,
             audio: None,
+            audio_enabled,
             audio_note: None,
             prefs,
             speed_index: NORMAL_SPEED_INDEX,
@@ -186,6 +259,9 @@ impl Playback {
 
     /// Opens the sound device for the clip's audio, if it has any.
     fn start_audio(&mut self) {
+        if !self.audio_enabled || self.audio.is_some() {
+            return;
+        }
         let Some(feed) = self.player.audio_feed() else {
             return;
         };
@@ -208,6 +284,9 @@ impl Playback {
 
     /// Restarts a sound device that stopped (unplugged, driver error) a few times, then gives up.
     fn watch_audio(&mut self, context: &egui::Context) {
+        if !self.audio_enabled {
+            return;
+        }
         if self.audio.as_ref().is_some_and(AudioOutput::failed) {
             // Dropping the output hands the clock back to the wall clock, so the picture goes on.
             self.audio = None;
@@ -238,6 +317,9 @@ impl Playback {
             PlayerEvent::Opened(info) => {
                 let has_audio = info.has_audio;
                 self.info = Some(info);
+                if !self.audio_enabled {
+                    self.apply_volume();
+                }
                 if has_audio {
                     self.start_audio();
                 }
@@ -272,6 +354,7 @@ impl Playback {
                     }
                 }
                 self.position = frame.pts;
+                self.frame_pts = Some(frame.pts);
             }
             PlayerEvent::Ended => self.playing = false,
             PlayerEvent::Failed(error) => {
@@ -938,9 +1021,195 @@ pub fn format_clock(time: Tick) -> String {
 }
 
 #[cfg(test)]
+pub(crate) mod editor_fixtures {
+    use filmcraft_h264enc::{Encoder, EncoderConfig, PacketFormat, YuvFrame};
+    use filmcraft_isobmff::{
+        AvcConfig, Brand, Mp4Writer, PcmConfig, SampleEntry, TrackConfig, WriteSample,
+        WriterOptions,
+    };
+    use std::io::Cursor;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    pub(crate) struct Fixture {
+        folder: PathBuf,
+        bytes: Vec<u8>,
+    }
+    impl Fixture {
+        pub(crate) fn new(sound: bool) -> Self {
+            let mut config = EncoderConfig::new(64, 48, 30, 1);
+            config.bframes = 0;
+            config.keyint = 10;
+            config.format = PacketFormat::LengthPrefixed;
+            let mut encoder = Encoder::new(config).unwrap();
+            let (sps, pps) = encoder.sps_pps();
+            let strip = |nal: &[u8]| {
+                nal.strip_prefix(&[0, 0, 0, 1])
+                    .or_else(|| nal.strip_prefix(&[0, 0, 1]))
+                    .unwrap_or(nal)
+                    .to_vec()
+            };
+            let mut writer =
+                Mp4Writer::new(Cursor::new(Vec::new()), WriterOptions::new(Brand::Mp4)).unwrap();
+            let track = writer
+                .add_track(TrackConfig::new(
+                    SampleEntry::avc(
+                        AvcConfig::new(vec![strip(&sps)], vec![strip(&pps)], 4),
+                        64,
+                        48,
+                    ),
+                    30,
+                ))
+                .unwrap();
+            let audio = sound.then(|| {
+                writer
+                    .add_track(TrackConfig::new(
+                        SampleEntry::pcm(PcmConfig {
+                            bits: 16,
+                            float: false,
+                            big_endian: false,
+                            signed: true,
+                            channels: 1,
+                            sample_rate: 48_000.0,
+                        }),
+                        48_000,
+                    ))
+                    .unwrap()
+            });
+            for index in 0..30_u8 {
+                let y = vec![24 + index * 7; 64 * 48];
+                let uv = vec![128; 64 * 48 / 4];
+                let frame = YuvFrame {
+                    y: &y,
+                    u: &uv,
+                    v: &uv,
+                    y_stride: 64,
+                    uv_stride: 32,
+                };
+                for packet in encoder.encode(&frame, i64::from(index)).unwrap() {
+                    writer
+                        .write_sample(
+                            track,
+                            WriteSample {
+                                data: &packet.data,
+                                duration: 1,
+                                composition_offset: 0,
+                                is_sync: packet.keyframe,
+                            },
+                        )
+                        .unwrap();
+                }
+            }
+            for packet in encoder.flush() {
+                writer
+                    .write_sample(
+                        track,
+                        WriteSample {
+                            data: &packet.data,
+                            duration: 1,
+                            composition_offset: 0,
+                            is_sync: packet.keyframe,
+                        },
+                    )
+                    .unwrap();
+            }
+            if let Some(audio) = audio {
+                let bytes = vec![0_u8; 48_000 * 2];
+                writer
+                    .write_sample(
+                        audio,
+                        WriteSample {
+                            data: &bytes,
+                            duration: 0,
+                            composition_offset: 0,
+                            is_sync: true,
+                        },
+                    )
+                    .unwrap();
+            }
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let folder = std::env::temp_dir().join(format!(
+                "clipcraft-editor-preload-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&folder).unwrap();
+            Self {
+                folder,
+                bytes: writer.finish().unwrap().into_inner(),
+            }
+        }
+        pub(crate) fn file(&self, name: &str) -> PathBuf {
+            let path = self.folder.join(name);
+            std::fs::write(&path, &self.bytes).unwrap();
+            path
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.folder);
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use clipcraft_player::{DecodedFrame, PlayerError};
+
+    #[test]
+    fn editor_preparation_decodes_target_without_starting_sound_and_cancels() {
+        let fixture = editor_fixtures::Fixture::new(true);
+        let path = fixture.file("prepared.mp4");
+        let context = egui::Context::default();
+        let target = Tick::from_units(1, 3);
+        let mut preview = Playback::prepare_editor(
+            &path.to_string_lossy(),
+            target,
+            clipcraft_engine::Effect::None,
+            &context,
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !preview.editor_target_ready(target) && Instant::now() < deadline {
+            preview.poll(&context);
+            assert!(
+                preview.editor_error().is_none(),
+                "{:?}",
+                preview.editor_error()
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(preview.editor_target_ready(target));
+        assert!(!preview.playing);
+        assert!(!preview.audio_enabled);
+        assert!(preview.audio.is_none());
+        assert!(preview.audio_retry_at.is_none());
+        let feed = preview.player.audio_feed().unwrap();
+        assert!(
+            !feed.driving(),
+            "preparation must not create an output device"
+        );
+        assert!(feed.muted());
+
+        let next = Tick::from_units(2, 3);
+        preview.editor_transport(Some(next), false, 0.25);
+        assert!(
+            !preview.editor_target_ready(next),
+            "a queued seek is not a decoded frame"
+        );
+        while !preview.editor_target_ready(next) && Instant::now() < deadline {
+            preview.poll(&context);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(preview.editor_target_ready(next));
+        preview.editor_retire();
+        while !preview.editor_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(preview.editor_finished());
+        assert!(!feed.driving());
+        assert!(preview.audio.is_none());
+    }
 
     fn playback() -> Playback {
         Playback::start(

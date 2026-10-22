@@ -14,6 +14,9 @@ use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, RichText, Sense
 
 use crate::kit::{self, BORDER, CANVAS, CARD, CARD_HOVER, DANGER, FAINT, LIME, MUTED, PANEL, TEXT};
 
+#[path = "editor_workspace.rs"]
+mod workspace;
+
 /// The least height the Library and preview row can be dragged down to.
 const MIN_TOP: f32 = 210.0;
 const RATE: FrameRate = FrameRate { num: 30, den: 1 };
@@ -45,6 +48,32 @@ enum LibraryTab {
     Effects,
     Text,
 }
+
+/// Everything that makes a prepared source specific to this position in the sequence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreviewSource {
+    id: u64,
+    input: PathBuf,
+    start: Tick,
+    end: Tick,
+    effect: Effect,
+}
+impl From<&clipcraft_engine::EditorClip> for PreviewSource {
+    fn from(clip: &clipcraft_engine::EditorClip) -> Self {
+        Self {
+            id: clip.id,
+            input: clip.input.clone(),
+            start: clip.start,
+            end: clip.end,
+            effect: clip.look.effect,
+        }
+    }
+}
+struct PreparedPreview {
+    source: PreviewSource,
+    playback: crate::playback::Playback,
+}
+
 pub struct EditorState {
     pub open: bool,
     media: Arc<Vec<MediaEntry>>,
@@ -57,6 +86,12 @@ pub struct EditorState {
     playing: bool,
     preview: Option<crate::playback::Playback>,
     preview_id: Option<u64>,
+    preview_source: Option<PreviewSource>,
+    preview_target: Option<Tick>,
+    prepared_preview: Option<PreparedPreview>,
+    failed_preload: Option<PreviewSource>,
+    /// Stopped decoders still count against the two-player budget until they acknowledge stop.
+    retiring_previews: Vec<crate::playback::Playback>,
     seek_pending: bool,
     clock: Option<(Instant, Tick)>,
     search: String,
@@ -80,6 +115,8 @@ pub struct EditorState {
     top_height: Option<f32>,
     /// One bounded set of shared FilmCraft rasters uploaded to the GPU for preview.
     preview_text: std::collections::VecDeque<PreviewText>,
+    draft: workspace::DraftState,
+    timeline_media: crate::editor_media::TimelineCache,
 }
 impl Default for EditorState {
     fn default() -> Self {
@@ -95,6 +132,11 @@ impl Default for EditorState {
             playing: false,
             preview: None,
             preview_id: None,
+            preview_source: None,
+            preview_target: None,
+            prepared_preview: None,
+            failed_preload: None,
+            retiring_previews: Vec::new(),
             seek_pending: true,
             clock: None,
             search: String::new(),
@@ -115,12 +157,16 @@ impl Default for EditorState {
             library_width: None,
             top_height: None,
             preview_text: std::collections::VecDeque::new(),
+            draft: workspace::DraftState::default(),
+            timeline_media: crate::editor_media::TimelineCache::default(),
         }
     }
 }
 struct Imported {
     entries: Vec<MediaEntry>,
     thumbnails: Vec<(String, PathBuf)>,
+    failures: usize,
+    recovery: bool,
 }
 
 impl EditorState {
@@ -132,6 +178,7 @@ impl EditorState {
             *old = entry;
         } else if self.media.len() < clipcraft_engine::MAX_LIBRARY_RESULTS {
             Arc::make_mut(&mut self.media).push(entry);
+            self.dirty_recovery();
         } else {
             self.message = Some((
                 "The editor media library is full. Import a smaller selection.".into(),
@@ -140,6 +187,17 @@ impl EditorState {
         }
     }
     fn import(&mut self, paths: Option<Vec<PathBuf>>, context: &egui::Context) {
+        self.start_import(paths, false, context);
+    }
+    fn import_recovery(&mut self, paths: Vec<PathBuf>, context: &egui::Context) {
+        self.start_import(Some(paths), true, context);
+    }
+    fn start_import(
+        &mut self,
+        paths: Option<Vec<PathBuf>>,
+        recovery: bool,
+        context: &egui::Context,
+    ) {
         if self.importing.is_some() {
             return;
         }
@@ -156,10 +214,29 @@ impl EditorState {
                             .pick_files()
                             .unwrap_or_default()
                     });
-                    let CommandOutput::EditorMedia(entries) =
-                        execute(Command::ImportEditorMedia { paths }).map_err(|e| e.to_string())?
-                    else {
-                        return Err("Import returned an unexpected result.".to_owned());
+                    let mut failures = 0;
+                    let entries = if recovery {
+                        let mut entries = Vec::new();
+                        for path in paths
+                            .into_iter()
+                            .take(clipcraft_engine::MAX_LIBRARY_RESULTS)
+                        {
+                            match execute(Command::ImportEditorMedia { paths: vec![path] }) {
+                                Ok(CommandOutput::EditorMedia(imported)) => {
+                                    entries.extend(imported)
+                                }
+                                _ => failures += 1,
+                            }
+                        }
+                        entries
+                    } else {
+                        let CommandOutput::EditorMedia(entries) =
+                            execute(Command::ImportEditorMedia { paths })
+                                .map_err(|e| e.to_string())?
+                        else {
+                            return Err("Import returned an unexpected result.".to_owned());
+                        };
+                        entries
                     };
                     let mut thumbnails = Vec::new();
                     if let Some(cache_dir) = clipcraft_engine::default_thumbnail_dir() {
@@ -177,6 +254,8 @@ impl EditorState {
                     Ok(Imported {
                         entries,
                         thumbnails,
+                        failures,
+                        recovery,
                     })
                 })();
                 let _ = sender.send(result);
@@ -189,13 +268,17 @@ impl EditorState {
         self.importing = Some(receiver);
     }
     pub fn close(&mut self) {
+        if self.open || self.playing {
+            self.dirty_recovery_view();
+        }
         self.open = false;
         self.export_dialog = false;
         self.playing = false;
-        self.preview = None;
-        self.preview_id = None;
+        self.invalidate_preload();
+        self.retire_active_preview();
         self.clock = None;
         self.preview_text.clear();
+        self.timeline_media.clear();
     }
     pub fn take_saved(&mut self) -> Option<PathBuf> {
         self.saved.take()
@@ -236,8 +319,10 @@ impl EditorState {
                 self.playhead = self.playhead.clamp(Tick::ZERO, self.session.duration());
                 self.playing = false;
                 self.seek_pending = true;
+                self.invalidate_preload();
                 self.clock = None;
                 self.message = None;
+                self.dirty_recovery();
             }
             Ok(_) => self.message = Some(("The edit returned an unexpected result.".into(), true)),
             Err(error) => self.message = Some((error.to_string(), true)),
@@ -265,8 +350,13 @@ impl EditorState {
         }
     }
     fn seek(&mut self, time: Tick) {
-        self.playhead = time.clamp(Tick::ZERO, self.session.duration());
+        let next = time.clamp(Tick::ZERO, self.session.duration());
+        if self.playhead != next {
+            self.playhead = next;
+            self.dirty_recovery_view();
+        }
         self.seek_pending = true;
+        self.invalidate_preload();
         self.clock = None;
     }
     fn toggle(&mut self) {
@@ -278,10 +368,49 @@ impl EditorState {
         }
         self.playing = !self.playing;
         self.clock = None;
+        self.dirty_recovery_view();
+    }
+    fn retire_preview(&mut self, mut playback: crate::playback::Playback) {
+        playback.editor_retire();
+        self.retiring_previews.push(playback);
+    }
+    fn retire_active_preview(&mut self) {
+        if let Some(playback) = self.preview.take() {
+            self.retire_preview(playback);
+        }
+        self.preview_id = None;
+        self.preview_source = None;
+        self.preview_target = None;
+        self.clock = None;
+    }
+    fn invalidate_preload(&mut self) {
+        if let Some(prepared) = self.prepared_preview.take() {
+            self.retire_preview(prepared.playback);
+        }
+        self.failed_preload = None;
+        self.preview_target = None;
+    }
+    fn preview_workers(&self) -> usize {
+        usize::from(self.preview.is_some())
+            + usize::from(self.prepared_preview.is_some())
+            + self.retiring_previews.len()
     }
     fn poll_preview(&mut self, context: &egui::Context) {
+        self.retiring_previews.retain(|p| !p.editor_finished());
+        if !self.retiring_previews.is_empty() {
+            context.request_repaint_after(Duration::from_millis(16));
+        }
         if !self.open {
             return;
+        }
+        if let Some(prepared) = self.prepared_preview.as_mut() {
+            prepared.playback.poll(context);
+            if prepared.playback.editor_error().is_some() {
+                self.failed_preload = Some(prepared.source.clone());
+                if let Some(prepared) = self.prepared_preview.take() {
+                    self.retire_preview(prepared.playback);
+                }
+            }
         }
         if self.playing
             && let Some((at, start)) = self.clock
@@ -309,54 +438,147 @@ impl EditorState {
             .at(self.playhead)
             .map(|(clip, time)| (clip.clone(), time))
         else {
-            self.preview = None;
-            self.preview_id = None;
+            self.invalidate_preload();
+            self.retire_active_preview();
             return;
         };
-        if self.preview_id != Some(clip.id) {
-            self.preview = Some(crate::playback::Playback::start(
-                &clip.input.to_string_lossy(),
-                context,
-                crate::playback::Prefs {
-                    volume: f32::from(clip.volume_percent) / 100.0,
-                    muted: clip.volume_percent == 0,
-                    looping: false,
-                },
-            ));
+        let source = PreviewSource::from(&clip);
+        let mut source_time = source_time;
+        if self.preview_source.as_ref() != Some(&source) {
+            let natural_cut = !self.seek_pending && self.preview_source.is_some();
+            let same_input = self
+                .preview_source
+                .as_ref()
+                .is_some_and(|previous| previous.input == source.input);
+            let continuous = natural_cut
+                && same_input
+                && self.preview_source.as_ref().is_some_and(|previous| {
+                    previous.end == source.start && previous.effect == source.effect
+                });
+            if !continuous && natural_cut {
+                // Start the next cut at its exact boundary, even if the last UI frame ran late.
+                self.playhead = self.session.offset_of(clip.id).unwrap_or(self.playhead);
+                source_time = clip.start;
+            }
+            if !same_input {
+                self.retire_active_preview();
+                let prepared_matches = self
+                    .prepared_preview
+                    .as_ref()
+                    .is_some_and(|prepared| prepared.source == source);
+                if prepared_matches {
+                    if let Some(prepared) = self.prepared_preview.take() {
+                        self.preview = Some(prepared.playback);
+                        self.preview_target = Some(clip.start);
+                    }
+                } else {
+                    self.invalidate_preload();
+                }
+                if self.preview.is_none() && self.preview_workers() < 2 {
+                    self.preview = Some(crate::playback::Playback::prepare_editor(
+                        &clip.input.to_string_lossy(),
+                        source_time,
+                        clip.look.effect,
+                        context,
+                    ));
+                    self.preview_target = Some(source_time);
+                }
+            }
+            if self.preview.is_none() {
+                // A slow cancelled decoder retains its slot; never spawn unbounded replacements.
+                self.clock = None;
+                context.request_repaint_after(Duration::from_millis(16));
+                return;
+            }
             self.preview_id = Some(clip.id);
-            self.seek_pending = true;
-            self.clock = None;
+            self.preview_source = Some(source.clone());
+            self.seek_pending = !continuous;
+            if !continuous {
+                self.clock = None;
+            }
         }
         if let Some(preview) = self.preview.as_mut() {
+            if preview.editor_effect(clip.look.effect) {
+                self.seek_pending = true;
+                self.preview_target = None;
+            }
             preview.poll(context);
             if let Some(error) = preview.editor_error() {
                 self.message = Some((error.to_owned(), true));
                 self.playing = false;
                 self.clock = None;
             }
-            if preview.editor_effect(clip.look.effect) {
-                self.seek_pending = true;
+            let seek = (self.seek_pending && self.preview_target.is_none()).then_some(source_time);
+            if let Some(target) = seek {
+                self.preview_target = Some(target);
+                self.clock = None;
             }
-            let ready = preview.editor_ready();
-            let seek = self.seek_pending.then_some(source_time);
+            let ready = seek.is_none()
+                && self.preview_target.map_or_else(
+                    || preview.editor_ready(),
+                    |target| preview.editor_target_ready(target),
+                );
             let gain = clip.look.audio_gain_at(
                 source_time - clip.start,
                 clip.duration(),
                 clip.volume_percent,
             );
+            // Set gain before activation so a newly opened output never starts at stale volume.
             preview.editor_transport(seek, self.playing && ready, gain);
             if ready {
                 self.seek_pending = false;
+                self.preview_target = None;
+                preview.editor_activate();
                 if self.playing && self.clock.is_none() {
                     self.clock = Some((Instant::now(), self.playhead));
                 }
             }
         }
+        self.prepare_next_preview(&source, context);
         if self.playing {
             context.request_repaint_after(Duration::from_millis(16));
         }
     }
+
+    fn prepare_next_preview(&mut self, source: &PreviewSource, context: &egui::Context) {
+        if !self.playing
+            || self.seek_pending
+            || self.preview_target.is_some()
+            || self.prepared_preview.is_some()
+            || self.preview_workers() >= 2
+            || !self
+                .preview
+                .as_ref()
+                .is_some_and(|preview| preview.editor_ready() && preview.editor_error().is_none())
+        {
+            return;
+        }
+        let Some(next) = self
+            .session
+            .clips()
+            .iter()
+            .position(|clip| clip.id == source.id)
+            .and_then(|index| self.session.clips().get(index + 1))
+        else {
+            return;
+        };
+        let next = PreviewSource::from(next);
+        if next.input == source.input || self.failed_preload.as_ref() == Some(&next) {
+            return;
+        }
+        self.prepared_preview = Some(PreparedPreview {
+            playback: crate::playback::Playback::prepare_editor(
+                &next.input.to_string_lossy(),
+                next.start,
+                next.effect,
+                context,
+            ),
+            source: next,
+        });
+    }
     pub fn poll(&mut self, context: &egui::Context) {
+        self.poll_recovery(context);
+        self.timeline_media.poll(context);
         if self.open {
             let paths: Vec<_> = context.input(|i| {
                 i.raw
@@ -397,6 +619,18 @@ impl EditorState {
                         self.receive(entry);
                     }
                     self.imported_thumbs.extend(imported.thumbnails);
+                    if imported.failures > 0 {
+                        self.message = Some((
+                            format!(
+                                "Draft restored, but {} source file(s) could not be opened. Reconnect their drive or restore the files to their original location.",
+                                imported.failures
+                            ),
+                            true,
+                        ));
+                    } else if imported.recovery {
+                        self.message =
+                            Some(("Your local editor draft was restored.".into(), false));
+                    }
                 }
                 Err(error) => {
                     self.message = Some((error, true));
@@ -588,6 +822,7 @@ impl EditorState {
             thumbs.set_file(path, file);
         }
         self.keys(ui);
+        self.recovery_banner(ui);
         ui.horizontal(|ui| {
             ui.set_min_height(44.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -698,21 +933,24 @@ impl EditorState {
                         .show(ui, |ui| {
                             ui.set_width((preview_width - 24.0).max(1.0));
                             ui.set_min_height((top - 16.0).max(0.0));
-                            ui.add(
+                            let title = ui.add(
                                 egui::TextEdit::singleline(&mut self.title)
                                     .char_limit(100)
                                     .font(FontId::new(13.0, kit::semibold()))
                                     .horizontal_align(Align::Center)
                                     .frame(false)
                                     .desired_width(ui.available_width()),
-                            )
-                            .widget_info(|| {
+                            );
+                            title.widget_info(|| {
                                 egui::WidgetInfo::labeled(
                                     egui::WidgetType::TextEdit,
                                     true,
                                     "Edit title",
                                 )
                             });
+                            if title.changed() {
+                                self.dirty_recovery();
+                            }
                             let size = Vec2::new(ui.available_width(), (top - 90.0).max(40.0));
                             let area = egui::Rect::from_min_size(ui.cursor().min, size);
                             if let Some(preview) = self.preview.as_mut() {
@@ -832,11 +1070,7 @@ impl EditorState {
                 ui.label(RichText::new(what).size(12.0).color(MUTED));
                 ui.add_space(8.0);
             }
-            ui.label(
-                RichText::new("Edits stay in this session. Originals are never changed.")
-                    .size(12.0)
-                    .color(FAINT),
-            );
+            self.recovery_footer(ui);
         });
         self.show_export_dialog(ui.ctx());
     }
@@ -868,6 +1102,7 @@ impl EditorState {
         let mut open = true;
         let mut start = false;
         let mut cancel = false;
+        let previous_preset = self.export_preset;
         egui::Window::new(
             RichText::new("Export video")
                 .size(20.0)
@@ -949,6 +1184,9 @@ impl EditorState {
             });
         });
         self.export_dialog = open && !cancel && !start;
+        if self.export_preset != previous_preset {
+            self.dirty_recovery();
+        }
         if start {
             self.export(context);
         }
@@ -1961,7 +2199,7 @@ impl EditorState {
         });
         ui.add_space(8.0);
     }
-    fn timeline(&mut self, ui: &mut egui::Ui, thumbs: &mut crate::thumbs::Thumbnails, lift: f32) {
+    fn timeline(&mut self, ui: &mut egui::Ui, _thumbs: &mut crate::thumbs::Thumbnails, lift: f32) {
         let lift = lift.max(0.0);
         let card_lift = lift * 0.75;
         let total = self.session.duration();
@@ -2075,40 +2313,85 @@ impl EditorState {
                         )
                     });
                     painter.rect_filled(card, 6, CARD_HOVER);
-                    if let Some(texture) = thumbs.texture(
-                        ui.ctx(),
-                        &clip.input.to_string_lossy(),
-                        ui.is_rect_visible(card),
-                    ) {
-                        // Repeat the cached source thumbnail at its natural aspect ratio.
-                        // These are source references, not decoded frame-by-frame filmstrips.
-                        let tile_width = (card.height() * texture.aspect_ratio()).max(1.0);
-                        let visible = card.intersect(ui.clip_rect());
-                        let first = ((visible.left() - card.left()) / tile_width)
-                            .floor()
-                            .max(0.0);
-                        let count = (visible.width() / tile_width).ceil() as usize + 1;
-                        for i in 0..count.min(128) {
-                            let left = card.left() + (first + i as f32) * tile_width;
-                            let tile = egui::Rect::from_min_max(
-                                egui::pos2(left, card.top()),
-                                egui::pos2((left + tile_width).min(card.right()), card.bottom()),
-                            );
-                            if tile.is_positive() {
-                                painter.with_clip_rect(card).image(
-                                    texture.id(),
-                                    tile,
-                                    egui::Rect::from_min_max(
-                                        egui::Pos2::ZERO,
-                                        egui::pos2(tile.width() / tile_width, 1.0),
-                                    ),
-                                    Color32::WHITE,
+                    let sample = timeline_window(clip.start, clip.end, card, ui.clip_rect());
+                    if let Some((start, end, frames, buckets)) = sample {
+                        self.timeline_media.request(
+                            ui.ctx(),
+                            &clip.input,
+                            start,
+                            end,
+                            frames,
+                            buckets,
+                        );
+                        if let Some(data) =
+                            self.timeline_media
+                                .get(&clip.input, start, end, frames, buckets)
+                        {
+                            let cell = (end.0 - start.0) as f64 / f64::from(frames);
+                            for frame in &data.frames {
+                                let left = source_x(
+                                    card,
+                                    clip.start,
+                                    clip.end,
+                                    frame.position.0 as f64 - cell / 2.0,
                                 );
+                                let right = source_x(
+                                    card,
+                                    clip.start,
+                                    clip.end,
+                                    frame.position.0 as f64 + cell / 2.0,
+                                );
+                                let tile = egui::Rect::from_min_max(
+                                    egui::pos2(left, card.top()),
+                                    egui::pos2(right, card.bottom()),
+                                );
+                                if tile.is_positive() {
+                                    painter
+                                        .with_clip_rect(card.intersect(ui.clip_rect()))
+                                        .image(
+                                            frame.texture.id(),
+                                            tile,
+                                            cover_uv(tile.size(), frame.texture.aspect_ratio()),
+                                            Color32::WHITE,
+                                        );
+                                }
                             }
+                            painter.rect_filled(
+                                card.intersect(ui.clip_rect()),
+                                0,
+                                Color32::from_black_alpha(55),
+                            );
+                        } else {
+                            let label = if self
+                                .timeline_media
+                                .error(&clip.input, start, end, frames, buckets)
+                                .is_some()
+                            {
+                                "Timeline unavailable"
+                            } else {
+                                "Loading timeline…"
+                            };
+                            painter.with_clip_rect(card).text(
+                                card.center(),
+                                Align2::CENTER_CENTER,
+                                label,
+                                FontId::new(10.0, kit::medium()),
+                                FAINT,
+                            );
                         }
-                        painter.rect_filled(card, 6, Color32::from_black_alpha(70));
+                        if let Some(error) =
+                            self.timeline_media
+                                .error(&clip.input, start, end, frames, buckets)
+                        {
+                            r.clone().on_hover_text(error);
+                        }
                     }
                     let clipped = painter.with_clip_rect(card);
+                    clipped.rect_filled(
+                        egui::Rect::from_min_size(card.left_top(), Vec2::new(card.width(), 24.0)),
+                        0,
+                        Color32::from_black_alpha(145),
+                    );
                     clipped.text(
                         card.left_top() + Vec2::new(6.0, 6.0),
                         Align2::LEFT_TOP,
@@ -2182,11 +2465,75 @@ impl EditorState {
                             Color32::from_rgb(42, 50, 30)
                         },
                     );
-                    painter.with_clip_rect(audio).text(
+                    let mut audio_label = if clip.volume_percent == 0 {
+                        "Muted"
+                    } else {
+                        "Audio"
+                    };
+                    let wave_painter = painter.with_clip_rect(audio.intersect(ui.clip_rect()));
+                    wave_painter.line_segment(
+                        [audio.left_center(), audio.right_center()],
+                        Stroke::new(0.5_f32, FAINT),
+                    );
+                    if let Some((start, end, frames, buckets)) = sample
+                        && let Some(data) =
+                            self.timeline_media
+                                .get(&clip.input, start, end, frames, buckets)
+                    {
+                        if !data.has_audio {
+                            audio_label = "No audio";
+                        }
+                        let count = data.waveform.len().max(1) as i64;
+                        for (i, bucket) in data.waveform.iter().enumerate() {
+                            let at = Tick(
+                                start.0
+                                    + ((i as i128 * 2 + 1) * i128::from(end.0 - start.0)
+                                        / (i128::from(count) * 2))
+                                        as i64,
+                            );
+                            let x = source_x(card, clip.start, clip.end, at.0 as f64);
+                            let gain = clip.look.audio_gain_at(
+                                at - clip.start,
+                                clip.duration(),
+                                clip.volume_percent,
+                            );
+                            let height = (audio.height() / 2.0 - 3.0).max(0.0);
+                            let low = f32::from(bucket.min) / 32767.0 * gain * height;
+                            let high = f32::from(bucket.max) / 32767.0 * gain * height;
+                            wave_painter.line_segment(
+                                [
+                                    egui::pos2(x, audio.center().y - high),
+                                    egui::pos2(x, audio.center().y - low),
+                                ],
+                                Stroke::new(
+                                    1.0_f32,
+                                    if clip.volume_percent == 0 {
+                                        FAINT
+                                    } else {
+                                        Color32::from_rgb(156, 185, 112)
+                                    },
+                                ),
+                            );
+                        }
+                    }
+                    let label = egui::Rect::from_min_size(
+                        audio.left_top(),
+                        Vec2::new(audio.width().min(96.0), audio.height()),
+                    );
+                    wave_painter.rect_filled(
+                        label,
+                        4,
+                        if clip.volume_percent == 0 {
+                            Color32::from_gray(28)
+                        } else {
+                            Color32::from_rgb(30, 35, 23)
+                        },
+                    );
+                    wave_painter.text(
                         audio.left_center() + Vec2::new(5.0, 0.0),
                         Align2::LEFT_CENTER,
-                        format!("Audio · {}%", clip.volume_percent),
-                        FontId::new(11.0, kit::medium()),
+                        format!("{audio_label} · {}%", clip.volume_percent),
+                        FontId::new(10.0, kit::medium()),
                         MUTED,
                     );
                     if r.clicked() || r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
@@ -2750,6 +3097,47 @@ fn separator(ui: &mut egui::Ui) {
     );
 }
 
+/// Stable, whole-second analysis windows are clipped to the actual source in/out points.
+/// Display coordinates select a view only; the edit's integer boundaries never change here.
+fn timeline_window(
+    start: Tick,
+    end: Tick,
+    card: egui::Rect,
+    viewport: egui::Rect,
+) -> Option<(Tick, Tick, u16, u16)> {
+    let visible = card.intersect(viewport);
+    if visible.width() < 8.0 || card.width() <= 0.0 || end <= start {
+        return None;
+    }
+    let second = clipcraft_time::TICKS_PER_SECOND;
+    let span = end.0 - start.0;
+    let fraction = |x: f32| f64::from(((x - card.left()) / card.width()).clamp(0.0, 1.0));
+    let first = start.0 + (span as f64 * fraction(visible.left())) as i64;
+    let last = start.0 + (span as f64 * fraction(visible.right())).ceil() as i64;
+    let a = Tick((first / second * second).max(start.0));
+    let b = Tick(((last.saturating_add(second - 1) / second) * second).min(end.0));
+    if !(second / 30..=second * 1800).contains(&(b.0 - a.0)) {
+        return None;
+    }
+    let frames = (visible.width() / (card.height() * 16.0 / 9.0).max(1.0))
+        .ceil()
+        .clamp(1.0, 12.0) as u16;
+    let buckets = ((visible.width() / 128.0).ceil() * 64.0).clamp(16.0, 2048.0) as u16;
+    Some((a, b, frames, buckets))
+}
+fn source_x(card: egui::Rect, start: Tick, end: Tick, at: f64) -> f32 {
+    card.left() + card.width() * ((at - start.0 as f64) / (end.0 - start.0).max(1) as f64) as f32
+}
+fn cover_uv(size: Vec2, aspect: f32) -> egui::Rect {
+    let ratio = size.x / size.y.max(1.0);
+    let (w, h) = if ratio > aspect {
+        (1.0, aspect / ratio)
+    } else {
+        (ratio / aspect, 1.0)
+    };
+    egui::Rect::from_center_size(egui::pos2(0.5, 0.5), Vec2::new(w, h))
+}
+
 fn stamp(time: Tick) -> String {
     let ms = time.to_units_floor(1000).max(0);
     format!("{}:{:02}.{:01}", ms / 60_000, ms / 1000 % 60, ms / 100 % 10)
@@ -2758,6 +3146,230 @@ fn stamp(time: Tick) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn visible_analysis_stays_in_trimmed_source_and_maps_back_to_the_same_cut() {
+        let start = Tick::from_units(37, 10);
+        let end = Tick::from_units(127, 10);
+        let card = egui::Rect::from_min_max(egui::pos2(-300.0, 0.0), egui::pos2(600.0, 72.0));
+        let viewport = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(300.0, 90.0));
+        let (a, b, frames, buckets) = timeline_window(start, end, card, viewport).unwrap();
+        assert_eq!(a, Tick::from_units(6, 1));
+        assert_eq!(b, Tick::from_units(10, 1));
+        assert!((1..=12).contains(&frames) && (16..=2048).contains(&buckets));
+        assert!((source_x(card, start, end, Tick::from_units(67, 10).0 as f64)).abs() < 0.01);
+        assert!(
+            (source_x(card, start, end, Tick::from_units(97, 10).0 as f64) - 300.0).abs() < 0.01
+        );
+        let full = timeline_window(start, end, card, card).unwrap();
+        assert_eq!((full.0, full.1), (start, end));
+        let tiny = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(4.0, 72.0));
+        assert!(timeline_window(start, end, tiny, tiny).is_none());
+        assert!(
+            timeline_window(Tick::ZERO, Tick::from_units(1801, 1), viewport, viewport).is_none()
+        );
+        // Subsecond trims stay precise and cannot ask a decoder outside their in/out points.
+        let short_end = start + RATE.tick_of(1);
+        assert_eq!(
+            timeline_window(start, short_end, viewport, viewport).map(|v| (v.0, v.1)),
+            Some((start, short_end))
+        );
+        let uv = cover_uv(Vec2::new(100.0, 100.0), 16.0 / 9.0);
+        assert!((uv.width() - 9.0 / 16.0).abs() < 0.001);
+        assert_eq!(uv.height(), 1.0);
+    }
+
+    fn two_preview_sources(fixture: &crate::playback::editor_fixtures::Fixture) -> EditorState {
+        let mut state = EditorState {
+            open: true,
+            ..Default::default()
+        };
+        for name in ["first.mp4", "second.mp4"] {
+            state.edit(EditorAction::Append {
+                input: fixture.file(name),
+                name: name.into(),
+                duration: Tick::from_units(1, 1),
+            });
+        }
+        state
+    }
+    fn preview_until(
+        state: &mut EditorState,
+        context: &egui::Context,
+        ready: impl Fn(&EditorState) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !ready(state) && Instant::now() < deadline {
+            // Test decode completion without depending on UI frame rate or advancing wall time.
+            state.clock = None;
+            state.poll_preview(context);
+            assert!(state.preview_workers() <= 2);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            ready(state),
+            "preview did not become ready: {:?}",
+            state.message
+        );
+    }
+
+    #[test]
+    fn prepared_second_source_keeps_its_picture_when_promoted_at_a_cut() {
+        let fixture = crate::playback::editor_fixtures::Fixture::new(false);
+        let context = crate::kit::test_context();
+        let mut state = two_preview_sources(&fixture);
+        let next = state.session.clips()[1].id;
+        state.edit(EditorAction::Trim {
+            id: next,
+            start: Tick::from_units(1, 3),
+            end: Tick::from_units(1, 1),
+        });
+        state.playing = true;
+        preview_until(&mut state, &context, |state| {
+            state.prepared_preview.as_ref().is_some_and(|prepared| {
+                prepared.playback.editor_target_ready(prepared.source.start)
+            })
+        });
+        let texture = state
+            .prepared_preview
+            .as_ref()
+            .unwrap()
+            .playback
+            .editor_texture_id();
+        assert!(texture.is_some());
+        state.playhead = Tick::from_units(1, 1);
+        state.clock = None;
+        state.poll_preview(&context);
+        assert_eq!(state.preview_id, Some(next));
+        assert_eq!(state.preview.as_ref().unwrap().editor_texture_id(), texture);
+        assert!(
+            state
+                .preview
+                .as_ref()
+                .unwrap()
+                .editor_target_ready(Tick::from_units(1, 3))
+        );
+        assert!(!state.seek_pending);
+        assert!(
+            state.preview_target.is_none(),
+            "promotion must not request another seek"
+        );
+        assert!(state.playing);
+        assert!(state.preview_workers() <= 2);
+        state.close();
+        preview_until(&mut state, &context, |state| state.preview_workers() == 0);
+    }
+
+    #[test]
+    fn same_source_cuts_reuse_decoder_and_seek_only_when_ranges_are_discontinuous() {
+        let fixture = crate::playback::editor_fixtures::Fixture::new(false);
+        let context = crate::kit::test_context();
+        let mut state = EditorState {
+            open: true,
+            ..Default::default()
+        };
+        state.edit(EditorAction::Append {
+            input: fixture.file("same.mp4"),
+            name: "Same".into(),
+            duration: Tick::from_units(1, 1),
+        });
+        state.edit(EditorAction::Split {
+            at: Tick::from_units(1, 2),
+        });
+        state.playing = true;
+        preview_until(&mut state, &context, |state| !state.seek_pending);
+        let texture = state.preview.as_ref().unwrap().editor_texture_id();
+        state.playhead = Tick::from_units(1, 2);
+        state.clock = None;
+        state.poll_preview(&context);
+        assert_eq!(state.preview.as_ref().unwrap().editor_texture_id(), texture);
+        assert_eq!(state.preview_workers(), 1);
+        assert!(state.prepared_preview.is_none());
+        assert!(state.preview_target.is_none());
+
+        let second = state.session.clips()[1].id;
+        state.edit(EditorAction::Trim {
+            id: second,
+            start: Tick::from_units(3, 4),
+            end: Tick::from_units(1, 1),
+        });
+        state.seek(Tick::ZERO);
+        state.playing = true;
+        preview_until(&mut state, &context, |state| !state.seek_pending);
+        state.playhead = Tick::from_units(1, 2);
+        state.clock = None;
+        state.poll_preview(&context);
+        assert_eq!(state.preview_target, Some(Tick::from_units(3, 4)));
+        assert_eq!(state.preview_workers(), 1);
+        preview_until(&mut state, &context, |state| !state.seek_pending);
+        assert!(
+            state
+                .preview
+                .as_ref()
+                .unwrap()
+                .editor_target_ready(Tick::from_units(3, 4))
+        );
+        assert_eq!(state.preview.as_ref().unwrap().editor_texture_id(), texture);
+        state.close();
+        preview_until(&mut state, &context, |state| state.preview_workers() == 0);
+    }
+
+    #[test]
+    fn rapid_seek_reorder_and_reopen_keep_active_prepared_and_retiring_workers_bounded() {
+        let fixture = crate::playback::editor_fixtures::Fixture::new(false);
+        let context = crate::kit::test_context();
+        let mut state = two_preview_sources(&fixture);
+        state.playing = true;
+        preview_until(&mut state, &context, |state| {
+            state.prepared_preview.is_some()
+        });
+        for index in 0..40 {
+            state.seek(Tick::from_units(index % 2, 1));
+            if index % 3 == 0 {
+                let id = state.session.clips()[1].id;
+                state.edit(EditorAction::Move { id, index: 0 });
+            }
+            state.playing = true;
+            state.poll_preview(&context);
+            assert!(state.preview_workers() <= 2);
+            assert!(
+                state.prepared_preview.is_none(),
+                "a seek invalidates preparation"
+            );
+            if index % 5 == 0 {
+                state.close();
+                assert!(state.preview.is_none());
+                assert!(state.prepared_preview.is_none());
+                state.open = true;
+                state.poll_preview(&context);
+                assert!(state.preview_workers() <= 2);
+            }
+        }
+        state.close();
+        preview_until(&mut state, &context, |state| state.preview_workers() == 0);
+        assert!(state.preview.is_none());
+        assert!(state.prepared_preview.is_none());
+    }
+
+    #[test]
+    fn failed_next_source_does_not_stop_or_repeatedly_reopen_healthy_current_source() {
+        let fixture = crate::playback::editor_fixtures::Fixture::new(false);
+        let context = crate::kit::test_context();
+        let mut state = two_preview_sources(&fixture);
+        std::fs::write(&state.session.clips()[1].input, b"damaged media").unwrap();
+        state.playing = true;
+        preview_until(&mut state, &context, |state| state.failed_preload.is_some());
+        let failed = state.failed_preload.clone();
+        for _ in 0..20 {
+            state.clock = None;
+            state.poll_preview(&context);
+            assert!(state.playing);
+            assert!(state.preview.as_ref().unwrap().editor_error().is_none());
+            assert!(state.prepared_preview.is_none());
+            assert_eq!(state.failed_preload, failed);
+        }
+        state.close();
+        preview_until(&mut state, &context, |state| state.preview_workers() == 0);
+    }
     #[test]
     fn export_presets_keep_edit_shortcuts_out_of_the_dialog_and_reject_impossible_sizes() {
         let context = crate::kit::test_context();

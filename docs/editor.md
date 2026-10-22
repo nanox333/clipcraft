@@ -64,10 +64,35 @@ Shortcuts remain active when a button is focused; text/numeric input retains nor
 ## Preview and export
 
 Preview plays the original source range and its first audio track at the selected volume, with
-the same fade envelope used by export. It uses one player and may pause briefly while opening
-the next source. The lower audio lane represents linked source audio; it is not a decoded waveform. Timeline thumbnails are cached source
-thumbnails, not frame-by-frame filmstrips. A missing sound device is reported and video preview
-continues without sound.
+the same fade envelope used by export. It prepares the next source paused, then promotes that
+source at the cut; its audio output opens only when it becomes active. At most two current,
+prepared or retiring players exist, including cancelled decoders until they finish. Slow sources,
+seeking or a decoder that is still stopping can still cause a pause; this is not a gapless-playback
+guarantee. A missing sound device is reported and video preview continues without sound.
+
+The video lane samples actual pictures from each visible source range. The linked audio lane
+shows first-track min/max peaks, with segment volume/mute and fades applied to its display.
+Trimming and splitting retain source-time alignment. Background analysis has loading/error states;
+it does not block editing or change the source file. These are sampled strips and envelopes, not
+every decoded video frame or an editable detached audio track. Media without an audio track has
+no waveform; recorded silence produces a flat envelope.
+
+Each analysis accepts 1–12 letterboxed 160×90 picture samples and 16–2048 min/max audio buckets.
+Sound comes from the first audio track. MP4/MOV reads native-rate packets and discards decoded
+PCM after accumulating peaks. Other containers use an 8 kHz fallback limited to ten seconds and
+a nominal native PCM span of 16 MiB; larger requests report unsupported. The requested range is
+otherwise at most 30 minutes, and source duration is at most 24 hours. One worker handles
+analysis, with up to eight queued UI requests. MP4/MOV metadata is checked before decoding:
+at most 16 MiB of movie/fragment metadata, 100,000 boxes/eight nesting levels and one million
+declared sample entries across all tracks in the whole source. Declared encoded samples over
+64 MiB are also refused before source probing. PCM tables count each audio frame, so
+48 kHz PCM longer than about 20.8 seconds can exceed the source budget even for a short
+selection. Oversized metadata or audio packets/configuration report unsupported without changing
+the source; AAC recording clips use far fewer entries. The 32 MiB/256-entry result cache uploads
+at most two textures per poll; source size
+and modification time invalidate stale entries. These are result/cache limits; decoder buffers
+are separate and can be much larger. Detailed decoder limits and remaining measurements are recorded in
+[architecture](architecture.md) and [testing](testing.md).
 
 **Export video** opens a window with these output choices:
 
@@ -155,8 +180,24 @@ The Library shows each clip's resolution and file size under its name.
 
 ## Sessions and command line
 
-Navigating away retains edits and imported media; return with the **Editor** rail icon. Closing ClipCraft discards the in-memory draft;
-there is no project file or autosave yet. Only an exported MP4 persists the assembled result.
+Navigating away retains edits and imported media; return with the **Editor** rail icon. The
+application also keeps one internal local `editor-draft.json` record beside its library index.
+It recovers current cuts, text, source references, title, playhead and export preset after a
+restart, paused and with a visible notice. Undo/redo history starts fresh. Recovery is metadata;
+it does not copy the videos or create a save-project workflow. An ordinary exported MP4 remains
+the way to keep or share the assembled result independently of its source files.
+
+Changed metadata is saved after a 500 ms debounce on one serial worker. Normal exit allows up
+to two seconds to flush the latest state. A crash, filesystem stall or over-budget edit can leave
+the most recent input unsaved; the last successful recovery remains intact. The record is limited
+to 16 MiB and at most 5,000 deduplicated absolute media references. Missing sources remain
+references, so reconnect the drive or restore the original paths before preview/export.
+
+Damaged, oversized, unreadable or future-version recovery is kept unchanged and shown as an error.
+Use the editor's explicit discard action to remove its recovery metadata, or resolve the reported
+file-access problem and retry. Discard never deletes source videos or exported copies. The fixed
+recovery filename and existing path components cannot be symbolic links. See
+[ADR 0020](adr/0020-internal-editor-recovery.md) for atomic-write and failure behavior.
 
 The Rust CLI calls the same engine commands, with at most 16 MiB of JSON on standard input:
 
@@ -164,6 +205,10 @@ The Rust CLI calls the same engine commands, with at most 16 MiB of JSON on stan
 clipcraft-cli editor import < paths.json
 clipcraft-cli editor apply < command.json
 clipcraft-cli editor export < export-request.json
+clipcraft-cli editor timeline < timeline-request.json
+clipcraft-cli editor draft-load < recovery-path.json
+clipcraft-cli editor draft-save < recovery-save.json
+clipcraft-cli editor draft-discard < recovery-path.json
 ```
 
 `import` accepts a JSON array of local file paths and returns probed media references. It is
@@ -201,6 +246,23 @@ The `editor.export` JSON result preserves the existing top-level `path`, `durati
 The Rust report stores clip facts in `ExportedSequence.clip`, which is flattened during JSON
 serialization; CLI callers do not need to look for a nested `clip` object. The CLI and UI share
 the same engine implementation and hardware preference.
+
+`timeline` accepts a source `path`, integer source `start`/`end` ticks, `frames` (1–12) and
+`buckets` (16–2048). It returns exact sample positions, 160×90 RGBA pictures, signed 16-bit min/max
+waveform buckets and `has_audio`; this bounded JSON can be large and contains decoded media.
+For example:
+
+```json
+{"path":"/clips/example.mp4","start":0,"end":1270080000000,"frames":6,"buckets":256}
+```
+
+`draft-load` and `draft-discard` accept one JSON string containing an absolute local path ending
+in `editor-draft.json`. Load returns the current draft or `null`; discard returns `true` when
+successful, including an already-missing file. `draft-save` accepts
+`{"path":"/app-data/ClipCraft/editor-draft.json","draft":<draft>}` and returns `true` after
+atomic publication. Use the engine's versioned recovery schema, not a hand-authored project file.
+The `editor.draft.*` commands enforce the same size, validation, existing-file preservation and
+path rules as the UI.
 
 No control server, cloud service, .ccproj format or AI upload is involved. Detached audio,
 overlapping video tracks, cross-dissolves and general-purpose multitrack editing remain outside

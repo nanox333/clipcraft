@@ -58,6 +58,29 @@ fn run_editor(arguments: &[OsString]) -> Result<(), CliError> {
         return Err(CliError::Usage);
     }
     let command = match arguments[0].to_str() {
+        Some("timeline") => Command::AnalyzeEditorTimeline {
+            request: Box::new(serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?),
+        },
+        Some("draft-load") | Some("draft-discard") => {
+            let path: PathBuf = serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?;
+            if arguments[0].to_str() == Some("draft-load") {
+                Command::LoadEditorDraft { path }
+            } else {
+                Command::DiscardEditorDraft { path }
+            }
+        }
+        Some("draft-save") => {
+            #[derive(serde::Deserialize)]
+            struct Save {
+                path: PathBuf,
+                draft: clipcraft_engine::EditorDraft,
+            }
+            let request: Save = serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?;
+            Command::SaveEditorDraft {
+                path: request.path,
+                draft: Box::new(request.draft),
+            }
+        }
         Some("import") => Command::ImportEditorMedia {
             paths: serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?,
         },
@@ -95,6 +118,9 @@ fn run_editor(arguments: &[OsString]) -> Result<(), CliError> {
         _ => return Err(CliError::Usage),
     };
     match execute(command).map_err(CliError::Engine)? {
+        CommandOutput::EditorTimeline(analysis) => write_json(&analysis),
+        CommandOutput::EditorDraft(draft) => write_json(&draft),
+        CommandOutput::EditorDraftSaved | CommandOutput::EditorDraftDiscarded => write_json(&true),
         CommandOutput::EditorMedia(entries) => write_json(&entries),
         CommandOutput::EditorSession(session) => write_json(&session),
         CommandOutput::SequenceExported(report) => write_json(&report),
@@ -552,7 +578,8 @@ fn print_help() -> Result<(), CliError> {
         "\n",
         "Usage:\n",
         "  clipcraft-cli commands\n",
-        "  clipcraft-cli editor import | editor apply | editor export  (JSON on stdin)\n",
+        "  clipcraft-cli editor import | apply | export | timeline  (JSON on stdin)\n",
+        "  clipcraft-cli editor draft-load | draft-save | draft-discard  (JSON on stdin)\n",
         "  clipcraft-cli recording games list | recording games installed [STEAM_ROOT ...]\n",
         "  clipcraft-cli recording games automatic on|off\n",
         "  clipcraft-cli recording games enable|disable <game-id...|all>\n",

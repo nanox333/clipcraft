@@ -183,6 +183,7 @@ fn validate(cut: &Cut) -> Result<(), EngineError> {
             || clip.name.chars().any(char::is_control)
             || clip.id == 0
             || !ids.insert(clip.id)
+            || text_ids.contains(&clip.id)
             || clip.source_duration > Tick::from_units(86_400, 1)
             || clip.start < Tick::ZERO
             || clip.end > clip.source_duration
@@ -258,8 +259,8 @@ impl EditorSession {
         self.next_id = self.next_id.checked_add(1).ok_or_else(invalid)?;
         Ok(self.next_id)
     }
-    /// Validate caller-supplied state before applying FilmCraft operations to a private copy.
-    pub(crate) fn apply(mut self, action: EditorAction) -> Result<Self, EngineError> {
+    /// Checks current edits and every history entry before they enter an operation or recovery.
+    pub fn validate_state(&self) -> Result<(), EngineError> {
         if self.undo.len() > MAX_EDITOR_HISTORY
             || self.redo.len() > MAX_EDITOR_HISTORY
             || self.undo.len() + self.redo.len() > MAX_EDITOR_HISTORY
@@ -294,6 +295,22 @@ impl EditorSession {
         {
             return Err(invalid());
         }
+        Ok(())
+    }
+    /// A recovery copy preserves current cuts and text, but starts a new undo history on restart.
+    pub fn validated_recovery_snapshot(&self) -> Result<Self, EngineError> {
+        self.validate_state()?;
+        Ok(Self {
+            clips: self.clips.clone(),
+            texts: self.texts.clone(),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            next_id: self.next_id,
+        })
+    }
+    /// Validate caller-supplied state before applying FilmCraft operations to a private copy.
+    pub(crate) fn apply(mut self, action: EditorAction) -> Result<Self, EngineError> {
+        self.validate_state()?;
         if action == EditorAction::Undo {
             if let Some(previous) = self.undo.pop() {
                 let now = self.cut();

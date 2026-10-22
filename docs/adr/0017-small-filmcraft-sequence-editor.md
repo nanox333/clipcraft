@@ -2,6 +2,11 @@
 
 **Status:** accepted · **Date:** 2026-10-22 · **Scope:** M11.1a
 
+Subsequent decisions: ADR 0019 adds the bounded text/effect/fade operations and shared preview
+rendering. [ADR 0020](0020-internal-editor-recovery.md) supersedes the session-only lifetime below
+with internal recovery. M11.1c prepares the next preview source within a two-player budget; see
+the current [editor guide](../editor.md) for remaining playback limits.
+
 The user explicitly requested the small editor expansion now, FilmCraft reuse, and a reference
 layout with media at the left, a large preview and a timeline underneath. This authorizes the
 portable cuts/arrangement slice ahead of the broad M8/M10 dependencies in M11.1. It does not

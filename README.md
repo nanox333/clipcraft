@@ -59,10 +59,13 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   or remove cuts, with 64-step undo/redo, linked audio volume/mute, black/white fades and seven colour
   effects. Independent text layers can be moved, trimmed, split, duplicated, faded and recoloured.
   Preview and export share FilmCraft text rendering and the same audio fade envelope.
+  Timeline strips sample the source pictures and linked audio waveforms; bounded background
+  analysis keeps media work off the UI thread. Preview prepares the next source across cuts.
   **Export video** offers standard H.264 MP4 or estimated 10 MB, 25 MB and custom 1–500 MB presets,
   with actual size and encoder reporting, progress/cancel and GPU-encoder fallback to software.
   Output is at most 720p/30 fps with stereo AAC; size presets can choose a smaller canvas. Edits
-  stay in memory, originals remain untouched, and quick trim stays available. See
+  recover from internal local metadata after restart, including text and the export preset;
+  undo history starts fresh. Originals remain untouched, and quick trim stays available. See
   [the editor guide](docs/editor.md) for controls and limits.
 - **Settings and diagnostics:** recording, quality, audio, hotkey, storage, game allowlist, and
   general settings are stored locally. [348 known games](docs/game-catalog.md) are recognized

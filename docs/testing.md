@@ -398,3 +398,71 @@ The environment has no physical sound output or GPU export device. These checks 
 software path and hardware-failure contract, not real-device sound, GPU throughput, Windows/macOS
 UI behavior or parity on reference gaming hardware. GIF/codec/export oracles remain external
 verification tools, never shipped product dependencies.
+
+## Timeline analysis, playback preparation and recovery (M11.1c, 2026-10-22)
+
+The final `cargo xtask ci` passes 520 tests across 30 targets, strict clippy, layering, assets and license
+checks. The documentation gate passes. The acceptance evidence includes:
+
+- Eleven focused player timeline tests use generated Rust media. Distinct source pictures resolve at
+  exact Tick bin centres before and after trim; first-track audio and a trimmed impulse produce
+  real min/max envelopes. Media without audio has `has_audio=false` and zero buckets. Tests cover
+  cancellation between bounded audio reads and inside packet processing, missing/hostile media,
+  range/payload limits and packet guards. A 30-minute fixture uses generated 8 Hz native PCM to
+  exercise full-range timing and streaming without retaining the decoded range. It is not a
+  realistic audio-throughput benchmark. Preflight regressions cover expanding/aggregate sample
+  counts, metadata bytes, 32/64-bit box headers, depth/count bounds and explicit/default oversized
+  encoded sizes. A relabeled ProRes source with a `u32::MAX` first-sample size is refused before
+  metadata probing; both 24/48-byte ALAC cookie layouts reject oversized frame declarations before
+  decoder construction.
+- Cache tests cover progressive texture uploads, stale/cancelled-result rejection, byte/entry/
+  queue limits, failed-key retention and source fingerprint invalidation. Playback tests exercise
+  prepared-frame promotion, paused preloading without audio output, same-source target seeks,
+  stale invalidation and the two-player budget including retiring workers. A slow decoder can
+  delay preview rather than grow the worker count.
+- Engine recovery tests round-trip cuts, text, title, media references, preset and clamped playhead
+  with fresh history. Missing sources, malformed state/history, size/version limits, atomic
+  preservation, temporary collisions, fixed-basename/path/symlink refusal and repeated discard are
+  covered. Worker tests prove save/discard ordering, bounded shutdown and failure recovery.
+- A CLI analysis of a three-second generated AAC clip produced six distinct pictures at exact
+  sample bins and 64 waveform buckets, with maximum signed amplitude 4104. Source hashes were
+  unchanged. CLI recovery smoke checks round-tripped a valid draft, preserved corrupt recovery on
+  a rejected save and accepted repeated explicit discard. CLI commands use the same engine
+  timeline and recovery implementation.
+
+The native Linux app was opened on an isolated Xvfb display at 1440×900 with generated sources.
+Before/after screenshots under ignored `.clipcraft-local/timeline-recovery/` show actual distinct
+source pictures and decoded waveforms. The latest guarded app build was opened again; Fit, zoom
+and horizontal panning verified source-time alignment, recorded in `zoomed-panned.png`. The
+latest `after.png` shows four cuts, a text layer, decoded waveforms and the restored notice.
+Keyboard checks exercised S split, Ctrl+Z undo,
+Ctrl+Shift+Z redo, Right frame-step and Space play/pause. After restart, recovery restored four
+cuts, one text layer, title, the 10 MB preset and the saved playhead, stopped with
+empty undo/redo. A missing file retained its placeholder and edits, showed unavailable timeline
+media and an actionable preview message. Generated media, decoded output and source hashes stay
+outside Git.
+
+Native corrupt recovery stayed byte-identical while the wrapped error and Discard action were
+visible at 1440×900. Explicit discard removed only that metadata. Discarding a valid record kept
+the current four cuts usable; Right navigation did not recreate the record, and the next launch
+opened the library without recovery. Normal exit 100 ms after Right, before the 500 ms debounce,
+persisted the latest frame change from 10.333333 to 10.366667 seconds (one 1/30-second frame).
+All three source SHA-256 hashes
+remained unchanged. The final recovery-notice/readability patch is rebuilt; six focused recovery
+UI tests and strict clippy pass.
+
+Independent review identified two additional shutdown-race cases. Their deterministic regressions
+now pass within 15 focused tests (nine workspace recovery cases and six worker cases); a subsequent
+read-only review passes. Final media preflight/allocation guards also cap whole-source MP4 box
+metadata and sample declarations before either source open, plus audio configuration before
+decoder construction. The latest guarded CLI analysis still returns six distinct pictures and
+64 waveform buckets with nonzero peaks from the generated AAC source. The final application/CLI builds, full
+gate and documentation check pass. M11.1c is software-complete for this slice; its native evidence
+is Linux/Xvfb only.
+
+The environment's virtual display and generated media can establish this software workflow.
+Physical audio, GPU decode/export, real games, Windows/macOS UI behavior and reference-machine
+latency/memory measurements remain separate evidence gates. Thumbnail/envelope payload and UI
+cache budgets are not total process-memory measurements; FilmCraft decoder internals allocate
+additional buffers. Recovery's 500 ms debounce and two-second exit-flush limit leave a bounded
+waiting policy, not a guarantee that an edit just before a crash or filesystem stall is saved.

@@ -9,6 +9,8 @@ use clipcraft_engine::{
 };
 mod capture;
 mod editor;
+mod editor_media;
+mod editor_recovery;
 mod game_scan;
 mod kit;
 mod library_scan;
@@ -64,7 +66,11 @@ fn main() -> eframe::Result<()> {
                     .egui_ctx
                     .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
-            Ok(Box::new(ClipCraftApp::restored()))
+            let mut app = ClipCraftApp::restored();
+            if let Some(path) = clipcraft_engine::default_editor_draft_path() {
+                app.editor.enable_recovery(path, &creation.egui_ctx);
+            }
+            Ok(Box::new(app))
         }),
     )
 }
@@ -217,6 +223,10 @@ impl eframe::App for ClipCraftApp {
         self.capture_frame(context);
         self.sync_playback(context);
         self.editor.poll(context);
+        if self.editor.take_recovered() {
+            self.page = Page::Editor;
+            self.selected = None;
+        }
         if self.editor.take_saved().is_some() {
             self.scan_library();
         }
@@ -224,6 +234,10 @@ impl eframe::App for ClipCraftApp {
         self.draw_screen(context);
         self.draw_focus_ring(context);
         resize_from_the_edges(context);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.editor.flush_recovery();
     }
 }
 

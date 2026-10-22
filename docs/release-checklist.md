@@ -10,6 +10,7 @@ alone.
 | --- | --- | --- |
 | Works with no network | Verified here | An `strace` of the app starting, clipping, and saving opens only `AF_UNIX` sockets (X11, sound server); no Cargo dependency is a network client. |
 | Crash recovery | Verified here | Unfinished saves cleaned up or recovered on launch, MP4 crash-safe copy, damaged settings/index set aside ([ADR 0011](adr/0011-crash-and-disk-safety.md)). Open: a real kill during a write. |
+| Editor recovery | Verified here | M11.1c software tests and native 1440×900 restart restore cuts/text/title/preset/playhead paused with fresh history; missing sources preserve the edit. Native corrupt-record preservation, explicit discard and normal-exit flush pass, with source hashes unchanged. Shutdown-race regressions and the final full gate pass. See [testing](testing.md) and [ADR 0020](adr/0020-internal-editor-recovery.md). Debounce/stalled filesystems can leave recent input unsaved. |
 | Full disk | Verified here | Real tmpfs tests: refusal before writing, mid-save and mid-export failure leave nothing, earlier clips untouched. |
 | Device loss | Verified here (generated) | A lost microphone goes silent and rejoins; a lost screen keeps what was recorded. Open: a real unplugged device. |
 | Suspend/resume | Verified here (simulated) | The soak tool freezes the recorder with `SIGSTOP` for 20 s; recording resumes, the stale buffer is dropped after a silence of 10 s, and later clips have no frozen stretch. Open: a real laptop sleep. |

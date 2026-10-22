@@ -17,17 +17,17 @@ fn brightness(index: u32) -> u8 {
 }
 
 /// Encodes a one-second flat-gray clip whose brightness rises every frame, with the pure-Rust encoder.
-fn make_clip() -> Vec<u8> {
+pub(crate) fn make_clip() -> Vec<u8> {
     build_clip(false)
 }
 
 /// The same clip with one second of 440 Hz sound: 16-bit mono PCM at 48 kHz.
-fn make_clip_with_sound() -> Vec<u8> {
+pub(crate) fn make_clip_with_sound() -> Vec<u8> {
     build_clip(true)
 }
 
 /// The same clip with one second of sound per entry: a sine tone at each pitch, as separate audio tracks.
-fn make_clip_with_tracks(tones: &[f64]) -> Vec<u8> {
+pub(crate) fn make_clip_with_tracks(tones: &[f64]) -> Vec<u8> {
     build_clip_with(tones)
 }
 
@@ -196,6 +196,45 @@ fn mean_red(frame: &DecodedFrame) -> f64 {
         .map(|pixel| u64::from(pixel[0]))
         .collect();
     reds.iter().sum::<u64>() as f64 / reds.len() as f64
+}
+
+#[test]
+fn cancellation_acknowledges_both_video_and_audio_worker_retirement() {
+    let scratch = Scratch::new();
+    let path = scratch.file("retire.mp4", &make_clip_with_sound());
+    let player = Player::start(path, || {});
+    let events = collect(&player, |events| !frames(events).is_empty());
+    assert!(!frames(&events).is_empty());
+    assert!(!player.worker_finished());
+    let feed = player.audio_feed().unwrap();
+    player.request_stop();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !player.worker_finished() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert!(player.worker_finished());
+    assert!(feed.worker_finished());
+}
+
+#[test]
+fn editor_resume_keeps_the_final_source_frame_instead_of_restarting_at_zero() {
+    let scratch = Scratch::new();
+    let path = scratch.file("last-frame.mp4", &make_clip());
+    let player = Player::start(path, || {});
+    collect(&player, |events| !frames(events).is_empty());
+    let target = Tick::from_units(29, 30);
+    player.seek(target);
+    let seeked = collect(&player, |events| {
+        frames(events).iter().any(|frame| frame.pts == target)
+    });
+    assert!(frames(&seeked).iter().any(|frame| frame.pts == target));
+    player.play_from_current();
+    let played = collect(&player, |events| {
+        events.iter().any(|e| matches!(e, PlayerEvent::Ended))
+    });
+    assert!(played.iter().any(|e| matches!(e, PlayerEvent::Ended)));
+    assert!(frames(&played).iter().all(|frame| frame.pts >= target));
+    player.request_stop();
 }
 
 #[test]

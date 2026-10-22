@@ -138,6 +138,7 @@ impl ClipInfoSummary {
 
 enum Command {
     Play,
+    PlayFromCurrent,
     Pause,
     Seek(Tick),
     SetSpeed(f64),
@@ -194,6 +195,12 @@ impl Player {
         let _ = self.commands.send(Command::Play);
     }
 
+    /// Resumes the requested position even in the final frame, for a bounded editor range.
+    /// Unlike [`Player::play`], this never interprets an end position as a replay request.
+    pub fn play_from_current(&self) {
+        let _ = self.commands.send(Command::PlayFromCurrent);
+    }
+
     /// Pauses on the current picture.
     pub fn pause(&self) {
         let _ = self.commands.send(Command::Pause);
@@ -229,6 +236,18 @@ impl Player {
     /// runs, playback keeps time with the wall clock.
     pub fn audio_feed(&self) -> Option<Arc<audio::AudioFeed>> {
         self.audio.get().cloned()
+    }
+
+    /// Requests cancellation without blocking the caller on a decoder or file read.
+    pub fn request_stop(&self) {
+        let _ = self.commands.send(Command::Shutdown);
+    }
+
+    /// Whether the worker has acknowledged cancellation (or failed to start).
+    /// Callers replacing players can retain stopped workers until this is true to bound opens.
+    pub fn worker_finished(&self) -> bool {
+        self.worker.as_ref().is_none_or(JoinHandle::is_finished)
+            && self.audio.get().is_none_or(|feed| feed.worker_finished())
     }
 
     /// Takes every event that arrived since the last call. Returns a worker failure if the thread
@@ -512,10 +531,12 @@ impl State {
     ) -> bool {
         match command {
             Command::Shutdown => return true,
-            Command::Play => {
+            Command::Play | Command::PlayFromCurrent => {
                 if !self.playing {
                     // Replaying from the end starts over.
-                    if self.position + info.frame_rate.frame_duration() >= info.duration {
+                    if matches!(command, Command::Play)
+                        && self.position + info.frame_rate.frame_duration() >= info.duration
+                    {
                         self.position = Tick::ZERO;
                         self.show = true;
                     }
@@ -691,6 +712,7 @@ impl Drop for CloseFeed {
 pub mod audio;
 pub mod stretch;
 pub mod thumbnail;
+pub mod timeline;
 
 #[cfg(test)]
 mod tests;

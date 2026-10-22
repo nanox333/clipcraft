@@ -66,7 +66,7 @@ ClipRecorder's timestamped audio-gap policy is also ported in `clipcraft-record`
 untimestamped `AudioSource` mixer does not use it. Upstream revisions, permission provenance, and
 exact source files are recorded in [`upstream-ports.md`](upstream-ports.md).
 
-## Small sequence editor (M11.1a/M11.1b)
+## Small sequence editor (M11.1a/M11.1b/M11.1c)
 
 The editor uses FilmCraft's pinned track/cut algebra, media readers, H.264 and AAC codecs. Its
 browser/preview/timeline workflow appends local references, splits at the playhead, trims source
@@ -82,8 +82,12 @@ Import clips and Send to editor add references, while right-click offers Details
 Undo/redo retains at most 64 edits within an 8 MiB budget. Quick trim remains available.
 
 Limits: one gapless video/linked-audio sequence, no separate segment-count cap, 30-minute total,
-minimum segment 1/30 second, at most 256 text layers and no persisted draft/project format.
-Navigating away retains edits until app exit. Export re-encodes SDR H.264/AAC MP4/MOV or
+minimum segment 1/30 second and at most 256 text layers. M11.1c adds internal current-state
+recovery without a user-facing project format. It restores edits/text/source references/title/
+playhead/preset paused, with fresh undo history. The 16 MiB record is debounced 500 ms; a normal
+exit flush waits at most two seconds. Crash/stalled-filesystem timing can lose recent unsaved
+input. Missing media stays referenced; damaged/unknown recovery is kept until explicit discard.
+Export re-encodes SDR H.264/AAC MP4/MOV or
 recorder-compatible MKV into H.264 MP4 at 30 fps on a 16:9 canvas, at most 720p. Pictures fit with
 black bars and no upscaling. Only the first source audio track is used (first two channels, mono
 repeated), encoded as one 48 kHz stereo AAC track; muted/silent segments contribute silence.
@@ -100,12 +104,37 @@ encoder failure. Sequence decoding stays in software; real-GPU export speed/qual
 unverified. Codec and FPS are fixed in this
 slice; the GIF/loudness tools remain in quick trim.
 
-Preview opens one source at a time and can pause briefly at a cut; real-time 4K playback and
-reference-machine export speed remain unmeasured. Text rasters and caches have explicit memory
+M11.1c prepares the next source paused within a two-player active/prepared/retiring budget;
+decoders that have not acknowledged cancellation retain their slots. Slow decoding/seeking can
+still pause at a cut; real-time 4K playback and reference-machine export speed remain unmeasured.
+The timeline now samples source pictures and first-track min/max audio envelopes rather
+than repeating a library thumbnail and showing a placeholder audio lane. One analysis worker,
+eight queued requests and a 32 MiB/256-entry result cache bound desktop work. Each result has at
+most twelve 160×90 pictures and 2048 i16 min/max buckets; codec buffers are separate from these
+payload bounds. MP4/MOV streams native-rate audio packets; other containers use an 8 kHz fallback
+limited to ten seconds and 16 MiB nominal native PCM, otherwise analysis reports unsupported.
+MP4 preflight caps movie/fragment metadata at 16 MiB, traversal at 100,000 boxes/eight levels,
+declared sample entries at one million across the entire source, and each declared encoded sample
+at 64 MiB before probing. Long PCM sources may exceed
+that source limit even for a short requested range; oversized audio packets are refused before
+decoding and oversized ALAC configuration before construction. Returned packet PCM is bounded
+after decode; codec scratch allocations are additional. AAC recorder clips use far fewer sample entries.
+Native video GOP/reference caches can be much larger than result caches; total process memory
+and analysis latency need reference-machine measurements. The final software gate passes 520 tests
+across 30 targets plus strict lints/layers/assets/licenses. Native 1440×900 checks show distinct
+source strips, waveforms, keyboard actions and paused restart recovery of cuts/text/title/preset/
+playhead with fresh history; missing-source placeholders preserve the edit. Corrupt recovery
+remains byte-identical until explicit discard, discard does not resave on navigation, and normal
+exit flushes a change made before the debounce. Zoom/pan screenshots verify source-time alignment
+on the latest guarded build. All source hashes remain unchanged. The two shutdown-race fixes pass
+focused regressions and the final full gate. M11.1c is software-complete for this slice, with
+Linux virtual-display evidence only.
+See [testing](testing.md).
+Text rasters and caches have explicit memory
 bounds rather than retaining every layer's rendered mask. Export preserves drafts/sources,
 supports progress/cancel and uses exclusive temporary output with no-replace publication; the
-destination filesystem must support hard links. The shared `editor.import`, `editor.edit` and
-`editor.export` commands accept bounded local JSON. See [editor.md](editor.md),
+destination filesystem must support hard links. The shared `editor.import`, `editor.edit`,
+`editor.export`, `editor.timeline` and `editor.draft.*` commands accept bounded local JSON. See [editor.md](editor.md),
 [testing.md](testing.md) and [ADR 0019](adr/0019-editor-preview-and-export-presets.md) for behavior,
 evidence and remaining platform checks.
 

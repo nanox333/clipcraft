@@ -154,7 +154,9 @@ The Medal support pages refer to editor “projects,” but do not document a us
 file format. `.ccproj` was my earlier ClipCraft architecture suggestion, not a Medal format. To
 keep the product clip-first, ClipCraft's primary artifacts are ordinary local video files. The app
 may keep a small rebuildable local index for titles/tags/favorites, but no custom editor project or
-save-project step is part of the MVP.
+save-project step is part of the MVP. M11.1c adds internal local recovery metadata, documented in
+[ADR 0020](docs/adr/0020-internal-editor-recovery.md), to recover the current edit after restart.
+It does not add a user-facing project-file workflow.
 
 ## MVP promise and acceptance gate
 
@@ -268,7 +270,9 @@ The separate Editor workspace now adds an independent media browser, sequence pr
 trim, arrangement, undo/redo, linked audio volume, colour effects, black/white fades and an independent
 text track, using pinned FilmCraft cut algebra, text layout and codecs. Editor exports offer normal
 output or estimated 10 MB/25 MB/custom-size presets with GPU encoder fallback.
-See [the editor guide](docs/editor.md) for export bounds and session lifetime. There is no
+Decoded timeline strips/waveforms, bounded next-source preparation and internal draft recovery
+are the M11.1c follow-up. See [the editor guide](docs/editor.md) for export bounds and recovery
+limits. There is no
 user-facing `.ccproj`, multitrack timeline, general effect system, or server component.
 
 The exact crate graph is checked with `cargo xtask layers`. Platform adapters expose fallible safe

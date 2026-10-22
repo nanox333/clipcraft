@@ -10,9 +10,14 @@ use std::sync::atomic::AtomicBool;
 
 mod diagnose;
 mod editor;
+mod editor_draft;
 pub use editor::{
     EditorAction, EditorClip, EditorSession, EditorText, MAX_EDITOR_DURATION, MAX_EDITOR_HISTORY,
     MIN_EDITOR_CLIP, TransitionPreset,
+};
+pub use editor_draft::{
+    EDITOR_DRAFT_FILE_NAME, EditorDraft, EditorDraftError, MAX_EDITOR_DRAFT_BYTES,
+    default_editor_draft_path, discard_editor_draft, load_editor_draft, save_editor_draft,
 };
 mod game_catalog;
 mod game_detection;
@@ -40,6 +45,9 @@ pub use clipcraft_export::{
     ExportPreset, GifOptions, LOUDNESS_TARGETS, MAX_GIF_SECONDS, TrimRequest as ExportRange,
 };
 pub use clipcraft_media::MediaProbe;
+pub use clipcraft_player::timeline::{
+    TimelineAnalysis, TimelineFrame, TimelineRequest, WaveformBucket,
+};
 use clipcraft_record::{HardwareEncoder, HardwareProvider, HardwareRequest};
 
 pub use clipcraft_capture::reframe::{
@@ -87,6 +95,19 @@ const VIDEO_EXTENSIONS: [&str; 7] = ["avi", "m4v", "mkv", "mov", "mp4", "webm", 
 /// A typed operation exposed by the shared command registry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
+    AnalyzeEditorTimeline {
+        request: Box<TimelineRequest>,
+    },
+    LoadEditorDraft {
+        path: PathBuf,
+    },
+    SaveEditorDraft {
+        path: PathBuf,
+        draft: Box<EditorDraft>,
+    },
+    DiscardEditorDraft {
+        path: PathBuf,
+    },
     ImportEditorMedia {
         paths: Vec<PathBuf>,
     },
@@ -223,6 +244,10 @@ impl Command {
     /// Returns this operation's stable command ID.
     pub const fn id(&self) -> &'static str {
         match self {
+            Self::AnalyzeEditorTimeline { .. } => "editor.timeline",
+            Self::LoadEditorDraft { .. } => "editor.draft.load",
+            Self::SaveEditorDraft { .. } => "editor.draft.save",
+            Self::DiscardEditorDraft { .. } => "editor.draft.discard",
             Self::ImportEditorMedia { .. } => "editor.import",
             Self::EditSequence { .. } => "editor.edit",
             Self::ExportSequence { .. } => "editor.export",
@@ -663,6 +688,10 @@ fn copy_path(input: &std::path::Path, suffix: &str, extension: &str) -> Option<P
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum CommandOutput {
+    EditorTimeline(Box<TimelineAnalysis>),
+    EditorDraft(Option<Box<EditorDraft>>),
+    EditorDraftSaved,
+    EditorDraftDiscarded,
     EditorMedia(Vec<MediaEntry>),
     EditorSession(Box<EditorSession>),
     SequenceExported(ExportedSequence),
@@ -705,6 +734,8 @@ pub enum CommandOutput {
 /// Actionable errors returned by engine commands.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EngineError {
+    EditorTimeline(clipcraft_player::timeline::TimelineError),
+    EditorDraft(EditorDraftError),
     EditorInvalid,
     SteamMetadataInvalid,
     /// A requested starter game does not exist in the shipped catalog.
@@ -780,6 +811,8 @@ pub enum EngineError {
 impl fmt::Display for EngineError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EditorTimeline(error) => error.fmt(formatter),
+            Self::EditorDraft(error) => error.fmt(formatter),
             Self::EditorInvalid => formatter.write_str("This edit is outside its limits. Use at most 30 minutes total, valid source ranges at least 1/30 second long, and volume from 0 to 100%."),
             Self::SteamMetadataInvalid => formatter.write_str("Steam library metadata could not be read safely. Check the installation or refresh again; no game files were changed."),
             Self::GamePresetInvalid => formatter.write_str("Choose a game from the built-in catalog, or add a custom game."),
@@ -875,6 +908,20 @@ pub fn execute_cancellable(
     cancel: &AtomicBool,
 ) -> Result<CommandOutput, EngineError> {
     match command {
+        Command::AnalyzeEditorTimeline { request } => {
+            clipcraft_player::timeline::analyze_timeline(&request, cancel)
+                .map(|analysis| CommandOutput::EditorTimeline(Box::new(analysis)))
+                .map_err(EngineError::EditorTimeline)
+        }
+        Command::LoadEditorDraft { path } => load_editor_draft(&path)
+            .map(|draft| CommandOutput::EditorDraft(draft.map(Box::new)))
+            .map_err(EngineError::EditorDraft),
+        Command::SaveEditorDraft { path, draft } => save_editor_draft(&path, &draft)
+            .map(|_| CommandOutput::EditorDraftSaved)
+            .map_err(EngineError::EditorDraft),
+        Command::DiscardEditorDraft { path } => discard_editor_draft(&path)
+            .map(|_| CommandOutput::EditorDraftDiscarded)
+            .map_err(EngineError::EditorDraft),
         Command::ImportEditorMedia { paths } => {
             editor::import_media(paths).map(CommandOutput::EditorMedia)
         }
@@ -1169,6 +1216,10 @@ fn scan_library_directory_with_limit(
 /// Lists stable user-facing command IDs available to the first application slice.
 pub const fn command_ids() -> &'static [&'static str] {
     &[
+        "editor.timeline",
+        "editor.draft.load",
+        "editor.draft.save",
+        "editor.draft.discard",
         "editor.import",
         "editor.edit",
         "editor.export",
@@ -1269,6 +1320,58 @@ mod tests {
     impl Drop for TestDirectory {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn timeline_and_recovery_commands_share_validated_engine_dispatch() {
+        let directory = TestDirectory::new();
+        let path = directory
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("editor-draft.json");
+        assert_eq!(
+            super::execute(Command::LoadEditorDraft { path: path.clone() }),
+            Ok(CommandOutput::EditorDraft(None))
+        );
+        let draft = Box::new(super::EditorDraft::default());
+        assert_eq!(
+            super::execute(Command::SaveEditorDraft {
+                path: path.clone(),
+                draft: draft.clone()
+            }),
+            Ok(CommandOutput::EditorDraftSaved)
+        );
+        assert_eq!(
+            super::execute(Command::LoadEditorDraft { path: path.clone() }),
+            Ok(CommandOutput::EditorDraft(Some(draft)))
+        );
+        assert_eq!(
+            super::execute(Command::DiscardEditorDraft { path: path.clone() }),
+            Ok(CommandOutput::EditorDraftDiscarded)
+        );
+        assert!(!path.exists());
+        let request = super::TimelineRequest {
+            path: PathBuf::from("missing.mp4"),
+            start: clipcraft_time::Tick::ZERO,
+            end: clipcraft_time::Tick::ZERO,
+            frames: 0,
+            buckets: 0,
+        };
+        assert!(matches!(
+            super::execute(Command::AnalyzeEditorTimeline {
+                request: Box::new(request)
+            }),
+            Err(EngineError::EditorTimeline(_))
+        ));
+        for id in [
+            "editor.timeline",
+            "editor.draft.load",
+            "editor.draft.save",
+            "editor.draft.discard",
+        ] {
+            assert!(super::command_ids().contains(&id));
         }
     }
 

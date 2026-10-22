@@ -58,6 +58,8 @@ pub struct AudioFeed {
     output_active: AtomicBool,
     failed: AtomicBool,
     closed: AtomicBool,
+    /// Retirement must wait for a detached decoder to release its source as well as the video worker.
+    worker_finished: AtomicBool,
     /// Frames delivered to the device since the last seek.
     played_frames: AtomicU64,
     /// Clip position, in ticks, of the first frame after the last seek.
@@ -87,6 +89,7 @@ impl AudioFeed {
             output_active: AtomicBool::new(false),
             failed: AtomicBool::new(false),
             closed: AtomicBool::new(false),
+            worker_finished: AtomicBool::new(false),
             played_frames: AtomicU64::new(0),
             base_ticks: AtomicI64::new(0),
             rate: AtomicU32::new(0),
@@ -300,6 +303,10 @@ impl AudioFeed {
         self.wake.notify_all();
     }
 
+    pub(crate) fn worker_finished(&self) -> bool {
+        self.worker_finished.load(Ordering::SeqCst)
+    }
+
     #[cfg(test)]
     pub fn buffered_frames(&self) -> usize {
         self.lock().buffered_frames
@@ -345,9 +352,12 @@ pub(crate) fn start_feed(source: SharedSource) -> Arc<AudioFeed> {
             if outcome.is_err() {
                 worker.failed.store(true, Ordering::SeqCst);
             }
+            drop(source);
+            worker.worker_finished.store(true, Ordering::SeqCst);
         });
     if spawned.is_err() {
         feed.failed.store(true, Ordering::SeqCst);
+        feed.worker_finished.store(true, Ordering::SeqCst);
     }
     feed
 }

@@ -91,8 +91,9 @@ the index schema but do not have a complete user-facing editing workflow.
 fingerprint references, safe atomic index saves, missing-media behavior, and disposable caches.
 
 **Limitations:** ordinary video files are the primary artifacts. Do not create a user-facing
-`.ccproj` or persistent editor-draft format; the active trim/cut range can live in memory until
-export. Index loss must be recoverable by rescanning folders.
+`.ccproj` or save-project workflow. Internal editor recovery is separately authorized under
+M11.1c/ADR 0020; quick trim still keeps its active range in memory. Index loss must be recoverable
+by rescanning folders.
 
 **Acceptance:** restart/rescan reconstructs local clips; round-trip/migration tests pass;
 malformed/oversized metadata returns an error; interrupted writes preserve the previous valid index.
@@ -315,7 +316,8 @@ evidence. Engine commands `clip.export_gif` and `clip.normalize`, the CLI
 Preserve originals; never overwrite; cancel leaves nothing behind; work offline.
 
 **Limitations:** GIF is at most 30 s, 960 px wide, 20 fps and has no sound. Joining clips is not
-included; it belongs to the planned editor with transitions. Loudness evening needs AAC sound, applies one gain to every track, holds the gain back at
+included in quick trim; the separate M11.1a editor supports joins and simple fade dips.
+Loudness evening needs AAC sound, applies one gain to every track, holds the gain back at
 -1 dBTP, and re-encodes the sound (the picture is copied).
 
 **Acceptance:** generated fixtures verify GIF size, frame count, delay and loop; normalised output measures at the target within 1 LU, keeps a
@@ -323,7 +325,8 @@ click within 50 ms of its place, never exceeds full scale, and decodes cleanly. 
 cancellation and collisions leave no partial file and do not touch the sources.
 
 **Open:** real-game and Windows evidence; speed on representative PCs (see
-[testing.md](testing.md)); a clip editor with joins and transitions; WebM/AV1 output.
+[testing.md](testing.md)); WebM/AV1 output. The separate editor's supported joins/fades are tracked
+under M11.1a/M11.1b.
 
 ### M4.3 — Local export size and quality presets
 
@@ -886,7 +889,8 @@ Do not add per-thumbnail Add buttons or an artificial segment-count cap. Match t
 charcoal/lime palette, embedded Inter font weights, compact controls and keyboard focus states.
 
 **Limits:** one gapless video/audio sequence plus bounded text layers, at most 30 minutes, no separate
-segment-count cap, bounded 64-step/8 MiB history; edits are in-memory and disappear on app exit.
+segment-count cap, bounded 64-step/8 MiB history. M11.1c supersedes this slice's original
+session-only lifetime with internal recovery, without adding a project-file workflow.
 Simple fade dips, colour looks and text are built. No custom project format, cross-dissolves,
 overlapping video, input overlays, detached/multiple audio lanes, arbitrary effects, HDR or speed
 changes in this slice. M11.1b adds shared preview rendering and size presets. Export is SDR H.264/AAC, at most 720p/30 FPS, first source audio track only; normalize to
@@ -936,6 +940,76 @@ collisions preserve all source files. Check keyboard and actual desktop UI scree
 feature exclusions rather than documenting existing text/effects as planned.
 **Dependencies:** M11.1a and existing clip.export preset/hardware seam; no hardware needed for the
 software/fake-provider acceptance slice. **Estimate:** one focused implementation/review cycle.
+
+### M11.1c — Timeline media, prepared playback and internal draft recovery
+
+**Status:** implemented and software-complete for this slice (2026-10-22). The final gate passes
+520 tests across 30 targets plus strict lints/layers/assets/licenses; Linux virtual-display
+timeline, zoom/pan, restart, missing-media, corrupt/discard and normal-exit checks pass. Additional
+shutdown-race regressions and independent review pass. Hardware/platform evidence remains separate.
+See [testing](testing.md).
+
+**Problem / evidence:** the timeline repeated one library thumbnail and showed an undecoded audio
+lane. Opening the next source at each cut could interrupt preview; closing the application lost
+the edit. The user approved real timeline media, prepared playback across cuts and local recovery
+after the M11.1b export work was merged.
+
+**Affected code/platforms:** `clipcraft-player` analysis/player lifecycle, `clipcraft-engine`
+commands/recovery, `apps/clipcraft` timeline/playback/recovery UI and `apps/clipcraft-cli` JSON
+transport. The software slice is portable Rust; native evidence in this environment is Linux/Xvfb
+only, with existing media/OS support limits unchanged.
+
+**Scope / requirements:** analyze visible source ranges through a shared typed `editor.timeline`
+command; paint source-time thumbnail strips and first-track audio envelopes with trim, split and
+zoom mapping. Keep analysis, file access and decoding off the UI thread, with loading/error states.
+Prepare the next source paused, without opening its audio output until promotion. Retain cancelled
+decoders in the playback budget until shutdown is acknowledged. Save validated current cuts, text,
+imported references, title, playhead and export preset as internal local recovery metadata; restore
+paused on launch with a visible notice. Expose shared `editor.draft.load`, `.save` and `.discard`
+commands to the bounded JSON CLI. Allow explicit discard and actionable retry; preserve corrupt or
+future-version records until the user discards them. Source videos and exports remain unchanged.
+
+**Limitations:** pure Rust, offline, no project picker, `.ccproj`, server or upload. One analysis
+accepts 1–12 160×90 thumbnail frames and 16–2048 signed min/max audio buckets, an interval of at
+most 30 minutes, and a source of at most 24 hours. Audio envelopes use the first track, streaming
+MP4/MOV native-rate packets; other containers use an 8 kHz fallback limited to ten seconds and
+a nominal native PCM span of 16 MiB, otherwise report unsupported. These envelopes are a
+visualization, not a separate editable audio track. Before opening MP4 sources, cap total movie/
+fragment metadata at 16 MiB, box traversal at 100,000/eight levels and declared sample entries at
+one million across all source tracks; declared encoded samples are at most 64 MiB before probing.
+Long high-rate PCM sources can exceed that budget even
+for short selections. Check packet size before decoding and ALAC configuration before construction;
+validate returned scalar counts without claiming a hard codec-scratch bound. See architecture
+for codec-specific limits. The UI uses one analysis worker,
+eight queued requests, a 32 MiB/256-entry cache and at most two texture uploads per poll. These
+payload/cache limits do not describe total codec memory. At most two current/prepared/retiring
+players exist; slow decoding or cancelled workers can still cause a pause. Recovery has a 16 MiB
+metadata limit, a 500 ms debounce and a bounded two-second normal-exit flush; the final unsaved
+input can be lost on a crash or stalled filesystem. Undo/redo history is not restored. Missing
+media remains a reference and must be available for playback/export. No capture/platform or
+reference-machine performance claim is added.
+
+**Acceptance:** distinct generated source frames appear in the proper trimmed timeline range;
+waveform peaks reflect real first-track audio and silence/mute states without blocking controls.
+Reorder, seek and repeated close/open cannot grow decoder or analysis workers without bound.
+Prepared playback promotes the correct source/frame and does not emit its audio before the cut.
+Restart restores edits/text/preset/playhead paused with fresh undo history; explicit discard does
+not resurrect a queued save. Corrupt/oversized/unknown recovery and failed writes preserve the
+previous file and sources, with a visible remedy. Missing sources do not erase the edit.
+
+**Verification:** generated Rust video/audio fixtures exercise exact sample positions, envelopes,
+no-audio, cancellation, hostile ranges/dimensions and payload bounds; cache tests cover queue,
+fingerprint invalidation and resource limits. Playback tests cover promotion and cancellation
+retirement. Draft tests cover round trips, missing references, malformed IDs/history, version and
+size limits, atomic preservation, symlinks and repeated discard. Exercise CLI analysis and draft
+commands. Inspect native 1440×900 before/after screenshots, keyboard interactions and restart/
+discard behavior using generated media. Run `cargo xtask ci` and `cargo xtask docs-check`; record
+actual results in testing/gaps. Hardware capture/audio tests remain separate.
+
+**Documentation impact:** README, gaps, roadmap, PLAN, editor guide, architecture, testing and
+[ADR 0020](adr/0020-internal-editor-recovery.md). **Dependencies:** M11.1a/M11.1b and existing
+FilmCraft readers/player; no hardware dependency for this software slice. **Estimate:** one
+focused implementation/review cycle, with slow-source decoder behavior the main resource risk.
 
 ### M11.2 — Local CLI and MCP footage-management adapter
 

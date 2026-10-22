@@ -26,4 +26,6 @@ rfd.workspace = true
 workspace = true
 
 [dev-dependencies]
+filmcraft-h264enc.workspace = true
+filmcraft-isobmff.workspace = true
 sysinfo.workspace = true

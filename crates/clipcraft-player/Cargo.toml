@@ -16,10 +16,12 @@ clipcraft-time.workspace = true
 image.workspace = true
 filmcraft-codecs.workspace = true
 filmcraft-media.workspace = true
+filmcraft-frame.workspace = true
+filmcraft-isobmff.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 filmcraft-h264enc.workspace = true
-filmcraft-isobmff.workspace = true
 
 [lints]
 workspace = true

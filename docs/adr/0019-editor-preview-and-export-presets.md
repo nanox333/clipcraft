@@ -2,6 +2,10 @@
 
 **Status:** accepted · **Date:** 2026-10-22 · **Scope:** M11.1b
 
+[ADR 0020](0020-internal-editor-recovery.md) subsequently supersedes the session-only lifetime
+with internal recovery. The rendering/export decisions and remaining media limits below continue
+to apply.
+
 ## Decision
 
 The user requested fixes for GIF timing and editor preview/export consistency, followed by the
