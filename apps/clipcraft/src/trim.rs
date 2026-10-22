@@ -216,7 +216,7 @@ impl TrimState {
                         .map(|report| Finished {
                             clip: report.clip,
                             target: Some(report.target_bytes),
-                            note: (report.encoder != "Software").then_some(report.encoder),
+                            note: gpu_note(&report.encoder, report.hardware_decode),
                         })
                 } else {
                     clipcraft_engine::trim_clip(
@@ -531,6 +531,16 @@ impl TrimState {
     }
 }
 
+/// Says when the GPU did part of the work, for the line after a save.
+fn gpu_note(encoder: &str, hardware_decode: bool) -> Option<String> {
+    match (encoder != "Software", hardware_decode) {
+        (true, true) => Some(format!("{encoder} + GPU decoding")),
+        (true, false) => Some(encoder.to_owned()),
+        (false, true) => Some("GPU decoding".to_owned()),
+        (false, false) => None,
+    }
+}
+
 /// How the loudness changed, for the line after a save.
 fn loudness_note(done: &clipcraft_engine::NormalizedClip) -> String {
     let lufs = |tenths: i32| format!("{:.1}", f64::from(tenths) / 10.0).replace('-', "\u{2212}");
@@ -795,6 +805,20 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_gpu_note_names_what_the_gpu_did() {
+        assert_eq!(gpu_note("Software", false), None);
+        assert_eq!(gpu_note("Software", true).as_deref(), Some("GPU decoding"));
+        assert_eq!(
+            gpu_note("NVIDIA NVENC", false).as_deref(),
+            Some("NVIDIA NVENC")
+        );
+        assert_eq!(
+            gpu_note("NVIDIA NVENC", true).as_deref(),
+            Some("NVIDIA NVENC + GPU decoding")
+        );
     }
 
     #[test]

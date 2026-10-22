@@ -36,7 +36,7 @@ mod windows;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod x11;
 
-pub use hardware::{hardware_provider, probe_hardware_encoder};
+pub use hardware::{hardware_provider, probe_hardware_encoder, register_hardware_decoding};
 pub use hotkey::{HotkeyBinding, HotkeyEvent, HotkeyListener, parse_shortcut};
 pub use priority::set_background_priority;
 pub use process::{ProcessObserver, RunningProcess, running_processes, steam_installation_roots};

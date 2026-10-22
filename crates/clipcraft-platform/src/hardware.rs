@@ -123,6 +123,24 @@ fn open_filmcraft(request: &HardwareRequest) -> Result<Box<dyn HardwareEncoder>,
     }
 }
 
+/// Puts the operating system's hardware video decoders (NVDEC, VA-API, Media Foundation,
+/// VideoToolbox) in front of FilmCraft's software ones, switched off. Nothing changes for playback;
+/// an export that is allowed to use the GPU switches them on while it opens its decoder. A stream
+/// the hardware cannot take, or a decoder that fails part-way, falls back to software by itself.
+/// Returns the backend's name, or `None` when this computer has no hardware decoder.
+pub fn register_hardware_decoding() -> Option<&'static str> {
+    use std::sync::OnceLock;
+    static BACKEND: OnceLock<Option<&'static str>> = OnceLock::new();
+    *BACKEND.get_or_init(|| {
+        let backend = match filmcraft_platform::register() {
+            filmcraft_platform::Availability::Available(name) => Some(name),
+            _ => None,
+        };
+        filmcraft_codecs::hw::set_hardware_decoding(false);
+        backend
+    })
+}
+
 /// Tries each hardware encoder this system has, in turn. On Windows that is NVIDIA's (through
 /// FilmCraft) and then whatever hardware H.264 encoder the graphics driver installs for Media
 /// Foundation, which is how AMD and Intel cards are reached. On Linux it is NVIDIA's and then

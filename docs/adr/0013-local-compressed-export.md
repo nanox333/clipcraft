@@ -8,7 +8,9 @@
 hardware encoder behind the recorder's `HardwareProvider` seam (through the export crate's own
 small `FastEncoder` trait, so the export layer does not depend on the recorder). Pictures go in as
 RGBA, packets must come out one per picture in order, and any failure restarts the export with the
-software encoder described below. The report names the encoder used.
+software encoder described below. The report names the encoder used. FilmCraft's OS hardware
+decoders are registered at start-up but switched off globally; an export that may use the GPU
+switches them on only while it opens its decoder.
 
 Keep the sample-copy trim from ADR 0010 as the default. Add a separate `clip.export` engine
 command, used by the trim panel and local CLI, for estimated 10 MB, 25 MB, and custom 1–500 MB

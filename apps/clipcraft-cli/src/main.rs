@@ -171,6 +171,7 @@ fn run_clip(arguments: &[OsString]) -> Result<(), CliError> {
     if exporting {
         // Small-file export uses the GPU encoder when the recording settings say so.
         clipcraft_engine::set_export_hardware(clipcraft_platform::hardware_provider());
+        clipcraft_platform::register_hardware_decoding();
         let gpu = clipcraft_engine::default_settings_path()
             .and_then(
                 |path| match execute(Command::LoadRecordingSettings { path }) {

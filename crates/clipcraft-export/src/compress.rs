@@ -70,6 +70,8 @@ pub struct CompressReport {
     pub height: u32,
     /// What encoded the picture: `Software`, or the name of the hardware encoder that did.
     pub encoder: String,
+    /// Whether a hardware decoder read at least some of the source's pictures.
+    pub hardware_decode: bool,
 }
 
 /// Re-encodes a selected range as H.264 MP4, preserving its AAC audio tracks.
@@ -348,14 +350,23 @@ fn export_inner(
         .file_name()
         .unwrap_or_default()
         .to_string_lossy();
-    let decoder = open_reader_within(
+    // A hardware decoder is only used when this export may use the GPU, and only if one was
+    // registered; the switch goes back as soon as the decoder exists. Pictures it cannot take, or
+    // a decoder that fails part-way, are decoded in software without the export noticing.
+    let frames_before = filmcraft_codecs::hw::hw_stats().frames;
+    let hardware_switch = filmcraft_codecs::hw::hardware_decoding();
+    if hardware.is_some() {
+        filmcraft_codecs::hw::set_hardware_decoding(true);
+    }
+    let opened = open_reader_within(
         &name,
         reader,
         &filmcraft_codecs::reader_openers(),
         &filmcraft_codecs::openers(),
         64 * 1024 * 1024,
-    )
-    .map_err(|_| ExportError::EncodeFailed)?;
+    );
+    filmcraft_codecs::hw::set_hardware_decoding(hardware_switch);
+    let decoder = opened.map_err(|_| ExportError::EncodeFailed)?;
     let info = decoder.info().video.as_ref().ok_or(ExportError::Damaged)?;
     source_size(info.width, info.height)?;
     if info.hdr.is_some() || info.par.0 == 0 || info.par.1 == 0 || info.par.0 != info.par.1 {
@@ -421,6 +432,7 @@ fn export_inner(
         duration,
         kbps,
         target,
+        hw_frames_before: frames_before,
     };
     if let Some(opener) = hardware {
         match hardware_export(&job, opener, progress, cancel) {
@@ -512,6 +524,8 @@ struct Job<'a> {
     duration: Tick,
     kbps: u32,
     target: u64,
+    /// The hardware-decoded picture count when the export began.
+    hw_frames_before: u64,
 }
 
 /// The file being written: its cleanup guard, the MP4 writer, and the tracks in it.
@@ -613,6 +627,7 @@ fn finish_output(
         width: job.size.0,
         height: job.size.1,
         encoder,
+        hardware_decode: filmcraft_codecs::hw::hw_stats().frames > job.hw_frames_before,
     })
 }
 

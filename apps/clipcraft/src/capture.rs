@@ -188,6 +188,7 @@ impl ClipCraftApp {
             self.capture.launched = true;
             // Exports may use the same hardware encoder as recording.
             clipcraft_engine::set_export_hardware(clipcraft_platform::hardware_provider());
+            clipcraft_platform::register_hardware_decoding();
             self.recover_after_crash();
             if self.recording.record_on_launch && !self.recording.game_only_capture {
                 self.start_capture();

@@ -237,8 +237,17 @@ export** (this container has none), so its speed and quality are unmeasured. As 
 timing test also runs the hardware path with a free encoder: 20 s for the 30 s 1080p60 clip, against
 27–30 s with the software encoder, because decoding the 1080p60 source with the pure-Rust decoder
 is then the limit (about 9 ms per source picture, and the decoder serialises concurrent requests).
-Expect a GPU to save roughly a third of the time, and to free the CPU while it runs, not to
-make export several times faster.
+Expect a GPU encoder alone to save roughly a third of the time, and to free the CPU while it runs.
+
+The decoder limit has a second lever that was already in FilmCraft but unused: its platform crate
+registers operating-system **hardware decoders** (NVDEC and VA-API on Linux, Media Foundation on
+Windows, VideoToolbox on macOS) in front of the software one, with a built-in fallback if a stream
+is refused or the decoder fails part-way. ClipCraft now registers them at start-up, switched off
+(`clipcraft_platform::register_hardware_decoding`), and a small-file export that may use the GPU
+switches them on only while it opens its own decoder, so playback and thumbnails behave exactly as
+before. The report says `hardware_decode` and the trim panel says "GPU decoding". Here (no GPU)
+the factories decline, the export is unchanged and reports `hardware_decode: false`; **real
+hardware decoding is untested**, so no speed-up is claimed for it.
 
 Output decodes cleanly. It is still about real time for 1080p, and a harder 720p noise
 clip (590 MB per 30 s) ran slower than real time before and after, so expect long waits on

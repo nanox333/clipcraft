@@ -49,6 +49,7 @@ x11rb = { version = "0.14" }
 
 [target.'cfg(any(windows, all(target_os = "linux", target_pointer_width = "64"), target_os = "macos"))'.dependencies]
 filmcraft-platform.workspace = true
+filmcraft-codecs.workspace = true
 filmcraft-export.workspace = true
 filmcraft-time.workspace = true
 filmcraft-isobmff.workspace = true

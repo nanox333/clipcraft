@@ -699,6 +699,7 @@ dependencies = [
  "clipcraft-capture",
  "clipcraft-record",
  "clipcraft-time",
+ "filmcraft-codecs",
  "filmcraft-export",
  "filmcraft-h264",
  "filmcraft-h264enc",

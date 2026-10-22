@@ -290,6 +290,8 @@ pub struct ExportedClip {
     pub height: u32,
     /// `Software`, or the hardware encoder that made the picture.
     pub encoder: String,
+    /// Whether a hardware decoder read the source.
+    pub hardware_decode: bool,
 }
 
 /// A clip saved with its loudness evened out. Loudness values are in tenths, so they compare
@@ -463,6 +465,7 @@ pub fn export_clip(
         width: report.width,
         height: report.height,
         encoder: report.encoder,
+        hardware_decode: report.hardware_decode,
     })
 }
 

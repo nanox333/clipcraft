@@ -41,7 +41,8 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   software H.264 encoder, preserves AAC audio tracks, and reduces video to at most 720p/30 fps
   without upscaling. Both paths preserve the source and support progress/cancel; compressed exports
   report their actual size. When recording is set to the GPU encoder, small-file export tries it
-  first and falls back to the software encoder on any trouble (untested on a real GPU so far). No
+  first, and the GPU decoder too, falling back to software on any trouble (untested on a real GPU
+  so far). No
   upload or Discord account is involved.
 - **GIF and loudness:** the same Trim panel can save a range of up to 30 seconds as a looping GIF
   (480 px wide, 12 fps, no sound) or even out its loudness to -16 LUFS (the picture is copied, the

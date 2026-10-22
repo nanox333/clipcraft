@@ -210,7 +210,9 @@ Windows, macOS or with real games, and the UI was only exercised through its hea
 and a manual Linux run. Joining clips (and transitions) is deliberately left for the planned
 editor. Small-file export also tries the GPU encoder (same choice as recording) and falls back to
 software on any trouble; that path is tested with a stand-in encoder only, and an upper-bound test
-shows decoding the source limits it to about a third faster. Small-file export was also made much faster (see [testing.md](testing.md)); the numbers are
+shows decoding the source limits it to about a third faster. FilmCraft's OS hardware decoders are
+now registered (off for playback, on for GPU-allowed exports) to lift that limit; untested on a
+real GPU. Small-file export was also made much faster (see [testing.md](testing.md)); the numbers are
 from a 4-core Linux container, not a gaming PC. See
 [ADR 0017](adr/0017-gif-and-loudness-export.md).
 
