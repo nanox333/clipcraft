@@ -544,8 +544,12 @@ impl EditorState {
         };
         let top = (ui.available_height() - 404.0 - status_height).max(120.0);
         let width = ui.available_width().max(1.0);
+        // The preview is 16:9, so it is only as wide as its picture needs to be tall; the Library
+        // gets everything else.
+        let picture_height = (top - 106.0).max(40.0);
         let browser = if width >= 700.0 {
-            260.0
+            let preview = (picture_height * 16.0 / 9.0 + 24.0).clamp(360.0, width - 12.0 - 260.0);
+            (width - 12.0 - preview).max(260.0)
         } else {
             (width * 0.32).max(80.0)
         };
@@ -649,7 +653,10 @@ impl EditorState {
                             if let Some(note) =
                                 self.preview.as_ref().and_then(|p| p.editor_audio_note())
                             {
-                                ui.label(RichText::new(note).small().color(MUTED));
+                                ui.add(
+                                    egui::Label::new(RichText::new(note).small().color(MUTED))
+                                        .truncate(),
+                                );
                             }
                         });
                     ui.data_mut(|d| {
@@ -749,150 +756,165 @@ impl EditorState {
                     .iter()
                     .filter(|e| e.title.to_lowercase().contains(&query))
                     .collect();
-                let card_width = ((ui.available_width() - 8.0) / 2.0).max(20.0);
+                let columns = (((ui.available_width() + 8.0) / 148.0).floor() as usize).clamp(2, 6);
+                let card_width = ((ui.available_width() - 8.0 * (columns - 1) as f32)
+                    / columns as f32)
+                    .max(20.0);
+                // Thumbnails are 16:9, so wider cards get taller ones.
+                let thumb_height = (card_width * 9.0 / 16.0).clamp(48.0, 150.0);
+                let card_height = thumb_height + 24.0;
                 egui::ScrollArea::vertical()
                     .id_salt("editor-browser")
                     .max_height((height - 174.0).max(30.0))
-                    .show_rows(ui, 98.0, filtered.len().div_ceil(2), |ui, rows| {
-                        for row in rows {
-                            ui.horizontal_top(|ui| {
-                                for entry in filtered.iter().skip(row * 2).take(2) {
-                                    ui.allocate_ui_with_layout(
-                                        Vec2::new(card_width, 92.0),
-                                        Layout::top_down(Align::Min),
-                                        |ui| {
-                                            let ready = !entry.offline
-                                                && entry
-                                                    .probe
-                                                    .as_ref()
-                                                    .and_then(|p| p.duration)
-                                                    .is_some();
-                                            // One response owns clicking, dragging and the menu;
-                                            // nested drag/thumbnail responses compete for pointer input.
-                                            let (card, _) = ui.allocate_exact_size(
-                                                Vec2::new(card_width, 92.0),
-                                                Sense::hover(),
-                                            );
-                                            let response = ui.interact(
-                                                card,
-                                                egui::Id::new(("editor-source", &entry.path)),
-                                                Sense::click_and_drag(),
-                                            );
-                                            response.widget_info(|| {
-                                                egui::WidgetInfo::labeled(
-                                                    egui::WidgetType::Button,
-                                                    true,
-                                                    &entry.title,
-                                                )
-                                            });
-                                            let rect = egui::Rect::from_min_size(
-                                                card.min,
-                                                Vec2::new(card_width, 68.0),
-                                            );
-                                            ui.painter().rect_filled(rect, 10, CARD);
-                                            if let Some(texture) = thumbs.texture(
-                                                ui.ctx(),
-                                                &entry.path,
-                                                ui.is_rect_visible(rect),
-                                            ) {
-                                                egui::Image::from_texture(
-                                                    egui::load::SizedTexture::from_handle(texture),
-                                                )
-                                                .corner_radius(10)
-                                                .paint_at(ui, rect);
-                                            }
-                                            if response.hovered() || response.has_focus() {
-                                                ui.painter().rect_stroke(
-                                                    rect,
-                                                    8,
-                                                    Stroke::new(
-                                                        1.0_f32,
-                                                        if response.has_focus() {
-                                                            LIME
-                                                        } else {
-                                                            MUTED
-                                                        },
-                                                    ),
-                                                    egui::StrokeKind::Inside,
+                    .show_rows(
+                        ui,
+                        card_height + 6.0,
+                        filtered.len().div_ceil(columns),
+                        |ui, rows| {
+                            for row in rows {
+                                ui.horizontal_top(|ui| {
+                                    for entry in filtered.iter().skip(row * columns).take(columns) {
+                                        ui.allocate_ui_with_layout(
+                                            Vec2::new(card_width, card_height),
+                                            Layout::top_down(Align::Min),
+                                            |ui| {
+                                                let ready = !entry.offline
+                                                    && entry
+                                                        .probe
+                                                        .as_ref()
+                                                        .and_then(|p| p.duration)
+                                                        .is_some();
+                                                // One response owns clicking, dragging and the menu;
+                                                // nested drag/thumbnail responses compete for pointer input.
+                                                let (card, _) = ui.allocate_exact_size(
+                                                    Vec2::new(card_width, card_height),
+                                                    Sense::hover(),
                                                 );
-                                            }
-                                            let duration =
-                                                crate::format_duration(entry.probe.as_ref());
-                                            let badge = egui::Rect::from_min_max(
-                                                rect.right_bottom() - Vec2::new(44.0, 23.0),
-                                                rect.right_bottom() - Vec2::splat(4.0),
-                                            );
-                                            ui.painter().rect_filled(
-                                                badge,
-                                                4,
-                                                Color32::from_black_alpha(200),
-                                            );
-                                            ui.painter().text(
-                                                badge.center(),
-                                                Align2::CENTER_CENTER,
-                                                duration,
-                                                FontId::new(11.0, kit::medium()),
-                                                TEXT,
-                                            );
-                                            let mut title_job =
-                                                egui::text::LayoutJob::simple_singleline(
-                                                    entry.title.clone(),
-                                                    FontId::new(11.5, kit::medium()),
+                                                let response = ui.interact(
+                                                    card,
+                                                    egui::Id::new(("editor-source", &entry.path)),
+                                                    Sense::click_and_drag(),
+                                                );
+                                                response.widget_info(|| {
+                                                    egui::WidgetInfo::labeled(
+                                                        egui::WidgetType::Button,
+                                                        true,
+                                                        &entry.title,
+                                                    )
+                                                });
+                                                let rect = egui::Rect::from_min_size(
+                                                    card.min,
+                                                    Vec2::new(card_width, thumb_height),
+                                                );
+                                                ui.painter().rect_filled(rect, 10, CARD);
+                                                if let Some(texture) = thumbs.texture(
+                                                    ui.ctx(),
+                                                    &entry.path,
+                                                    ui.is_rect_visible(rect),
+                                                ) {
+                                                    egui::Image::from_texture(
+                                                        egui::load::SizedTexture::from_handle(
+                                                            texture,
+                                                        ),
+                                                    )
+                                                    .corner_radius(10)
+                                                    .paint_at(ui, rect);
+                                                }
+                                                if response.hovered() || response.has_focus() {
+                                                    ui.painter().rect_stroke(
+                                                        rect,
+                                                        8,
+                                                        Stroke::new(
+                                                            1.0_f32,
+                                                            if response.has_focus() {
+                                                                LIME
+                                                            } else {
+                                                                MUTED
+                                                            },
+                                                        ),
+                                                        egui::StrokeKind::Inside,
+                                                    );
+                                                }
+                                                let duration =
+                                                    crate::format_duration(entry.probe.as_ref());
+                                                let badge = egui::Rect::from_min_max(
+                                                    rect.right_bottom() - Vec2::new(44.0, 23.0),
+                                                    rect.right_bottom() - Vec2::splat(4.0),
+                                                );
+                                                ui.painter().rect_filled(
+                                                    badge,
+                                                    4,
+                                                    Color32::from_black_alpha(200),
+                                                );
+                                                ui.painter().text(
+                                                    badge.center(),
+                                                    Align2::CENTER_CENTER,
+                                                    duration,
+                                                    FontId::new(11.0, kit::medium()),
                                                     TEXT,
                                                 );
-                                            title_job.wrap.max_width = card_width;
-                                            title_job.wrap.max_rows = 1;
-                                            title_job.wrap.break_anywhere = true;
-                                            let title = ui.painter().layout_job(title_job);
-                                            ui.painter()
-                                                .with_clip_rect(egui::Rect::from_min_max(
-                                                    rect.left_bottom(),
-                                                    card.right_bottom(),
-                                                ))
-                                                .galley(
-                                                    rect.left_bottom() + Vec2::new(0.0, 5.0),
-                                                    title,
-                                                    TEXT,
+                                                let mut title_job =
+                                                    egui::text::LayoutJob::simple_singleline(
+                                                        entry.title.clone(),
+                                                        FontId::new(11.5, kit::medium()),
+                                                        TEXT,
+                                                    );
+                                                title_job.wrap.max_width = card_width;
+                                                title_job.wrap.max_rows = 1;
+                                                title_job.wrap.break_anywhere = true;
+                                                let title = ui.painter().layout_job(title_job);
+                                                ui.painter()
+                                                    .with_clip_rect(egui::Rect::from_min_max(
+                                                        rect.left_bottom(),
+                                                        card.right_bottom(),
+                                                    ))
+                                                    .galley(
+                                                        rect.left_bottom() + Vec2::new(0.0, 5.0),
+                                                        title,
+                                                        TEXT,
+                                                    );
+                                                if response.clicked() {
+                                                    response.request_focus();
+                                                }
+                                                if ready
+                                                    && (response.double_clicked()
+                                                        || response.has_focus()
+                                                            && ui.input(|i| {
+                                                                i.key_pressed(egui::Key::Enter)
+                                                            }))
+                                                {
+                                                    add = Some((*entry).clone());
+                                                }
+                                                if response.drag_started() && ready {
+                                                    response.dnd_set_drag_payload((*entry).clone());
+                                                }
+                                                response.on_hover_text(&entry.title).context_menu(
+                                                    |ui| {
+                                                        if ui.button("Details").clicked() {
+                                                            details = Some((*entry).clone());
+                                                            ui.close();
+                                                        }
+                                                        if ui
+                                                            .add_enabled(
+                                                                ready && !self.busy(),
+                                                                egui::Button::new(
+                                                                    "Add to timeline",
+                                                                ),
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            add = Some((*entry).clone());
+                                                            ui.close();
+                                                        }
+                                                    },
                                                 );
-                                            if response.clicked() {
-                                                response.request_focus();
-                                            }
-                                            if ready
-                                                && (response.double_clicked()
-                                                    || response.has_focus()
-                                                        && ui.input(|i| {
-                                                            i.key_pressed(egui::Key::Enter)
-                                                        }))
-                                            {
-                                                add = Some((*entry).clone());
-                                            }
-                                            if response.drag_started() && ready {
-                                                response.dnd_set_drag_payload((*entry).clone());
-                                            }
-                                            response.on_hover_text(&entry.title).context_menu(
-                                                |ui| {
-                                                    if ui.button("Details").clicked() {
-                                                        details = Some((*entry).clone());
-                                                        ui.close();
-                                                    }
-                                                    if ui
-                                                        .add_enabled(
-                                                            ready && !self.busy(),
-                                                            egui::Button::new("Add to timeline"),
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        add = Some((*entry).clone());
-                                                        ui.close();
-                                                    }
-                                                },
-                                            );
-                                        },
-                                    );
-                                }
-                            });
-                        }
-                    });
+                                            },
+                                        );
+                                    }
+                                });
+                            }
+                        },
+                    );
                 if self.importing.is_some() {
                     ui.spinner();
                     ui.label(RichText::new("Importing clips…").small().color(MUTED));

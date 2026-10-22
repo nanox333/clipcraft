@@ -9,8 +9,8 @@ icon-and-label pills like the rest of the app, with quiet outlined buttons for s
 and lime for the main one. Under the preview there is a position bar you can click or drag to scrub
 the edit, then Play/Pause, Start and the time. The timeline has a ruler with minor ticks, a
 triangular playhead, grips on the selected segment, and a bar under it with the source in/out,
-volume and mute for that segment. A footer lists the keyboard shortcuts. The Library and the
-preview panel keep the same height.
+volume and mute for that segment. A footer lists the keyboard shortcuts. The preview panel is only as wide as a 16:9 picture needs, so the Library takes the rest and
+shows as many thumbnail columns as fit (2 to 6); the two panels keep the same height.
 
 When entering the editor directly, **Import clips** in its Library opens a local video picker.
 Import can select multiple MP4/MOV/MKV files; files dropped on the editor use the same background
