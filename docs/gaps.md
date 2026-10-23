@@ -1,6 +1,6 @@
 # Known gaps
 
-**Status:** active prototype · **Last reviewed:** 2026-10-22 · **Target:** local Windows capture-to-export alpha
+**Status:** active prototype · **Last reviewed:** 2026-10-23 · **Target:** local Windows capture-to-export alpha
 
 This is the ranked work list, not a parity claim. Capture, replay, playback, local library
 organization, and no-reencode trim export are implemented. Linux/X11 has end-to-end synthetic
@@ -65,6 +65,30 @@ automatic switching is enabled; it stores executable basenames and exact Steam I
 ClipRecorder's timestamped audio-gap policy is also ported in `clipcraft-record`, but the current
 untimestamped `AudioSource` mixer does not use it. Upstream revisions, permission provenance, and
 exact source files are recorded in [`upstream-ports.md`](upstream-ports.md).
+
+## Connected workflow evidence (M5.3)
+
+The current generated Linux/X11 session covers process/window recognition → F8 replay with virtual
+system audio → game-labelled/favorited library and thumbnail → playback → two cuts and text → MP4
+export → normal/crash restart. A portable Rust integration test carries the same recording across
+capture/save, library, playback, editor, export and recovery, including non-silent decoded sound,
+missing-source failure/reconnect, cancellation, collisions and retained metadata. The full gate
+passes 535 tests across 33 targets. Windows, real games/anti-cheat and physical devices remain open.
+
+This check found and fixed three safety/integration problems: editor import now uses the playback
+reader's video duration instead of a longer AAC-padded container duration; copy naming skips occupied
+partials/recovery files and broken links; original-quality trim exclusively owns its temporary and
+publishes without replacing a destination created during export. Trims now need a hard-link-capable
+filesystem like compressed/editor exports. Each regression failed before its fix. Existing older
+drafts retain their saved bounds: re-add a full source or trim its end if it extends past playable
+video. A killed export can leave a partial behind; retry picks a fresh name and preserves that file,
+since it may belong to another live instance. Automatic reclamation is not implemented by this change.
+
+Native source and exported sound fully decode and play through a private PulseAudio null sink via
+the normal capture/playback adapters; no physical microphone or speaker is proved. Five app sessions
+were audited with `strace`: no Internet-addressed connect/send calls were observed. Network namespace
+creation was blocked by this sandbox, so this does not close the network-disabled release gate.
+See [testing](testing.md) for exact steps, generated outputs, failures and limitations.
 
 ## Small sequence editor (M11.1a/M11.1b/M11.1c)
 

@@ -3776,6 +3776,10 @@ mod tests {
         assert!(app.editor.open);
         assert!(app.selected.is_none());
         assert_eq!(app.editor.media.len(), 1);
+        assert!(
+            app.editor.media[0].probe.is_none(),
+            "send must resolve playable source bounds"
+        );
         assert!(app.editor.session.clips().is_empty());
         app.editor.receive(media());
         assert_eq!(app.editor.media.len(), 1);

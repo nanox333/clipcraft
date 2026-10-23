@@ -1,6 +1,7 @@
 //! Cuts real clips from the recorder, as MP4 and as MKV, and has ffprobe and ffmpeg (outside
 //! judges, skipped when absent) check what comes out: length, the exact first picture, sound in
 //! the right place, and that nothing is left behind when an export fails or is cancelled.
+mod support;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -15,6 +16,61 @@ use clipcraft_record::{
     RecordConfig, Recorder, ToneSource,
 };
 use clipcraft_time::Tick;
+
+#[test]
+fn trim_respects_existing_partials_raced_outputs_and_late_cancellation() {
+    let scratch = support::Scratch::new("trim-atomic");
+    let input = scratch.file("source.mp4");
+    support::fixture(&input, ClipFormat::Mp4, true);
+    let original = std::fs::read(&input).unwrap();
+    let output = scratch.file("out.mp4");
+    let partial = scratch.file("out.mp4.partial");
+    let request = TrimRequest {
+        input: input.clone(),
+        output: output.clone(),
+        start: Tick::ZERO,
+        end: Tick::from_units(1, 1),
+    };
+    std::fs::write(&partial, b"another writer").unwrap();
+    assert_eq!(
+        trim_to_mp4(&request, &mut |_| {}, &AtomicBool::new(false)),
+        Err(ExportError::AlreadyExists)
+    );
+    assert_eq!(std::fs::read(&partial).unwrap(), b"another writer");
+    assert!(!output.exists());
+    std::fs::remove_file(&partial).unwrap();
+    let raced = AtomicBool::new(false);
+    assert_eq!(
+        trim_to_mp4(
+            &request,
+            &mut |_| {
+                if !raced.swap(true, Ordering::Relaxed) {
+                    std::fs::write(&output, b"external winner").unwrap();
+                }
+            },
+            &AtomicBool::new(false)
+        ),
+        Err(ExportError::AlreadyExists)
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), b"external winner");
+    assert!(!partial.exists());
+    std::fs::remove_file(&output).unwrap();
+    let cancel = AtomicBool::new(false);
+    assert_eq!(
+        trim_to_mp4(
+            &request,
+            &mut |p| {
+                if p >= 0.99 {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            },
+            &cancel
+        ),
+        Err(ExportError::Cancelled)
+    );
+    assert!(!partial.exists() && !output.exists());
+    assert_eq!(std::fs::read(&input).unwrap(), original);
+}
 
 struct Scratch(PathBuf);
 

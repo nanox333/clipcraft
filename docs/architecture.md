@@ -94,8 +94,12 @@ not a formal clean-room implementation. The small editor additionally consumes p
   bitrate with overhead headroom, and choose bounded dimensions/FPS without upscaling. Frames are
   decoded, resized, encoded, and muxed sequentially; no whole-clip raw-frame buffer is built. The
   original is preserved, progress/cancel is shared with the UI, and actual output size is reported.
-  Compression uses exclusive temporary-file creation and publishes via a no-replace hard link;
+  Trim and compression use exclusive temporary-file creation and publish via a no-replace hard link;
   the output filesystem must support hard links. See [ADR 0013](adr/0013-local-compressed-export.md).
+  M5.3 brings sample-copy trim under the same ownership rule: failures clean up only a temporary
+  this operation created, publication cannot replace a raced destination, and cancellation is
+  checked again before publication. Automatic copy names reserve `.partial`, `.recovery`, broken
+  links and unreadable paths; retained crash output is never deleted merely to reuse a filename.
   The same crate writes looping GIFs (`clip.export_gif`) and evens out loudness by decoding, scaling and re-encoding only the sound
   (`clip.normalize`); see [ADR 0018](adr/0018-gif-and-loudness-export.md).
   `editor.export` renders a bounded ordered range list through FilmCraft H.264/AAC encoders,
@@ -184,6 +188,12 @@ The Editor rail destination owns an in-memory media pool independent of the Clip
 without placing it on the sequence. `editor.edit` validates integer-tick cuts and keeps at most
 64 history snapshots within 8 MiB, plus a 64 MiB current-metadata budget. Duration/minimum-frame
 bounds replace an arbitrary segment-count cap. UI and CLI use these same commands.
+Editor import preserves the library's container facts separately and resolves its duration through
+the bounded playback reader (`timeline::source_info`, with the existing MP4 metadata preflight).
+Container-wide duration can include AAC padding beyond the video. Imported editor bounds match
+preview, analysis and sequence export instead. Send to editor clears the copied library probe
+and lets the existing background import worker resolve it before append. Existing recovery edits
+are preserved rather than silently truncated when their previously stored source bounds differ.
 The editor uses the shared `kit` palette, Inter families and standard keyboard-aware egui buttons.
 A single thumbnail response handles click, drag and context menus to avoid competing hit targets.
 Dense fit views aggregate subpixel cuts, cull offscreen widgets and bound thumbnail painting;

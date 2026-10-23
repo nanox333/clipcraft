@@ -446,6 +446,51 @@ vendor, compositor, or OS combination supported from compilation alone.
 platform provider (M6.2 for Linux Wayland, future macOS capture for Apple). **Estimate:** large; split
 the work by platform after the feasibility report.
 
+### M5.3 — Continuous offline capture-to-export workflow verification
+
+**Status:** implemented and verified with generated Linux/X11 media (2026-10-23), following M11.1e.
+The full gate passes 535 tests across 33 targets. GitHub: [#4](https://github.com/nanox333/clipcraft/issues/4).
+
+**Problem / evidence:** individual capture, game arming, library, editor, export and recovery slices
+have evidence, but their complete connected workflow must be checked on the current revision before
+making an alpha claim. Windows hardware is unavailable; generated Linux/X11 evidence is feasible.
+
+**Scope:** add a repeatable pure-Rust integration scenario using production capture/save, library,
+player, editor and recovery APIs. Run the actual native app on an isolated display/data folder with
+a generated game process/window. Check detection → save → metadata/thumbnail/playback → cuts/text →
+export → restart recovery. Exercise cancellation, missing sources, destination collisions and
+interrupted jobs. Fix reproducible failures with focused regressions. Audit local workflow network calls.
+
+**Limitations:** no new editor features, servers/accounts, uploads, dependencies, codecs, platform
+promises or performance claims. Generated audio/window evidence does not prove physical devices,
+anti-cheat, real games, Wayland or Windows/macOS. Preserve existing media and bound all fixtures,
+worker waits, caches and output. If network isolation cannot be enabled here, distinguish observed
+no-network use from a physically disconnected or network-disabled release test.
+
+**Acceptance:** one connected automated scenario captures real encoded pictures and generated sound,
+retains the captured game and user metadata through reload/rescan, generates a thumbnail, plays saved
+and exported media, edits/cuts/text through shared commands, restores a paused history-free draft,
+and reports safe failure for missing source/cancellation/collision without altering originals.
+Native process/window detection, save hotkey, library/editor actions, export, normal and interrupted
+restart are documented with screenshots and exact local/unsupported evidence. `cargo xtask ci` and
+the documentation gate pass; existing Windows/hardware release gates remain open.
+
+**Verification / documentation:** portable synthetic integration test, native Linux/X11 session with
+generated media and optional external decode oracle/network syscall audit. Update README, roadmap,
+gaps, testing, release checklist and architecture guidance if behavior changes. No private footage
+or machine paths enter Git. **Dependencies / estimate:** M7.1b and M11.1a–e; one verification/fix cycle.
+
+**Result:** the connected test exposed AAC-padding duration disagreement between import and
+playback/export. Native forced termination exposed a partial file blocking same-title retry. Trim
+failure review additionally found truncating temporary creation and a raced rename that could
+replace existing files. All three now have failing-before/passing-after regressions. Import uses
+bounded reader metadata; Send to editor resolves it off the UI thread; automatic names reserve
+temporary/recovery paths; trim uses exclusive ownership/no-replace hard-link publication and a
+final cancellation check. No source or occupied temporary is deleted to make a retry work.
+Native virtual audio, playback, edits, retry and normal/crash recovery pass; `strace` observed no
+Internet-addressed calls across five sessions. Namespace creation was unavailable, so physical
+network disconnection and Windows/hardware release gates remain open. See `testing.md`.
+
 ## M6 — Additional local platforms
 
 ### M6.1 — macOS capture/audio provider

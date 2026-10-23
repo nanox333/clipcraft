@@ -594,7 +594,7 @@ pub(crate) fn import_media(paths: Vec<PathBuf>) -> Result<Vec<crate::MediaEntry>
         if !metadata.is_file() {
             return Err(EngineError::FileUnavailable);
         }
-        let crate::CommandOutput::ClipProbe(probe) =
+        let crate::CommandOutput::ClipProbe(mut probe) =
             crate::execute(crate::Command::ProbeClip { path: path.clone() })?
         else {
             return Err(EngineError::MediaUnsupported);
@@ -606,6 +606,9 @@ pub(crate) fn import_media(paths: Vec<PathBuf>) -> Result<Vec<crate::MediaEntry>
         {
             return Err(EngineError::MediaUnsupported);
         }
+        let playable =
+            clipcraft_player::timeline::source_info(&path).map_err(EngineError::EditorTimeline)?;
+        probe.duration = Some(playable.duration);
         entries.push(crate::MediaEntry {
             path: text,
             title: path

@@ -545,3 +545,86 @@ Before/after screenshots and generated media stay outside Git. Screenshots are u
 the completed sequence. Physical GPU, Windows/macOS, real-game interference, long-GOP/long-run
 memory, power and reference-machine latency measurements remain open. Lower editor controls can
 still require a taller window; this change specifically keeps export cancellation reachable.
+
+
+### M5.3 — Connected local workflow and failure recovery (2026-10-23)
+
+The complete `cargo xtask ci` gate passes **535 tests across 33 targets**, including formatting,
+strict Clippy, layers, assets and dependency/license checks. Five existing/manual/platform tests
+remain ignored; no test was disabled for this change. The new connected engine scenario is:
+
+```sh
+cargo test -p clipcraft-engine offline_workflow_tests
+cargo test -p clipcraft-engine interrupted_exports_reserve
+cargo test -p clipcraft-export --test export trim_respects_existing
+```
+
+A generated moving source and 440 Hz stereo tone enter the production CaptureSession/recorder.
+The test snapshots a game when Save is requested, stops capture before the save completes, then
+registers that same MP4 in the library. It probes, generates a real thumbnail, favorites/collects,
+reloads/rescans, plays pictures and consumes non-silent decoded audio. It imports the recording,
+analyzes/exports the entire default range, makes a split and trim plus text through engine commands,
+saves/restores a history-free recovery record, and exports 54 pictures at 60 FPS over 900 ms.
+Cancellation and a disconnected source publish no output; reconnect/retry succeeds; an occupied
+output stays byte-identical; source bytes, game, favorite, collection, probe and draft survive.
+The test requires no display, sound hardware, external codec tool or network.
+
+Three regressions failed against their previous implementations before the fixes:
+
+- A recorder MP4's container duration included AAC padding past its video duration. Native import
+  offered 2.368 seconds, while the playback reader's video timeline ends at 71/30 seconds. The
+  original default range produced `EditorTimeline(Unsupported)` and `BadRange`. Import now uses
+  bounded reader metadata; Send to editor schedules that resolution on its existing worker.
+  Main-library container metadata is unchanged. Existing saved edit boundaries are not rewritten.
+- A killed editor export left a `.partial` without a final MP4; automatic naming selected the same
+  output, making retry report AlreadyExists. Naming now reserves final/partial/recovery paths,
+  unreadable entries and broken links. It does not delete a possible live writer's file.
+- Sample-copy trim used truncating File::create for its temporary and a replacing rename at the end.
+  The new generated test verifies existing-partial refusal, raced-destination preservation, late
+  cancellation and unchanged source. Exclusive creation, owned cleanup and no-replace hard-link
+  publication now match the rendered exporters. Hard-link support is required for trim as well.
+
+For native checks, start a **private** Xvfb display at 2240×1000 with TCP listening disabled and
+run ClipCraft in an isolated XDG data/cache directory. The new optional Rust fixture window is:
+
+```sh
+cargo run -p clipcraft-platform --example workflow_game -- --private-display
+```
+
+It refuses an existing managed/client desktop, advertises only its own PID/window to the private
+X server, paints an original moving rectangle and exits after at most 180 seconds. Use an exact
+custom executable match for `workflow_game`, software H.264, 360p/30, 15-second replay, game-only
+capture and no desktop fallback. No real game, game art or third-party recorder source is used.
+The native run also used a private PulseAudio null sink/monitor and generated tone via local Unix
+sockets. These are test/OS facilities, not shipped ClipCraft components or a hosted service.
+
+The actual app on Xvfb `:85` automatically recognized the generated process/window. F8 saved a
+640×360 H.264/AAC clip; the library displayed its game, cached thumbnail and favorite. The source
+played through the ordinary ALSA/PulseAudio output adapter: monitor capture RMS was 0.034883
+(normalized s16), with the test-tone producer already stopped. Send to editor, Add to timeline,
+split at 0.9 seconds, an independent text layer and a custom export title all ran through the UI.
+The fixed imported range produced decoded filmstrips and a real audio envelope.
+
+SIGKILL during an actual editor export left an 8 KiB partial. Restart restored both cuts, text,
+title and playhead paused with no undo/redo history. The original retry failure was captured;
+after the naming fix, retry chose the next suffix and completed **107,550 bytes, 640×360,
+30/1 FPS, 71 pictures, 2.366667 seconds and stereo 48 kHz AAC**. External FFprobe inspected it and
+FFmpeg fully decoded it. It appeared in the ordinary library and played with text/pictures/audio;
+its virtual output-monitor RMS was 0.029702. Native normal shutdown/restart again retained the
+edit, and the source's favorite/captured game survived. SHA-256 checks confirm unchanged source
+and interrupted-partial bytes. The completed export is a new file; the partial remains deliberately
+reserved. There is no new automatic orphan-partial deletion policy.
+
+Five app sessions, including normal and forced restart, ran under `strace -f -e trace=network`.
+No Internet-addressed connect/send calls were observed; 31 local Unix connect calls included X11,
+system audio and unavailable session-bus probes. Raw traces stay outside Git. Network namespace
+creation failed because this sandbox makes UID-map configuration read-only; the audit is evidence
+that this workflow made no Internet calls, not a physically disconnected/network-disabled release
+run. Windows/macOS, physical speakers/microphones, real games/anti-cheat, Wayland, GPU impact and
+long-run reliability remain unverified by this slice. No alpha/beta release gate is marked complete.
+
+Screenshots stay under ignored `.clipcraft-local/offline-workflow/`: `waiting.png`,
+`game-running.png`, `library-final.png`, `playback.png`, `before-full-clip-export.png`, `edited.png`,
+`before-interrupted-retry.png`, `crash-restored.png`, `export-complete.png`, `export-playback.png`,
+`after.png` and `restart-final.png`. Generated footage, audio, private configuration and syscall
+logs are not committed. See [release checklist](release-checklist.md) for remaining platform gates.

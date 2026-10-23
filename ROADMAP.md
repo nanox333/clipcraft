@@ -12,6 +12,9 @@ ClipCraft-hosted storage or account. The complete direction and constraints are 
 - **Prototype:** local capture/replay/save, playback, persistent clip library, and no-reencode trim
   export are implemented. Linux/X11 and Windows/AMD have generated capture-to-file evidence;
   Windows hotkey, real-game and broader real-device evidence remain open.
+  M5.3 verifies a connected Linux/X11 generated-game → F8 replay → library/audio playback → cuts/text
+  → export → normal/crash recovery workflow, with portable regressions and a network-call audit.
+  This does not close the Windows or network-disabled release gates.
 - **Local alpha:** Windows capture, bounded replay buffer, hotkey, synchronized audio, local library,
   basic cut/trim editor, and MP4 export pass end-to-end checks without a network connection.
 - **Beta:** crash recovery, storage limits, device-loss and full-disk recovery, signed installer,

@@ -1903,7 +1903,10 @@ impl ClipCraftApp {
         }
     }
 
-    fn send_to_editor(&mut self, entry: MediaEntry) {
+    fn send_to_editor(&mut self, mut entry: MediaEntry) {
+        // Library duration may include audio padding. Resolve editor bounds on its import worker,
+        // using the same reader as preview/export, before this reference can be appended.
+        entry.probe = None;
         self.editor.receive(entry);
         self.editor.open = true;
         self.page = Page::Editor;

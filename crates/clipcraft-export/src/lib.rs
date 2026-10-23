@@ -33,9 +33,9 @@ pub use gif::{GifOptions, MAX_GIF_FPS, MAX_GIF_SECONDS, export_gif};
 pub use hardware::{FastEncoder, FastOpener, FastPacket, FastRequest};
 pub use normalize::{LOUDNESS_TARGETS, NormalizeReport, normalize_to_mp4};
 
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, ErrorKind, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use clipcraft_time::Tick;
@@ -117,7 +117,9 @@ impl std::fmt::Display for ExportError {
                 write!(formatter, "This clip cannot be exported yet: {what}.")
             }
             Self::Damaged => formatter.write_str("The clip is damaged and cannot be exported."),
-            Self::BadRange => formatter.write_str("Choose a start that comes before the end."),
+            Self::BadRange => {
+                formatter.write_str("Choose a start before the end, within the clip's duration.")
+            }
             Self::AlreadyExists => formatter.write_str("A file with that name already exists."),
             Self::DiskFull => {
                 formatter.write_str("The disk is full. Free some space and try again.")
@@ -202,18 +204,29 @@ pub fn trim_to_mp4(
     let mut partial = request.output.as_os_str().to_owned();
     partial.push(".partial");
     let partial = PathBuf::from(partial);
-    let outcome = write(&source, &plans, &partial, progress, cancel);
-    let (pictures, audio_tracks) = match outcome {
-        Ok(counts) => counts,
-        Err(error) => {
-            let _ = fs::remove_file(&partial);
-            return Err(error);
+    compress::check_cancel(cancel)?;
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&partial)
+        .map_err(|error| {
+            if error.kind() == ErrorKind::AlreadyExists {
+                ExportError::AlreadyExists
+            } else {
+                io_error(&error)
+            }
+        })?;
+    // Cleanup owns only a file this operation created; an existing writer's partial is untouched.
+    let temporary = compress::Temporary(partial);
+    let (pictures, audio_tracks) = write(&source, &plans, file, progress, cancel)?;
+    compress::check_cancel(cancel)?;
+    fs::hard_link(&temporary.0, &request.output).map_err(|error| match error.kind() {
+        ErrorKind::AlreadyExists => ExportError::AlreadyExists,
+        ErrorKind::Unsupported => {
+            ExportError::Unsupported("choose a filesystem supporting hard links")
         }
-    };
-    if let Err(error) = fs::rename(&partial, &request.output) {
-        let _ = fs::remove_file(&partial);
-        return Err(io_error(&error));
-    }
+        _ => io_error(&error),
+    })?;
     let bytes = fs::metadata(&request.output).map_or(0, |meta| meta.len());
     let video_span = plans
         .iter()
@@ -315,11 +328,10 @@ fn plan(source: &Source, start: Tick, end: Tick) -> Result<Vec<Plan>, ExportErro
 fn write(
     source: &Source,
     plans: &[Plan],
-    partial: &Path,
+    file: File,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
 ) -> Result<(u64, usize), ExportError> {
-    let file = File::create(partial).map_err(|error| io_error(&error))?;
     let mut mp4 =
         Mp4Writer::new(BufWriter::new(file), WriterOptions::new(Brand::Mp4)).map_err(mp4_error)?;
     let mut ids = Vec::new();

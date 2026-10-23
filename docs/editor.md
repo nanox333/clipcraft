@@ -21,6 +21,12 @@ Import can select multiple MP4/MOV/MKV files; files dropped on the editor use th
 import command. Only references, metadata and cached thumbnails are added. Importing does not
 change the normal Clips library or its active folder. The editor media library deduplicates paths
 and uses the existing 5,000-media-entry budget; that is independent of timeline segment count.
+Import and Send to editor resolve the playable video duration in the background before adding a
+source to the timeline. This excludes an AAC padding tail that may extend the container's duration
+beyond its video. Older drafts retain their saved out points; if one extends past playable media,
+trim that end or remove/re-add the source. Saved edits and originals are never silently shortened.
+Automatic export names skip occupied final, partial and recovery paths. An interrupted partial can
+remain on disk; a retry chooses a fresh name without deleting it or another instance's live output.
 
 ## Arrange and cut
 

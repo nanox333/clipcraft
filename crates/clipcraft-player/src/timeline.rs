@@ -5,7 +5,7 @@
 
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use clipcraft_time::Tick;
@@ -113,6 +113,24 @@ fn valid_dimensions(width: u32, height: u32) -> bool {
         && width <= 8192
         && height <= 8192
         && u64::from(width) * u64::from(height) <= MAX_SOURCE_PIXELS
+}
+
+/// Bounded metadata from the same reader used for playback/analysis. Container-wide duration can
+/// include an AAC padding tail; editor source boundaries must use the playable video timeline.
+pub fn source_info(path: &Path) -> Result<crate::ClipInfoSummary, TimelineError> {
+    catch_unwind(AssertUnwindSafe(|| {
+        mp4::preflight(path, &AtomicBool::new(false))?;
+        let source = open_source(path)?;
+        let info = clip_info(&source)?;
+        if !valid_dimensions(info.width, info.height)
+            || info.duration <= Tick::ZERO
+            || info.duration > Tick::from_units(86_400, 1)
+        {
+            return Err(TimelineError::Unsupported);
+        }
+        Ok((&info).into())
+    }))
+    .unwrap_or(Err(TimelineError::Crashed))
 }
 
 /// Reads local media only; never creates, copies or changes any source file.
@@ -523,6 +541,12 @@ mod tests {
         let scratch = Scratch::new();
         let bytes = crate::tests::make_clip();
         let path = scratch.file("clip.mp4", &bytes);
+        let inspected = source_info(&path).unwrap();
+        assert!(inspected.duration > Tick::ZERO);
+        assert!(inspected.width > 0 && inspected.height > 0);
+        assert!(source_info(&scratch.0.join("missing.mp4")).is_err());
+        assert!(source_info(&scratch.0).is_err());
+        assert!(source_info(&scratch.file("broken-info.mp4", b"not a video")).is_err());
         for (start, end) in [
             (Tick(-1), Tick::from_units(1, 1)),
             (Tick::ZERO, Tick::ZERO),

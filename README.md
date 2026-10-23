@@ -43,7 +43,9 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   choose an estimated 10 MB, 25 MB, or custom 1–500 MB small-file export. Compression uses the Rust
   software H.264 encoder, preserves AAC audio tracks, and reduces video to at most 720p/30 fps
   without upscaling. Both paths preserve the source and support progress/cancel; compressed exports
-  report their actual size. When recording is set to the GPU encoder, small-file export tries it
+  report their actual size. Both writers use exclusive temporary files and no-replace publication.
+  Their output filesystem must support hard links. Automatic copy names skip occupied partial/recovery
+  files. When recording is set to the GPU encoder, small-file export tries it
   first, and the GPU decoder too, falling back to software on any trouble (untested on a real GPU
   so far). No upload or Discord account is involved.
 - **GIF and loudness:** the same Trim panel can save a range of up to 30 seconds as a looping GIF
@@ -59,6 +61,9 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   or remove cuts, with 64-step undo/redo, linked audio volume/mute, black/white fades and seven colour
   effects. Independent text layers can be moved, trimmed, split, duplicated, faded and recoloured.
   Preview and export share FilmCraft text rendering and the same audio fade envelope.
+  Editor import resolves source bounds with the playback reader, so AAC padding cannot make a
+  freshly captured clip's full-length timeline or export fail. Send to editor resolves these facts
+  in the background before the clip can be added.
   Timeline strips sample the source pictures and linked audio waveforms; bounded background
   analysis keeps media work off the UI thread. Preview prepares the next source across cuts.
   **Export video** offers standard H.264 MP4 or estimated 10 MB, 25 MB and custom 1–500 MB presets,

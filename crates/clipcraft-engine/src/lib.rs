@@ -687,7 +687,15 @@ fn copy_path(input: &std::path::Path, suffix: &str, extension: &str) -> Option<P
             format!("{suffix} {n}")
         };
         let candidate = folder.join(format!("{stem} ({tag}).{extension}"));
-        (!candidate.exists()).then_some(candidate)
+        // A crashed or concurrent writer may own its temporary even when final output is absent.
+        // Broken links and unreadable paths also reserve a name; never erase them to make room.
+        let available = ["", ".partial", ".recovery"].into_iter().all(|suffix| {
+            let mut path = candidate.as_os_str().to_owned();
+            path.push(suffix);
+            std::fs::symlink_metadata(PathBuf::from(path))
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        });
+        available.then_some(candidate)
     })
 }
 
@@ -1261,6 +1269,9 @@ pub const fn command_ids() -> &'static [&'static str] {
 }
 
 #[cfg(test)]
+mod offline_workflow_tests;
+
+#[cfg(test)]
 mod tests {
     use super::{
         Command, CommandOutput, EngineError, FileManager, MAX_DIRECTORY_ENTRIES,
@@ -1487,6 +1498,33 @@ mod tests {
             .id(),
             "clip.trim"
         );
+    }
+
+    #[test]
+    fn interrupted_exports_reserve_temporary_names_without_deleting_them() {
+        let directory = TestDirectory::new();
+        let input = directory.path().join("Run.mkv");
+        let partial = directory.path().join("Run (edit).mp4.partial");
+        let recovery = directory.path().join("Run (edit 2).mp4.recovery");
+        fs::write(&partial, b"unfinished export").unwrap();
+        fs::write(&recovery, b"recoverable recording").unwrap();
+        fs::create_dir(directory.path().join("Run (edit 3).mp4")).unwrap();
+        assert_eq!(
+            super::edited_path(&input),
+            Some(directory.path().join("Run (edit 4).mp4"))
+        );
+        assert_eq!(fs::read(&partial).unwrap(), b"unfinished export");
+        assert_eq!(fs::read(&recovery).unwrap(), b"recoverable recording");
+        #[cfg(unix)]
+        {
+            let dangling = directory.path().join("Run (edit 4).mp4");
+            std::os::unix::fs::symlink(directory.path().join("absent"), &dangling).unwrap();
+            assert_eq!(
+                super::edited_path(&input),
+                Some(directory.path().join("Run (edit 5).mp4"))
+            );
+            assert!(fs::symlink_metadata(dangling).is_ok());
+        }
     }
 
     #[test]
