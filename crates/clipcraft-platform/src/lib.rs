@@ -24,6 +24,7 @@ mod hotkey;
 mod mf_encoder;
 #[cfg(windows)]
 mod mf_events;
+pub mod presence;
 mod priority;
 mod process;
 #[cfg(target_os = "linux")]

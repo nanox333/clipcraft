@@ -80,9 +80,14 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   [the editor guide](docs/editor.md) for controls and limits.
 - **Local match data:** optional CS2/Dota 2 GSI adapters and a League of Legends local API reader
   show selected map/match/player details in Settings → Games. All default off; Valve config setup
-  preserves existing files. No data is uploaded, persisted with clips or published to Discord yet.
+  preserves existing files. Snapshots are transient and are not stored with clips. Discord
+  disclosure is controlled separately below.
   League transport requires Windows/macOS. Protocol/socket tests and Windows compilation are
   verified; live matches/native League TLS still need target-OS checks. See [setup and limits](docs/game-integrations.md).
+- **Discord Rich Presence:** opt-in activity, with separate game-name and selected match-context
+  switches in General. A bounded local IPC worker handles update/clear/reconnect independently
+  of capture. No media, paths, clip titles or account identifiers are published. You need a Discord
+  Application ID; none is bundled yet. [Setup, exact fields and limits](docs/discord-presence.md).
 - **Settings and diagnostics:** recording, quality, audio, hotkey, storage, game allowlist, and
   general settings are stored locally. [348 known games](docs/game-catalog.md) are recognized
   automatically, with per-game exclusions and a global switch in Settings › Games. The toggle at
@@ -132,7 +137,7 @@ they do not establish game-FPS impact or sustained capture performance.
 
 The next product plan prioritizes Windows/Linux/macOS game-only capture evidence and a low-copy
 GPU capture-to-encode path, then an Android feasibility study. Later proposals include opt-in
-client-side encrypted backups to a user-selected provider, controller shortcuts, Discord Rich Presence,
+client-side encrypted backups to a user-selected provider, controller shortcuts,
 keyboard/mouse overlays, safer themes/plugins, further editor evaluation, and a local CLI/MCP
 interface for footage management. These are not available in this build. See the
 [`roadmap`](ROADMAP.md) and [`backlog`](docs/backlog.md) for their requirements and limitations.

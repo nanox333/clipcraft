@@ -320,6 +320,8 @@ pub const MAX_VIDEO_KBPS: u32 = 200_000;
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
 pub struct RecordingSettings {
+    /// Optional Discord disclosure; never part of capture configuration.
+    pub discord_presence: crate::presence::PresenceSettings,
     /// Optional local match-data integrations. Separate from capture/game recognition.
     pub game_integrations: crate::game_state::GameIntegrationSettings,
     /// File format.
@@ -433,6 +435,7 @@ impl Default for RecordingSettings {
     fn default() -> Self {
         Self {
             game_integrations: crate::game_state::GameIntegrationSettings::default(),
+            discord_presence: crate::presence::PresenceSettings::default(),
             container: Container::Mp4,
             quality: QualityMode::High,
             video_encoder: VideoEncoder::Gpu,
@@ -566,6 +569,7 @@ pub const AUDIO_KBPS: [u32; 8] = [96, 128, 160, 192, 256, 320, 384, 512];
 impl RecordingSettings {
     /// Clamps hand-edited values into safe ranges and swaps an unwritable container for MP4.
     pub fn sanitized(mut self) -> Self {
+        self.discord_presence = self.discord_presence.sanitized();
         if !self.container.is_available() {
             self.container = Container::Mp4;
         }

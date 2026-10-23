@@ -77,9 +77,25 @@ See [game integrations](game-integrations.md) and [ADR 0022](adr/0022-local-game
 
 Live CS2/Dota/League matches, target-OS League TLS and macOS runtime behavior are not verified here.
 Linux League transport is explicitly unsupported. Snapshots are transient: clip annotations,
-automatic highlights and Discord publication are not built. No documented supported local
+automatic highlights are not built. Discord publication now has a separate explicit-consent
+policy ([M10.2](discord-presence.md)). No documented supported local
 match-data interface was established for Overwatch/Deadlock; they retain process recognition.
 This work closes no capture/platform release gate.
+
+## Discord presence (M10.2)
+
+Default-off basic activity and separate game-name/map-mode-score-hero consent are implemented in
+General, using shared engine policy/settings commands and a bounded local IPC worker. Unix mock
+tests cover READY/ack/ping, malformed/oversized data, timeout/rejection, coalescing/rate limits,
+privacy clears, reconnect, ID change, late READY after opt-out and shutdown. UI/CLI disclose only
+the permitted fields; capture is independent. See [setup and limits](discord-presence.md).
+
+No registered ClipCraft Discord Application ID exists yet; the app requires a user-configured ID
+and shows a setup message without probing IPC when it is missing. Actual Discord profile/audience
+checks, Windows/macOS IPC runtime and live games remain unverified. Mock success/compilation do
+not close these gates. Clearing is best effort when the client/service is unreachable or the app
+is killed; normal exit requests a bounded clear then disconnects. Saved rich clip metadata is
+still separate future work.
 
 ## Connected workflow evidence (M5.3)
 

@@ -854,23 +854,37 @@ input. **Verification:** fake-device tests plus named controller/OS integration 
 
 ### M10.2 — Optional Discord Rich Presence
 
-**Status:** planned.
+**Issue:** [#6](https://github.com/nanox333/clipcraft/issues/6). **Status:** Rust policy, IPC worker,
+General settings/CLI and mock verification implemented; real Discord identity/profile and target-OS
+IPC verification remain open. No registered ClipCraft Application ID is bundled.
 
 **Requirements:** provide opt-in local Rich Presence that can show ClipCraft activity and, only if
-the user enables it, the detected game name. Explain the exact fields before enabling; turn off and
-clear presence when the user exits or disables it.
+the user enables it, the captured game name and matching fresh map/mode/team score/hero information.
+Explain exact fields before enabling; clear old activity on disabled/reduced consent, lost game or
+fresh match data, application-ID change and exit. Basic labels are clipping/editing/browsing.
+Use shared `presence.preview` policy and existing settings commands for UI/CLI; one replaceable
+target, bounded framing/IO/retry, acknowledgments and conservative update limits.
 
 **Affected code/platforms:** desktop app and a small Rust presence adapter on Windows/Linux/macOS;
 Discord's local IPC availability is optional.
 
 **Limitations:** no clip upload, link, Discord login inside ClipCraft, friends/community surface, or
 collection of Discord account data. Discord availability is optional and must not affect capture.
+Only the local desktop IPC is used; Discord may publish opted-in activity through its service.
+No clip paths/titles, media, health/money/KDA, join secrets or raw game updates. Without a valid
+user-configured public Application ID, show setup state and perform no IPC discovery. No bot/token.
+Clear/exit is bounded and best effort for unresponsive Discord; disconnect is the fallback.
 
 **Acceptance:** default is off; enabling/disabling and Discord unavailable states are clear; stopping
 ClipCraft clears the presence; capture remains functional when Discord is missing or blocked.
 
-**Verification:** mock IPC tests and a manual opt-in desktop check; inspect logs for no token, clip
-path, or private metadata. **Dependencies:** M7.1 game identity. **Estimate:** TBD.
+**Verification:** engine disclosure/hostile-input matrix; actual Unix mock handshake/set/clear/ping,
+nonce/error/oversize/timeouts, coalescing/rate/privacy/reconnect/ID-change/late-READY/shutdown tests;
+native settings screenshots/keyboard and mock IPC, full gate and Windows/macOS compile checks.
+Actual Discord profile and live-game tests stay open until an Application ID/client is available.
+**Documentation:** README, gaps/roadmap, architecture/testing/settings/release, Discord guide and
+ADR 0023 ship together. **Dependencies:** M7.1 identity and M7.3 match adapters. **Estimate:** one
+prototype plus independent live Discord/platform verification.
 
 ### M10.3 — Built-in keyboard/mouse overlays and themes
 

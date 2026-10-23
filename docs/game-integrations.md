@@ -52,8 +52,9 @@ Account names, Steam/Riot identifiers, other-player tables, positions, event his
 and raw payloads are not retained. Exact identity is used transiently to select the local player.
 CS2 spectated-player statistics are omitted; Dota spectator-team objects are not traversed.
 The snapshot exists only in memory. **This change does not attach it to saved clips, create
-automatic highlight markers/clips, or publish Discord Rich Presence.** Those consumers need
-separate work, including explicit disclosure of any fields published to Discord.
+automatic highlight markers/clips.** [Optional Discord presence](discord-presence.md) now selects
+map/mode/score/hero through a separate default-off consent policy; enabling game data alone never
+publishes anything.
 
 ## Local transport and platform limits
 

@@ -1,5 +1,11 @@
 # Settings and advanced controls
 
+General has an optional **Discord Rich Presence** section before Help and the final advanced
+toggle. Basic activity, captured game name and selected match context each need explicit consent.
+The section explains exactly which fields Discord can publish, shows connection/setup state and
+accepts a public Application ID with an explicit Apply button. No ID is bundled yet; a missing ID
+starts no IPC worker. See [Discord setup and privacy](discord-presence.md).
+
 Games also has **Live game data**, separate from capture arming and custom rules. Its CS2/Dota 2/
 League switches default off and expose local setup, waiting/error/live summaries and expandable
 match details. These regular controls appear before the final advanced section; enabling them

@@ -150,9 +150,16 @@ not a formal clean-room implementation. The small editor additionally consumes p
   and install Valve configs. One opt-in platform worker owns authenticated loopback CS2/Dota
   listeners and Windows/macOS League HTTPS, with bounded IO and one current snapshot per game.
   Platform's L5 → engine L4 dependency shares operations. UI/CLI own lifecycle; disabling clears
-  status and stops sockets. Data is transient and cannot control capture or publish presence.
+  status and stops sockets. Data is transient and cannot control capture; the separately enabled
+  presence policy can select only explicitly disclosed match fields.
   OS TLS stays behind platform; [ADR 0022](adr/0022-local-game-state.md) scopes this optional local
   listener without a separately hosted server process.
+- **Discord presence:** `presence.preview` owns a fixed publication allowlist. Default-off settings
+  separately permit basic activity, the captured game's name and selected match context. One
+  platform worker owns bounded local Unix/named-pipe IPC, a replaceable target, acknowledgments,
+  rate limits, retry and clearing. No capture/media operation depends on Discord. General and CLI
+  share engine policy/settings commands; no ID, token or account is fabricated or fetched.
+  [ADR 0023](adr/0023-discord-presence.md) records the explicit publication exception and limits.
 - **UI/CLI:** native egui desktop app and local command-line tool. No HTTP/WebSocket control service,
   MCP server, browser UI, or remotely hosted feature is part of this architecture.
 - **Current product status:** the UI provides recording controls/settings, a persistent local clip

@@ -672,3 +672,51 @@ were removed, then the build and full gate passed. Before/after, live, details, 
 update screenshots stay outside Git in `.clipcraft-local/game-data/`. Generated configuration,
 keys, public sample cache and JSON diagnostics remain in ignored/private temporary directories.
 See [setup and protocol limits](game-integrations.md) and [ADR 0022](adr/0022-local-game-state.md).
+
+### M10.2 — Optional Discord Rich Presence (2026-10-23)
+
+The final `cargo xtask ci` gate passes **565 tests across 33 targets**, five existing/manual/platform
+checks ignored, formatting, strict Clippy, layers/assets and dependency licenses/sources/bans.
+Focused checks are `cargo test -p clipcraft-engine presence`,
+`cargo test -p clipcraft-platform presence`, and `cargo test -p clipcraft presence`.
+
+Three engine cases cover all consent combinations, browsing/editing versus active capture,
+missing/stale/mismatched game snapshots, invalid Application IDs, hostile strings and UTF-8 wire
+bounds. Ten Unix IPC tests use actual socket pairs with mocked Discord peers: handshake/READY,
+activity/nonce acknowledgment, ping/pong, clear, malformed/oversized/truncated/error/close frames,
+wrong nonce and timeout, no disabled discovery, coalescing/unchanged suppression, routine rate
+limits, immediate privacy clear, reconnect, changed Application ID, opt-out during a delayed READY,
+and normal shutdown. Expanding consent without changing activity sends no redundant update.
+Two desktop tests use Tab/Enter for separate consent and applying an ID, and verify that disabled
+or missing-ID settings start no worker. Fixture IDs are invented test data, never product defaults.
+
+The actual native app ran on private Linux Xvfb `:87` at 1440×900, with isolated data/cache/runtime
+roots. An isolated Unix socket mock at that runtime's `discord-ipc-0` recorded only synthetic
+activity frames and replied with READY/ack. No real Discord account, client or profile was used.
+Before opt-in and after enabling without an ID, the mock received zero connections. Typing the
+fixture ID and activating Apply through Tab/Enter connected and sent only `Browsing clips`.
+Game-name and match-context switches were enabled separately through the native UI.
+
+A generated Rust `workflow_game` window was explicitly labelled Counter-Strike 2 by an isolated
+custom test rule, then captured by the existing software recorder. Generated authenticated GSI
+updates supplied Mirage/competitive/8–6, plus excluded health/money/KDA fixture fields. The mock
+received the selected game/map/mode/score only; account identifiers, health, money, KDA and paths
+were absent. Stopping updates cleared old match context while preserving game-name presence;
+stopping the generated window cleared the game and returned to browsing. Opening Editor published
+only `Editing clips`; the normal window close sent `activity: null`. These are synthetic protocol/
+UI/capture checks, not evidence of CS2 gameplay or actual Discord profile behavior.
+
+The CLI configure/settings round trip passed in a separate temporary data root. `presence preview`
+returned only the allowed activity; malformed and >64 KiB stdin failed. Preview performs no IPC.
+Windows (`x86_64-pc-windows-gnu`) and macOS (`x86_64-apple-darwin`) platform compile checks pass;
+macOS retains an existing unused Channel-variant warning in `hotkey.rs`. Native Windows named-pipe,
+macOS socket packaging, actual registered Application ID/profile/audience, Discord privacy settings,
+live-game transitions and real-client shutdown/reconnect remain open. The maintainer has no
+Application ID yet; the app shows setup instead of inventing a product identity.
+
+No new test was ignored. Superseded generated executable hashes were removed to keep the cloud
+workspace within disk capacity; source/media were preserved. Before/after, missing-ID, connected
+mock, match and editor screenshots remain outside Git under `.clipcraft-local/discord-presence/`.
+Private generated configs/mock frames and verification records remain under the temporary native
+root. See [setup/exact fields](discord-presence.md), [ADR 0023](adr/0023-discord-presence.md) and the
+[release checklist](release-checklist.md). Rich per-clip match metadata is not implemented here.

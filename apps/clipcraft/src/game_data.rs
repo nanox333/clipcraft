@@ -84,7 +84,7 @@ impl State {
 
     pub(crate) fn show(&mut self, ui: &mut egui::Ui, settings: &mut GameIntegrationSettings) {
         crate::settings::card(ui, "Live game data", |ui| {
-            ui.label(RichText::new("Optional match details, read locally from the game. Off by default. Nothing is published to Discord or uploaded, and recording works without this.").color(crate::kit::MUTED).size(12.5));
+            ui.label(RichText::new("Optional match details, read locally from the game. Off by default; recording works without this. Discord sharing is controlled separately in General.").color(crate::kit::MUTED).size(12.5));
             ui.add_space(12.0);
             for game in GameIntegration::ALL {
                 ui.push_id(game.port(), |ui| {

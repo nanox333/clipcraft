@@ -37,8 +37,70 @@ fn run(arguments: Vec<OsString>) -> Result<(), CliError> {
         "clip" => run_clip(&arguments[1..]),
         "editor" => run_editor(&arguments[1..]),
         "game-data" => run_game_data(&arguments[1..]),
+        "presence" => run_presence(&arguments[1..]),
         "diagnose" => run_diagnose(&arguments[1..]),
         _ => Err(CliError::Usage),
+    }
+}
+
+fn run_presence(arguments: &[OsString]) -> Result<(), CliError> {
+    use clipcraft_engine::presence::{PresenceContext, PresenceSettings};
+    use std::io::Read;
+    if arguments.len() != 1 {
+        return Err(CliError::Usage);
+    }
+    let operation = arguments[0].to_str().ok_or(CliError::Usage)?;
+    if operation == "settings" {
+        let path = clipcraft_engine::default_settings_path().ok_or(CliError::Usage)?;
+        let CommandOutput::RecordingSettings(settings) =
+            execute(Command::LoadRecordingSettings { path }).map_err(CliError::Engine)?
+        else {
+            return Err(CliError::UnexpectedOutput);
+        };
+        return write_json(&settings.discord_presence);
+    }
+    if operation != "preview" && operation != "configure" {
+        return Err(CliError::Usage);
+    }
+    let mut bytes = Vec::new();
+    io::stdin()
+        .lock()
+        .take(65537)
+        .read_to_end(&mut bytes)
+        .map_err(CliError::Io)?;
+    if bytes.len() > 65536 {
+        return Err(CliError::Usage);
+    }
+    if operation == "preview" {
+        #[derive(serde::Deserialize)]
+        struct Request {
+            settings: PresenceSettings,
+            context: PresenceContext,
+        }
+        let r: Request = serde_json::from_slice(&bytes).map_err(CliError::Json)?;
+        return match execute(Command::BuildDiscordPresence {
+            settings: r.settings,
+            context: Box::new(r.context),
+        })
+        .map_err(CliError::Engine)?
+        {
+            CommandOutput::DiscordPresence(target) => {
+                write_json(&target.map(|t| t.activity.wire()))
+            }
+            _ => Err(CliError::UnexpectedOutput),
+        };
+    }
+    let presence: PresenceSettings = serde_json::from_slice(&bytes).map_err(CliError::Json)?;
+    let path = clipcraft_engine::default_settings_path().ok_or(CliError::Usage)?;
+    let CommandOutput::RecordingSettings(mut settings) =
+        execute(Command::LoadRecordingSettings { path: path.clone() }).map_err(CliError::Engine)?
+    else {
+        return Err(CliError::UnexpectedOutput);
+    };
+    settings.discord_presence = presence;
+    match execute(Command::SaveRecordingSettings { path, settings }).map_err(CliError::Engine)? {
+        CommandOutput::RecordingSettings(settings) => write_json(&settings.discord_presence),
+        _ => Err(CliError::UnexpectedOutput),
     }
 }
 
@@ -686,6 +748,8 @@ fn print_help() -> Result<(), CliError> {
         "\n",
         "Usage:\n",
         "  clipcraft-cli commands\n",
+        "  clipcraft-cli presence settings\n",
+        "  clipcraft-cli presence preview | configure  (JSON on stdin; preview never connects)\n",
         "  clipcraft-cli game-data enable|disable cs2|dota2|league\n",
         "  clipcraft-cli game-data setup cs2|dota2 <existing-GSI-config-folder>\n",
         "  clipcraft-cli game-data parse cs2|dota2|league  (JSON on stdin)\n",

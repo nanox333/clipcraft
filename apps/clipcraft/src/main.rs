@@ -17,6 +17,7 @@ mod kit;
 mod library_scan;
 mod organize;
 mod playback;
+mod presence;
 mod settings;
 mod thumbs;
 mod trim;
@@ -126,6 +127,7 @@ struct ClipCraftApp {
     settings_tab: SettingsTab,
     settings_state: settings::SettingsState,
     game_data: game_data::State,
+    presence: presence::State,
     /// Which clips the library shows: all, favorites, a collection, or a game.
     filter: LibraryFilter,
     /// A collection being created or renamed in the sidebar.
@@ -228,6 +230,7 @@ impl eframe::App for ClipCraftApp {
             self.settings_path.as_deref(),
             context,
         );
+        self.sync_presence(context);
         self.sync_playback(context);
         self.editor.poll(context);
         if self.editor.take_recovered() {
@@ -244,11 +247,48 @@ impl eframe::App for ClipCraftApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.presence.shutdown();
         self.editor.flush_recovery();
     }
 }
 
 impl ClipCraftApp {
+    fn sync_presence(&mut self, context: &egui::Context) {
+        use clipcraft_engine::presence::{PresenceContext, PresenceMode, integration_for_name};
+        let mode = if self.editor.open {
+            PresenceMode::Editing
+        } else if self.capture.is_active() {
+            PresenceMode::Clipping
+        } else {
+            PresenceMode::Browsing
+        };
+        let game_name = if mode == PresenceMode::Clipping {
+            self.capture.game_recording_name().map(str::to_owned)
+        } else {
+            None
+        };
+        let snapshot = game_name
+            .as_deref()
+            .and_then(integration_for_name)
+            .and_then(|game| {
+                if let clipcraft_platform::game_state::IntegrationStatus::Live(snapshot) =
+                    self.game_data.statuses.get(game)
+                {
+                    Some(Box::new(snapshot.clone()))
+                } else {
+                    None
+                }
+            });
+        self.presence.sync(
+            &self.recording.discord_presence,
+            PresenceContext {
+                mode,
+                game_name,
+                snapshot,
+            },
+            context,
+        );
+    }
     /// Shows which control the keyboard is on: a ring around the focused widget, drawn on top of
     /// everything, only after the keyboard (not the mouse) moved the focus.
     fn draw_focus_ring(&mut self, context: &egui::Context) {
@@ -1813,6 +1853,7 @@ impl ClipCraftApp {
             self.choose_library_folder();
         }
         settings::startup_card(ui, working);
+        self.presence.show(ui, &mut working.discord_presence);
         card(ui, "Help", |ui| {
             setting_row(
                 ui,

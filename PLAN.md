@@ -219,9 +219,10 @@ not permission to copy code, assets, or proprietary interfaces.
   the device. The user chooses and configures a storage provider. No ClipCraft account or hosted
   storage is required, and core workflows remain available offline. Provider choice, key recovery,
   metadata exposure, deletion, and restore behavior must be settled before implementation.
-- **Controller and presence integrations:** optional controller shortcuts and Discord Rich Presence
-  can be considered after desktop platform parity. Both are off by default and must not upload clips
-  or inspect game memory.
+- **Controller and presence integrations:** the user authorized the M10.2 Discord presence
+  prototype ahead of desktop parity: local IPC and separate activity/game/match consent are built,
+  with a user-configured Application ID and real-client verification still required. Controller
+  shortcuts remain planned. Both stay optional and must not upload clips or inspect game memory.
 - **Themes, overlays, and plugins:** start with built-in keyboard/mouse overlays and declarative
   themes. A plugin API and shader/effect extensions require a security and portability spike first;
   never load unrestricted native plugins by default.
