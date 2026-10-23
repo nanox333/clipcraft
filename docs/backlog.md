@@ -872,7 +872,7 @@ Discord's local IPC availability is optional.
 collection of Discord account data. Discord availability is optional and must not affect capture.
 Only the local desktop IPC is used; Discord may publish opted-in activity through its service.
 No clip paths/titles, media, health/money/KDA, join secrets or raw game updates. Without a valid
-user-configured public Application ID, show setup state and perform no IPC discovery. No bot/token.
+effective shared/override public Application ID, show unconfigured state and perform no IPC discovery. No bot/token.
 Clear/exit is bounded and best effort for unresponsive Discord; disconnect is the fallback.
 
 **Acceptance:** default is off; enabling/disabling and Discord unavailable states are clear; stopping
@@ -885,6 +885,24 @@ Actual Discord profile and live-game tests stay open until an Application ID/cli
 **Documentation:** README, gaps/roadmap, architecture/testing/settings/release, Discord guide and
 ADR 0023 ship together. **Dependencies:** M7.1 identity and M7.3 match adapters. **Estimate:** one
 prototype plus independent live Discord/platform verification.
+
+### M10.2a — Medal-inspired presence and automatic end-user setup
+
+**Issue:** [#7](https://github.com/nanox333/clipcraft/issues/7). **Status:** implementation complete;
+production identity/art upload and real Discord rendering remain open.
+**Requirements:** normal users enable one toggle; maintainer supplies a shared public build ID.
+Keep saved custom IDs in General's advanced section with Apply/reset. Show a local preview without
+connecting; use `Clipping <game>`, `with ClipCraft`, optional readable match details and original
+large game/small ClipCraft badges. Preview/CLI share `presence.card` disclosure policy.
+**Limitations:** no borrowed ID/logos, elapsed timestamp, uploads, game art or per-game application
+identity spoofing. Shared setup requires one Discord portal registration and asset upload; no ID
+is fabricated. Unknown games use the generic ClipCraft badge. Existing privacy/IPC limits remain.
+**Acceptance:** preview works with no ID; off does not connect; normal UI has no ID form; advanced
+Apply/reset works by keyboard; resolver validates and prioritizes override/shared IDs; assets are
+bounded and never reveal a game without consent; exporter refuses an existing directory.
+**Verification:** policy/art and UI keyboard tests, actual Unix mock IPC, native Linux screenshots,
+full workspace gate and cross-platform compile checks; real Discord/client/Windows/mac runtime open.
+**Affected:** engine, egui, CLI, release workflow, documentation. No dependency or transport change.
 
 ### M10.3 — Built-in keyboard/mouse overlays and themes
 

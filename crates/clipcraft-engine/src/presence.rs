@@ -2,6 +2,22 @@
 use crate::game_state::{GameIntegration, GameSnapshot};
 use serde::{Deserialize, Serialize};
 
+/// Public product identity supplied once by the maintainer, never a token or a borrowed ID.
+pub fn shared_application_id() -> Option<&'static str> {
+    let id = option_env!("CLIPCRAFT_DISCORD_APPLICATION_ID")?;
+    valid_application_id(id).then_some(id)
+}
+pub fn resolve_application_id<'a>(
+    settings: &'a PresenceSettings,
+    shared: Option<&'a str>,
+) -> Option<&'a str> {
+    if valid_application_id(&settings.application_id) {
+        Some(&settings.application_id)
+    } else {
+        shared.filter(|id| valid_application_id(id))
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
 pub struct PresenceSettings {
@@ -53,16 +69,29 @@ pub struct PresenceActivity {
     pub match_context: Option<String>,
 }
 impl PresenceActivity {
-    pub fn wire(&self) -> serde_json::Value {
-        let mut activity = serde_json::json!({"details":self.details});
-        if let Some(game) = &self.game {
-            let text = self
-                .match_context
-                .as_ref()
-                .map_or_else(|| game.clone(), |m| format!("{game} · {m}"));
-            activity["state"] = serde_json::Value::String(bound(&text, 128));
+    pub fn asset_key(&self) -> &'static str {
+        match self.game.as_deref().and_then(integration_for_name) {
+            Some(GameIntegration::Cs2) => "clipcraft_cs2",
+            Some(GameIntegration::Dota2) => "clipcraft_dota2",
+            Some(GameIntegration::League) => "clipcraft_league",
+            None => "clipcraft",
         }
-        activity
+    }
+    pub fn wire(&self) -> serde_json::Value {
+        let details = self.game.as_ref().map_or_else(
+            || self.details.clone(),
+            |game| format!("{} {game}", self.details),
+        );
+        let state = self.match_context.as_ref().map_or_else(
+            || "with ClipCraft".to_owned(),
+            |m| format!("with ClipCraft · {m}"),
+        );
+        let mut assets = serde_json::json!({"large_image":self.asset_key(),"large_text":self.game.as_deref().unwrap_or("ClipCraft")});
+        if self.game.is_some() {
+            assets["small_image"] = serde_json::json!("clipcraft");
+            assets["small_text"] = serde_json::json!("ClipCraft");
+        }
+        serde_json::json!({"details":bound(&details,128),"state":bound(&state,128),"assets":assets})
     }
 }
 
@@ -100,7 +129,22 @@ pub fn build_presence(
     settings: &PresenceSettings,
     context: &PresenceContext,
 ) -> Option<PresenceTarget> {
-    if !settings.enabled || !valid_application_id(&settings.application_id) {
+    let id = resolve_application_id(settings, shared_application_id())?;
+    let activity = preview_activity(settings, context)?;
+    Some(PresenceTarget {
+        application_id: id.into(),
+        activity,
+        disclosure: u8::from(settings.show_game)
+            | (u8::from(settings.show_game && settings.show_match) << 1),
+    })
+}
+
+/// Same disclosure policy for a local card/CLI preview, independent of Discord identity/IPC.
+pub fn preview_activity(
+    settings: &PresenceSettings,
+    context: &PresenceContext,
+) -> Option<PresenceActivity> {
+    if !settings.enabled {
         return None;
     }
     let mut activity = PresenceActivity {
@@ -125,7 +169,7 @@ pub fn build_presence(
                 .flatten()
             {
                 if let Some(text) = clean(field, 48) {
-                    fields.push(text);
+                    fields.push(display_match_label(&text));
                 }
             }
             if let (Some(a), Some(b)) = (snapshot.team_score, snapshot.opponent_score)
@@ -139,12 +183,24 @@ pub fn build_presence(
             }
         }
     }
-    Some(PresenceTarget {
-        application_id: settings.application_id.clone(),
-        activity,
-        disclosure: u8::from(settings.show_game)
-            | (u8::from(settings.show_game && settings.show_match) << 1),
-    })
+    Some(activity)
+}
+fn display_match_label(text: &str) -> String {
+    let text = text
+        .strip_prefix("npc_dota_hero_")
+        .or_else(|| text.strip_prefix("de_"))
+        .or_else(|| text.strip_prefix("cs_"))
+        .unwrap_or(text);
+    text.split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -161,6 +217,35 @@ mod tests {
         PresenceContext { mode:PresenceMode::Clipping,game_name:Some("Counter-Strike 2".into()),snapshot:Some(Box::new(crate::game_state::parse_game_state(GameIntegration::Cs2,br#"{"provider":{"appid":730,"steamid":"private"},"map":{"name":"de_mirage","mode":"competitive","team_ct":{"score":8},"team_t":{"score":6}},"player":{"steamid":"private","team":"CT","state":{"health":73,"money":555},"match_stats":{"kills":99}}}"#).unwrap())) }
     }
     #[test]
+    fn shared_identity_override_and_preview_without_identity() {
+        let mut s = PresenceSettings {
+            enabled: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_application_id(&s, Some("123456789012345678")),
+            Some("123456789012345678")
+        );
+        assert!(resolve_application_id(&s, Some("invalid")).is_none());
+        s.application_id = "234567890123456789".into();
+        assert_eq!(
+            resolve_application_id(&s, Some("123456789012345678")),
+            Some("234567890123456789")
+        );
+        s.application_id.clear();
+        let built = build_presence(&s, &context());
+        match shared_application_id() {
+            Some(id) => assert_eq!(built.unwrap().application_id, id),
+            None => assert!(built.is_none()),
+        }
+        assert_eq!(
+            preview_activity(&s, &context()).unwrap().wire()["state"],
+            "with ClipCraft"
+        );
+        s.enabled = false;
+        assert!(preview_activity(&s, &context()).is_none());
+    }
+    #[test]
     fn disclosure_matrix_is_off_then_activity_then_game_then_selected_match_fields() {
         assert!(build_presence(&PresenceSettings::default(), &context()).is_none());
         for game in [false, true] {
@@ -170,13 +255,22 @@ mod tests {
                 s.show_match = details;
                 let target = build_presence(&s, &context()).unwrap();
                 let wire = target.activity.wire();
-                assert_eq!(wire["details"], "Clipping");
-                assert_eq!(wire.get("state").is_some(), game);
+                assert_eq!(
+                    wire["details"],
+                    if game {
+                        "Clipping Counter-Strike 2"
+                    } else {
+                        "Clipping"
+                    }
+                );
+                assert_eq!(
+                    wire["assets"]["large_image"],
+                    if game { "clipcraft_cs2" } else { "clipcraft" }
+                );
                 let text = wire.to_string();
-                assert_eq!(text.contains("de_mirage"), game && details);
+                assert_eq!(text.contains("Mirage"), game && details);
                 for forbidden in [
-                    "private", "steamid", "73", "555", "99", "kills", "health", "money", "assets",
-                    "secrets",
+                    "private", "steamid", "73", "555", "99", "kills", "health", "money", "secrets",
                 ] {
                     assert!(!text.contains(forbidden));
                 }
@@ -228,7 +322,7 @@ mod tests {
             assert!(!valid_application_id(id));
             let mut s = settings();
             s.application_id = id.into();
-            assert!(build_presence(&s, &context()).is_none());
+            assert!(resolve_application_id(&s, None).is_none());
         }
         let mut s = settings();
         s.show_game = true;

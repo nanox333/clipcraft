@@ -23,6 +23,7 @@ mod game_catalog;
 mod game_detection;
 pub mod game_state;
 pub mod presence;
+pub mod presence_art;
 pub use game_catalog::{BuiltInGame, MAX_BUILT_IN_GAMES, built_in_games};
 mod hotkeys;
 mod index;
@@ -98,6 +99,10 @@ const VIDEO_EXTENSIONS: [&str; 7] = ["avi", "m4v", "mkv", "mov", "mp4", "webm", 
 /// A typed operation exposed by the shared command registry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
+    PreviewDiscordCard {
+        settings: presence::PresenceSettings,
+        context: Box<presence::PresenceContext>,
+    },
     BuildDiscordPresence {
         settings: presence::PresenceSettings,
         context: Box<presence::PresenceContext>,
@@ -260,6 +265,7 @@ impl Command {
     /// Returns this operation's stable command ID.
     pub const fn id(&self) -> &'static str {
         match self {
+            Self::PreviewDiscordCard { .. } => "presence.card",
             Self::BuildDiscordPresence { .. } => "presence.preview",
             Self::ParseGameState { .. } => "game_state.parse",
             Self::InstallGameIntegration { .. } => "game_state.install",
@@ -721,6 +727,7 @@ fn copy_path(input: &std::path::Path, suffix: &str, extension: &str) -> Option<P
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum CommandOutput {
+    DiscordCard(Option<presence::PresenceActivity>),
     DiscordPresence(Option<presence::PresenceTarget>),
     GameState(Box<game_state::GameSnapshot>),
     GameIntegrationInstalled(PathBuf),
@@ -946,6 +953,9 @@ pub fn execute_cancellable(
     cancel: &AtomicBool,
 ) -> Result<CommandOutput, EngineError> {
     match command {
+        Command::PreviewDiscordCard { settings, context } => Ok(CommandOutput::DiscordCard(
+            presence::preview_activity(&settings, &context),
+        )),
         Command::BuildDiscordPresence { settings, context } => Ok(CommandOutput::DiscordPresence(
             presence::build_presence(&settings, &context),
         )),
@@ -1267,6 +1277,7 @@ fn scan_library_directory_with_limit(
 /// Lists stable user-facing command IDs available to the first application slice.
 pub const fn command_ids() -> &'static [&'static str] {
     &[
+        "presence.card",
         "presence.preview",
         "game_state.parse",
         "game_state.install",

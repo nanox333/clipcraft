@@ -78,15 +78,13 @@ fn run_presence(arguments: &[OsString]) -> Result<(), CliError> {
             context: PresenceContext,
         }
         let r: Request = serde_json::from_slice(&bytes).map_err(CliError::Json)?;
-        return match execute(Command::BuildDiscordPresence {
+        return match execute(Command::PreviewDiscordCard {
             settings: r.settings,
             context: Box::new(r.context),
         })
         .map_err(CliError::Engine)?
         {
-            CommandOutput::DiscordPresence(target) => {
-                write_json(&target.map(|t| t.activity.wire()))
-            }
+            CommandOutput::DiscordCard(target) => write_json(&target.map(|t| t.wire())),
             _ => Err(CliError::UnexpectedOutput),
         };
     }

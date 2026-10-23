@@ -720,3 +720,37 @@ mock, match and editor screenshots remain outside Git under `.clipcraft-local/di
 Private generated configs/mock frames and verification records remain under the temporary native
 root. See [setup/exact fields](discord-presence.md), [ADR 0023](adr/0023-discord-presence.md) and the
 [release checklist](release-checklist.md). Rich per-clip match metadata is not implemented here.
+
+### M10.2a — Medal-inspired card and shared setup (2026-10-23)
+
+`cargo xtask ci` passes **568 tests across 34 targets**, five existing ignored checks, fmt,
+strict Clippy, layers/assets and dependency checks. No new ignored test or dependency is added.
+The shared-ID resolver covers valid/invalid fallback and explicit-override priority. Focused engine
+tests also ran with a fixture `CLIPCRAFT_DISCORD_APPLICATION_ID` and an invalid build value, checking
+that the actual target uses the shared identity only when valid. No test ID is shipped as a default.
+The disclosure matrix now checks badge selection, `Clipping <game>`, readable Mirage/Competitive
+context and forbidden private fields. Bounded original art rejects hostile keys/canvas sizes.
+
+Native Linux Xvfb :87, 1440×900: inspected before/after settings screenshots; normal controls have
+no ID form and show an identity-independent local preview. Advanced controls appear under the
+explicit heading, before General's final advanced toggle. Typing a fixture override and using
+Tab/Enter on Apply connected to an isolated Unix mock. Without an effective ID the enabled app
+made zero mock connections. A generated Rust `workflow_game` window (custom test rule labelled
+Counter-Strike 2, software capture) produced the CS2 large/ClipCraft small badge in both the native
+preview and actual IPC JSON. This is synthetic capture/IPC, not a CS2 or Discord account test.
+Normal close sent an acknowledged null activity. Automated egui keyboard checks cover separate
+consent, advanced Apply and reset; accessibility checks verify preview text and no normal ID form.
+
+CLI preview checks without an ID cover CS2/Dota/League/unknown-game badges, absent-game consent
+and disabled/null output. The Rust exporter produced four 1024px PNGs and license/provenance;
+a second run refused the existing destination and preserved all PNG hashes. Preview and export
+share the same bounded renderer. Inter SemiBold matches the pinned FilmCraft font by SHA-256.
+Windows/macOS platform compile checks pass (the pre-existing macOS `hotkey::Channel` warning
+remains); documentation gate passes. Actual registered application/art rendering, Discord audience,
+real-client reconnect/exit and Windows/macOS runtime remain open.
+
+Ignored evidence: `.clipcraft-local/discord-presence/medal-before*.png`, `medal-after*.png`,
+`medal-game-card.png`; original generated art under `.clipcraft-local/discord-assets/`;
+private fixture configuration/frames under `/tmp/clipcraft-presence-native`. Public Medal support
+screenshots were inspected as layout references only, never shipped. See [setup](discord-presence.md)
+for the one-time maintainer registration/upload/build-variable requirement.

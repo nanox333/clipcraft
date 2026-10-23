@@ -2275,7 +2275,7 @@ pub fn about_tab(ui: &mut egui::Ui) {
 }
 
 /// The advanced controls stay within their normal category, below its basic settings.
-fn advanced_heading(ui: &mut egui::Ui) {
+pub(crate) fn advanced_heading(ui: &mut egui::Ui) {
     ui.add_space(4.0);
     divider(ui);
     ui.add_space(26.0);

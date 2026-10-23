@@ -1877,11 +1877,15 @@ impl ClipCraftApp {
                 },
             );
         });
+        if working.show_advanced {
+            self.presence
+                .show_advanced(ui, &mut working.discord_presence);
+        }
         card(ui, "Advanced", |ui| {
             toggle_row(
                 ui,
                 "Show advanced settings",
-                "Show extra controls at the bottom of Games, Capture, Quality and Audio.",
+                "Show extra controls at the bottom of General, Games, Capture, Quality and Audio.",
                 &mut working.show_advanced,
                 true,
             );

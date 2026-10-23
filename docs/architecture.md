@@ -154,11 +154,14 @@ not a formal clean-room implementation. The small editor additionally consumes p
   presence policy can select only explicitly disclosed match fields.
   OS TLS stays behind platform; [ADR 0022](adr/0022-local-game-state.md) scopes this optional local
   listener without a separately hosted server process.
-- **Discord presence:** `presence.preview` owns a fixed publication allowlist. Default-off settings
+- **Discord presence:** `presence.preview` builds the IPC target; `presence.card` applies the same fixed publication
+  allowlist for an identity-independent local preview. Default-off settings
   separately permit basic activity, the captured game's name and selected match context. One
   platform worker owns bounded local Unix/named-pipe IPC, a replaceable target, acknowledgments,
   rate limits, retry and clearing. No capture/media operation depends on Discord. General and CLI
-  share engine policy/settings commands; no ID, token or account is fabricated or fetched.
+  share engine policy/settings commands. A validated compile-time public identity is the default;
+  an advanced saved override takes priority. `presence_art` generates fixed-key original badges
+  for preview/export. No ID, token or account is fabricated or fetched.
   [ADR 0023](adr/0023-discord-presence.md) records the explicit publication exception and limits.
 - **UI/CLI:** native egui desktop app and local command-line tool. No HTTP/WebSocket control service,
   MCP server, browser UI, or remotely hosted feature is part of this architecture.

@@ -1,5 +1,8 @@
 //! Discord UI and lifecycle. The engine owns every field allowed out through IPC.
-use clipcraft_engine::presence::{PresenceContext, PresenceSettings, valid_application_id};
+use clipcraft_engine::presence::{
+    PresenceActivity, PresenceContext, PresenceSettings, resolve_application_id,
+    shared_application_id, valid_application_id,
+};
 use clipcraft_engine::{Command, CommandOutput, execute};
 use clipcraft_platform::presence::{PresenceStatus, PresenceWorker};
 use eframe::egui::{self, RichText};
@@ -9,6 +12,8 @@ pub(crate) struct State {
     worker: Option<PresenceWorker>,
     id_draft: Option<String>,
     failed: bool,
+    preview: Option<PresenceActivity>,
+    badges: std::collections::HashMap<&'static str, egui::TextureHandle>,
     pub(crate) status: PresenceStatus,
 }
 impl State {
@@ -18,6 +23,13 @@ impl State {
         context: PresenceContext,
         ui: &egui::Context,
     ) {
+        self.preview = match execute(Command::PreviewDiscordCard {
+            settings: settings.clone(),
+            context: Box::new(context.clone()),
+        }) {
+            Ok(CommandOutput::DiscordCard(card)) => card,
+            _ => None,
+        };
         let target = match execute(Command::BuildDiscordPresence {
             settings: settings.clone(),
             context: Box::new(context),
@@ -59,6 +71,50 @@ impl State {
             }
         }
     }
+    pub(crate) fn show_advanced(&mut self, ui: &mut egui::Ui, settings: &mut PresenceSettings) {
+        crate::settings::advanced_heading(ui);
+        crate::settings::card(ui, "Discord developer settings", |ui| {
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("Discord Application ID")
+                    .family(crate::kit::medium())
+                    .size(14.0),
+            );
+            let draft = self
+                .id_draft
+                .get_or_insert_with(|| settings.application_id.clone());
+            let response = ui.add(
+                egui::TextEdit::singleline(draft)
+                    .char_limit(20)
+                    .hint_text("Application ID — not a bot token")
+                    .desired_width(ui.available_width().min(360.0)),
+            );
+            crate::kit::name_text_box(&response, "Discord Application ID", draft);
+            if crate::kit::labelled_button(
+                ui,
+                crate::kit::Icon::Gear,
+                "Apply Application ID",
+                false,
+                valid_application_id(draft.trim()) && draft.trim() != settings.application_id,
+            )
+            .clicked()
+            {
+                settings.application_id = draft.trim().to_owned();
+            }
+            ui.label(RichText::new("Create an application named ClipCraft in Discord's developer portal, then copy its Application ID from General Information. No bot, secret, token or login inside ClipCraft is needed.").size(12.0).color(crate::kit::MUTED));
+            ui.hyperlink_to(
+                "Discord developer portal",
+                "https://discord.com/developers/applications",
+            );
+            if !settings.application_id.is_empty()
+                && ui.button("Use shared ClipCraft identity").clicked()
+            {
+                settings.application_id.clear();
+                self.id_draft = Some(String::new());
+            }
+            ui.label(RichText::new("This override is for developers. Normal installations use the shared identity included in the build. An Application ID is public; never enter a token or secret.").size(12.0).color(crate::kit::MUTED));
+        });
+    }
     pub(crate) fn shutdown(&mut self) {
         if let Some(mut worker) = self.worker.take() {
             worker.shutdown();
@@ -74,8 +130,8 @@ impl State {
                 true,
             );
             if settings.enabled {
-                let text = if !valid_application_id(&settings.application_id) {
-                    "Add a Discord Application ID to connect."
+                let text = if resolve_application_id(settings, shared_application_id()).is_none() {
+                    "Discord presence is not configured in this build yet."
                 } else {
                     self.status.label()
                 };
@@ -91,38 +147,84 @@ impl State {
                     crate::settings::toggle_row(ui,"Show map, mode, score and hero",
                         "Also publishes available map, game mode, team score and hero/champion from an enabled local game integration. No health, money, K/D/A or account identifiers.",&mut settings.show_match,true);
                 });
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new("Discord Application ID")
-                        .family(crate::kit::medium())
-                        .size(14.0),
-                );
-                let draft = self
-                    .id_draft
-                    .get_or_insert_with(|| settings.application_id.clone());
-                let response = ui.add(
-                    egui::TextEdit::singleline(draft)
-                        .char_limit(20)
-                        .hint_text("Application ID — not a bot token")
-                        .desired_width(ui.available_width().min(360.0)),
-                );
-                crate::kit::name_text_box(&response, "Discord Application ID", draft);
-                if crate::kit::labelled_button(
-                    ui,
-                    crate::kit::Icon::Gear,
-                    "Apply Application ID",
-                    false,
-                    valid_application_id(draft.trim()) && draft.trim() != settings.application_id,
-                )
-                .clicked()
-                {
-                    settings.application_id = draft.trim().to_owned();
+                if let Some(activity) = &self.preview {
+                    ui.add_space(8.0);
+                    egui::Frame::new()
+                        .fill(egui::Color32::from_rgb(30, 31, 34))
+                        .corner_radius(8.0)
+                        .inner_margin(16.0)
+                        .show(ui, |ui| {
+                            ui.set_min_width(ui.available_width().min(340.0));
+                            ui.label(
+                                RichText::new("LOCAL CARD PREVIEW")
+                                    .size(10.5)
+                                    .color(crate::kit::MUTED),
+                            );
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                let key = activity.asset_key();
+                                for key in [key, "clipcraft"] {
+                                    if !self.badges.contains_key(key)
+                                        && let Ok(image) =
+                                            clipcraft_engine::presence_art::badge(key, 128)
+                                    {
+                                        let pixels = egui::ColorImage::from_rgba_unmultiplied(
+                                            [128, 128],
+                                            image.as_raw(),
+                                        );
+                                        self.badges.insert(
+                                            key,
+                                            ui.ctx().load_texture(
+                                                key,
+                                                pixels,
+                                                egui::TextureOptions::LINEAR,
+                                            ),
+                                        );
+                                    }
+                                }
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(64.0, 64.0),
+                                    egui::Sense::hover(),
+                                );
+                                if let Some(texture) = self.badges.get(key) {
+                                    ui.put(
+                                        rect,
+                                        egui::Image::new(texture)
+                                            .fit_to_exact_size(rect.size())
+                                            .corner_radius(10.0),
+                                    );
+                                }
+                                if activity.game.is_some() {
+                                    let badge = egui::Rect::from_center_size(
+                                        rect.right_bottom() - egui::vec2(4.0, 4.0),
+                                        egui::vec2(24.0, 24.0),
+                                    );
+                                    if let Some(texture) = self.badges.get("clipcraft") {
+                                        ui.put(
+                                            badge,
+                                            egui::Image::new(texture)
+                                                .fit_to_exact_size(badge.size())
+                                                .corner_radius(12.0),
+                                        );
+                                    }
+                                }
+                                ui.add_space(12.0);
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        RichText::new("ClipCraft").family(crate::kit::medium()),
+                                    );
+                                    let wire = activity.wire();
+                                    if let Some(details) = wire["details"].as_str() {
+                                        ui.label(details);
+                                    }
+                                    if let Some(state) = wire["state"].as_str() {
+                                        ui.label(RichText::new(state).color(crate::kit::MUTED));
+                                    }
+                                });
+                            });
+                        });
+                    ui.label(RichText::new("Preview only. Discord controls the application name and renders the uploaded artwork.").size(11.5).color(crate::kit::FAINT));
                 }
-                ui.label(RichText::new("Create an application named ClipCraft in Discord's developer portal, then copy its Application ID from General Information. No bot, secret, token or login inside ClipCraft is needed.").size(12.0).color(crate::kit::MUTED));
-                ui.hyperlink_to(
-                    "Discord developer portal",
-                    "https://discord.com/developers/applications",
-                );
                 ui.label(RichText::new("Requires the Discord desktop app and activity sharing enabled in Discord. Discord controls visibility to other people. Local recording works without it.").size(12.0).color(crate::kit::FAINT));
             }
         });
@@ -149,7 +251,10 @@ mod tests {
             },
             |ctx| {
                 crate::kit::apply_theme(ctx);
-                egui::CentralPanel::default().show(ctx, |ui| state.show(ui, settings));
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    state.show(ui, settings);
+                    state.show_advanced(ui, settings);
+                });
             },
         )
     }
@@ -213,6 +318,8 @@ mod tests {
         activate(&mut state, &mut settings, "Apply Application ID");
         assert_eq!(settings.application_id, "123456789012345678");
         assert!(state.worker.is_none());
+        activate(&mut state, &mut settings, "Use shared ClipCraft identity");
+        assert!(settings.application_id.is_empty());
         activate(
             &mut state,
             &mut settings,
@@ -221,10 +328,64 @@ mod tests {
         assert!(!settings.enabled);
     }
     #[test]
+    fn normal_settings_preview_works_without_id_and_has_no_developer_form() {
+        let context = crate::kit::test_context();
+        context.enable_accesskit();
+        let mut state = State::default();
+        let mut settings = PresenceSettings {
+            enabled: true,
+            ..Default::default()
+        };
+        // Preview is independent of shared build identity and never starts a worker.
+        let CommandOutput::DiscordCard(card) = execute(Command::PreviewDiscordCard {
+            settings: settings.clone(),
+            context: Box::default(),
+        })
+        .unwrap() else {
+            panic!("wrong command output");
+        };
+        state.preview = card;
+        let mut labels = Vec::new();
+        for _ in 0..3 {
+            let output = context.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(960.0, 1200.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    crate::kit::apply_theme(ctx);
+                    egui::CentralPanel::default().show(ctx, |ui| state.show(ui, &mut settings));
+                },
+            );
+            if let Some(update) = output.platform_output.accesskit_update {
+                labels.extend(
+                    update
+                        .nodes
+                        .into_iter()
+                        .filter_map(|(_, n)| n.label().or_else(|| n.value()).map(str::to_owned)),
+                );
+            }
+        }
+        assert!(labels.iter().any(|s| s == "LOCAL CARD PREVIEW"));
+        assert!(labels.iter().any(|s| s == "with ClipCraft"));
+        assert!(
+            !labels
+                .iter()
+                .any(|s| s == "Discord Application ID" || s == "Apply Application ID")
+        );
+        assert!(state.worker.is_none());
+    }
+    #[test]
     fn missing_id_and_disabled_settings_never_start_ipc_workers() {
         let context = crate::kit::test_context();
         let mut state = State::default();
-        for enabled in [false, true] {
+        for enabled in [false, true]
+            .into_iter()
+            .filter(|enabled| !enabled || shared_application_id().is_none())
+        {
             let settings = PresenceSettings {
                 enabled,
                 ..Default::default()

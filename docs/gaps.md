@@ -90,12 +90,21 @@ tests cover READY/ack/ping, malformed/oversized data, timeout/rejection, coalesc
 privacy clears, reconnect, ID change, late READY after opt-out and shutdown. UI/CLI disclose only
 the permitted fields; capture is independent. See [setup and limits](discord-presence.md).
 
-No registered ClipCraft Discord Application ID exists yet; the app requires a user-configured ID
-and shows a setup message without probing IPC when it is missing. Actual Discord profile/audience
+M10.2a adds Medal-inspired details/state and original typographic game badges, a local card preview
+without an ID, and a shared build identity (`CLIPCRAFT_DISCORD_APPLICATION_ID`). Normal settings
+need only a toggle; a custom public ID is an advanced developer override. No registered production
+ID exists yet: this build says unconfigured and does not probe IPC without an effective ID. The
+maintainer must register the app, upload the four generated badges and configure the release
+variable before automatic connection works for end users. Actual Discord profile/audience
 checks, Windows/macOS IPC runtime and live games remain unverified. Mock success/compilation do
 not close these gates. Clearing is best effort when the client/service is unreachable or the app
 is killed; normal exit requests a bounded clear then disconnects. Saved rich clip metadata is
 still separate future work.
+
+M10.2a verification: 568 tests/34 targets pass (five existing ignored checks), including privacy,
+identity fallback, bounded art, advanced keyboard Apply/reset and ID-independent preview. Native
+Linux screenshots/private mock and generated-game capture confirm the game/product badge layout;
+CLI previews and exporter no-overwrite checks pass. Windows/macOS compilation is not runtime proof.
 
 ## Connected workflow evidence (M5.3)
 

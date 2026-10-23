@@ -595,7 +595,7 @@ mod tests {
             let activity: Value = serde_json::from_slice(&bytes).unwrap();
             assert_eq!(
                 activity["args"]["activity"]["state"],
-                "Counter-Strike 2 · Mirage · 8–6"
+                "with ClipCraft · Mirage · 8–6"
             );
             assert!(!String::from_utf8_lossy(&bytes).contains("private"));
             write(&mut server, 3, json!({"ping":"echo"}));
@@ -748,7 +748,7 @@ mod tests {
         worker.publish(Some(target(Some("first")))).unwrap();
         assert_eq!(
             rx.recv_timeout(Duration::from_secs(3)).unwrap()["args"]["activity"]["state"],
-            "Counter-Strike 2 · first"
+            "with ClipCraft · first"
         );
         for i in 0..100 {
             worker
@@ -758,7 +758,7 @@ mod tests {
         let last = rx.recv_timeout(Duration::from_secs(3)).unwrap();
         assert_eq!(
             last["args"]["activity"]["state"],
-            "Counter-Strike 2 · update 99"
+            "with ClipCraft · update 99"
         );
         for _ in 0..20 {
             worker.publish(Some(target(Some("update 99")))).unwrap();
@@ -796,7 +796,7 @@ mod tests {
         assert!(rx.recv_timeout(Duration::from_millis(180)).unwrap()["args"]["activity"].is_null());
         assert_eq!(
             rx.recv_timeout(Duration::from_secs(3)).unwrap()["args"]["activity"],
-            json!({"details":"Clipping"})
+            target(None).activity.wire()
         );
         worker.shutdown();
         assert!(rx.recv_timeout(Duration::from_secs(1)).unwrap()["args"]["activity"].is_null());
@@ -831,7 +831,7 @@ mod tests {
         rx.recv_timeout(Duration::from_secs(3)).unwrap();
         worker.publish(Some(target(None))).unwrap();
         let restored = rx.recv_timeout(Duration::from_secs(3)).unwrap();
-        assert_eq!(restored["args"]["activity"], json!({"details":"Clipping"}));
+        assert_eq!(restored["args"]["activity"], target(None).activity.wire());
         worker.shutdown();
         assert!(rx.recv_timeout(Duration::from_secs(1)).unwrap()["args"]["activity"].is_null());
         a.join().unwrap();
@@ -905,7 +905,7 @@ mod tests {
         worker.publish(Some(next)).unwrap();
         assert_eq!(
             rx.recv_timeout(Duration::from_secs(2)).unwrap()["args"]["activity"],
-            json!({"details":"Clipping"})
+            target(None).activity.wire()
         );
         worker.shutdown();
         a.join().unwrap();

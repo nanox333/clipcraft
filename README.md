@@ -86,8 +86,10 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   verified; live matches/native League TLS still need target-OS checks. See [setup and limits](docs/game-integrations.md).
 - **Discord Rich Presence:** opt-in activity, with separate game-name and selected match-context
   switches in General. A bounded local IPC worker handles update/clear/reconnect independently
-  of capture. No media, paths, clip titles or account identifiers are published. You need a Discord
-  Application ID; none is bundled yet. [Setup, exact fields and limits](docs/discord-presence.md).
+  of capture. No media, paths, clip titles or account identifiers are published. Automatic setup uses a ClipCraft
+  build with the shared ClipCraft identity configured once by the maintainer; end users then only
+  enable the toggle. A Medal-inspired local card preview works without an ID, with original badges
+  and optional readable match details. No registered production ID is bundled yet. [Setup, exact fields and limits](docs/discord-presence.md).
 - **Settings and diagnostics:** recording, quality, audio, hotkey, storage, game allowlist, and
   general settings are stored locally. [348 known games](docs/game-catalog.md) are recognized
   automatically, with per-game exclusions and a global switch in Settings › Games. The toggle at

@@ -39,6 +39,8 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
   package:
+    env:
+      CLIPCRAFT_DISCORD_APPLICATION_ID: ${{ vars.CLIPCRAFT_DISCORD_APPLICATION_ID }}
     needs: version
     strategy:
       fail-fast: false
