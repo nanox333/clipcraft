@@ -47,12 +47,31 @@ static READBACKS: AtomicU64 = AtomicU64::new(0);
 static NATIVE_INPUTS: AtomicU64 = AtomicU64::new(0);
 static CPU_INPUTS: AtomicU64 = AtomicU64::new(0);
 static POOL_DROPS: AtomicU64 = AtomicU64::new(0);
+static FRESH_READS: AtomicU64 = AtomicU64::new(0);
+static REPEATED_READS: AtomicU64 = AtomicU64::new(0);
 static FEED_US: AtomicU64 = AtomicU64::new(0);
 static CONVERT_US: AtomicU64 = AtomicU64::new(0);
 static OUTPUT_US: AtomicU64 = AtomicU64::new(0);
 static WAIT_US: AtomicU64 = AtomicU64::new(0);
 static INPUT_US: AtomicU64 = AtomicU64::new(0);
 static EVENT_US: AtomicU64 = AtomicU64::new(0);
+static MF_INPUT_RATE: AtomicU64 = AtomicU64::new(0);
+static MF_OUTPUT_RATE: AtomicU64 = AtomicU64::new(0);
+static MF_MAX_MBPS: AtomicU64 = AtomicU64::new(0);
+static MF_STREAM_CHANGES: AtomicU64 = AtomicU64::new(0);
+static MF_OUTPUT_PICTURES: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn media_types(input: u64, output: u64, max_mbps: u32) {
+    MF_INPUT_RATE.store(input, Ordering::Relaxed);
+    MF_OUTPUT_RATE.store(output, Ordering::Relaxed);
+    MF_MAX_MBPS.store(u64::from(max_mbps & 0x0fff_ffff), Ordering::Relaxed);
+}
+pub(crate) fn stream_changed() {
+    MF_STREAM_CHANGES.fetch_add(1, Ordering::Relaxed);
+}
+pub(crate) fn output_picture() {
+    MF_OUTPUT_PICTURES.fetch_add(1, Ordering::Relaxed);
+}
 
 pub(crate) struct Timer(&'static AtomicU64, std::time::Instant);
 impl Drop for Timer {
@@ -91,19 +110,30 @@ pub(crate) fn native_input_count() {
 pub(crate) fn cpu_input_count() {
     CPU_INPUTS.fetch_add(1, Ordering::Relaxed);
 }
+pub(crate) fn capture_read(fresh: bool) {
+    if fresh { &FRESH_READS } else { &REPEATED_READS }.fetch_add(1, Ordering::Relaxed);
+}
 pub(crate) fn stats() -> crate::CapturePipelineStats {
+    let rate = |packed: u64| ((packed >> 32) as u32, packed as u32);
     crate::CapturePipelineStats {
         gpu_copies: GPU_COPIES.load(Ordering::Relaxed),
         cpu_readbacks: READBACKS.load(Ordering::Relaxed),
         native_encoder_inputs: NATIVE_INPUTS.load(Ordering::Relaxed),
         cpu_encoder_inputs: CPU_INPUTS.load(Ordering::Relaxed),
         pool_drops: POOL_DROPS.load(Ordering::Relaxed),
+        fresh_capture_reads: FRESH_READS.load(Ordering::Relaxed),
+        repeated_capture_reads: REPEATED_READS.load(Ordering::Relaxed),
         feed_us: FEED_US.load(Ordering::Relaxed),
         conversion_us: CONVERT_US.load(Ordering::Relaxed),
         output_us: OUTPUT_US.load(Ordering::Relaxed),
         input_wait_us: WAIT_US.load(Ordering::Relaxed),
         input_submit_us: INPUT_US.load(Ordering::Relaxed),
         event_us: EVENT_US.load(Ordering::Relaxed),
+        mf_input_rate: rate(MF_INPUT_RATE.load(Ordering::Relaxed)),
+        mf_output_rate: rate(MF_OUTPUT_RATE.load(Ordering::Relaxed)),
+        mf_max_macroblocks_per_second: MF_MAX_MBPS.load(Ordering::Relaxed) as u32,
+        mf_stream_changes: MF_STREAM_CHANGES.load(Ordering::Relaxed),
+        mf_output_pictures: MF_OUTPUT_PICTURES.load(Ordering::Relaxed),
     }
 }
 

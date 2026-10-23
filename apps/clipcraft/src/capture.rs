@@ -789,6 +789,7 @@ impl ClipCraftApp {
         let options = CaptureOptions {
             show_cursor: self.recording.capture_cursor,
             hdr_to_sdr: self.recording.hdr_compatibility,
+            requested_fps: self.recording.frames_per_second,
         };
         match self.open_capture_source(&id, &options) {
             Ok(source) => {
@@ -988,6 +989,7 @@ impl ClipCraftApp {
         let options = CaptureOptions {
             show_cursor: self.recording.capture_cursor,
             hdr_to_sdr: self.recording.hdr_compatibility,
+            requested_fps: self.recording.frames_per_second,
         };
         // The desktop's chooser can stay open for minutes, so it is waited for off the window.
         #[cfg(target_os = "linux")]

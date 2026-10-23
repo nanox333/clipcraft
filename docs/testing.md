@@ -197,6 +197,18 @@ remaining real-device checks. Timing is informational and is not a flaky CI asse
   Windows WGC/D3D11 and AMD Media Foundation also have generated-window evidence and an explicit
   real-device lease/readback/resize test. Reproduction and the checkpointed Windows soak example
   are in [windows-performance.md](windows-performance.md). Other GPU/format pairs remain unrun.
+  Follow-up verified 2026-10-23 includes a 60.026-second native SDR 1080p60 generated-window run:
+  3,589 returned pictures (0.333% deficit), 3,602 fresh WGC reads with no repeats, zero readbacks
+  and 177.10 MiB peak sampled RSS. All saved follow-up files fully decode; this is a short
+  throughput check, not a two-hour 60 fps or real-game pass. HDR compatibility remains enabled
+  by default and is outside this native SDR evidence. The encoder-only `encoder_bench` example
+  separates paced/unpaced hardware input from WGC/audio/UI; `capture_bench` also offers silent,
+  synthetic and headless isolation modes. Require actual returned output and fresh-read counts,
+  not input acceptance or constant-rate repeated images. Tests cover cached timestamps and
+  failure precedence, bounded FPS hints, unsupported-only interval fallback, CPU readback
+  admission, rational MF contracts, changed parameter sets and output-allocation bounds.
+  Windows CI also verifies restored editor media with canonical fixture paths, matching production
+  imports (including Windows' verbatim drive prefix) while retaining missing-source checks.
   Real-device evidence names the GPU,
   driver, OS, compositor, capture/encoder APIs, resolution/FPS, CPU use, GPU use, dropped frames, and
   game frame-time delta. Never infer sub-1% CPU use or broad compositor support from a compile or

@@ -420,7 +420,9 @@ mod tests {
     #[test]
     fn restore_preserves_missing_references_and_probes_each_file_independently() {
         let fixture = crate::playback::editor_fixtures::Fixture::new(false);
-        let healthy = fixture.file("healthy.mp4");
+        // Real editor imports store canonical paths. On Windows canonicalization also adds
+        // the verbatim drive prefix, so build the draft with the same path representation.
+        let healthy = std::fs::canonicalize(fixture.file("healthy.mp4")).unwrap();
         let missing = healthy.with_file_name("missing.mp4");
         let checkpoint = healthy.with_file_name(clipcraft_engine::EDITOR_DRAFT_FILE_NAME);
         let original = std::fs::read(&healthy).unwrap();

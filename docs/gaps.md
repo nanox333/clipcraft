@@ -4,19 +4,20 @@
 
 This is the ranked work list, not a parity claim. Capture, replay, playback, local library
 organization, and no-reencode trim export are implemented. Linux/X11 has end-to-end synthetic
-capture evidence; Windows/AMD now has generated-window capture and native GPU encoding evidence,
-with unresolved 1080p60 throughput and hardware reliability gates. Rank remaining work
+capture evidence; Windows/AMD has generated-window capture and native GPU encoding evidence,
+including one-minute SDR 1080p60 measurements, with broader performance and hardware reliability
+gates still open. Rank remaining work
 by user impact, frequency, and evidence. Update this file in the same pull request whenever a
 feature's status, workaround, or evidence changes.
 
 | Rank | Gap | Evidence / current limitation | Impact | Work |
 | ---: | --- | --- | --- | --- |
 | G0 | Windows release and broader real-device evidence remain open | Windows/AMD generated-window WGC and native/CPU MF encode have run. Windows hotkeys, game-only arming, real microphone/speaker, device loss and other GPU encoders remain unverified. Linux/X11 capture-to-export is proven against synthetic sources | Limits platform and release claims | M0 evidence close-out; M2/M3/M5 |
-| G1 | Low-copy GPU path is implemented for Windows SDR; performance gates remain open | WGC D3D11 leases and Media Foundation GPU NV12 conversion produced AMD generated-window MP4 clips with zero CPU readbacks. Matching dimensions/original framing and HDR compatibility disabled are required. Both CPU/native runs encoded about 32 fps at requested 1080p60. Other GPUs, HDR/scaling, GPU-use/power and real-game comparisons remain open; see [measurements](windows-performance.md). | 1080p60 throughput and game impact are not established | M5.1/M5.2 |
+| G1 | Low-copy GPU path is implemented for Windows SDR; broader performance gates remain open | WGC D3D11 leases and Media Foundation GPU NV12 conversion have one-minute AMD generated-window 1080p60 evidence with zero CPU readbacks and separate fresh/repeated-frame counters. Matching dimensions/original framing and HDR compatibility disabled are required; the default HDR-compatible setting retains CPU readback. The earlier 32 fps wait stall did not reproduce before these changes and remains unexplained. A two-hour 1080p60 soak, other GPUs, HDR/scaling, GPU-use/power and real-game comparisons remain open; see [measurements](windows-performance.md). | Short generated-workload throughput is measured; game impact and broader reliability are not established | M5.1/M5.2/M5.2a |
 | G2 | Game-only capture still needs real platform evidence | Recursive library scans and captured-game tagging are implemented and tested on Linux. Desktop scans are cancellable; manual labels, favorites and collections survive rescans. Game-managed saves snapshot the game at Save time. Real-game/Windows arming and Wayland process-to-window matching remain unverified or unavailable | The library workflow is usable, but automatic arming still needs desktop evidence | M4.1b/M7 |
 | G3 | Compressed export needs reference-machine measurements; broader output controls remain open | Original-quality trim and software H.264 size presets (10 MB, 25 MB, custom 1–500 MB) are built. Generated MP4/MKV fixtures verify decoding, audio sync, cancellation, actual-size reporting, and collision safety. Quick-trim compression is at most 720p/30 fps, copies AAC audio, and estimates rather than guarantees size; 30/60-second throughput measurements on representative PCs remain open | Local small-file export is available; editor 720p/1080p/source (up to 4K) and 30/60 FPS are now built; broader codecs and speed claims remain limited | M4.2/M4.3/M11.1d |
 | G4 | macOS capture/audio is not implemented; Wayland capture is only partly verified | No ScreenCaptureKit/CoreAudio provider; Wayland portal and PipeWire pieces pass component tests but no real desktop chooser has delivered a frame | Limits supported-platform claims | M6 |
-| G5 | Real-device audio and broader performance evidence are incomplete | Windows/AMD passed a two-hour generated-window 1080p30 GPU soak: eight drops, zero restarts, all 24 saved clips decoded. Real audio devices, real-game impact, 1080p60 and device-loss integration remain open; see [results](windows-performance.md) | Limits reliability and release claims | M3/M5 |
+| G5 | Real-device audio and broader performance evidence are incomplete | Windows/AMD passed a two-hour generated-window 1080p30 GPU soak: eight drops, zero restarts, all 24 saved clips decoded. Native SDR 1080p60 has one-minute generated-window measurements. Real audio devices, real-game impact, a two-hour 1080p60 soak and device-loss integration remain open; see [results](windows-performance.md) | Limits reliability and release claims | M3/M5 |
 
 The core workflow exists and can be exercised locally on Linux/X11 with synthetic capture and audio.
 Do not mark platform support from compilation alone; attach evidence for the user workflow and
@@ -226,14 +227,17 @@ destination filesystem must support hard links. The shared `editor.import`, `edi
 [testing.md](testing.md) and [ADR 0019](adr/0019-editor-preview-and-export-presets.md) for behavior,
 evidence and remaining platform checks.
 
-## Performance review (2026-10-21)
+## Performance review (2026-10-22)
 
 M2.P1 removes encoded-video payload copies from clip snapshots, caches replay GOP boundaries and
 avoids redundant full-frame RGBA clears and unscaled interpolation tables. On a Ryzen 7 5700X3D
 Windows CPU microbenchmark, a ~150 MB video snapshot fell from 68.070 ms to 0.034 ms and 1080p
 RGBA conversion with four threads fell from 1.392 ms to 0.638 ms. These are synthetic CPU timings,
-not game-FPS evidence. Windows SDR native surfaces now avoid readback for compatible MF encoders;
-[generated-window measurements](windows-performance.md) show an unresolved 1080p60 throughput limit.
+not game-FPS evidence. Windows SDR native surfaces avoid readback for compatible MF encoders.
+Nonblocking latest-frame reads and a bounded SDR update-interval request have one-minute
+[generated-window 1080p60 measurements](windows-performance.md), counting fresh images separately
+from repeated output. The earlier 32 fps encoder wait stall stopped reproducing before these
+changes; its cause remains unresolved. A two-hour 1080p60 soak and real-game impact remain open.
 Hardware pending input is bounded, and drain errors are reported on stop without modifying saved clips.
 CPU fallback frame clones, HDR cost,
 worker churn, large-library traversal/index merging and real-hardware validation remain open.
@@ -289,8 +293,10 @@ touches ClipCraft's own clips.
   capped at four threads, and on Windows the program runs a little below normal priority while
   clipping. **Not measured:** the effect on a game's frame rate on any machine. **Still costly:**
   HDR/scaled/incompatible paths still copy pictures from the graphics card to memory. The new
-  native SDR WGC-to-Media-Foundation route avoids that readback on the tested AMD combination,
-  but both native and CPU runs still miss 1080p60. See [the report](windows-performance.md).
+  native SDR WGC-to-Media-Foundation route avoids that readback on the tested AMD combination and
+  has one-minute generated-window 1080p60 evidence. HDR compatibility remains enabled by default
+  and uses CPU readback; this evidence requires it disabled. Real-game impact, a two-hour 1080p60
+  soak and other GPUs remain unverified. See [the report](windows-performance.md).
 - **Windows.** Generated-window Graphics Capture and AMD Media Foundation encode have run;
   Windows hotkeys, exclusive-full-screen games,
   the cursor option, protected content, and elevated windows are all untested.
@@ -343,7 +349,9 @@ touches ClipCraft's own clips.
   leaving a frozen stretch in clips; `gap_restart_seconds` sets it. The soak tool measured
   720p30 + sound at +21 to +26 MB memory after warm-up over 3 to 4 minutes. Windows/AMD also passed
   a two-hour generated-window 1080p30 GPU soak: eight drops, zero restarts, 177.77 MiB peak RSS and
-  24 saved clips decoded; [details](windows-performance.md). The 1080p60 release gate remains open.
+  24 saved clips decoded. Native SDR 1080p60 also has one-minute generated-window measurements;
+  a two-hour 1080p60 soak and the broader release gates remain open. See
+  [details](windows-performance.md).
   Tab moves a visible focus ring through every control and Enter activates; the
    Tab starts at the top bar, then the navigation rail, then the page.
   `clipcraft-cli diagnose` and Settings › General › Copy report list folders, screens, sound, and

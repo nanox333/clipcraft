@@ -7,7 +7,8 @@ backend, backup, upload, sync, or share-link service.
 > **Status: active prototype.** The screen-capture/replay/save pipeline, playback, local library,
 > and basic trim-to-MP4 workflow are implemented. Their verification varies by platform: the
 > end-to-end capture pipeline is tested on Linux/X11 and with a generated window on Windows/AMD.
-> Windows/AMD passed a two-hour generated-window 1080p30 soak; 1080p60 throughput remains open.
+> Windows/AMD has a two-hour generated-window 1080p30 soak and one-minute native SDR 1080p60
+> throughput evidence; real games and a two-hour 1080p60 soak remain open.
 > See [`ROADMAP.md`](ROADMAP.md) and
 > [`docs/gaps.md`](docs/gaps.md) for current evidence and limits.
 
@@ -113,10 +114,14 @@ they do not establish game-FPS impact or sustained capture performance.
 - Linux/X11 capture and replay have been tested end to end in a virtual display. Wayland support is
   partly verified; no real desktop portal chooser has delivered a frame yet.
 - Windows/AMD native SDR capture avoids full-frame CPU readback at matching source/output size.
-  HDR compatibility, resizing/cropping and incompatible encoders retain CPU fallback. Both tested
-  CPU and native paths encoded about 32 fps when requesting 1080p60; this gate remains open.
-  See [Windows measurements and reproduction](docs/windows-performance.md). Windows hotkeys and
-  real-game behavior remain untested; macOS capture is not implemented.
+  Nonblocking latest-frame reads and a bounded SDR update-interval request have one-minute
+  generated-window 1080p60 evidence, with fresh captures counted separately from repeated images.
+  HDR compatibility is enabled by default and retains CPU readback; disable it for this SDR path.
+  Resizing/cropping and incompatible encoders also retain CPU fallback. An earlier 32 fps encoder
+  wait stall did not reproduce before these changes, so its cause remains unexplained.
+  See [Windows measurements and reproduction](docs/windows-performance.md). A two-hour 1080p60
+  soak, Windows hotkeys, real-game impact and other GPUs remain unverified; macOS capture is not
+  implemented.
 - Game-only capture is the default and stays idle until a recognized game is running. X11 and
   Windows window-to-process adapters are implemented; this environment verifies X11 with a
   synthetic window, not a real game. Wayland does not expose the

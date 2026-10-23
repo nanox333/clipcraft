@@ -51,12 +51,22 @@ pub struct CapturePipelineStats {
     pub native_encoder_inputs: u64,
     pub cpu_encoder_inputs: u64,
     pub pool_drops: u64,
+    pub fresh_capture_reads: u64,
+    pub repeated_capture_reads: u64,
     pub feed_us: u64,
     pub conversion_us: u64,
     pub output_us: u64,
     pub input_wait_us: u64,
     pub input_submit_us: u64,
     pub event_us: u64,
+    /// Last negotiated MF input/output rates, as numerator/denominator; (0, 0) is unknown.
+    pub mf_input_rate: (u32, u32),
+    pub mf_output_rate: (u32, u32),
+    /// Driver-advertised 16x16 macroblocks/second, with reserved flag bits masked out.
+    pub mf_max_macroblocks_per_second: u32,
+    pub mf_stream_changes: u64,
+    /// Encoded pictures actually returned, including drain, rather than accepted input calls.
+    pub mf_output_pictures: u64,
 }
 
 /// Cumulative counters; compare snapshots around a recording when other sources are inactive.
@@ -83,6 +93,10 @@ pub struct CaptureOptions {
     pub show_cursor: bool,
     /// Convert HDR to standard colours, where the provider can.
     pub hdr_to_sdr: bool,
+    /// Windows capture eligibility hint (1..=240); other providers currently ignore it. SDR
+    /// may request more frequent OS updates to avoid display timing undershoot. The recorder
+    /// owns output pacing, and this hint does not guarantee fresh frames at that rate.
+    pub requested_fps: u32,
 }
 
 impl Default for CaptureOptions {
@@ -90,6 +104,7 @@ impl Default for CaptureOptions {
         Self {
             show_cursor: true,
             hdr_to_sdr: true,
+            requested_fps: 60,
         }
     }
 }
