@@ -146,6 +146,13 @@ not a formal clean-room implementation. The small editor additionally consumes p
 - **Audio timeline policy:** `clipcraft-record::audio_timeline` aligns timestamped native audio
   packets. The current `AudioSource` mixer remains clock-driven and does not call this helper until
   a timestamped platform source is connected.
+- **Local match data:** engine commands `game_state.parse`/`game_state.install` normalize snapshots
+  and install Valve configs. One opt-in platform worker owns authenticated loopback CS2/Dota
+  listeners and Windows/macOS League HTTPS, with bounded IO and one current snapshot per game.
+  Platform's L5 → engine L4 dependency shares operations. UI/CLI own lifecycle; disabling clears
+  status and stops sockets. Data is transient and cannot control capture or publish presence.
+  OS TLS stays behind platform; [ADR 0022](adr/0022-local-game-state.md) scopes this optional local
+  listener without a separately hosted server process.
 - **UI/CLI:** native egui desktop app and local command-line tool. No HTTP/WebSocket control service,
   MCP server, browser UI, or remotely hosted feature is part of this architecture.
 - **Current product status:** the UI provides recording controls/settings, a persistent local clip

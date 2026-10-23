@@ -78,6 +78,11 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   Edits recover from internal local metadata after restart, including text, export preset and quality;
   undo history starts fresh. Originals remain untouched, and quick trim stays available. See
   [the editor guide](docs/editor.md) for controls and limits.
+- **Local match data:** optional CS2/Dota 2 GSI adapters and a League of Legends local API reader
+  show selected map/match/player details in Settings → Games. All default off; Valve config setup
+  preserves existing files. No data is uploaded, persisted with clips or published to Discord yet.
+  League transport requires Windows/macOS. Protocol/socket tests and Windows compilation are
+  verified; live matches/native League TLS still need target-OS checks. See [setup and limits](docs/game-integrations.md).
 - **Settings and diagnostics:** recording, quality, audio, hotkey, storage, game allowlist, and
   general settings are stored locally. [348 known games](docs/game-catalog.md) are recognized
   automatically, with per-game exclusions and a global switch in Settings › Games. The toggle at

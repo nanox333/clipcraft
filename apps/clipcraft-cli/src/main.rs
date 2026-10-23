@@ -36,7 +36,115 @@ fn run(arguments: Vec<OsString>) -> Result<(), CliError> {
         "capture" => run_capture(&arguments[1..]),
         "clip" => run_clip(&arguments[1..]),
         "editor" => run_editor(&arguments[1..]),
+        "game-data" => run_game_data(&arguments[1..]),
         "diagnose" => run_diagnose(&arguments[1..]),
+        _ => Err(CliError::Usage),
+    }
+}
+
+fn run_game_data(arguments: &[OsString]) -> Result<(), CliError> {
+    use clipcraft_engine::game_state::{GameIntegration, MAX_GAME_STATE_BYTES};
+    let operation = arguments
+        .first()
+        .and_then(|s| s.to_str())
+        .ok_or(CliError::Usage)?;
+    let game = || match arguments.get(1).and_then(|s| s.to_str()) {
+        Some("cs2") => Ok(GameIntegration::Cs2),
+        Some("dota2") => Ok(GameIntegration::Dota2),
+        Some("league") => Ok(GameIntegration::League),
+        _ => Err(CliError::Usage),
+    };
+    if operation == "parse" && arguments.len() == 2 {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        io::stdin()
+            .lock()
+            .take(MAX_GAME_STATE_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(CliError::Io)?;
+        return match execute(Command::ParseGameState {
+            game: game()?,
+            bytes,
+        })
+        .map_err(CliError::Engine)?
+        {
+            CommandOutput::GameState(state) => write_json(&state),
+            _ => Err(CliError::UnexpectedOutput),
+        };
+    }
+    let settings_path = clipcraft_engine::default_settings_path().ok_or(CliError::Usage)?;
+    let key_path = settings_path.with_file_name("game-state-key");
+    match operation {
+        "setup" if arguments.len() == 3 => {
+            match execute(Command::InstallGameIntegration {
+                game: game()?,
+                directory: PathBuf::from(&arguments[2]),
+                key_path,
+            })
+            .map_err(CliError::Engine)?
+            {
+                CommandOutput::GameIntegrationInstalled(path) => write_json(&path),
+                _ => Err(CliError::UnexpectedOutput),
+            }
+        }
+        "enable" | "disable" if arguments.len() == 2 => {
+            let CommandOutput::RecordingSettings(mut settings) =
+                execute(Command::LoadRecordingSettings {
+                    path: settings_path.clone(),
+                })
+                .map_err(CliError::Engine)?
+            else {
+                return Err(CliError::UnexpectedOutput);
+            };
+            let value = operation == "enable";
+            match game()? {
+                GameIntegration::Cs2 => settings.game_integrations.cs2 = value,
+                GameIntegration::Dota2 => settings.game_integrations.dota2 = value,
+                GameIntegration::League => settings.game_integrations.league = value,
+            }
+            execute(Command::SaveRecordingSettings {
+                path: settings_path,
+                settings,
+            })
+            .map_err(CliError::Engine)?;
+            write_json(&value)
+        }
+        "watch" if arguments.len() == 2 => {
+            let seconds: u64 = arguments[1]
+                .to_str()
+                .and_then(|s| s.parse().ok())
+                .filter(|s| (1..=3600).contains(s))
+                .ok_or(CliError::Usage)?;
+            let CommandOutput::RecordingSettings(settings) =
+                execute(Command::LoadRecordingSettings {
+                    path: settings_path,
+                })
+                .map_err(CliError::Engine)?
+            else {
+                return Err(CliError::UnexpectedOutput);
+            };
+            let worker = clipcraft_platform::game_state::GameStateWorker::start(
+                settings.game_integrations,
+                key_path,
+            )
+            .map_err(|e| CliError::Engine(clipcraft_engine::EngineError::GameState(e)))?;
+            for _ in 0..seconds {
+                let statuses = worker
+                    .statuses()
+                    .map_err(|e| CliError::Engine(clipcraft_engine::EngineError::GameState(e)))?;
+                let data: Vec<_> = GameIntegration::ALL.into_iter().map(|game| {
+                    let status = statuses.get(game);
+                    let snapshot = match status { clipcraft_platform::game_state::IntegrationStatus::Live(s) => Some(s), _ => None };
+                    serde_json::json!({"game": game, "status": status.label(), "snapshot": snapshot})
+                }).collect();
+                let mut bytes = serde_json::to_vec(&data).map_err(CliError::Json)?;
+                bytes.push(b'\n');
+                write_stdout(&bytes)?;
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            worker.stop();
+            Ok(())
+        }
         _ => Err(CliError::Usage),
     }
 }
@@ -578,6 +686,10 @@ fn print_help() -> Result<(), CliError> {
         "\n",
         "Usage:\n",
         "  clipcraft-cli commands\n",
+        "  clipcraft-cli game-data enable|disable cs2|dota2|league\n",
+        "  clipcraft-cli game-data setup cs2|dota2 <existing-GSI-config-folder>\n",
+        "  clipcraft-cli game-data parse cs2|dota2|league  (JSON on stdin)\n",
+        "  clipcraft-cli game-data watch <seconds:1..3600>\n",
         "  clipcraft-cli editor import | apply | export | timeline  (JSON on stdin)\n",
         "  clipcraft-cli editor draft-load | draft-save | draft-discard  (JSON on stdin)\n",
         "  clipcraft-cli recording games list | recording games installed [STEAM_ROOT ...]\n",

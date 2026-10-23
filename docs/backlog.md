@@ -710,6 +710,39 @@ Update README, gaps, roadmap, architecture, testing, settings/catalog guides and
 keyboard/screenshots, valid saved media and the full gate; Windows/live-game validation remains open.
 See [testing.md](testing.md#m71b--background-discovery-and-desktopgame-switching-2026-10-22).
 
+### M7.3 — Optional local game data for CS2, Dota 2 and League
+
+**Issue:** [#5](https://github.com/nanox333/clipcraft/issues/5). **Status:** adapters and setup/status
+UI/CLI implemented; portable protocol/socket/keyboard checks and Windows compilation verified;
+native live-game/League TLS evidence remains open.
+
+**Problem/evidence:** process recognition cannot provide map, match phase or local-player stats.
+The maintainer requested these integrations using public Valve GSI/Dota configuration and Riot
+Live Client API documentation. See [references/setup](game-integrations.md).
+
+**Scope/requirements:** engine `game_state.parse`/`game_state.install`, existing recording settings,
+one Rust platform worker and Games UI/CLI. Explicit opt-in, transient allowlisted snapshots,
+loopback-only authenticated Valve listeners, bounded input/IO/work, OS-verified local League TLS.
+Show disabled/waiting/live/error states and setup instructions. Capture stays independent.
+
+**Limitations:** no hosted service, account, injected code, memory reading, remote stats, upload,
+Discord publication, automatic highlights or rich saved-clip metadata. League transport requires
+Windows/macOS. Config/key loss, occupied ports and game patches can require explicit setup/retry.
+Existing configs/media/partials must be preserved. ADR 0022 scopes the optional local listener.
+
+**Acceptance:** default-off settings; exclusive idempotent setup; authenticated game-ID validation;
+local-player fields without retained identity; stale/error clearing; bounded HTTP/body/IO and
+snapshots; keyboard switches and shared CLI commands; failures cannot change capture policy.
+Success and malformed/collision/shutdown lifecycle cases have tests. Synthetic messages and
+compilation cannot establish live-game compatibility.
+
+**Verification:** engine/platform/UI tests, native Linux before/after screenshots and generated
+authenticated loopback traffic, `cargo xtask ci`, docs gate and Windows target check. Actual
+CS2/Dota/League sessions, League native TLS and macOS runtime checks stay open until run.
+**Docs:** README, gaps, roadmap, architecture/testing/settings, game-integrations, ADR and attribution.
+**Dependencies/estimate:** existing M7.1 settings/detection; one implementation plus separate
+target-OS live-match verification. Overwatch/Deadlock rich adapters remain research.
+
 ## M8 — Desktop platform parity and Android feasibility
 
 ### M8.1 — Cross-platform desktop support matrix

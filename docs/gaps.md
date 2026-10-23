@@ -66,6 +66,21 @@ ClipRecorder's timestamped audio-gap policy is also ported in `clipcraft-record`
 untimestamped `AudioSource` mixer does not use it. Upstream revisions, permission provenance, and
 exact source files are recorded in [`upstream-ports.md`](upstream-ports.md).
 
+## Local game data (M7.3)
+
+Opt-in CS2/Dota 2 authenticated loopback GSI and a Windows/macOS League Live Client API adapter
+are implemented, with native Games settings, config setup, live summaries/details and CLI commands.
+All switches default off; capture is independent. Portable tests cover local-player selection,
+privacy, malformed/oversized data, stale status, actual loopback requests, config/partial
+preservation, HTTP framing and disabling/keyboard lifecycle. Windows compilation passes.
+See [game integrations](game-integrations.md) and [ADR 0022](adr/0022-local-game-state.md).
+
+Live CS2/Dota/League matches, target-OS League TLS and macOS runtime behavior are not verified here.
+Linux League transport is explicitly unsupported. Snapshots are transient: clip annotations,
+automatic highlights and Discord publication are not built. No documented supported local
+match-data interface was established for Overwatch/Deadlock; they retain process recognition.
+This work closes no capture/platform release gate.
+
 ## Connected workflow evidence (M5.3)
 
 The current generated Linux/X11 session covers process/window recognition → F8 replay with virtual

@@ -628,3 +628,47 @@ Screenshots stay under ignored `.clipcraft-local/offline-workflow/`: `waiting.pn
 `before-interrupted-retry.png`, `crash-restored.png`, `export-complete.png`, `export-playback.png`,
 `after.png` and `restart-final.png`. Generated footage, audio, private configuration and syscall
 logs are not committed. See [release checklist](release-checklist.md) for remaining platform gates.
+
+### M7.3 — Local match-data adapters (2026-10-23)
+
+`cargo xtask ci` passes **550 tests across 33 targets**, five existing/manual/platform tests
+ignored, formatting, strict Clippy, layers, assets and dependency/license/source checks. The
+focused commands are `cargo test -p clipcraft-engine game_state`,
+`cargo test -p clipcraft-platform game_state`, and `cargo test -p clipcraft game_data`.
+
+Engine cases cover CS2 fields/spectating, flat Dota versus nested spectator data, modern/legacy
+League exact local-player selection, identity/token omission, missing-field replacement,
+malformed/deep/oversized JSON and invalid numbers/text. Setup tests verify default-off settings,
+shared commands, repeatability, preservation of existing config/partials and Unix key permissions.
+Actual ephemeral loopback sockets test valid authentication, wrong token/AppID, HTTP errors and a
+stalled body timeout. Other tests cover strict request framing, bounded chunked/length responses,
+redirect refusal, stale status, disabled startup and shutdown. UI tests activate the two Valve
+switches through Tab/Enter and verify clearing/reaping before replacement. A focus regression failed
+before per-game stable IDs: removing CS2's live-details control displaced Dota's keyboard target.
+It passes after the fix. Unsupported League cannot be enabled in the Linux UI; a saved enabled
+setting can still be disabled.
+
+The native app ran on a private Linux Xvfb `:86`, 1440×900, with isolated settings/cache and no
+capture running. Existing/new switches were off; enabling CS2/Dota and setting up through the shared
+CLI wrote only generated configs in temporary directories. Authenticated generated payloads produced
+Mirage/competitive/8–6/18-9-4/73 HP and Dota/Axe/8-2-11/1500 HP summaries. Match details are expandable.
+A wrong-token request returned HTTP 400, displayed an error, and the next valid update restored
+live status. Native Tab/Shift-Tab/Enter toggled and re-toggled Dota; restarting retained switches.
+Capture policy stayed unchanged. The shared CLI `watch 4` then received both generated games,
+printed no key/account identity and released both ports on exit. Riot's published sample response
+also parsed through `game-data parse league`, selecting Annie and discarding the account name.
+The native file-picker/Steam installation/live-game workflow was not exercised; setup itself was
+exercised through the same engine command from the CLI.
+
+`cargo check -p clipcraft-platform --target x86_64-pc-windows-gnu` and
+`cargo check -p clipcraft-platform --target x86_64-apple-darwin` both pass, including the OS TLS
+adapter. macOS emits an existing unused Channel-variant warning in `priority.rs`; this is not a
+native runtime check. No running CS2/Dota/League, target-OS TLS handshake, anti-cheat, physical
+hardware or real-game performance is verified here. Windows/macOS live checks and all existing
+capture release gates remain open. No Discord publication or saved rich clip metadata is claimed.
+
+Build/linking exhausted the cloud workspace once; only superseded generated executable hashes
+were removed, then the build and full gate passed. Before/after, live, details, keyboard and invalid
+update screenshots stay outside Git in `.clipcraft-local/game-data/`. Generated configuration,
+keys, public sample cache and JSON diagnostics remain in ignored/private temporary directories.
+See [setup and protocol limits](game-integrations.md) and [ADR 0022](adr/0022-local-game-state.md).

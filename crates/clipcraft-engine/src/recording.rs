@@ -320,6 +320,8 @@ pub const MAX_VIDEO_KBPS: u32 = 200_000;
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
 pub struct RecordingSettings {
+    /// Optional local match-data integrations. Separate from capture/game recognition.
+    pub game_integrations: crate::game_state::GameIntegrationSettings,
     /// File format.
     pub container: Container,
     /// A named quality, or `Custom` to use the values below.
@@ -430,6 +432,7 @@ pub struct RecordingSettings {
 impl Default for RecordingSettings {
     fn default() -> Self {
         Self {
+            game_integrations: crate::game_state::GameIntegrationSettings::default(),
             container: Container::Mp4,
             quality: QualityMode::High,
             video_encoder: VideoEncoder::Gpu,

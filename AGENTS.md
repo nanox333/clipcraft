@@ -40,6 +40,11 @@ an actionable error and preserve existing files. This rule outranks feature work
 
 ## 2. Local media and privacy
 
+- Optional local game-state adapters follow [ADR 0022](docs/adr/0022-local-game-state.md): explicit
+  opt-in, loopback only, bounded authenticated input, transient selected fields and no retained
+  account identifiers. They cannot authorize capture or other privileged actions. Adding a game
+  or publishing fields to Discord needs its own documented scope, privacy model and verification.
+
 - Captures and library metadata remain on the user's device by default. No feature may transmit
   media unless the user explicitly configures an approved encrypted-backup workflow. Backup issues
   must specify key recovery, metadata exposure, provider credentials, deletion, restore, and offline

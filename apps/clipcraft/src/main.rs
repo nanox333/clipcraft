@@ -11,6 +11,7 @@ mod capture;
 mod editor;
 mod editor_media;
 mod editor_recovery;
+mod game_data;
 mod game_scan;
 mod kit;
 mod library_scan;
@@ -124,6 +125,7 @@ struct ClipCraftApp {
     settings_path: Option<PathBuf>,
     settings_tab: SettingsTab,
     settings_state: settings::SettingsState,
+    game_data: game_data::State,
     /// Which clips the library shows: all, favorites, a collection, or a game.
     filter: LibraryFilter,
     /// A collection being created or renamed in the sidebar.
@@ -221,6 +223,11 @@ impl eframe::App for ClipCraftApp {
         self.poll_thumbnails();
         self.thumbs.begin_frame();
         self.capture_frame(context);
+        self.game_data.sync(
+            &self.recording.game_integrations,
+            self.settings_path.as_deref(),
+            context,
+        );
         self.sync_playback(context);
         self.editor.poll(context);
         if self.editor.take_recovered() {
@@ -1711,7 +1718,12 @@ impl ClipCraftApp {
                 settings::hotkeys_tab(ui, &mut working, &mut self.settings_state)
             }
             SettingsTab::Games => {
-                let refresh = settings::games_tab(ui, &mut working, &mut self.settings_state);
+                let refresh = settings::games_tab(
+                    ui,
+                    &mut working,
+                    &mut self.settings_state,
+                    &mut self.game_data,
+                );
                 if refresh {
                     self.request_game_refresh();
                 }

@@ -21,6 +21,7 @@ pub use editor_draft::{
 };
 mod game_catalog;
 mod game_detection;
+pub mod game_state;
 pub use game_catalog::{BuiltInGame, MAX_BUILT_IN_GAMES, built_in_games};
 mod hotkeys;
 mod index;
@@ -96,6 +97,15 @@ const VIDEO_EXTENSIONS: [&str; 7] = ["avi", "m4v", "mkv", "mov", "mp4", "webm", 
 /// A typed operation exposed by the shared command registry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
+    ParseGameState {
+        game: game_state::GameIntegration,
+        bytes: Vec<u8>,
+    },
+    InstallGameIntegration {
+        game: game_state::GameIntegration,
+        directory: PathBuf,
+        key_path: PathBuf,
+    },
     AnalyzeEditorTimeline {
         request: Box<TimelineRequest>,
     },
@@ -245,6 +255,8 @@ impl Command {
     /// Returns this operation's stable command ID.
     pub const fn id(&self) -> &'static str {
         match self {
+            Self::ParseGameState { .. } => "game_state.parse",
+            Self::InstallGameIntegration { .. } => "game_state.install",
             Self::AnalyzeEditorTimeline { .. } => "editor.timeline",
             Self::LoadEditorDraft { .. } => "editor.draft.load",
             Self::SaveEditorDraft { .. } => "editor.draft.save",
@@ -703,6 +715,8 @@ fn copy_path(input: &std::path::Path, suffix: &str, extension: &str) -> Option<P
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum CommandOutput {
+    GameState(Box<game_state::GameSnapshot>),
+    GameIntegrationInstalled(PathBuf),
     EditorTimeline(Box<TimelineAnalysis>),
     EditorDraft(Option<Box<EditorDraft>>),
     EditorDraftSaved,
@@ -749,6 +763,7 @@ pub enum CommandOutput {
 /// Actionable errors returned by engine commands.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EngineError {
+    GameState(game_state::GameStateError),
     EditorTimeline(clipcraft_player::timeline::TimelineError),
     EditorDraft(EditorDraftError),
     EditorInvalid,
@@ -826,6 +841,7 @@ pub enum EngineError {
 impl fmt::Display for EngineError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::GameState(error) => error.fmt(formatter),
             Self::EditorTimeline(error) => error.fmt(formatter),
             Self::EditorDraft(error) => error.fmt(formatter),
             Self::EditorInvalid => formatter.write_str("This edit is outside its limits. Use at most 30 minutes total, valid source ranges at least 1/30 second long, and volume from 0 to 100%."),
@@ -923,6 +939,16 @@ pub fn execute_cancellable(
     cancel: &AtomicBool,
 ) -> Result<CommandOutput, EngineError> {
     match command {
+        Command::ParseGameState { game, bytes } => game_state::parse_game_state(game, &bytes)
+            .map(|s| CommandOutput::GameState(Box::new(s)))
+            .map_err(EngineError::GameState),
+        Command::InstallGameIntegration {
+            game,
+            directory,
+            key_path,
+        } => game_state::install_game_config(game, &directory, &key_path)
+            .map(CommandOutput::GameIntegrationInstalled)
+            .map_err(EngineError::GameState),
         Command::AnalyzeEditorTimeline { request } => {
             clipcraft_player::timeline::analyze_timeline(&request, cancel)
                 .map(|analysis| CommandOutput::EditorTimeline(Box::new(analysis)))
@@ -1231,6 +1257,8 @@ fn scan_library_directory_with_limit(
 /// Lists stable user-facing command IDs available to the first application slice.
 pub const fn command_ids() -> &'static [&'static str] {
     &[
+        "game_state.parse",
+        "game_state.install",
         "editor.timeline",
         "editor.draft.load",
         "editor.draft.save",

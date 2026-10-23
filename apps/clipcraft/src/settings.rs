@@ -947,6 +947,7 @@ pub fn games_tab(
     ui: &mut egui::Ui,
     settings: &mut RecordingSettings,
     state: &mut SettingsState,
+    game_data: &mut crate::game_data::State,
 ) -> bool {
     let mut refresh_processes = false;
     card(ui, "Recording behavior", |ui| {
@@ -1162,6 +1163,7 @@ pub fn games_tab(
         }
     });
 
+    game_data.show(ui, &mut settings.game_integrations);
     if !settings.show_advanced && !settings.game_rules.is_empty() {
         ui.label(
             RichText::new(format!(

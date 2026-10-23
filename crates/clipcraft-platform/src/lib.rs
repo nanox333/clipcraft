@@ -13,6 +13,7 @@ use clipcraft_capture::{Capabilities, CaptureError, CaptureSource, CaptureTarget
 
 #[cfg(windows)]
 mod d3d11;
+pub mod game_state;
 #[cfg(any(target_os = "linux", test))]
 mod h264_headers;
 #[cfg(any(windows, target_os = "linux", test))]

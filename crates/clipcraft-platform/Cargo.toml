@@ -11,6 +11,8 @@ description = "Operating-system capture providers and global hotkeys behind a sa
 layer = 5
 
 [dependencies]
+clipcraft-engine.workspace = true
+serde_json.workspace = true
 clipcraft-capture.workspace = true
 clipcraft-time.workspace = true
 clipcraft-record.workspace = true
@@ -39,6 +41,9 @@ windows = { version = "0.62", features = [
 ] }
 windows-capture = "2.0.1"
 global-hotkey = "0.9"
+
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+native-tls = "0.2"
 
 [dev-dependencies]
 filmcraft-h264.workspace = true

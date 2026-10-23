@@ -1,5 +1,11 @@
 # Settings and advanced controls
 
+Games also has **Live game data**, separate from capture arming and custom rules. Its CS2/Dota 2/
+League switches default off and expose local setup, waiting/error/live summaries and expandable
+match details. These regular controls appear before the final advanced section; enabling them
+does not restart or change capture. League transport requires Windows/macOS. See
+[game integration setup and privacy limits](game-integrations.md).
+
 **Show advanced settings** is the last setting in **Settings › General**, after Library, Startup
 and Help. It reveals extra controls at the bottom of the categories below. Each added section
 starts with a divider and an **Advanced settings** heading. The navigation categories stay the same.
