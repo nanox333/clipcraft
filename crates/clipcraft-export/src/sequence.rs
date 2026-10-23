@@ -597,21 +597,13 @@ fn picture(
         .video_frame(FrameRequest::full(source_time))
         .map_err(|_| ExportError::EncodeFailed)?;
     source_size(decoded.width, decoded.height)?;
+    check_cancel(cancel)?;
     let factor = (decoded.width / width).min(decoded.height / height).max(1) as usize;
     let small = decoded.box_decimated(factor);
     let frame = small.as_ref().unwrap_or(&decoded);
     let image = image::RgbaImage::from_raw(frame.width, frame.height, frame.to_rgba8())
         .ok_or(ExportError::Damaged)?;
-    let mut fitted =
-        image::imageops::thumbnail(&image, width.min(image.width()), height.min(image.height()));
-    segment.look.effect.apply_rgba(&mut fitted);
-    let mut canvas = image::RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 0, 255]));
-    image::imageops::overlay(
-        &mut canvas,
-        &fitted,
-        i64::from((width - fitted.width()) / 2),
-        i64::from((height - fitted.height()) / 2),
-    );
+    let mut canvas = fit_picture(image, size, segment.look.effect);
     if let Some((fade, amount)) = segment
         .look
         .fade_at(time - offset, segment.end - segment.start)
@@ -620,6 +612,32 @@ fn picture(
     }
     paint_texts(request, cache, &mut canvas, time, cancel)?;
     Ok(canvas)
+}
+
+/// Preserve the original thumbnail/alpha-composition result. Matching opaque pictures already
+/// are the canvas: resizing and compositing them would allocate and traverse two full frames.
+fn fit_picture(mut image: image::RgbaImage, size: (u32, u32), effect: Effect) -> image::RgbaImage {
+    let (width, height) = size;
+    if image.width() > width || image.height() > height {
+        image = image::imageops::thumbnail(
+            &image,
+            width.min(image.width()),
+            height.min(image.height()),
+        );
+    }
+    effect.apply_rgba(&mut image);
+    if image.dimensions() == size && image.pixels().all(|pixel| pixel[3] == 255) {
+        return image;
+    }
+    // Smaller and transparent pictures still composite over opaque black exactly as before.
+    let mut canvas = image::RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 0, 255]));
+    image::imageops::overlay(
+        &mut canvas,
+        &image,
+        i64::from((width - image.width()) / 2),
+        i64::from((height - image.height()) / 2),
+    );
+    canvas
 }
 
 fn render(
@@ -700,6 +718,7 @@ fn render(
             &mut text_cache,
             cancel,
         )?;
+        check_cancel(cancel)?;
         Some(video.encode(&canvas, 0)?)
     } else {
         None
@@ -778,6 +797,7 @@ fn render(
                     &mut text_cache,
                     cancel,
                 )?;
+                check_cancel(cancel)?;
                 video.encode(&canvas, frame)?
             };
             write_packets(
@@ -894,8 +914,11 @@ fn write_audio_until(
     while *next < until {
         check_cancel(cancel)?;
         let frames = (until - *next).min(1024) as usize;
-        let mut left = vec![0.0; frames];
-        let mut right = vec![0.0; frames];
+        // At most one AAC block; avoid two heap allocations for every ~21 ms of sound.
+        let mut left_storage = [0.0; 1024];
+        let mut right_storage = [0.0; 1024];
+        let left = &mut left_storage[..frames];
+        let right = &mut right_storage[..frames];
         if segment.volume_percent > 0 && !decoder.info().audio_streams.is_empty() {
             let local = (Tick::from_units(*next, i64::from(AUDIO_RATE)) - offset).max(Tick::ZERO);
             let source_time = segment.start + local;
@@ -932,10 +955,10 @@ fn write_audio_until(
                     };
                 }
             } else {
-                right.clone_from(&left);
+                right.copy_from_slice(left);
             }
         }
-        for data in encoder.encode(&[&left, &right]) {
+        for data in encoder.encode(&[left, right]) {
             write_audio_packet(mp4, id, &data)?;
         }
         *next += frames as i64;
@@ -972,3 +995,7 @@ fn blend_fade(canvas: &mut image::RgbaImage, fade: Fade, amount: f32) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "sequence_picture_tests.rs"]
+mod picture_tests;

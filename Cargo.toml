@@ -82,6 +82,9 @@ opt-level = 2
 [profile.dev.package.clipcraft-player]
 opt-level = 3
 
+[profile.dev.package.clipcraft-export]
+opt-level = 3
+
 [profile.dev.package.filmcraft-h264]
 opt-level = 3
 

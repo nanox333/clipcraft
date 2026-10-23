@@ -1,4 +1,6 @@
-# Performance review — 2026-10-21
+# Performance review
+
+Original recording audit: 2026-10-21. Editor export measurements: 2026-10-23 (M11.1e below).
 
 This review follows the first-party paths across all 13 workspace packages. Findings below are
 source-level costs unless a measurement is attached. Dependency codec internals, real game frame
@@ -135,3 +137,95 @@ GPU encode/copy usage, working set, allocation rate, drop count, A/V offset and 
 latency. Include idle/minimized operation, saving while recording, disk pressure and a two-hour
 soak. Repeat paired runs; report spread. Comparison with other software requires identical visual
 quality, bitrate and capture settings. No universal "fastest" claim follows from these microbenchmarks.
+
+
+## M11.1e — Editor export frame work and desktop responsiveness (2026-10-23)
+
+Baseline: `3b6642a`, plus the measurement example added in this change, built before altering the
+renderer. No codec, bitrate, output quality, time math or dependency changes. Source-size RGBA
+pictures previously went through thumbnail filtering, a second full-size allocation and an overlay
+onto a freshly allocated black canvas. The matching opaque path now returns the owned RGBA picture
+as its canvas. Smaller/transparent pictures retain black-background composition, and actual scaling
+retains the existing thumbnail filter. AAC channel mixing uses two bounded stack arrays. Decoder,
+codec, RGBA conversion and text caches still allocate; this is not GPU zero-copy export.
+
+### Machine and method
+
+Linux x86_64 cloud VM, AMD EPYC 9V74, five visible logical CPUs, cgroup CPU quota four cores and
+32 GiB memory limit; Rust 1.99.1, ordinary Cargo release profile, no custom CPU flags. Shared-host
+scheduling and other desktop sessions introduce noise. No GPU or physical capture/audio device was
+used. These measurements are not a reference-PC performance claim.
+
+The new Rust example generates a deterministic two-second 1920×1080/60 H.264 source with a moving
+luma pattern and fixed chroma. Source generation is outside export timing. Every export uses the same
+software Speed preset, two encoding threads, standard 1080p/60 output plan, one text layer and
+stereo silent AAC. It runs one warm-up and three measured exports. The six-second case repeats the
+two-second source as three cuts. Exclusive output-directory creation prevents deleting/overwriting
+old results; duration is bounded to even values from two to ten seconds. Four exports and the
+fixture are retained for inspection. No display or external codec tool is required.
+
+```sh
+cargo run --release -p clipcraft-export --example sequence_performance -- target/export-perf-new 2
+cargo run --release -p clipcraft-export --example sequence_performance -- target/export-perf-long 6
+cargo test --release -p clipcraft-export --lib measure_sequence_composition -- --ignored --nocapture
+```
+
+Use new directories on repeat runs. To reproduce the historical full-export baseline, build the
+same example against `3b6642a` (copy just the example into that checkout), then run baseline and
+current binaries sequentially with identical arguments. Exclude run 0. The private baseline binary
+was retained before implementation; no workspace build or native UI test ran during the final
+paired two-second series or the six-second series.
+
+### Results
+
+| Workload | Before median (range), ms | After median (range), ms |
+| --- | ---: | ---: |
+| Matching 1080p RGBA composition | 43.507 (43.045–45.754) | 1.962 (0.986–2.725) |
+| Matching 4K RGBA composition | 127.041 (126.373–140.749) | 5.664 (5.333–6.327) |
+| 1080p → 720p composition | 18.830 (17.223–18.908) | 15.730 (14.730–16.697) |
+| Portrait into landscape composition | 11.829 (11.784–14.091) | 11.700 (11.587–12.255) |
+| Full two-second 1080p60 export | 12,127.885 (11,976.696–12,240.160) | 7,504.321 (7,391.795–8,237.460) |
+| Full six-second 1080p60 export | Not measured | 20,722.060 (20,597.945–20,849.419) |
+
+Composition compares the retained pre-change algorithm with the current helper in the same
+release test process, alternating their order. Two warm-up batches precede five timed batches of
+four pictures. Each invocation includes cloning the input RGBA picture and dropping its result;
+source generation, decode, text, effects, fades, encode and mux are outside this microbenchmark.
+Only the full-export rows include those stages. The scaled/portrait differences are not evidence
+of a general resizing speedup. The full paired workload used about 38% less wall time; it still
+runs slower than real time and cannot establish capture/game impact or real-GPU throughput.
+
+The matching path removes two RGBA allocations per frame: 15.82 MiB of transient buffers at
+1080p and 63.28 MiB at 4K, excluding decoder/codec/conversion state. An ownership regression checks
+that the returned matching canvas retains the input allocation. This is an allocation-path result,
+not a measured reduction in total process peak. Linux `VmHWM` at the final measured export was
+570,704 KiB before and 559,392 KiB after; the six-second process reached 575,100 KiB. These are
+process high-water marks including generation, warm-up and allocator retention; they are not
+export-only memory, leak/soak evidence or a universal memory cap. Longer sources/GOPs and physical
+GPU adapters require separate measurements.
+
+All two-second benchmark inputs and outputs compared across baseline/current runs were
+byte-identical: the export had 120 pictures and 4,379,816 bytes (SHA-256
+`278871f354531316712f8de7430ae53d0b6eb05c6275e4116914369c2c1b470e`). The six-second outputs each
+have 360 pictures and 13,483,974 bytes. Output/source inspection uses generated media only.
+
+### Responsiveness and limits
+
+The existing single background export worker remains. Latest progress is stored for every callback,
+but progress-driven event-loop wakeups are spaced at least 100 ms apart; completion/errors wake
+immediately. Preview and input can redraw independently. Space and arrow-key transport now remain
+available during export, matching the mouse controls. Edits and a second export remain blocked,
+including while cancellation is pending. Cancel displays its pending state until the worker returns;
+progress/cancellation live in the top toolbar so a short window cannot clip them below the timeline.
+Disconnected workers surface an error. Cancellation is checked after decode and composition before
+starting encode, but cannot interrupt a codec or filesystem call already executing. No new worker
+pool, frame queue, priority scheduler, throughput promise or public engine command was added.
+Development builds now optimize `clipcraft-export` at level 3, matching the existing player/codec
+policy, so first-party pixel loops do not run unoptimized. This does not affect the release-profile
+before/after numbers above.
+
+Pixel regressions compare the original composition across source sizes, alpha, all colour effects
+and fade amounts, including reuse of the matching RGBA allocation. Existing generated export tests
+cover shared text rendering, audio/cut timestamps, 30/60 FPS, size targets, hardware stand-ins,
+cancellation, collision safety and unchanged sources. Native workflow and final gate evidence is
+recorded in [testing.md](testing.md); physical GPU/Windows/macOS measurements remain open.

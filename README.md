@@ -65,8 +65,12 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   with actual size and encoder reporting, progress/cancel and GPU-encoder fallback to software.
   Choose **720p**, **1080p**, or **Source (up to 4K)** at **30 or 60 FPS**, with stereo AAC.
   Size presets can reduce resolution or bitrate; the dialog explains reductions and shows actual
-  output settings. Source mode preserves the first clip's portrait or ultrawide framing. Edits
-  recover from internal local metadata after restart, including text, export preset and quality;
+  output settings. Source mode preserves the first clip's portrait or ultrawide framing.
+  Exports run in the background with keyboard play/pause and frame stepping still available; progress
+  and cancellation stay in the top toolbar, including in shorter windows. Cancellation shows its
+  pending state until the worker stops. Matching-size exports skip redundant frame copies.
+  Repeatable software-export measurements and their limits are in [the performance review](docs/performance.md).
+  Edits recover from internal local metadata after restart, including text, export preset and quality;
   undo history starts fresh. Originals remain untouched, and quick trim stays available. See
   [the editor guide](docs/editor.md) for controls and limits.
 - **Settings and diagnostics:** recording, quality, audio, hotkey, storage, game allowlist, and

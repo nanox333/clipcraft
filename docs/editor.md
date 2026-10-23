@@ -44,6 +44,14 @@ and uses the existing 5,000-media-entry budget; that is independent of timeline 
 - **Undo/Redo** restores up to 64 edits within an 8 MiB history budget; older history is pruned as needed. **Reset edit** clears the sequence and can be undone.
   **Fit** shows the whole sequence; **−/+** changes horizontal zoom.
 
+Export runs in the background. You can still preview, scrub and use **Space** or **←/→** while it
+runs; editing and starting another export stay disabled until it finishes. Progress and cancellation
+stay in the top toolbar so they remain reachable in a short window. **Cancel export** changes
+to **Cancelling…** while waiting for the current codec operation to return. A cancelled or failed
+export leaves the sources unchanged and removes its partial output. Progress updates do not request
+more than ten redraws per second, apart from completion; preview and input redraws are independent.
+Performance depends on the source and machine; see [measured workloads and limits](performance.md).
+
 The title field names the exported copy; the default uses the first source's filename. A title
 is a filename label, not text drawn into the picture. Names are sanitized for local filesystems,
 and a numeric suffix is used if a matching output already exists.

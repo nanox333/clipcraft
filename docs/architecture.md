@@ -200,6 +200,20 @@ volume applies the same segment fade envelope as the audio exporter without chan
 volume setting. GIF frame delays derive from cumulative integer centisecond timestamps, avoiding
 per-frame rounding drift at frame rates such as 12 and 13 fps.
 
+M11.1e preserves that pixel pipeline while bypassing thumbnail filtering when no size change is
+needed. A matching opaque RGBA frame becomes the canvas directly; smaller or transparent pictures
+still composite over opaque black. This removes two frame-sized temporary allocations in the
+matching case; decoder buffers and the required RGBA conversion remain. AAC mixing uses two
+1024-sample stack arrays instead of allocating channel vectors per block. Checks after decode and
+composition observe cancellation before encoding; codec calls themselves remain non-interruptible.
+The desktop retains one export worker and its immutable request until completion is acknowledged.
+Latest progress is atomic; progress-driven repaint requests are spaced at least 100 ms apart,
+with immediate completion/error wakes. Preview, input and other repaint sources keep their normal
+scheduling. Keyboard transport remains available while edit mutations and another export are blocked.
+Progress and cancellation are in the top toolbar, so a short viewport cannot hide cancellation
+below the timeline. The existing player/codec development optimization policy now covers export
+pixel loops too; release encoder settings are unchanged.
+
 `clipcraft-player::timeline` owns read-only source analysis. Engine `editor.timeline` validates a
 typed request and forwards cancellation. Exact Tick bin centres select 1–12 source pictures;
 native decoder thumbnail hints reduce work before RGBA conversion into letterboxed 160×90

@@ -500,3 +500,48 @@ original SHA-256 hashes remain unchanged, with no abandoned partial output. Scre
 This is software/Linux virtual-display evidence; physical GPU performance, Windows/macOS UI,
 physical audio and reference-machine throughput remain unverified by this change. Quick trim
 and its existing 720p/30 size presets are unchanged.
+
+
+### M11.1e — Export performance and responsiveness (2026-10-23)
+
+The full `cargo xtask ci` gate passes **532 tests across 32 targets**, formatting, strict Clippy,
+layers, asset attribution and dependency/license checks. Five tests remain deliberately ignored,
+including the new manual composition timing benchmark; no test was excluded to make the gate pass.
+The first gate attempt ran out of workspace disk while linking duplicated generated binaries;
+superseded build executables were removed and the gate rerun. One Clippy suggestion in the benchmark
+argument parser was corrected. The final gate includes the small-window cancellation regression.
+
+Frame tests retain the prior thumbnail/black-canvas/overlay algorithm as a reference. Matching,
+smaller, larger, odd-sized, portrait and transparent RGBA pictures match across every colour effect
+and black/white fade amounts; the matching opaque result retains the input allocation. The manual
+release benchmark alternates old/new composition in one process. The new Rust
+`sequence_performance` example generates its own 1080p60 source and records repeated full exports
+and process memory observations. See [performance](performance.md) for workload, machine, ranges,
+reproduction and limitations. Every before/after two-second MP4 was byte-identical. A six-second
+series also completed, with three source cuts and one text layer; timing thresholds are not CI tests.
+Existing generated tests verify fractional-cut audio/video clocks, real 30/60 FPS output, high
+resolution/text, size targets, fake GPU fallback, cancellation, collisions and unchanged files.
+
+Desktop regressions keep the single worker slot occupied until completion/cancellation is
+acknowledged, reject edits/another export, allow Space and frame stepping, and report disconnected
+workers. A deterministic clock exercises 1,000 progress callbacks in one second and permits only
+ten progress wakes, then an immediate completion wake. Latest atomic progress still updates every
+frame. An accessibility-bounds test uses the editor area inside a 960×640 desktop, verifies that
+Cancel export is visible, clicks its actual target and checks cancellation without freeing the slot.
+
+The native app ran on private Linux Xvfb `:84`, 1440×900 and 960×640, using isolated local settings,
+recovered references, generated H.264/AAC media, three two-second cuts, text and software 1080p60
+export. Space starts preview during a real export; Right pauses/steps without editing. The initial
+small-window inspection found cancellation below the timeline; the final toolbar placement is
+visible and a native click cancels an active job, removes its partial and publishes no new output.
+Retry completes a six-second MP4 with **360 pictures, 1920×1080 at 60/1 FPS, stereo 48 kHz AAC and
+13,635,063 bytes**. External FFprobe checked streams/duration and FFmpeg fully decoded it. Previously
+completed outputs remain present, originals retain their SHA-256 hashes, and no partial remains.
+Physical audio output is unavailable in this virtual display; encoded audio was checked in the file.
+
+Before/after screenshots and generated media stay outside Git. Screenshots are under
+`.clipcraft-local/export-performance/`: `before.png`, `after.png`, `export-step.png`,
+`small-export.png`, `cancel-complete.png` and `export-complete.png`. The final app remains open on
+the completed sequence. Physical GPU, Windows/macOS, real-game interference, long-GOP/long-run
+memory, power and reference-machine latency measurements remain open. Lower editor controls can
+still require a taller window; this change specifically keeps export cancellation reachable.

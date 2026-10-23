@@ -113,6 +113,21 @@ an actionable reduce/shorten error. M11.1d passes the 527-test/31-target full ga
 recovery, minimum-window and size-warning checks. A real native 1080p/60 export and a
 1 MB-target 960×540/60 CLI export decode fully; source hashes are unchanged. See [ADR 0021](adr/0021-editor-export-quality.md).
 
+M11.1e removes redundant thumbnail/canvas allocations for matching opaque output pictures and
+per-block AAC channel-vector allocations. A generated two-second 1080p60 software export measured
+12.128 s before and 7.504 s after on the Linux cloud VM, with byte-identical MP4 output; this is
+not real-time export or a game/capture performance claim. Six-second exports measured 20.722 s;
+the process high-water mark reached 575,100 KiB, including warm-up and allocator retention. Decoder
+caches remain substantial; the removed 15.82 MiB/frame temporary allocations at 1080p are not a
+total memory bound or a guaranteed process-peak saving. See [performance](performance.md) for the
+machine, workloads, spread and reproduction commands. One worker still owns each export; latest
+progress updates every frame, with progress wakeups spaced at least 100 ms apart and immediate
+completion/error notification. Keyboard Space/stepping and mouse transport remain available while
+edits/another export are blocked. Cancellation stays pending until acknowledged and cannot interrupt
+a running codec/filesystem call. Progress/cancellation stay reachable in the top toolbar at 960×640;
+other lower editor controls can still require a taller window. Development builds optimize export loops like the
+player/codecs. Physical GPU, Windows/macOS and real-game interference measurements remain open.
+
 M11.1c prepares the next source paused within a two-player active/prepared/retiring budget;
 decoders that have not acknowledged cancellation retain their slots. Slow decoding/seeking can
 still pause at a cut; real-time 4K playback and reference-machine export speed remain unmeasured.

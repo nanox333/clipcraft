@@ -1033,6 +1033,43 @@ focused implementation/review cycle, with slow-source decoder behavior the main 
 
 **Dependencies / estimate:** M11.1a–c and existing FilmCraft encoders. One focused implementation and verification cycle; no hardware prerequisite for this software slice.
 
+### M11.1e — Editor export performance and responsiveness
+
+**Status:** implemented (2026-10-23), following M11.1d. The full gate passes 532 tests across
+32 targets; the manual composition benchmark is deliberately ignored in CI. Measured software
+exports and native Linux verification are recorded in `performance.md` and `testing.md`.
+GitHub: [#3](https://github.com/nanox333/clipcraft/issues/3).
+
+**Problem / evidence:** before this change, a matching-size export ran every RGBA picture through
+the thumbnail filter, allocated a black canvas and overlaid it. Background export also disabled
+keyboard transport while mouse playback remained available. Profile these paths before changing them.
+
+**Scope / requirements:** reduce redundant frame allocations/copies without changing decoded pixels,
+timing, codec settings, text/fades, output planning or atomic publication. Keep one export worker,
+bounded scratch storage and cooperative cancellation. Allow preview transport during export while
+keeping edit mutations and a second export disabled; limit progress-triggered UI wakeups.
+
+**Limitations:** pure Rust, offline, no dependencies, no capture/provider changes, no frame queue,
+no codec quality tradeoffs or speed promises on unmeasured hardware. Codec calls cannot be interrupted
+mid-call. Physical GPU, real-game interference, Windows and macOS performance remain unverified.
+
+**Acceptance:** a repeatable Rust benchmark records the machine, workload, wall time and available
+process-memory evidence against `3b6642a`; the matching-size composition path removes two frame-sized
+temporary allocations and measures faster without changing pixels. Mixed sizes, alpha, effects,
+fades and text preserve reference results; 30/60 FPS audio/timestamp tests pass. Export progress wakes
+at most ten times per second plus completion; cancellation remains actionable and removes partials.
+Keyboard Space/stepping work during export, mutations/duplicate exports stay blocked, and a disconnected
+worker returns an error. Progress/cancellation stay visible and clickable in the top toolbar at a
+960×640 desktop size. Verify native playback/cancel/completion and screenshots, then `cargo xtask ci`.
+
+**Verification / documentation:** deterministic frame-reference and worker/keyboard regressions;
+generated 1080p60 exports before/after with identical settings and repeated runs, plus native Linux
+virtual-display checks. Update README, gaps, roadmap, editor, architecture, testing and performance
+guidance in this change. Timing thresholds are manual evidence, not flaky CI assertions.
+
+**Dependencies / estimate:** M11.1a–d, existing FilmCraft codecs and export job. One focused measured
+implementation cycle; hardware release gates remain separate.
+
 ### M11.2 — Local CLI and MCP footage-management adapter
 
 **Status:** planned; the local Rust CLI exists, but an MCP adapter does not.

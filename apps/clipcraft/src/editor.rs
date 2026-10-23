@@ -35,6 +35,16 @@ struct ExportJob {
     cancel: Arc<AtomicBool>,
     progress: Arc<AtomicU32>,
 }
+
+/// Progress still updates every frame, but a fast export must not flood the event loop.
+fn export_wake_due(last: &mut Option<Instant>, now: Instant, complete: bool) -> bool {
+    if complete || last.is_none_or(|at| now.duration_since(at) >= Duration::from_millis(100)) {
+        *last = Some(now);
+        true
+    } else {
+        false
+    }
+}
 impl Drop for ExportJob {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
@@ -748,9 +758,12 @@ impl EditorState {
         let spawned = std::thread::Builder::new()
             .name("sequence-export".into())
             .spawn(move || {
+                let mut last_wake = None;
                 let mut report = |fraction: f32| {
                     job_progress.store(fraction.to_bits(), Ordering::Relaxed);
-                    wake.request_repaint();
+                    if export_wake_due(&mut last_wake, Instant::now(), fraction >= 1.0) {
+                        wake.request_repaint();
+                    }
                 };
                 let result = clipcraft_engine::export_sequence(&request, &mut report, &job_cancel)
                     .map_err(|e| e.to_string());
@@ -773,7 +786,7 @@ impl EditorState {
             .ctx()
             .memory(|m| m.focused())
             .is_some_and(|id| egui::TextEdit::load_state(ui.ctx(), id).is_some());
-        if typing || self.export_dialog || egui::Popup::is_any_open(ui.ctx()) || self.busy() {
+        if typing || self.export_dialog || egui::Popup::is_any_open(ui.ctx()) {
             return;
         }
         let pressed = |modifiers, key| ui.input_mut(|i| i.consume_key(modifiers, key));
@@ -781,6 +794,19 @@ impl EditorState {
         let command = egui::Modifiers::COMMAND;
         if pressed(none, egui::Key::Space) {
             self.toggle();
+        }
+        if pressed(none, egui::Key::ArrowLeft) {
+            self.playing = false;
+            self.seek(self.playhead - RATE.frame_duration());
+        }
+        if pressed(none, egui::Key::ArrowRight) {
+            self.playing = false;
+            self.seek(self.playhead + RATE.frame_duration());
+        }
+        // The worker owns an immutable request. Preview transport remains available, while edits
+        // and a second export stay blocked until the worker acknowledges completion/cancellation.
+        if self.busy() {
+            return;
         }
         if pressed(none, egui::Key::S) {
             self.split();
@@ -812,14 +838,6 @@ impl EditorState {
                 self.edit(EditorAction::Duplicate { id });
             }
         }
-        if pressed(none, egui::Key::ArrowLeft) {
-            self.playing = false;
-            self.seek(self.playhead - RATE.frame_duration());
-        }
-        if pressed(none, egui::Key::ArrowRight) {
-            self.playing = false;
-            self.seek(self.playhead + RATE.frame_duration());
-        }
     }
     pub fn show(&mut self, ui: &mut egui::Ui, thumbs: &mut crate::thumbs::Thumbnails) {
         for (path, file) in std::mem::take(&mut self.imported_thumbs) {
@@ -850,16 +868,38 @@ impl EditorState {
                 if button(ui, "Undo", false, self.session.can_undo() && !self.busy()).clicked() {
                     self.edit(EditorAction::Undo);
                 }
+                // Keep cancellation reachable even when a short window clips the lower timeline.
+                if let Some(job) = &self.job {
+                    let cancelling = job.cancel.load(Ordering::Relaxed);
+                    if button(
+                        ui,
+                        if cancelling {
+                            "Cancelling…"
+                        } else {
+                            "Cancel export"
+                        },
+                        false,
+                        !cancelling,
+                    )
+                    .on_hover_text(
+                        "Stops after the current codec operation. Your source clips are unchanged.",
+                    )
+                    .clicked()
+                    {
+                        job.cancel.store(true, Ordering::Relaxed);
+                    }
+                    ui.add(
+                        egui::ProgressBar::new(f32::from_bits(
+                            job.progress.load(Ordering::Relaxed),
+                        ))
+                        .desired_width(240.0)
+                        .show_percentage(),
+                    );
+                }
             });
         });
         ui.add_space(10.0);
-        let status_height = if self.job.is_some() {
-            40.0
-        } else if self.message.is_some() {
-            26.0
-        } else {
-            0.0
-        };
+        let status_height = if self.message.is_some() { 26.0 } else { 0.0 };
         let full_top = (ui.available_height() - 454.0 - status_height).max(120.0);
         let top = self
             .top_height
@@ -1050,18 +1090,6 @@ impl EditorState {
                 self.timeline(ui, thumbs, lift);
                 self.range_controls(ui);
             });
-        if let Some(job) = &self.job {
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::ProgressBar::new(f32::from_bits(job.progress.load(Ordering::Relaxed)))
-                        .desired_width(240.0)
-                        .show_percentage(),
-                );
-                if button(ui, "Cancel export", false, true).clicked() {
-                    job.cancel.store(true, Ordering::Relaxed);
-                }
-            });
-        }
         if let Some((text, error)) = &self.message {
             kit::status_pill(ui, if *error { DANGER } else { LIME }, text);
         }
@@ -3220,6 +3248,168 @@ fn stamp(time: Tick) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_progress_wakes_are_bounded_and_completion_is_immediate() {
+        let start = Instant::now();
+        let mut last = None;
+        let wakes = (0..1000)
+            .filter(|ms| export_wake_due(&mut last, start + Duration::from_millis(*ms), false))
+            .count();
+        assert_eq!(wakes, 10);
+        assert!(export_wake_due(
+            &mut last,
+            start + Duration::from_millis(999),
+            true
+        ));
+        assert!(!export_wake_due(
+            &mut last,
+            start + Duration::from_millis(1000),
+            false
+        ));
+    }
+
+    #[test]
+    fn short_editor_keeps_export_cancellation_visible_and_clickable() {
+        let context = crate::kit::test_context();
+        context.enable_accesskit();
+        let mut state = state();
+        let (_sender, receiver) = mpsc::sync_channel(1);
+        let cancel = Arc::new(AtomicBool::new(false));
+        state.job = Some(ExportJob {
+            receiver,
+            cancel: cancel.clone(),
+            progress: Arc::new(AtomicU32::new(0)),
+        });
+        // The editor's space inside a 960x640 desktop window, after rail/top bar/margins.
+        let size = Vec2::new(858.0, 554.0);
+        let mut bounds = None;
+        for _ in 0..3 {
+            if let Some(update) = frame(&mut state, &context, vec![], size)
+                .platform_output
+                .accesskit_update
+            {
+                for (_, node) in update.nodes {
+                    if node.label() == Some("Cancel export") {
+                        bounds = node.bounds();
+                    }
+                }
+            }
+        }
+        let bounds = bounds.expect("cancel must have an accessible target");
+        assert!(
+            bounds.y0 >= 0.0 && bounds.y1 <= f64::from(size.y),
+            "cancel clipped: {bounds:?}"
+        );
+        assert!(bounds.x0 >= 0.0 && bounds.x1 <= f64::from(size.x));
+        let pos = egui::pos2(
+            ((bounds.x0 + bounds.x1) / 2.0) as f32,
+            ((bounds.y0 + bounds.y1) / 2.0) as f32,
+        );
+        frame(
+            &mut state,
+            &context,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            size,
+        );
+        assert!(
+            cancel.load(Ordering::Relaxed),
+            "the visible target must accept a cancel click"
+        );
+        assert!(
+            state.busy(),
+            "the worker must still acknowledge cancellation"
+        );
+    }
+
+    #[test]
+    fn export_keeps_keyboard_transport_and_blocks_mutations_until_worker_acknowledges() {
+        let context = crate::kit::test_context();
+        let mut state = state();
+        let original = state.session.clips().to_vec();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let cancel = Arc::new(AtomicBool::new(false));
+        state.job = Some(ExportJob {
+            receiver,
+            cancel: cancel.clone(),
+            progress: Arc::new(AtomicU32::new(0)),
+        });
+        frame(&mut state, &context, vec![], Vec2::new(1440.0, 900.0));
+        key(
+            &mut state,
+            &context,
+            egui::Key::Space,
+            egui::Modifiers::NONE,
+        );
+        assert!(
+            state.playing,
+            "Space must work during export, just like mouse playback"
+        );
+        state.playhead = RATE.tick_of(30);
+        key(
+            &mut state,
+            &context,
+            egui::Key::ArrowRight,
+            egui::Modifiers::NONE,
+        );
+        assert!(!state.playing);
+        assert_eq!(state.playhead, RATE.tick_of(31));
+        key(
+            &mut state,
+            &context,
+            egui::Key::ArrowLeft,
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(state.playhead, RATE.tick_of(30));
+        for key_value in [egui::Key::S, egui::Key::Delete, egui::Key::Z, egui::Key::D] {
+            key(&mut state, &context, key_value, egui::Modifiers::NONE);
+        }
+        state.edit(EditorAction::Delete { id: original[0].id });
+        state.export(&context);
+        assert_eq!(state.session.clips(), original);
+        assert!(Arc::ptr_eq(&state.job.as_ref().unwrap().cancel, &cancel));
+        cancel.store(true, Ordering::Relaxed);
+        frame(&mut state, &context, vec![], Vec2::new(960.0, 640.0));
+        assert!(state.busy(), "cancellation cannot free a worker slot early");
+        state.open = false;
+        sender.send(Err("Export cancelled".into())).unwrap();
+        state.poll(&context);
+        assert!(!state.busy());
+        assert_eq!(state.message.as_ref().unwrap().0, "Export cancelled");
+        // A failed worker also releases the slot and surfaces an actionable error.
+        let (sender, receiver) = mpsc::sync_channel(1);
+        state.job = Some(ExportJob {
+            receiver,
+            cancel,
+            progress: Arc::new(AtomicU32::new(0)),
+        });
+        drop(sender);
+        state.poll(&context);
+        assert!(!state.busy());
+        assert!(
+            state
+                .message
+                .as_ref()
+                .unwrap()
+                .0
+                .contains("Export stopped unexpectedly")
+        );
+    }
+
     #[test]
     fn visible_analysis_stays_in_trimmed_source_and_maps_back_to_the_same_cut() {
         let start = Tick::from_units(37, 10);
