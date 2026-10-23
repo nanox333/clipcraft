@@ -104,8 +104,14 @@ not a formal clean-room implementation. The small editor additionally consumes p
   that audio and mux overhead before choosing a video bitrate and canvas tier. The hardware
   encoder seam retries the complete job in software on failure, while exclusive temporary output
   and no-replace publication preserve sources and existing files. The result reports actual size,
-  optional target, target status, dimensions and encoder. No editor-project file is required;
-  see [ADR 0019](adr/0019-editor-preview-and-export-presets.md).
+  optional target, target status, dimensions, FPS, target video bitrate and encoder.
+  M11.1d shares `sequence_settings` between preview and export: 720p/1080p or a first-source
+  aspect canvas bounded to 3840×2160 landscape / 2160×3840 portrait, at 30/60 FPS. Bitrate
+  scales up to 50 Mbps; size-target canvas tiers account for FPS. Encoder and mux use the same
+  integer frame clock, including shortened final samples. Internal recovery defaults missing
+  quality fields to 720p/30 and validates supplied values. No editor-project file is required;
+  see [ADR 0019](adr/0019-editor-preview-and-export-presets.md) and
+  [ADR 0021](adr/0021-editor-export-quality.md).
 - **Engine:** owns recording sessions, input validation, local index operations, crash recovery,
   background jobs, and stable typed commands. UI and CLI dispatch these same commands. It does not
   provide a user-facing project-file workflow. The bounded `editor.edit` session owns exact source
@@ -233,7 +239,7 @@ state. `request_stop` is cooperative; retaining stopped players until `worker_fi
 rapid seeks from creating an unbounded set of detached codec workers. If those slots are occupied
 or the next frame is not ready, preview waits rather than exceeding its budget.
 
-`EditorDraft` stores current validated cuts/text, media references, title, playhead and preset
+`EditorDraft` stores current validated cuts/text, media references, title, playhead, preset and quality
 without undo/redo. JSON and path validation enforce 16 MiB, the fixed owned basename, no existing
 symlink components and no writes to media paths. Save uses an exclusively created sibling file,
 flush and atomic replacement; invalid existing recovery cannot be silently replaced. One serial

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use clipcraft_time::Tick;
 use serde::{Deserialize, Serialize};
 
-use crate::{EditorSession, ExportPreset, MAX_LIBRARY_RESULTS};
+use crate::{EditorSession, ExportPreset, MAX_LIBRARY_RESULTS, SequenceQuality};
 
 pub const EDITOR_DRAFT_FILE_NAME: &str = "editor-draft.json";
 pub const MAX_EDITOR_DRAFT_BYTES: u64 = 16 * 1024 * 1024;
@@ -29,6 +29,8 @@ pub struct EditorDraft {
     pub title: String,
     pub playhead: Tick,
     pub preset: Option<ExportPreset>,
+    #[serde(default)]
+    pub quality: SequenceQuality,
 }
 
 impl Default for EditorDraft {
@@ -41,6 +43,7 @@ impl Default for EditorDraft {
             title: "Untitled edit".into(),
             playhead: Tick::ZERO,
             preset: None,
+            quality: SequenceQuality::default(),
         }
     }
 }
@@ -71,7 +74,16 @@ impl EditorDraft {
         self.session.clips().is_empty() && self.session.texts().is_empty() && self.media.is_empty()
     }
 
+    pub fn with_quality(mut self, quality: SequenceQuality) -> Result<Self, EditorDraftError> {
+        quality.validate().map_err(|_| EditorDraftError::Invalid)?;
+        self.quality = quality;
+        Ok(self)
+    }
+
     fn normalized(&self) -> Result<Self, EditorDraftError> {
+        self.quality
+            .validate()
+            .map_err(|_| EditorDraftError::Invalid)?;
         if self.format != FORMAT {
             return Err(EditorDraftError::Invalid);
         }
@@ -117,6 +129,7 @@ impl EditorDraft {
             title: self.title.clone(),
             playhead,
             preset: self.preset,
+            quality: self.quality,
         })
     }
 }
@@ -371,6 +384,40 @@ mod tests {
             Some(ExportPreset::Custom { megabytes: 25 }),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn quality_defaults_for_old_drafts_and_round_trips_without_overwriting_invalid_fps() {
+        let dir = Scratch::new();
+        let quality = SequenceQuality {
+            resolution: crate::SequenceResolution::Source,
+            fps: 60,
+        };
+        let value = draft(&dir).with_quality(quality).unwrap();
+        save_editor_draft(&dir.path(), &value).unwrap();
+        assert_eq!(
+            load_editor_draft(&dir.path()).unwrap().unwrap().quality,
+            quality
+        );
+        let mut old = serde_json::to_value(&value).unwrap();
+        old.as_object_mut().unwrap().remove("quality");
+        fs::write(dir.path(), serde_json::to_vec(&old).unwrap()).unwrap();
+        assert_eq!(
+            load_editor_draft(&dir.path()).unwrap().unwrap().quality,
+            SequenceQuality::default()
+        );
+        old["quality"] = serde_json::json!({"resolution":"source","fps":120});
+        let bytes = serde_json::to_vec(&old).unwrap();
+        fs::write(dir.path(), &bytes).unwrap();
+        assert_eq!(
+            load_editor_draft(&dir.path()),
+            Err(EditorDraftError::Invalid)
+        );
+        assert_eq!(
+            save_editor_draft(&dir.path(), &value),
+            Err(EditorDraftError::Invalid)
+        );
+        assert_eq!(fs::read(dir.path()).unwrap(), bytes);
     }
 
     #[test]

@@ -38,8 +38,9 @@ pub use steam_games::{MAX_STEAM_GAMES, SteamGame, SteamGames};
 mod storage;
 
 pub use clipcraft_export::{
-    Effect, FADE_LENGTH, Fade, MAX_TEXT_LAYERS, MAX_TITLE_CHARS, SegmentLook, SequenceRequest,
-    SequenceSegment, SequenceText, TEXT_SIZE_RANGE, TextRaster, sequence_canvas, text_position,
+    Effect, FADE_LENGTH, Fade, MAX_TEXT_LAYERS, MAX_TITLE_CHARS, SegmentLook, SequenceQuality,
+    SequenceRequest, SequenceResolution, SequenceSegment, SequenceSettings, SequenceText,
+    TEXT_SIZE_RANGE, TextRaster, sequence_canvas, sequence_settings, text_position,
 };
 pub use clipcraft_export::{
     ExportPreset, GifOptions, LOUDNESS_TARGETS, MAX_GIF_SECONDS, TrimRequest as ExportRange,
@@ -373,6 +374,9 @@ pub struct ExportedSequence {
     pub within_target: bool,
     pub width: u32,
     pub height: u32,
+    pub fps: u32,
+    pub video_kbps: u32,
+    pub resolution_limited: bool,
     pub encoder: String,
     pub hardware_decode: bool,
 }
@@ -532,6 +536,9 @@ pub fn export_sequence(
         within_target: report.within_target,
         width: report.width,
         height: report.height,
+        fps: report.fps,
+        video_kbps: report.video_kbps,
+        resolution_limited: report.resolution_limited,
         encoder: report.encoder,
         hardware_decode: report.hardware_decode,
     })
@@ -1271,6 +1278,7 @@ mod tests {
         let normal: super::SequenceRequest =
             serde_json::from_str(r#"{"segments":[],"output":"generated.mp4"}"#).unwrap();
         assert_eq!(normal.preset, None);
+        assert_eq!(normal.quality, super::SequenceQuality::default());
         let small: super::SequenceRequest = serde_json::from_str(
             r#"{"segments":[],"output":"generated.mp4","preset":{"preset":"small"}}"#,
         )
@@ -1288,6 +1296,9 @@ mod tests {
             within_target: true,
             width: 640,
             height: 360,
+            fps: 30,
+            video_kbps: 4000,
+            resolution_limited: false,
             encoder: "Software".into(),
             hardware_decode: false,
         };
@@ -1295,6 +1306,7 @@ mod tests {
         assert_eq!(json["path"], "generated.mp4");
         assert_eq!(json["duration_ms"], 1000);
         assert_eq!(json["target_bytes"], 10_000_000);
+        assert_eq!(json["fps"], 30);
         assert!(
             json.get("clip").is_none(),
             "existing CLI fields remain at the top level"
@@ -1321,6 +1333,40 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn editor_quality_json_uses_the_shared_validation_before_opening_or_writing_files() {
+        let dir = TestDirectory::new();
+        let output = dir.path().join("out.mp4");
+        let json = serde_json::json!({
+            "segments": [{"input":dir.path().join("missing.mp4"),"start":0,"end":254016000000_i64,"volume_percent":100}],
+            "output":output,
+            "quality":{"resolution":"source","fps":60}
+        });
+        let valid: super::SequenceRequest = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(
+            valid.quality,
+            super::SequenceQuality {
+                resolution: super::SequenceResolution::Source,
+                fps: 60
+            }
+        );
+        let mut invalid = json.clone();
+        invalid["quality"]["fps"] = serde_json::json!(120);
+        let request = serde_json::from_value(invalid).unwrap();
+        assert!(matches!(
+            super::execute(Command::ExportSequence {
+                request: Box::new(request)
+            }),
+            Err(EngineError::Export(
+                clipcraft_export::ExportError::Unsupported(_)
+            ))
+        ));
+        let mut invalid = json;
+        invalid["quality"]["resolution"] = serde_json::json!("unlimited");
+        assert!(serde_json::from_value::<super::SequenceRequest>(invalid).is_err());
+        assert!(!output.exists());
     }
 
     #[test]

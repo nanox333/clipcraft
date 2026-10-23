@@ -14,7 +14,7 @@ feature's status, workaround, or evidence changes.
 | G0 | Windows release and broader real-device evidence remain open | Windows/AMD generated-window WGC and native/CPU MF encode have run. Windows hotkeys, game-only arming, real microphone/speaker, device loss and other GPU encoders remain unverified. Linux/X11 capture-to-export is proven against synthetic sources | Limits platform and release claims | M0 evidence close-out; M2/M3/M5 |
 | G1 | Low-copy GPU path is implemented for Windows SDR; performance gates remain open | WGC D3D11 leases and Media Foundation GPU NV12 conversion produced AMD generated-window MP4 clips with zero CPU readbacks. Matching dimensions/original framing and HDR compatibility disabled are required. Both CPU/native runs encoded about 32 fps at requested 1080p60. Other GPUs, HDR/scaling, GPU-use/power and real-game comparisons remain open; see [measurements](windows-performance.md). | 1080p60 throughput and game impact are not established | M5.1/M5.2 |
 | G2 | Game-only capture still needs real platform evidence | Recursive library scans and captured-game tagging are implemented and tested on Linux. Desktop scans are cancellable; manual labels, favorites and collections survive rescans. Game-managed saves snapshot the game at Save time. Real-game/Windows arming and Wayland process-to-window matching remain unverified or unavailable | The library workflow is usable, but automatic arming still needs desktop evidence | M4.1b/M7 |
-| G3 | Compressed export needs reference-machine measurements; broader output controls remain open | Original-quality trim and software H.264 size presets (10 MB, 25 MB, custom 1–500 MB) are built. Generated MP4/MKV fixtures verify decoding, audio sync, cancellation, actual-size reporting, and collision safety. Compression is at most 720p/30 fps, copies AAC audio, and estimates rather than guarantees size; 30/60-second throughput measurements on representative PCs remain open | Local small-file export is available; broader codec/quality controls and speed claims remain limited | M4.2/M4.3 |
+| G3 | Compressed export needs reference-machine measurements; broader output controls remain open | Original-quality trim and software H.264 size presets (10 MB, 25 MB, custom 1–500 MB) are built. Generated MP4/MKV fixtures verify decoding, audio sync, cancellation, actual-size reporting, and collision safety. Quick-trim compression is at most 720p/30 fps, copies AAC audio, and estimates rather than guarantees size; 30/60-second throughput measurements on representative PCs remain open | Local small-file export is available; editor 720p/1080p/source (up to 4K) and 30/60 FPS are now built; broader codecs and speed claims remain limited | M4.2/M4.3/M11.1d |
 | G4 | macOS capture/audio is not implemented; Wayland capture is only partly verified | No ScreenCaptureKit/CoreAudio provider; Wayland portal and PipeWire pieces pass component tests but no real desktop chooser has delivered a frame | Limits supported-platform claims | M6 |
 | G5 | Real-device audio and broader performance evidence are incomplete | Windows/AMD passed a two-hour generated-window 1080p30 GPU soak: eight drops, zero restarts, all 24 saved clips decoded. Real audio devices, real-game impact, 1080p60 and device-loss integration remain open; see [results](windows-performance.md) | Limits reliability and release claims | M3/M5 |
 
@@ -88,21 +88,30 @@ playhead/preset paused, with fresh undo history. The 16 MiB record is debounced 
 exit flush waits at most two seconds. Crash/stalled-filesystem timing can lose recent unsaved
 input. Missing media stays referenced; damaged/unknown recovery is kept until explicit discard.
 Export re-encodes SDR H.264/AAC MP4/MOV or
-recorder-compatible MKV into H.264 MP4 at 30 fps on a 16:9 canvas, at most 720p. Pictures fit with
+recorder-compatible MKV into H.264 MP4 at 30/60 FPS, with 720p/1080p or source framing up to 4K. Pictures fit with
 black bars and no upscaling. Only the first source audio track is used (first two channels, mono
 repeated), encoded as one 48 kHz stereo AAC track; muted/silent segments contribute silence.
 Additional audio tracks, HDR, non-square pixels, detached audio, overlapping video,
-cross-dissolves and arbitrary rendering controls remain unsupported. Video cuts follow the 30 fps
-output grid; audio follows integer timeline positions without per-cut encoder priming.
+cross-dissolves and arbitrary rendering controls remain unsupported. Editing/stepping uses the
+30 FPS grid; exported cuts follow the selected output frame grid; audio follows integer timeline positions without per-cut encoder priming.
 
 Export video offers standard output or estimated 10 MB, 25 MB and custom 1–500 MB targets. Targets
 reserve AAC and container overhead before choosing video bitrate and may lower canvas resolution;
-an impossible budget is refused. Actual size, target status, dimensions and encoder are reported.
+an impossible budget is refused. Actual size, target status, dimensions, selected FPS, target video bitrate and encoder are reported.
 These are estimates, not guarantees of a service's upload limit. When enabled by the recording
 encoder preference, sequence export tries the registered GPU encoder and restarts in software on
 encoder failure. Sequence decoding stays in software; real-GPU export speed/quality remain
-unverified. Codec and FPS are fixed in this
-slice; the GIF/loudness tools remain in quick trim.
+unverified. M11.1d adds 720p/1080p/source (up to 4K), 30/60 FPS and recovery of those
+choices. Source canvases preserve the first clip's aspect ratio within 3840×2160 landscape or
+2160×3840 portrait (8,294,400 pixels). Standard bitrate targets scale from 4 Mbps to at most
+50 Mbps; file-size presets can reduce bitrate/resolution while retaining selected FPS. The
+dialog explains reductions and shows the actual output plan. Codec selection and GIF/loudness
+remain in their existing workflows. High-resolution text uses content-height masks with the
+existing 2,097,152-pixel per-layer and 16 MiB active-cache budgets; overly large text returns
+an actionable reduce/shorten error. M11.1d passes the 527-test/31-target full gate, generated
+1080p/60 and 4K/text/portrait/ultrawide exports, hardware stand-ins and native Linux quality,
+recovery, minimum-window and size-warning checks. A real native 1080p/60 export and a
+1 MB-target 960×540/60 CLI export decode fully; source hashes are unchanged. See [ADR 0021](adr/0021-editor-export-quality.md).
 
 M11.1c prepares the next source paused within a two-player active/prepared/retiring budget;
 decoders that have not acknowledged cancellation retain their slots. Slow decoding/seeking can

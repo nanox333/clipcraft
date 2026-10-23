@@ -15,12 +15,16 @@ mod gif;
 mod hardware;
 mod normalize;
 mod sequence;
+mod sequence_quality;
 mod source;
 mod text;
 pub use sequence::{
     Effect, FADE_LENGTH, Fade, MAX_TEXT_LAYERS, MAX_TITLE_CHARS, SegmentLook, SequenceReport,
     SequenceRequest, SequenceSegment, SequenceText, TEXT_SIZE_RANGE, sequence_canvas,
     sequence_to_mp4, sequence_to_mp4_with,
+};
+pub use sequence_quality::{
+    SequenceQuality, SequenceResolution, SequenceSettings, sequence_settings,
 };
 pub use text::{TextRaster, text_position};
 

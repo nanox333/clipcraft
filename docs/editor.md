@@ -98,33 +98,42 @@ are separate and can be much larger. Detailed decoder limits and remaining measu
 
 | Choice | Behavior |
 | --- | --- |
-| Standard | The existing H.264 MP4 output, up to 720p/30 fps with a 4 Mbps video target |
+| Standard quality | H.264 MP4 at the selected resolution/FPS, with a 4–50 Mbps video target |
 | Small file | Estimated 10 MB output |
 | Medium file | Estimated 25 MB output |
 | Custom size | Estimated 1–500 MB output |
 
-The window shows the chosen output dimensions. Size presets reserve the continuous AAC track
-and container overhead before estimating the video bitrate; smaller budgets can choose 540p,
-480p or 360p instead of 720p. Output is never upscaled. An estimate that cannot fit the audio and
-minimum video budget is refused so a larger target can be chosen. Targets are decimal MB and
-remain estimates; output can be smaller or larger than the target, and no Discord upload limit
-is assumed.
+**Resolution** offers **720p**, **1080p** and **Source · up to 4K**. **Frame rate** offers
+**30 FPS** or **60 FPS**. The defaults are 720p/30. Source preserves the first clip's aspect ratio,
+including portrait/ultrawide, within a 3840×2160 landscape or 2160×3840 portrait box. The other
+two choices retain the existing 16:9 canvas; smaller source pictures are never enlarged.
+
+The window shows actual dimensions, FPS and target video bitrate. File-size targets reserve the
+continuous AAC track and mux overhead, then can reduce bitrate and resolution while keeping the
+chosen FPS. A visible explanation identifies the reduction. Higher frame rates need more bitrate
+for a given resolution. An impossible audio/minimum-video budget is refused. Targets are decimal
+MB and remain estimates; output can be smaller or larger than the target, and no Discord upload
+limit is assumed. Standard targets scale with pixels/FPS from 4 Mbps to at most 50 Mbps.
 
 The new MP4 is saved beside the first source. The default name is `Source (edit).mp4`; a changed
 title supplies the base name. Progress and **Cancel export** are shown while working. Editing is
 disabled during export; navigation and playback remain available. The completion message reports
-actual size, the selected target and whether it was exceeded, dimensions and encoder. Exported
+actual size, the selected target and whether it was exceeded, dimensions, FPS and encoder. Exported
 media appears on the next library scan if inside the active root. Input files and the in-memory
 draft are unchanged. Failures retain the draft and show the reason.
 
-Output is H.264 at 30 fps on a 16:9 canvas whose height follows the first source up to the chosen
-resolution cap. Smaller/portrait images fit with black bars without stretching or upscaling.
+Output is H.264 at the selected 30/60 FPS. The first source determines the canvas as described
+above, bounded to 8,294,400 output pixels. Smaller/portrait images fit with black bars without stretching or upscaling.
 Video is re-encoded; use quick trim for original-quality sample copy. Video cuts follow the
 output frame grid; audio follows the exact timeline and is encoded continuously to avoid per-cut
 AAC delay. The output has one 48 kHz stereo AAC track. Only the first source audio stream is
 included; mono is duplicated, the first two channels of larger layouts are used, and muted or
 silent segments contribute silence. Use quick trim when preserving separate audio tracks matters.
-Codec and frame rate stay fixed; GIF and loudness tools remain in quick trim.
+The codec remains H.264; GIF and loudness tools remain in quick trim. Editing/stepping keeps
+the existing 30 FPS grid; 60 FPS export samples source motion without interpolation. Shared text
+rendering supports these canvases, bounded to 2,097,152 raster pixels per layer and a 16 MiB
+active cache; shorten or reduce text if that budget is exceeded. Keyboard focus stays inside the
+export window and its popups until it is closed.
 
 Sequence export follows the recording encoder preference. With GPU encoding enabled it tries the
 registered hardware encoder, then discards its owned partial output and retries in software if
@@ -182,7 +191,7 @@ The Library shows each clip's resolution and file size under its name.
 
 Navigating away retains edits and imported media; return with the **Editor** rail icon. The
 application also keeps one internal local `editor-draft.json` record beside its library index.
-It recovers current cuts, text, source references, title, playhead and export preset after a
+It recovers current cuts, text, source references, title, playhead, export preset and quality after a
 restart, paused and with a visible notice. Undo/redo history starts fresh. Recovery is metadata;
 it does not copy the videos or create a save-project workflow. An ordinary exported MP4 remains
 the way to keep or share the assembled result independently of its source files.
@@ -225,7 +234,8 @@ delete, volume, look, preset, add_text, update_text, delete_text, split_text, du
 redo and reset; engine validation is the same as the UI. Durations supplied in an edit payload describe source metadata; export reopens the actual source and validates it.
 
 Export accepts ordered source ranges, optional text layers, an unused output path and an optional
-size preset. Omitting `preset`, or setting it to `null`, keeps standard output and remains
+size preset and `quality`. Omitting `quality` retains 720p/30. Omitting `preset`, or setting it
+to `null`, uses standard output at the chosen quality and remains
 compatible with earlier request payloads:
 
 ```json
@@ -240,9 +250,13 @@ values of the request's `preset` field, not separate commands. For example:
 {"output":"/clips/highlights-small.mp4","preset":{"preset":"small"},"segments":[{"input":"/clips/example.mp4","start":0,"end":1270080000000,"volume_percent":100}]}
 ```
 
+Add `"quality":{"resolution":"1080p","fps":60}` for 1080p/60, or use `"source"` for
+source framing up to 4K. `"720p"` and 30 are the defaults. Invalid resolutions or rates fail
+before source opening/output creation; the same typed settings drive UI, CLI and recovery.
+
 The `editor.export` JSON result preserves the existing top-level `path`, `duration_ms`,
 `pictures`, `audio_tracks` and `bytes` fields. It adds optional `target_bytes`, `within_target`,
-`width`, `height`, `encoder` and `hardware_decode`. `target_bytes` is `null` for standard output.
+`width`, `height`, `fps`, target `video_kbps`, `resolution_limited`, `encoder` and `hardware_decode`. `target_bytes` is `null` for standard output.
 The Rust report stores clip facts in `ExportedSequence.clip`, which is flattened during JSON
 serialization; CLI callers do not need to look for a nested `clip` object. The CLI and UI share
 the same engine implementation and hardware preference.

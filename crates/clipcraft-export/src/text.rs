@@ -22,8 +22,16 @@ impl TextRaster {
         width: u32,
         height: u32,
     ) -> Result<Option<Self>, ExportError> {
-        if !text.is_valid() || !(2..=1280).contains(&width) || !(2..=720).contains(&height) {
+        if !text.is_valid() {
             return Err(ExportError::InvalidSequence);
+        }
+        if !(2..=crate::sequence_quality::MAX_OUTPUT_EDGE).contains(&width)
+            || !(2..=crate::sequence_quality::MAX_OUTPUT_EDGE).contains(&height)
+            || u64::from(width) * u64::from(height) > crate::sequence_quality::MAX_OUTPUT_PIXELS
+        {
+            return Err(ExportError::Unsupported(
+                "text needs a canvas within the 4K output limits",
+            ));
         }
         let line = text.text.trim();
         if line.is_empty() {
@@ -37,8 +45,9 @@ impl TextRaster {
         let paragraph = filmcraft_text::ParagraphStyle {
             align: filmcraft_text::Align::Center,
             width: Some(width as f32 * 0.9),
-            // Area text stops at the canvas height instead of allocating an arbitrarily tall mask.
-            height: Some(height as f32),
+            // Measure content height; a full-canvas paragraph would allocate empty 4K rows.
+            // The mask below still clips long text to the canvas and its fixed pixel budget.
+            height: None,
             ..Default::default()
         };
         let layout = filmcraft_text::layout(line, &style, &paragraph);
@@ -51,12 +60,14 @@ impl TextRaster {
             ((bounds[2].ceil() - bounds[0].floor() + 2.0).max(1.0) as usize).min(width as usize);
         let h =
             ((bounds[3].ceil() - bounds[1].floor() + 2.0).max(1.0) as usize).min(height as usize);
-        let shadow = (h as f32 / 12.0).clamp(1.0, 4.0) as usize;
+        let shadow = (height as f32 / 12.0).clamp(1.0, 4.0) as usize;
         let dimensions = [w.saturating_add(shadow), h.saturating_add(shadow)];
         let pixels = dimensions[0]
             .checked_mul(dimensions[1])
             .filter(|&n| n <= MAX_RASTER_PIXELS)
-            .ok_or(ExportError::InvalidSequence)?;
+            .ok_or(ExportError::Unsupported(
+                "text exceeds its raster budget; shorten it or reduce its size",
+            ))?;
         // Draw directly into a bounded mask: a long unbroken word can overflow the paragraph
         // width, so rasterising its full device bounds would otherwise defeat the canvas limit.
         let mut mask = filmcraft_text::Mask::new(w, h);
@@ -224,6 +235,13 @@ mod tests {
         text.size = 250;
         let largest = TextRaster::render(&text, 1280, 720).unwrap().unwrap();
         assert!(largest.bytes() <= MAX_RASTER_PIXELS * 4);
+        let title = SequenceText::new(Tick::ZERO, Tick::from_units(1, 1), "High quality highlight");
+        for (w, h) in [(3840, 2160), (2160, 3840)] {
+            assert!(
+                TextRaster::render(&title, w, h).unwrap().unwrap().bytes() <= MAX_RASTER_PIXELS * 4
+            );
+        }
+        assert!(TextRaster::render(&title, 3840, 3840).is_err());
         assert!(TextRaster::render(&text, u32::MAX, u32::MAX).is_err());
         text.text.push('W');
         assert!(TextRaster::render(&text, 1280, 720).is_err());

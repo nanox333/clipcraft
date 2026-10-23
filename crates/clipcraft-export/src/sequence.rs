@@ -19,12 +19,12 @@ use filmcraft_media::{FrameRequest, SharedReader, SharedSource};
 use serde::{Deserialize, Serialize};
 
 use crate::ExportPreset;
-use crate::compress::{Temporary, check_cancel, source_size, video_budget, write_video};
+use crate::compress::{Temporary, check_cancel, source_size, write_video};
 use crate::hardware::{FastEncoder, FastOpener, FastPacket, FastRequest};
 use crate::text::TextRaster;
-use crate::{ExportError, ExportReport, io_error, mp4_error};
+use crate::{ExportError, ExportReport, SequenceQuality, io_error, mp4_error, sequence_settings};
 
-const RATE: FrameRate = FrameRate { num: 30, den: 1 };
+const MIN_SEGMENT: Tick = Tick(clipcraft_time::TICKS_PER_SECOND / 30);
 const AUDIO_RATE: u32 = 48_000;
 const MOVIE_SCALE: u32 = 720_000; // Divisible by both 90 kHz video and 48 kHz audio.
 
@@ -251,9 +251,11 @@ pub struct SequenceRequest {
     /// Text layers on the track above the video.
     #[serde(default)]
     pub texts: Vec<SequenceText>,
-    /// An estimated file-size target. Absent preserves the normal 720p/30 fps export.
+    /// An estimated file-size target. Absent uses the selected standard quality.
     #[serde(default)]
     pub preset: Option<ExportPreset>,
+    #[serde(default)]
+    pub quality: SequenceQuality,
     pub output: PathBuf,
 }
 
@@ -265,46 +267,28 @@ pub struct SequenceReport {
     pub within_target: bool,
     pub width: u32,
     pub height: u32,
+    pub fps: u32,
+    pub video_kbps: u32,
+    pub resolution_limited: bool,
     pub encoder: String,
     pub hardware_decode: bool,
 }
 
-fn sequence_budget(duration: Tick, preset: Option<ExportPreset>) -> Result<u32, ExportError> {
-    if duration <= Tick::ZERO || duration > Tick::from_units(1800, 1) {
-        return Err(ExportError::BadRange);
-    }
-    let Some(preset) = preset else {
-        return Ok(4000);
-    };
-    // One continuous 160 kbps AAC stream, plus padding/priming. The shared estimator reserves
-    // another ten percent and 64 KiB for indexes, mux overhead and bitrate variation.
-    let ticks = i128::from(duration.0);
-    let scale = i128::from(clipcraft_time::TICKS_PER_SECOND);
-    let audio_bytes = ((ticks * 20_000 + scale - 1) / scale) as u64 + 2048;
-    Ok(video_budget(preset.target_bytes()?, audio_bytes, duration)?.min(4000))
-}
-
-/// Canonical sequence canvas, shared by text preview and export. The source is never enlarged;
-/// its pictures fit inside a 16:9 canvas. Small budgets reduce the canvas resolution.
+/// Legacy 720p/30 canvas helper. New callers use `sequence_settings` for explicit quality.
 pub fn sequence_canvas(
     first_width: u32,
     first_height: u32,
     preset: Option<ExportPreset>,
     duration: Tick,
 ) -> Result<(u32, u32), ExportError> {
-    source_size(first_width, first_height)?;
-    let kbps = sequence_budget(duration, preset)?;
-    let cap = if preset.is_none() || kbps >= 2500 {
-        720
-    } else if kbps >= 900 {
-        540
-    } else if kbps >= 350 {
-        480
-    } else {
-        360
-    };
-    let height = (first_height.min(cap) / 2 * 2).max(2);
-    Ok(((height * 16 / 9 / 2 * 2).max(2), height))
+    let settings = sequence_settings(
+        first_width,
+        first_height,
+        preset,
+        duration,
+        SequenceQuality::default(),
+    )?;
+    Ok((settings.width, settings.height))
 }
 
 fn validate(request: &SequenceRequest) -> Result<Tick, ExportError> {
@@ -333,7 +317,7 @@ fn validate(request: &SequenceRequest) -> Result<Tick, ExportError> {
             .0
             .checked_sub(segment.start.0)
             .ok_or(ExportError::InvalidSequence)?;
-        if duration < RATE.frame_duration().0 {
+        if duration < MIN_SEGMENT.0 {
             return Err(ExportError::InvalidSequence);
         }
         total = total
@@ -343,7 +327,7 @@ fn validate(request: &SequenceRequest) -> Result<Tick, ExportError> {
             return Err(ExportError::InvalidSequence);
         }
     }
-    sequence_budget(Tick(total), request.preset)?;
+    sequence_settings(1280, 720, request.preset, Tick(total), request.quality)?;
     Ok(Tick(total))
 }
 
@@ -393,7 +377,7 @@ fn open(segment: &SequenceSegment) -> Result<SharedSource, ExportError> {
     Ok(decoder)
 }
 
-/// Render a 16:9 sequence at 30 fps, at most 720p, with one 48 kHz stereo AAC track.
+/// Render a bounded sequence at the selected resolution and 30/60 FPS, with stereo AAC.
 /// The first source determines canvas height; pictures fit inside it with black bars and no
 /// upscaling. The first audio track is used; silent/muted clips contribute silence. No whole-clip
 /// raw-frame or audio buffer is built, and existing files are never replaced.
@@ -510,6 +494,7 @@ fn software_packets(packets: Vec<filmcraft_h264enc::Packet>) -> Vec<FastPacket> 
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_packets(
     mp4: &mut Mp4Writer<BufWriter<std::fs::File>>,
     video_id: usize,
@@ -517,6 +502,7 @@ fn write_packets(
     written: &mut i64,
     expected: i64,
     duration: Tick,
+    rate: FrameRate,
 ) -> Result<(), ExportError> {
     if packets.len() > expected.saturating_sub(*written) as usize {
         return Err(ExportError::EncodeFailed);
@@ -545,7 +531,7 @@ fn write_packets(
             mp4,
             video_id,
             (&packet.data, packet.keyframe, *written),
-            RATE,
+            rate,
             duration,
         )?;
         *written += 1;
@@ -581,7 +567,9 @@ fn paint_texts(
                 .checked_add(raster.bytes())
                 .ok_or(ExportError::InvalidSequence)?;
             if bytes > TEXT_CACHE_BYTES {
-                return Err(ExportError::InvalidSequence);
+                return Err(ExportError::Unsupported(
+                    "active text exceeds its cache budget; remove layers or reduce their size",
+                ));
             }
             entry.insert(raster);
         }
@@ -641,37 +629,47 @@ fn render(
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
 ) -> Result<SequenceReport, ExportError> {
-    let mut size = (1280, 720);
+    let mut settings = sequence_settings(1280, 720, request.preset, duration, request.quality)?;
     // Validate every source before creating output. Keep one decoder/cache open at a time.
     for (index, segment) in request.segments.iter().enumerate() {
         check_cancel(cancel)?;
         let decoder = open(segment)?;
         if index == 0 {
-            let info = decoder.info();
-            let video = info.video.as_ref().ok_or(ExportError::Damaged)?;
-            size = sequence_canvas(video.width, video.height, request.preset, duration)?;
+            let video = decoder.info().video.as_ref().ok_or(ExportError::Damaged)?;
+            settings = sequence_settings(
+                video.width,
+                video.height,
+                request.preset,
+                duration,
+                request.quality,
+            )?;
         }
     }
+    let size = (settings.width, settings.height);
     let (width, height) = size;
-    let kbps = sequence_budget(duration, request.preset)?;
+    let kbps = settings.video_kbps;
+    let rate = FrameRate {
+        num: i64::from(settings.fps),
+        den: 1,
+    };
     let mut video = if let Some(opener) = hardware {
         VideoEncoder::Hardware(
             opener(&FastRequest {
                 width,
                 height,
-                fps: 30,
+                fps: settings.fps,
                 video_kbps: kbps,
-                keyframe_frames: 60,
+                keyframe_frames: settings.fps * 2,
             })
             .map_err(|_| ExportError::EncodeFailed)?,
         )
     } else {
-        let mut config = EncoderConfig::new(width, height, 30, 1);
+        let mut config = EncoderConfig::new(width, height, settings.fps, 1);
         config.profile = Profile::Baseline;
         config.preset = Preset::Speed;
         config.bframes = 0;
         config.threads = 2;
-        config.keyint = 60;
+        config.keyint = settings.fps * 2;
         config.format = PacketFormat::LengthPrefixed;
         config.rate = RateControl::Vbr {
             target_kbps: kbps,
@@ -754,7 +752,7 @@ fn render(
     let mut frame = 0_i64;
     let mut written = 0_i64;
     let frames =
-        RATE.frame_at(duration) + i64::from(RATE.tick_of(RATE.frame_at(duration)) < duration);
+        rate.frame_at(duration) + i64::from(rate.tick_of(rate.frame_at(duration)) < duration);
     let mut audio_sample = 0_i64;
     let mut offset = Tick::ZERO;
     for segment in &request.segments {
@@ -762,9 +760,9 @@ fn render(
         let decoder = open(segment)?;
         let end = offset + (segment.end - segment.start);
         let segment_audio_end = ceil_units(end, i64::from(AUDIO_RATE));
-        while RATE.tick_of(frame) < end {
+        while rate.tick_of(frame) < end {
             check_cancel(cancel)?;
-            let time = RATE.tick_of(frame);
+            let time = rate.tick_of(frame);
             let packets = if frame == 0
                 && let Some(packets) = first.take()
             {
@@ -782,9 +780,17 @@ fn render(
                 )?;
                 video.encode(&canvas, frame)?
             };
-            write_packets(&mut mp4, video_id, packets, &mut written, frames, duration)?;
+            write_packets(
+                &mut mp4,
+                video_id,
+                packets,
+                &mut written,
+                frames,
+                duration,
+                rate,
+            )?;
             frame += 1;
-            let until = ceil_units(RATE.tick_of(frame).min(end), i64::from(AUDIO_RATE));
+            let until = ceil_units(rate.tick_of(frame).min(end), i64::from(AUDIO_RATE));
             write_audio_until(
                 &decoder,
                 segment,
@@ -796,7 +802,7 @@ fn render(
                 audio_id,
                 cancel,
             )?;
-            progress((RATE.tick_of(frame).0 as f64 / duration.0 as f64 * 0.98).min(0.98) as f32);
+            progress((rate.tick_of(frame).0 as f64 / duration.0 as f64 * 0.98).min(0.98) as f32);
         }
         write_audio_until(
             &decoder,
@@ -819,6 +825,7 @@ fn render(
         &mut written,
         frames,
         duration,
+        rate,
     )?;
     if written != frames {
         return Err(ExportError::EncodeFailed);
@@ -859,6 +866,9 @@ fn render(
         within_target: target_bytes.is_none_or(|target| bytes <= target),
         width,
         height,
+        fps: settings.fps,
+        video_kbps: kbps,
+        resolution_limited: settings.resolution_limited,
         encoder: name,
         hardware_decode: false,
     })

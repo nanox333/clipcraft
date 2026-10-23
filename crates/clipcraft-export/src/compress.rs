@@ -882,6 +882,15 @@ pub(crate) fn video_budget(
     audio_bytes: u64,
     duration: Tick,
 ) -> Result<u32, ExportError> {
+    video_budget_with_limit(target, audio_bytes, duration, 12_000)
+}
+
+pub(crate) fn video_budget_with_limit(
+    target: u64,
+    audio_bytes: u64,
+    duration: Tick,
+    max_kbps: u32,
+) -> Result<u32, ExportError> {
     // Reserve 10% plus 64 KB for indexes, metadata, bitrate variation, and mux overhead.
     let room = target.saturating_mul(9) / 10;
     let room = room
@@ -895,7 +904,7 @@ pub(crate) fn video_budget(
     if kbps < 100 {
         return Err(ExportError::TargetTooSmall);
     }
-    Ok(kbps.min(12_000) as u32)
+    Ok(kbps.min(u64::from(max_kbps)) as u32)
 }
 
 fn output_size(width: u32, height: u32, kbps: u32) -> (u32, u32) {

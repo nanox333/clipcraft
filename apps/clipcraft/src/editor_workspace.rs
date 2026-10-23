@@ -114,6 +114,7 @@ impl EditorState {
             self.playhead,
             self.export_preset,
         )
+        .and_then(|draft| draft.with_quality(self.export_quality))
         .map_err(|error| error.to_string())
     }
 
@@ -220,6 +221,7 @@ impl EditorState {
         self.title = draft.title;
         self.playhead = draft.playhead;
         self.export_preset = draft.preset;
+        self.export_quality = draft.quality;
         self.selected = self.session.clips().first().map(|clip| clip.id);
         self.selected_text = None;
         self.title_draft = (0, String::new());
@@ -422,7 +424,13 @@ mod tests {
         let missing = healthy.with_file_name("missing.mp4");
         let checkpoint = healthy.with_file_name(clipcraft_engine::EDITOR_DRAFT_FILE_NAME);
         let original = std::fs::read(&healthy).unwrap();
-        let draft = snapshot(&[healthy.clone(), missing.clone()], "Recovered edit");
+        let quality = clipcraft_engine::SequenceQuality {
+            resolution: clipcraft_engine::SequenceResolution::Source,
+            fps: 60,
+        };
+        let draft = snapshot(&[healthy.clone(), missing.clone()], "Recovered edit")
+            .with_quality(quality)
+            .unwrap();
         assert!(!draft.session.can_undo());
         save_editor_draft(&checkpoint, &draft).unwrap();
         let context = egui::Context::default();
@@ -437,6 +445,7 @@ mod tests {
         assert!(!state.session.can_undo());
         assert_eq!(state.title, "Recovered edit");
         assert_eq!(state.export_preset, Some(ExportPreset::Small));
+        assert_eq!(state.export_quality, quality);
         assert!(
             state
                 .media

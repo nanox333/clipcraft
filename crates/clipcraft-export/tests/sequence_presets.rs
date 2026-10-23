@@ -128,6 +128,7 @@ fn request(
     preset: Option<ExportPreset>,
 ) -> SequenceRequest {
     SequenceRequest {
+        quality: Default::default(),
         segments: vec![SequenceSegment {
             input: input.to_path_buf(),
             start: Tick::ZERO,
@@ -405,4 +406,45 @@ fn a_small_sequence_budget_reduces_the_actual_encoded_canvas() {
         .unwrap();
     assert_eq!((picture.width, picture.height), (852, 480));
     assert_eq!(decoded.info().duration, Tick::from_units(7, 1));
+}
+
+#[test]
+fn sixty_fps_reaches_hardware_and_survives_device_failure_without_changing_timing() {
+    use clipcraft_export::{SequenceQuality, SequenceResolution};
+    let dir = Scratch::new("sequence-quality-hardware");
+    let input = dir.file("in.mp4");
+    fixture(&input, ClipFormat::Mp4, true);
+    let before = std::fs::read(&input).unwrap();
+    for (i, fault) in [Fault::None, Fault::DeviceLost, Fault::Missing]
+        .into_iter()
+        .enumerate()
+    {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let base = opener(fault, attempts.clone());
+        let gpu: FastOpener = Arc::new(move |request| {
+            assert_eq!(request.fps, 60);
+            assert_eq!(request.keyframe_frames, 120);
+            base(request)
+        });
+        let mut req = request(&input, dir.file(&format!("out-{i}.mp4")), None);
+        req.quality = SequenceQuality {
+            resolution: SequenceResolution::Source,
+            fps: 60,
+        };
+        let report =
+            sequence_to_mp4_with(&req, Some(&gpu), &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        assert_eq!((report.fps, report.clip.pictures), (60, 60));
+        assert_eq!(
+            report.encoder,
+            if fault == Fault::None {
+                "Test GPU"
+            } else {
+                "Software"
+            }
+        );
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+        assert_eq!(source(&req.output).info().duration, Tick::from_units(1, 1));
+        decode(&req);
+    }
+    assert_eq!(std::fs::read(&input).unwrap(), before);
 }

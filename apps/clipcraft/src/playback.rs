@@ -158,8 +158,8 @@ impl Playback {
             self.playing = playing;
         }
     }
-    pub(crate) fn editor_picture(&mut self, ui: &mut egui::Ui, size: Vec2) {
-        self.picture(ui, size, true, false);
+    pub(crate) fn editor_picture(&mut self, ui: &mut egui::Ui, size: Vec2, canvas: Vec2) {
+        self.picture(ui, size, true, false, Some(canvas));
     }
     /// Opens `path` and starts playing it.
     pub fn start(path: &str, context: &egui::Context, prefs: Prefs) -> Self {
@@ -544,7 +544,7 @@ impl Playback {
 
     /// Draws the picture area and fills it. Returns the response for clicks.
     fn draw_picture(&mut self, ui: &mut egui::Ui, size: Vec2, rounded: bool) -> egui::Response {
-        self.picture(ui, size, rounded, true)
+        self.picture(ui, size, rounded, true, None)
     }
 
     fn picture(
@@ -553,6 +553,7 @@ impl Playback {
         size: Vec2,
         rounded: bool,
         interactive: bool,
+        canvas: Option<Vec2>,
     ) -> egui::Response {
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         let corner = if rounded { 14 } else { 0 };
@@ -560,7 +561,8 @@ impl Playback {
             .rect_filled(rect, egui::CornerRadius::same(corner), Color32::BLACK);
         let message = match (&self.texture, &self.error) {
             (Some(texture), _) => {
-                let fitted = fit(texture.size_vec2(), rect);
+                let canvas = canvas.map_or(rect, |size| fit(size, rect));
+                let fitted = fit(texture.size_vec2(), canvas);
                 // Round the picture's corners only when it reaches the corners of its area.
                 let fills = (fitted.width() - rect.width()).abs() < 1.5
                     && (fitted.height() - rect.height()).abs() < 1.5;

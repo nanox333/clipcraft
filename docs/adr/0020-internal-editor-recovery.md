@@ -68,3 +68,7 @@ oversized-save preservation, exclusive temporary cleanup, arbitrary-file and sym
 rejection, repeated/empty discard, command/CLI validation and UI restore/discard checks. Record
 actual test and screenshot evidence in [testing.md](../testing.md); platform capture hardware is
 unaffected and remains separately verified.
+
+M11.1d adds optional validated export quality to this record, defaulting missing fields to
+720p/30 FPS. See [ADR 0021](0021-editor-export-quality.md); the ownership/version and atomic-write
+protections are unchanged.

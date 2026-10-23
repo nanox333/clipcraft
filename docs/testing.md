@@ -466,3 +466,37 @@ latency/memory measurements remain separate evidence gates. Thumbnail/envelope p
 cache budgets are not total process-memory measurements; FilmCraft decoder internals allocate
 additional buffers. Recovery's 500 ms debounce and two-second exit-flush limit leave a bounded
 waiting policy, not a guarantee that an edit just before a crash or filesystem stall is saved.
+
+
+## Editor export quality (M11.1d, 2026-10-23)
+
+Generated Rust integration tests export actual 1080p/60, 4K/30, portrait and ultrawide canvases,
+including text, and decode them with the pinned reader and optional external FFmpeg oracle.
+A 60 FPS fractional-cut sequence emits fifty pictures, keeps adjacent source motion distinct,
+shortens its final partial video sample and preserves the expected audio click within 256 samples.
+Software and hardware stand-ins receive the same FPS/two-second keyframe interval; missing
+pictures/device loss restart safely in software. Existing preset, cancellation, no-overwrite
+and original-media checks remain in the full gate. Plan tests cover 4K bounds, native aspect,
+no upscale, legacy even rounding, frame-rate-aware size reduction, bitrate-only reduction and
+invalid rates/sizes. Engine JSON and recovery tests check old defaults, supplied quality,
+invalid values preserving existing files and restoration of quality choices. UI tests check
+modal focus and block editing shortcuts while the export window is open.
+
+The actual native Linux app ran at 1440×900 using isolated generated 1080p/60 and portrait/60
+fixtures. A restart recovered 1080p/60 settings. Exporting its two-second clip with text produced
+4,550,579 bytes at 1920×1080, 60/1 FPS, 120 pictures and continuous stereo AAC. External FFprobe
+inspected the output and FFmpeg fully decoded it. Original source hashes stayed unchanged.
+Before/after screenshots stay outside Git under `.clipcraft-local/export-quality/`.
+
+The final `cargo xtask ci` passes **527 tests across 31 targets**, formatting, strict Clippy,
+layering, asset and dependency-license checks. The documentation gate also passes. Native Tab
+focus is constrained to the export window/popups and Escape dismisses it without editing the
+sequence. The 960×640 window shows its controls and size warning. A 1 MB target visibly plans
+960×540 at 60 FPS; the same CLI export produces 821,797 bytes, 120 pictures and a truthful
+`resolution_limited` flag, and fully decodes. Source mode shows 720×1280 at 60 FPS for the portrait
+fixture, including correctly framed preview text. Quality choices survive native restart. All
+original SHA-256 hashes remain unchanged, with no abandoned partial output. Screenshots include
+`after.png`, `size-target-reduced.png`, `dialog-minimum.png` and `portrait-source.png`.
+This is software/Linux virtual-display evidence; physical GPU performance, Windows/macOS UI,
+physical audio and reference-machine throughput remain unverified by this change. Quick trim
+and its existing 720p/30 size presets are unchanged.

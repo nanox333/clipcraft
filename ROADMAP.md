@@ -1,6 +1,6 @@
 # ClipCraft roadmap
 
-**Stage:** active prototype · **Last reviewed:** 2026-10-22 · **Target:** offline-first, game-aware capture and local editing
+**Stage:** active prototype · **Last reviewed:** 2026-10-23 · **Target:** offline-first, game-aware capture and local editing
 
 ClipCraft is a pure-Rust, offline-first native desktop product. Capture, library, editing, and export
 must work offline. Optional user-configured client-side-encrypted backup is planned, with no
@@ -42,7 +42,7 @@ passed (verified 2026-10-22); real-game and 1080p60 release gates remain open.
 | M8 | ◷ Planned | Establish tested Windows/Linux/macOS desktop support through the shared Rust platform layer; run an Android screen-capture feasibility study without promising mobile support |
 | M9 | ◷ Planned | Design and implement opt-in client-side-encrypted backup to a user-selected provider, including recovery and restore; all local workflows remain offline |
 | M10 | ◷ Planned | Add controller shortcuts and optional Discord Rich Presence; prototype declarative themes, keyboard/mouse overlays, and a permission-limited plugin/shader extension model |
-| M11 | 🟡 Small editor implemented; broader expansion evaluation open | A bounded video/audio sequence editor adds arrangement, cuts, trim, volume/mute, undo/redo, simple fades, seven colour effects and an independent text track using FilmCraft. Preview/export share text rendering and audio fades. Sequence MP4 export offers standard or estimated file-size presets with GPU-encoder fallback. M11.1c adds decoded timeline strips/waveforms, prepared playback and internal local draft recovery, with software and Linux virtual-display evidence. Input overlays and the MCP adapter remain planned; no full NLE, AI service or community feature is implied |
+| M11 | 🟡 Small editor implemented; broader expansion evaluation open | A bounded video/audio sequence editor adds arrangement, cuts, trim, volume/mute, undo/redo, simple fades, seven colour effects and an independent text track using FilmCraft. Preview/export share text rendering and audio fades. Sequence MP4 export offers 720p/1080p/source (up to 4K), 30/60 FPS, estimated file-size presets and GPU-encoder fallback. M11.1c adds decoded timeline strips/waveforms, prepared playback and internal local draft recovery, with software and Linux virtual-display evidence. Input overlays and the MCP adapter remain planned; no full NLE, AI service or community feature is implied |
 
 Issue-level tasks require a problem statement, explicit limitations, measurable acceptance criteria,
 and test evidence. See the [`backlog`](docs/backlog.md) and

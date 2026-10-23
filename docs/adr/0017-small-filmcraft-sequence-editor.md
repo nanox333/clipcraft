@@ -57,3 +57,6 @@ Validation requires generated multi-source visual/audio checks, exact edit/histo
 state tests, cancellation/publication collisions, native UI screenshots/keyboard checks, the
 canonical Linux gate and documentation gate. Windows/macOS hardware and reference-machine timing
 remain separate checks. See [editor.md](../editor.md) and [testing.md](../testing.md).
+
+M11.1d supersedes the fixed 720p/30 export limit with bounded resolution/FPS choices; see
+[ADR 0021](0021-editor-export-quality.md).

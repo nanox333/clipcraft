@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use clipcraft_engine::{
     Command, CommandOutput, EditorAction, EditorSession, Effect, ExportPreset, ExportedSequence,
-    Fade, MediaEntry, SegmentLook, SequenceRequest, SequenceSegment, SequenceText,
-    TransitionPreset, execute,
+    Fade, MediaEntry, SegmentLook, SequenceQuality, SequenceRequest, SequenceResolution,
+    SequenceSegment, SequenceSettings, SequenceText, TransitionPreset, execute,
 };
 use clipcraft_time::{FrameRate, Tick};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, RichText, Sense, Stroke, Vec2};
@@ -102,6 +102,7 @@ pub struct EditorState {
     job: Option<ExportJob>,
     export_dialog: bool,
     export_preset: Option<ExportPreset>,
+    export_quality: SequenceQuality,
     saved: Option<PathBuf>,
     /// Width the person dragged the Library to; `None` lets it follow the 16:9 preview.
     selected_text: Option<u64>,
@@ -147,6 +148,7 @@ impl Default for EditorState {
             job: None,
             export_dialog: false,
             export_preset: None,
+            export_quality: SequenceQuality::default(),
             saved: None,
             selected_text: None,
             title_draft: (0, String::new()),
@@ -669,10 +671,11 @@ impl EditorState {
                     });
                     self.message = Some((
                         format!(
-                            "Edit saved · {}{target} · {}×{} · {}",
+                            "Edit saved · {}{target} · {}×{} · {} FPS · {}",
                             clipcraft_engine::format_bytes(report.clip.bytes),
                             report.width,
                             report.height,
+                            report.fps,
                             report.encoder
                         ),
                         false,
@@ -715,6 +718,7 @@ impl EditorState {
         };
         let request = SequenceRequest {
             preset: self.export_preset,
+            quality: self.export_quality,
             texts: self
                 .session
                 .texts()
@@ -953,8 +957,13 @@ impl EditorState {
                             }
                             let size = Vec2::new(ui.available_width(), (top - 90.0).max(40.0));
                             let area = egui::Rect::from_min_size(ui.cursor().min, size);
+                            let canvas = self.export_canvas().unwrap_or((1280, 720));
                             if let Some(preview) = self.preview.as_mut() {
-                                preview.editor_picture(ui, size);
+                                preview.editor_picture(
+                                    ui,
+                                    size,
+                                    Vec2::new(canvas.0 as f32, canvas.1 as f32),
+                                );
                                 self.paint_look(ui, area);
                             } else {
                                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
@@ -1075,6 +1084,9 @@ impl EditorState {
         self.show_export_dialog(ui.ctx());
     }
     fn export_canvas(&self) -> Result<(u32, u32), String> {
+        self.export_settings().map(|s| (s.width, s.height))
+    }
+    fn export_settings(&self) -> Result<SequenceSettings, String> {
         let first = self.session.clips().first();
         let probe = first
             .and_then(|clip| {
@@ -1083,11 +1095,12 @@ impl EditorState {
                     .find(|m| m.path == clip.input.to_string_lossy())
             })
             .and_then(|m| m.probe.as_ref());
-        clipcraft_engine::sequence_canvas(
+        clipcraft_engine::sequence_settings(
             probe.and_then(|p| p.width).unwrap_or(1280),
             probe.and_then(|p| p.height).unwrap_or(720),
             self.export_preset,
             self.session.duration(),
+            self.export_quality,
         )
         .map_err(|error| error.to_string())
     }
@@ -1103,7 +1116,8 @@ impl EditorState {
         let mut start = false;
         let mut cancel = false;
         let previous_preset = self.export_preset;
-        egui::Window::new(
+        let previous_quality = self.export_quality;
+        let window = egui::Window::new(
             RichText::new("Export video")
                 .size(20.0)
                 .family(kit::semibold()),
@@ -1116,7 +1130,9 @@ impl EditorState {
         .default_width(380.0)
         .show(context, |ui| {
             ui.spacing_mut().item_spacing.y = 12.0;
-            ui.label(RichText::new("Choose a file size for the finished video.").color(MUTED));
+            ui.label(
+                RichText::new("Choose quality and file size for the finished video.").color(MUTED),
+            );
             ui.label(RichText::new("Export preset").family(kit::medium()));
             let custom = match self.export_preset {
                 Some(value @ ExportPreset::Custom { .. }) => value,
@@ -1125,14 +1141,14 @@ impl EditorState {
             egui::ComboBox::from_id_salt("editor-export-preset")
                 .width(ui.available_width())
                 .selected_text(match self.export_preset {
-                    None => "Standard · up to 720p",
+                    None => "Standard quality",
                     Some(ExportPreset::Small) => "Small file · ~10 MB",
                     Some(ExportPreset::Medium) => "Medium file · ~25 MB",
                     Some(ExportPreset::Custom { .. }) => "Custom size",
                 })
                 .show_ui(ui, |ui| {
                     for (value, label) in [
-                        (None, "Standard · up to 720p"),
+                        (None, "Standard quality"),
                         (Some(ExportPreset::Small), "Small file · ~10 MB"),
                         (Some(ExportPreset::Medium), "Medium file · ~25 MB"),
                         (Some(custom), "Custom size"),
@@ -1147,12 +1163,65 @@ impl EditorState {
                         .on_hover_text("Estimated output size, from 1 to 500 MB");
                 });
             }
-            let canvas = self.export_canvas();
-            match &canvas {
-                Ok((width, height)) => {
+            ui.horizontal(|ui| {
+                ui.label("Resolution");
+                egui::ComboBox::from_id_salt("editor-export-resolution")
+                    .selected_text(match self.export_quality.resolution {
+                        SequenceResolution::Hd720 => "720p",
+                        SequenceResolution::FullHd1080 => "1080p",
+                        SequenceResolution::Source => "Source · up to 4K",
+                    })
+                    .show_ui(ui, |ui| {
+                        for (value, name) in [
+                            (SequenceResolution::Hd720, "720p"),
+                            (SequenceResolution::FullHd1080, "1080p"),
+                            (SequenceResolution::Source, "Source · up to 4K"),
+                        ] {
+                            ui.selectable_value(&mut self.export_quality.resolution, value, name);
+                        }
+                    });
+            });
+            ui.horizontal(|ui| {
+                ui.label("Frame rate");
+                egui::ComboBox::from_id_salt("editor-export-fps")
+                    .selected_text(format!("{} FPS", self.export_quality.fps))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.export_quality.fps, 30, "30 FPS");
+                        ui.selectable_value(&mut self.export_quality.fps, 60, "60 FPS");
+                    });
+            });
+            let settings = self.export_settings();
+            match &settings {
+                Ok(settings) => {
                     ui.label(
-                        RichText::new(format!("{width} × {height} · 30 fps · H.264 MP4"))
-                            .family(kit::medium()),
+                        RichText::new(format!(
+                            "{} × {} · {} FPS · H.264 MP4",
+                            settings.width, settings.height, settings.fps
+                        ))
+                        .family(kit::medium()),
+                    );
+                    if settings.resolution_limited {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new("Resolution reduced to fit the file-size target.")
+                                    .color(LIME),
+                            )
+                            .wrap(),
+                        );
+                    }
+                    if !settings.resolution_limited && settings.bitrate_limited {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new("Video bitrate reduced to fit the file-size target.")
+                                    .color(LIME),
+                            )
+                            .wrap(),
+                        );
+                    }
+                    ui.label(
+                        RichText::new(format!("Video target: {} kbps", settings.video_kbps))
+                            .small()
+                            .color(MUTED),
                     );
                     ui.label(
                         RichText::new("Stereo AAC audio. Saved beside the first source clip.")
@@ -1177,14 +1246,18 @@ impl EditorState {
                         ui,
                         "Export",
                         true,
-                        canvas.is_ok() && self.has_clips() && !self.busy(),
+                        settings.is_ok() && self.has_clips() && !self.busy(),
                     )
                     .clicked();
                 });
             });
         });
+        if let Some(window) = window {
+            // Keep keyboard navigation in the dialog and its popups, not the editor behind it.
+            context.memory_mut(|memory| memory.set_modal_layer(window.response.layer_id));
+        }
         self.export_dialog = open && !cancel && !start;
-        if self.export_preset != previous_preset {
+        if self.export_preset != previous_preset || self.export_quality != previous_quality {
             self.dirty_recovery();
         }
         if start {
@@ -1933,13 +2006,14 @@ impl EditorState {
             return;
         };
         let fade = clip.look.fade_at(source_time - clip.start, clip.duration());
-        let (width, height) = if area.width() / area.height().max(1.0) > 16.0 / 9.0 {
-            (area.height() * 16.0 / 9.0, area.height())
+        let (raster_width, raster_height) = self.export_canvas().unwrap_or((1280, 720));
+        let aspect = raster_width as f32 / raster_height as f32;
+        let (width, height) = if area.width() / area.height().max(1.0) > aspect {
+            (area.height() * aspect, area.height())
         } else {
-            (area.width(), area.width() * 9.0 / 16.0)
+            (area.width(), area.width() / aspect)
         };
         let canvas = egui::Rect::from_center_size(area.center(), Vec2::new(width, height));
-        let (raster_width, raster_height) = self.export_canvas().unwrap_or((1280, 720));
         let raster_canvas = [raster_width, raster_height];
         let scale = Vec2::new(width / raster_width as f32, height / raster_height as f32);
         let painter = ui.painter().with_clip_rect(canvas);
@@ -3376,6 +3450,10 @@ mod tests {
         let mut editor = state();
         editor.playhead = Tick::from_units(2, 1);
         editor.export_dialog = true;
+        editor.export_quality = SequenceQuality {
+            resolution: SequenceResolution::Source,
+            fps: 60,
+        };
         for preset in [
             None,
             Some(ExportPreset::Small),
@@ -3391,6 +3469,10 @@ mod tests {
             }
         }
         let original = editor.session.clone();
+        assert!(
+            !context.memory(|memory| memory.allows_interaction(egui::LayerId::background())),
+            "export keyboard focus must not escape to the editor behind it"
+        );
         for pressed in [egui::Key::Space, egui::Key::S, egui::Key::Delete] {
             key(&mut editor, &context, pressed, egui::Modifiers::NONE);
         }

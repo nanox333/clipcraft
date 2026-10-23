@@ -63,8 +63,10 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   analysis keeps media work off the UI thread. Preview prepares the next source across cuts.
   **Export video** offers standard H.264 MP4 or estimated 10 MB, 25 MB and custom 1–500 MB presets,
   with actual size and encoder reporting, progress/cancel and GPU-encoder fallback to software.
-  Output is at most 720p/30 fps with stereo AAC; size presets can choose a smaller canvas. Edits
-  recover from internal local metadata after restart, including text and the export preset;
+  Choose **720p**, **1080p**, or **Source (up to 4K)** at **30 or 60 FPS**, with stereo AAC.
+  Size presets can reduce resolution or bitrate; the dialog explains reductions and shows actual
+  output settings. Source mode preserves the first clip's portrait or ultrawide framing. Edits
+  recover from internal local metadata after restart, including text, export preset and quality;
   undo history starts fresh. Originals remain untouched, and quick trim stays available. See
   [the editor guide](docs/editor.md) for controls and limits.
 - **Settings and diagnostics:** recording, quality, audio, hotkey, storage, game allowlist, and

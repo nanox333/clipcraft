@@ -65,3 +65,6 @@ hardware-fallback stand-ins, cancellation/collision preservation, UI screenshots
 Real-GPU speed/quality, physical audio output and broader platform UI behavior remain separate
 verification work. Normal codec/FPS, source-format, 30-minute sequence and session-lifetime limits
 remain unchanged; see [editor.md](../editor.md).
+
+M11.1d supersedes the fixed 720p/30 export limit with bounded resolution/FPS choices; see
+[ADR 0021](0021-editor-export-quality.md).

@@ -269,7 +269,8 @@ The library index is local and rebuildable; normal video files remain the user's
 The separate Editor workspace now adds an independent media browser, sequence preview, cuts,
 trim, arrangement, undo/redo, linked audio volume, colour effects, black/white fades and an independent
 text track, using pinned FilmCraft cut algebra, text layout and codecs. Editor exports offer normal
-output or estimated 10 MB/25 MB/custom-size presets with GPU encoder fallback.
+output or estimated 10 MB/25 MB/custom-size presets with GPU encoder fallback. M11.1d adds
+720p/1080p/source (up to 4K) and 30/60 FPS, with explicit size-target reductions.
 Decoded timeline strips/waveforms, bounded next-source preparation and internal draft recovery
 are the M11.1c follow-up. See [the editor guide](docs/editor.md) for export bounds and recovery
 limits. There is no

@@ -893,7 +893,8 @@ segment-count cap, bounded 64-step/8 MiB history. M11.1c supersedes this slice's
 session-only lifetime with internal recovery, without adding a project-file workflow.
 Simple fade dips, colour looks and text are built. No custom project format, cross-dissolves,
 overlapping video, input overlays, detached/multiple audio lanes, arbitrary effects, HDR or speed
-changes in this slice. M11.1b adds shared preview rendering and size presets. Export is SDR H.264/AAC, at most 720p/30 FPS, first source audio track only; normalize to
+changes in this slice. M11.1b adds shared preview rendering and size presets. This slice initially exported SDR H.264/AAC at most 720p/30 FPS; M11.1d supersedes that
+quality limit. The first source audio track is used; normalize to
 48 kHz stereo and preserve originals. Missing/unsupported media must fail with an actionable
 message without replacing output; no required server or external encoder.
 
@@ -924,8 +925,8 @@ headroom, reject impossible budgets, report actual size/settings/encoder, and tr
 GPU encoder with a safe software fallback. Keep progress/cancel and source preservation.
 
 **Limitations:** pure Rust and offline; no new hosted service, project format, codec or capture
-platform claim. Size targets are estimates, not Discord limits. SDR H.264/AAC output remains at
-most 720p/30 fps; small budgets can reduce dimensions. One gapless video/audio sequence plus text
+platform claim. Size targets are estimates, not Discord limits. This slice initially capped output at
+720p/30; M11.1d adds explicit bounded resolution/FPS choices; small budgets can reduce dimensions. One gapless video/audio sequence plus text
 layers; text, layer count, masks, history and workers remain bounded. Real-GPU export and physical
 audio/Windows validation are separate evidence gates.
 
@@ -1010,6 +1011,27 @@ actual results in testing/gaps. Hardware capture/audio tests remain separate.
 [ADR 0020](adr/0020-internal-editor-recovery.md). **Dependencies:** M11.1a/M11.1b and existing
 FilmCraft readers/player; no hardware dependency for this software slice. **Estimate:** one
 focused implementation/review cycle, with slow-source decoder behavior the main resource risk.
+
+### M11.1d — Editor export resolution and frame rate
+
+**Status:** implemented; 527 tests across 31 targets and Linux virtual-display checks pass
+(2026-10-23). [GitHub #2](https://github.com/nanox333/clipcraft/issues/2).
+
+**Problem / evidence:** M11.1c editor exports always render at at most 720p/30 FPS, including recordings captured at higher resolution or frame rate. The user approved higher quality export while preserving the simple local workflow.
+
+**Scope / requirements:** extend the Rust sequence export, shared `editor.export` JSON command, export dialog and internal draft recovery with 720p, 1080p and source-resolution choices plus 30/60 FPS. Existing requests/drafts default to 720p/30. Source follows the first clip's aspect ratio, bounded to a 3840×2160 landscape or 2160×3840 portrait canvas without enlarging source pictures. Mixed clips fit with black bars. Existing 720p/1080p choices retain a 16:9 canvas. File-size presets may reduce resolution/bitrate; show actual dimensions/rate and explain reductions. Report actual FPS/bitrate and recover the selected options after restart.
+
+**Affected platforms/code:** portable export/engine crates, native desktop editor and JSON CLI. Linux virtual-display and generated media verification here; physical GPU, Windows/macOS throughput and audio devices remain unverified.
+
+**Limitations:** pure Rust, fully offline, no new runtime dependency or server. Existing SDR H.264/AAC input, stereo AAC output, first audio track, 30-minute duration, no source overwrite and cancellation rules remain. Maximum output is 8,294,400 pixels and 60 FPS; 30 FPS editing-grid boundaries remain unchanged. No new codecs, source-FPS auto-selection, interpolation, HDR, quick-trim changes or general editor expansion. Hardware refusal must safely retry software with identical settings. Bitrate/size targets are estimates, not guarantees.
+
+**Acceptance:** legacy payloads retain previous defaults. Chosen resolution/FPS reach encoder, packet timestamps, mux, CLI report, text preview and recovery. 60 FPS cuts do not accumulate audio drift; final partial video samples preserve exact duration. Small sources do not upscale; portrait/ultrawide source canvases preserve aspect ratio. Tight size presets visibly reduce resolution. Unknown enums, unsupported FPS, hostile sizes/ranges, failed encoders, cancellation and existing destinations preserve original files and valid recovery data.
+
+**Verification:** generated Rust H.264/AAC fixtures and external FFmpeg/FFprobe oracles for 30/60 FPS motion, fractional cuts and continuous audio, real higher-resolution exports, plans for 4K/portrait/ultrawide and size reduction; hardware stand-ins and failure/cancel tests; engine JSON/draft compatibility and recovery tests; native before/after screenshots and keyboard checks. Run `cargo xtask ci` and `cargo xtask docs-check dfe99f3`.
+
+**Documentation:** update README, gaps, roadmap, backlog, editor guide, architecture, testing and relevant ADRs in the same change.
+
+**Dependencies / estimate:** M11.1a–c and existing FilmCraft encoders. One focused implementation and verification cycle; no hardware prerequisite for this software slice.
 
 ### M11.2 — Local CLI and MCP footage-management adapter
 
