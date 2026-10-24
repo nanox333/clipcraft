@@ -234,8 +234,15 @@ impl eframe::App for ClipCraftApp {
         self.sync_playback(context);
         self.editor.poll(context);
         if self.editor.take_recovered() {
-            self.page = Page::Editor;
-            self.selected = None;
+            // Stay where the person is (the library, on launch) and say the draft is waiting;
+            // the Editor tab reopens it as it was.
+            self.editor.open = false;
+            self.capture.notice = Some(capture::Notice {
+                text: "Your editor draft was restored. Open the Editor to continue.".into(),
+                error: false,
+                at: std::time::Instant::now(),
+                path: None,
+            });
         }
         if self.editor.take_saved().is_some() {
             self.scan_library();

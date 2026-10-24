@@ -842,6 +842,13 @@ impl EditorState {
         }
     }
     pub fn show(&mut self, ui: &mut egui::Ui, thumbs: &mut crate::thumbs::Thumbnails) {
+        // In a short window the page scrolls instead of squeezing the preview to a sliver.
+        let view = ui.available_height();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| self.page(ui, thumbs, view));
+    }
+    fn page(&mut self, ui: &mut egui::Ui, thumbs: &mut crate::thumbs::Thumbnails, view: f32) {
         for (path, file) in std::mem::take(&mut self.imported_thumbs) {
             thumbs.set_file(path, file);
         }
@@ -902,7 +909,7 @@ impl EditorState {
         });
         ui.add_space(10.0);
         let status_height = if self.message.is_some() { 26.0 } else { 0.0 };
-        let full_top = (ui.available_height() - 372.0 - status_height).max(120.0);
+        let full_top = (view - 432.0 - status_height).max(MIN_TOP + 40.0);
         let top = self
             .top_height
             .filter(|height| height.is_finite())

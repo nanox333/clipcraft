@@ -300,3 +300,9 @@ and export decision.
 ## Layout notes
 
 The preview takes at least half of the top row and the Library the rest; the timeline fills the window below. Move buttons appear only when there is more than one segment. Trim and volume sit behind **Segment settings** (collapsed by default). **Discard saved draft** is a normal button in the footer.
+
+## Launch and small windows
+
+A restored editor draft no longer takes over the launch screen: ClipCraft opens on Clips, says the
+draft was restored, and the Editor tab reopens it. In a short window the editor page scrolls so the
+preview keeps a usable height (never under about 250 px) instead of shrinking to a strip.
