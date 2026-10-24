@@ -1,5 +1,10 @@
 # Architecture
 
+The original CUT brand outline is defined in `clipcraft-engine::brand`, without UI/platform
+dependencies. The native window and Discord product badge share its bounded raster renderer;
+the header caches one texture in the egui context. The maintainer exporter produces SVG masters
+and PNG delivery assets from that same geometry. See [brand guide](brand.md).
+
 ClipCraft is a **pure-Rust native desktop application**. Every first-party runtime component is a
 Rust crate in the Cargo workspace. The core product has no required backend, web client, account
 system, or server process. Capture, library, edit, and export must work offline. An optional

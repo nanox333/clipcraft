@@ -1,5 +1,19 @@
 # Testing
 
+## CUT identity verification (M10.2b, Windows, 2026-10-24)
+
+The `brand` tests check the C stem/opening and antialiasing at 16, 24, 32, 64 and 256 px,
+reject hostile sizes before allocation, and compare committed SVG masters with shared geometry.
+The UI regression draws two frames and verifies texture reuse without nested context locks.
+Presence tests retain bounded opaque product/game asset checks.
+
+The Rust `brand_assets` exporter generated the kit successfully; repeating it against the same
+destination returned `AlreadyExists`. A native 1440×900 desktop review confirmed the CUT header
+and visible Tab focus on Start clipping; Shift+Tab returned focus to the header. No recording
+was started. Before/after and keyboard screenshots are kept out of Git in
+`target/brand-ui-evidence/`; delivery artwork is in `target/brand-cut-final-20261024/`.
+This is native app evidence, not a Discord profile or game-art verification.
+
 The test strategy treats capture, media, and local library metadata as untrusted and checks failure
 behavior as carefully as the happy path. Capture/replay, playback, persistent library metadata,
 audio, and trim export have deterministic tests; platform evidence and real-device limits are

@@ -686,16 +686,7 @@ impl ClipCraftApp {
                 ui.horizontal_centered(|ui| {
                     ui.add_space(20.0);
                     let (logo, _) = ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::hover());
-                    ui.painter().add(egui::Shape::convex_polygon(
-                        vec![
-                            logo.center_top(),
-                            logo.right_center(),
-                            logo.center_bottom(),
-                            logo.left_center(),
-                        ],
-                        LIME,
-                        Stroke::NONE,
-                    ));
+                    kit::brand_mark(ui, logo);
                     ui.add_space(2.0);
                     ui.label(
                         RichText::new("ClipCraft")

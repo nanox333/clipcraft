@@ -1,5 +1,13 @@
 # Known gaps
 
+The selected **A / CUT** branding has shared Rust geometry, scalable monochrome masters,
+small icon exports, light/dark wordmark lockups and a Discord product badge. The native icon
+and header use the same mark. Game artwork is still the old typographic placeholder; publisher
+logos are not bundled. Uploading the new `clipcraft` asset and verifying its actual Discord
+rendering remain open. See the [brand guide](brand.md) for reproduction and constraints.
+Verification: small-size/hostile-input and texture-cache regression tests, native 1440×900
+screenshots, Tab/Shift+Tab checks, exporter overwrite refusal and `cargo xtask ci` passed.
+
 **Status:** active prototype · **Last reviewed:** 2026-10-24 · **Target:** local Windows capture-to-export alpha
 
 This is the ranked work list, not a parity claim. Capture, replay, playback, local library

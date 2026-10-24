@@ -722,31 +722,41 @@ pub fn name_text_box(response: &egui::Response, name: &str, text: &str) {
     });
 }
 
-/// The window and taskbar icon: the lime diamond from the top bar, on a transparent square.
+/// Shared CUT logo, rasterized once for the native window.
 pub fn app_icon() -> egui::IconData {
-    const SIZE: u32 = 256;
-    let centre = (SIZE as f32 - 1.0) / 2.0;
-    // The diamond reaches almost to the edge of the square.
-    let reach = centre - 6.0;
-    let mut rgba = Vec::with_capacity((SIZE * SIZE * 4) as usize);
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let distance = (x as f32 - centre).abs() + (y as f32 - centre).abs();
-            // One pixel of soft edge, measured across the slanted side.
-            let coverage = ((reach - distance) / std::f32::consts::SQRT_2 + 0.5).clamp(0.0, 1.0);
-            rgba.extend_from_slice(&[
-                LIME.r(),
-                LIME.g(),
-                LIME.b(),
-                (coverage * 255.0).round() as u8,
-            ]);
-        }
-    }
+    let image = clipcraft_engine::brand::window_icon();
     egui::IconData {
-        rgba,
-        width: SIZE,
-        height: SIZE,
+        width: image.width(),
+        height: image.height(),
+        rgba: image.into_raw(),
     }
+}
+
+/// Cached GPU texture; no rasterization or image allocation during subsequent frames.
+pub fn brand_mark(ui: &egui::Ui, rect: Rect) {
+    let id = egui::Id::new("clipcraft-cut-brand-texture");
+    let cached = ui
+        .ctx()
+        .data_mut(|data| data.get_temp::<egui::TextureHandle>(id));
+    let texture = cached.unwrap_or_else(|| {
+        let icon = app_icon();
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [icon.width as usize, icon.height as usize],
+            &icon.rgba,
+        );
+        let texture = ui
+            .ctx()
+            .load_texture("ClipCraft CUT", image, egui::TextureOptions::LINEAR);
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(id, texture.clone()));
+        texture
+    });
+    ui.painter().image(
+        texture.id(),
+        rect,
+        Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+        Color32::WHITE,
+    );
 }
 
 #[cfg(test)]
@@ -754,19 +764,32 @@ mod icon_tests {
     use super::*;
 
     #[test]
-    fn the_app_icon_is_a_lime_diamond_on_a_transparent_square() {
+    fn window_icon_uses_the_shared_cut_artwork() {
         let icon = app_icon();
-        assert_eq!(icon.rgba.len(), (icon.width * icon.height * 4) as usize);
-        let at = |x: u32, y: u32| {
-            let start = ((y * icon.width + x) * 4) as usize;
-            icon.rgba[start..start + 4].to_vec()
-        };
-        // The middle is solid lime; the corners, outside the diamond, are clear.
-        assert_eq!(at(128, 128), vec![LIME.r(), LIME.g(), LIME.b(), 255]);
-        for corner in [(0, 0), (255, 0), (0, 255), (255, 255)] {
-            assert_eq!(at(corner.0, corner.1)[3], 0);
+        assert_eq!((icon.width, icon.height), (256, 256));
+        assert_eq!(icon.rgba, clipcraft_engine::brand::window_icon().into_raw());
+    }
+
+    #[test]
+    fn brand_texture_loads_without_nested_context_locks_and_is_reused() {
+        let ctx = egui::Context::default();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
+                    brand_mark(ui, rect);
+                    let texture = ctx.data_mut(|data| {
+                        data.get_temp::<egui::TextureHandle>(egui::Id::new(
+                            "clipcraft-cut-brand-texture",
+                        ))
+                    });
+                    ids.push(texture.map(|handle| handle.id()));
+                });
+            });
         }
-        // The points of the diamond are inside it.
-        assert_eq!(at(128, 12)[3], 255);
+        assert!(ids[0].is_some());
+        assert_eq!(ids[0], ids[1]);
     }
 }
