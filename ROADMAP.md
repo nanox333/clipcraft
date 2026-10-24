@@ -26,7 +26,9 @@ ClipCraft-hosted storage or account. The complete direction and constraints are 
 ## Milestones
 
 M10.2b establishes the maintainer-selected A / CUT identity, with shared native/Discord product
-artwork and a reproducible brand kit. Discord artwork upload and game-logo licensing remain open.
+artwork and a reproducible brand kit. M10.2c replaces three typographic game placeholders with
+Discord-hosted icon references; no publisher image files or runtime lookup service are bundled.
+Discord upload and profile rendering are separate verification steps.
 
 Performance work M2.P1 has synthetic CPU measurements for shared replay snapshots, GOP boundary
 caching and redundant pixel-write removal. [The review](docs/performance.md) records the results
@@ -49,7 +51,7 @@ real-game impact, default HDR-compatible capture and other GPUs remain open perf
 | M7 | 🟡 Game-only arming and local game-data adapters implemented; live evidence open | Vice-style custom-first matching, 348 bundled games plus local Steam discovery, per-game exclusions, background process observation, and replay arming are implemented. Timed desktop continuation and continuous desktop/game switching are opt-in. M7.3 adds opt-in CS2/Dota 2/League match-data adapters and setup/status UI/CLI; live-game/native League TLS verification remains open. X11 has synthetic window-to-process coverage; saved clips retain the captured game name, not rich match snapshots. Real-game/Windows arming evidence and Wayland matching remain open |
 | M8 | ◷ Planned | Establish tested Windows/Linux/macOS desktop support through the shared Rust platform layer; run an Android screen-capture feasibility study without promising mobile support |
 | M9 | ◷ Planned | Design and implement opt-in client-side-encrypted backup to a user-selected provider, including recovery and restore; all local workflows remain offline |
-| M10 | 🟡 Discord presence prototype implemented; live verification open | Opt-in local Discord IPC and separate game-name/match-context disclosure are built with mock protocol/UI tests. Medal-inspired local card preview and shared build identity are implemented (M10.2a); the maintainer-supplied public identity is configured. Art upload and actual Discord profile verification remain open. Controller shortcuts, declarative themes, keyboard/mouse overlays and a permission-limited plugin/shader model remain planned |
+| M10 | 🟡 Windows Discord artwork/IPC verified; broader live gates open | Opt-in local Discord IPC and separate game-name/match-context disclosure are built. The owned identity and CUT app icon are configured. Actual Windows CS2/Dota/League cards show Discord-hosted game icons and the small CUT badge (M10.2c), with no bundled publisher images or product HTTP client. Other-account audience, broader reconnect/macOS and live-game context checks remain open. Controller shortcuts, themes, input overlays and a permission-limited plugin/shader model remain planned |
 | M11 | 🟡 Small editor implemented; broader expansion evaluation open | A bounded video/audio sequence editor adds arrangement, cuts, trim, volume/mute, undo/redo, simple fades, seven colour effects and an independent text track using FilmCraft. Preview/export share text rendering and audio fades. Sequence MP4 export offers 720p/1080p/source (up to 4K), 30/60 FPS, estimated file-size presets and GPU-encoder fallback. M11.1c adds decoded timeline strips/waveforms, prepared playback and internal local draft recovery. M11.1e reduces redundant export frame work and keeps keyboard preview controls available during export; generated Linux software measurements are in the performance review. Input overlays and the MCP adapter remain planned; no full NLE, AI service or community feature is implied |
 
 Issue-level tasks require a problem statement, explicit limitations, measurable acceptance criteria,

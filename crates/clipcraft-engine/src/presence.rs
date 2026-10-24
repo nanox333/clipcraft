@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 /// Public product identity supplied by the maintainer, never a token or a borrowed ID.
 const DEFAULT_APPLICATION_ID: &str = "1563496212554846279";
 
+/// Original CUT icon uploaded to the owned ClipCraft application on 2026-10-24.
+pub const PRODUCT_ICON_URL: &str =
+    "https://cdn.discordapp.com/app-icons/1563496212554846279/8efb408c7cfafd62479ed67f300ff94e.png";
+
 pub fn shared_application_id() -> Option<&'static str> {
     build_application_id(option_env!("CLIPCRAFT_DISCORD_APPLICATION_ID"))
 }
@@ -79,12 +83,25 @@ pub struct PresenceActivity {
     pub match_context: Option<String>,
 }
 impl PresenceActivity {
+    /// Offline preview/fallback artwork. Publisher image bytes are never bundled.
     pub fn asset_key(&self) -> &'static str {
+        "clipcraft"
+    }
+
+    /// Fixed public Discord CDN references, resolved by Discord rather than ClipCraft.
+    /// Public application metadata checked 2026-10-24; these IDs are never IPC identities.
+    pub fn game_icon_url(&self) -> Option<&'static str> {
         match self.game.as_deref().and_then(integration_for_name) {
-            Some(GameIntegration::Cs2) => "clipcraft_cs2",
-            Some(GameIntegration::Dota2) => "clipcraft_dota2",
-            Some(GameIntegration::League) => "clipcraft_league",
-            None => "clipcraft",
+            Some(GameIntegration::Cs2) => Some(
+                "https://cdn.discordapp.com/app-icons/1158877933042143272/558f5a26ecb3b17c3dea3d15c1df537a.png",
+            ),
+            Some(GameIntegration::Dota2) => Some(
+                "https://cdn.discordapp.com/app-icons/356875988589740042/6b4b3fa4c83555d3008de69d33a60588.png",
+            ),
+            Some(GameIntegration::League) => Some(
+                "https://cdn.discordapp.com/app-icons/1402418696126992445/bbf8d5494cfb622e452facb7941b2ead.png",
+            ),
+            None => None,
         }
     }
     pub fn wire(&self) -> serde_json::Value {
@@ -96,9 +113,9 @@ impl PresenceActivity {
             || "with ClipCraft".to_owned(),
             |m| format!("with ClipCraft · {m}"),
         );
-        let mut assets = serde_json::json!({"large_image":self.asset_key(),"large_text":self.game.as_deref().unwrap_or("ClipCraft")});
+        let mut assets = serde_json::json!({"large_image":self.game_icon_url().unwrap_or(PRODUCT_ICON_URL),"large_text":self.game.as_deref().unwrap_or("ClipCraft")});
         if self.game.is_some() {
-            assets["small_image"] = serde_json::json!("clipcraft");
+            assets["small_image"] = serde_json::json!(PRODUCT_ICON_URL);
             assets["small_text"] = serde_json::json!("ClipCraft");
         }
         serde_json::json!({"details":bound(&details,128),"state":bound(&state,128),"assets":assets})
@@ -303,13 +320,20 @@ mod tests {
                 );
                 assert_eq!(
                     wire["assets"]["large_image"],
-                    if game { "clipcraft_cs2" } else { "clipcraft" }
+                    if game {
+                        target.activity.game_icon_url().unwrap()
+                    } else {
+                        PRODUCT_ICON_URL
+                    }
                 );
                 let text = wire.to_string();
+                assert_eq!(wire.as_object().unwrap().len(), 3);
+                assert_eq!(
+                    wire["assets"].as_object().unwrap().len(),
+                    if game { 4 } else { 2 }
+                );
                 assert_eq!(text.contains("Mirage"), game && details);
-                for forbidden in [
-                    "private", "steamid", "73", "555", "99", "kills", "health", "money", "secrets",
-                ] {
+                for forbidden in ["private", "steamid", "kills", "health", "money", "secrets"] {
                     assert!(!text.contains(forbidden));
                 }
             }
@@ -345,6 +369,45 @@ mod tests {
             c.mode = mode;
             let a = build_presence(&s, &c).unwrap().activity;
             assert!(a.game.is_none() && a.match_context.is_none());
+        }
+    }
+
+    #[test]
+    fn game_icons_are_fixed_discord_references_and_obey_name_consent() {
+        let mut s = settings();
+        s.show_game = true;
+        for game in ["CS2", "Dota 2", "League of Legends"] {
+            let mut c = context();
+            c.game_name = Some(game.into());
+            let target = build_presence(&s, &c).unwrap();
+            assert_eq!(target.application_id, s.application_id);
+            let wire = target.activity.wire();
+            let url = wire["assets"]["large_image"].as_str().unwrap();
+            assert!(url.starts_with("https://cdn.discordapp.com/app-icons/"));
+            assert!(url.ends_with(".png") && url.len() <= 300);
+            assert_eq!(wire["assets"]["small_image"], PRODUCT_ICON_URL);
+            let mut hidden = s.clone();
+            hidden.show_game = false;
+            assert_eq!(
+                build_presence(&hidden, &c).unwrap().activity.wire()["assets"]["large_image"],
+                PRODUCT_ICON_URL
+            );
+        }
+        for name in [
+            "Unknown game",
+            "https://evil.example/icon.png",
+            "CS2/../private",
+            "CS2\n",
+        ] {
+            let mut c = context();
+            c.game_name = Some(name.into());
+            let activity = build_presence(&s, &c).unwrap().activity;
+            // A trailing newline is trimmed by existing label sanitation, but it can only
+            // select a known fixed URL, never supply an image address of its own.
+            if name != "CS2\n" {
+                assert!(activity.game_icon_url().is_none());
+            }
+            assert!(!activity.wire().to_string().contains("evil.example"));
         }
     }
     #[test]

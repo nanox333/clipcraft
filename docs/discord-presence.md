@@ -2,8 +2,9 @@
 
 The `clipcraft` product artwork now uses the selected CUT C/play mark. Generate the complete
 identity kit with the [brand exporter](brand.md), or use the existing `discord_assets` exporter
-below for the same product badge. Existing game-specific exports remain typographic placeholders.
-The application portal must receive the replacement `clipcraft` PNG before Discord can display it.
+below for the same product badge. Game placeholders are removed: CS2, Dota 2 and League use
+fixed Discord-hosted icon references. ClipCraft never downloads or bundles those image files.
+The original CUT icon is uploaded to the owned application; its fixed CDN reference supplies the product badge too.
 
 ClipCraft can optionally publish activity through the **Discord desktop app's local IPC**.
 It is off by default, requires no bot/token or login inside ClipCraft, and never affects capture.
@@ -33,6 +34,13 @@ being treated as a disconnect before Discord's reply arrives. An explicit live W
 2026-10-24 received READY and an activity acknowledgment using the shared ID, then requested clear
 and disconnected. This verifies transport acceptance, not the final profile's artwork or audience.
 
+On 2026-10-24 the CUT application icon and **ClipCraft** capitalization were saved in the portal.
+The real Windows profile initially hid acknowledged activity because Discord's **Activity
+Privacy → Share my activity** switch was off. After the maintainer enabled it, CS2, Dota 2 and
+League cards rendered their Discord-hosted icons with the small CUT badge. This controls Discord's broader
+game/connected-app activity sharing; ClipCraft cannot change it. The application heading can
+retain Discord's cached former capitalization until the client refreshes its application metadata.
+
 ## One-time maintainer setup
 
 1. Create an application named **ClipCraft** at <https://discord.com/developers/applications>.
@@ -44,10 +52,10 @@ and disconnected. This verifies transport acceptance, not the final profile's ar
    ```
 
    Create the parent directory first if necessary. The exporter refuses an existing destination
-   and never overwrites its contents. It includes provenance and the Inter font license.
-   Use `clipcraft.png` as the application icon too. Upload
-   `clipcraft.png`, `clipcraft_cs2.png`, `clipcraft_dota2.png`, `clipcraft_league.png` in Discord's
-   application Rich Presence Art Assets, using each filename stem as its asset key.
+   and never overwrites its contents. It includes provenance and the MIT license.
+   Upload `clipcraft.png` as the application icon in General Information. Record its public
+   CDN URL in `PRODUCT_ICON_URL` when replacing the branded icon. The current CUT icon is
+   already uploaded. Separate Rich Presence art-key and publisher-image uploads are unnecessary.
 3. ClipCraft's shared public Application ID is included in the Rust source. Optionally set the
    repository Actions variable **CLIPCRAFT_DISCORD_APPLICATION_ID** to override it for release
    packages, or the same environment variable for a local build. This is **not a secret**.
@@ -65,11 +73,12 @@ identity, nothing connects. No other application's ID is borrowed and no product
 
 ## Card appearance
 
-The local preview and outgoing activity use the same disclosure policy and original badge artwork.
+The local preview and outgoing activity use the same disclosure policy.
 With game consent, the card reads **Clipping Counter-Strike 2**, then **with ClipCraft**, with a
-large CS2 typographic badge and small ClipCraft badge. Match consent adds readable context, such
-as **with ClipCraft · Mirage · Competitive · 8–6**. Dota and League use their own typographic
-badges; unknown games use the generic badge. Editing/browsing omit game details and use ClipCraft.
+large Discord-hosted CS2 icon and small CUT badge. Match consent adds readable context, such
+as **with ClipCraft · Mirage · Competitive · 8–6**. Dota and League use their own Discord-hosted
+icons; other games use CUT. Editing/browsing omit game details and use ClipCraft.
+The local preview always uses offline CUT artwork and explicitly labels that difference.
 Known internal prefixes (`de_`, `cs_`, `npc_dota_hero_`) are removed from readable labels.
 
 The registered application's heading is **ClipCraft**. This does not spoof Medal's per-game
@@ -81,8 +90,8 @@ approximation of that card, not a screenshot of an actual Discord profile.
 
 | Control | Fields permitted |
 | --- | --- |
-| Show ClipCraft activity on Discord | One activity label: `Clipping`, `Editing clips`, or `Browsing clips` |
-| Show the captured game's name | Additionally, the current captured game's label, only while clipping |
+| Show ClipCraft activity on Discord | One activity label: `Clipping`, `Editing clips`, or `Browsing clips`, with original CUT product art |
+| Show the captured game's name | Additionally, the current captured game's label and a fixed CDN icon for supported games, only while clipping |
 | Show map, mode, score and hero | Additionally, available map, mode, team-relative score and hero/champion from the matching fresh CS2/Dota/League adapter |
 
 The second and third switches default off. Match context additionally requires game-name consent.
@@ -93,11 +102,29 @@ snapshot. Current matching recognizes CS2/Counter-Strike 2, Dota 2/Dota2 and Lea
 
 No clip/media bytes, filenames/paths, clip titles, local library metadata, account identifiers,
 K/D/A, health, money, positions, match IDs, raw game payloads, credentials, timestamps, join secrets,
-image URLs or buttons are included. Only fixed uploaded-asset keys and public tooltip labels are
-included. The IPC protocol necessarily includes the ClipCraft process ID,
+arbitrary image URLs or buttons are included. Only four fixed public Discord CDN references
+(three games and the original CUT icon) and public tooltip labels are included.
+Game-name consent gates both the name and game-icon reference. The IPC protocol includes the ClipCraft process ID,
 Application ID and a local command nonce. Ready/ack frames may contain Discord user data; the
 adapter bounds/parses them only to identify protocol responses, then discards them without logging
 or storing account fields. It does not request authentication or subscribe to events.
+
+### Game-icon provenance and limits
+
+On 2026-10-24 the three application IDs/icon hashes were checked using public, unauthenticated
+Discord application metadata. They identify artwork only; the IPC handshake always uses the
+owned ClipCraft application ID. The product does not call Discord discovery or metadata APIs,
+download publisher images, introduce an HTTP client, or store/cache remote artwork. Core capture
+and editing remain offline. Discord's client/service may fetch and cache CDN images as part of
+enabled presence. Fixed hashes can become stale; updating them is a maintainer data change.
+CDN failure cannot be detected through an activity acknowledgment, so the visual check is separate.
+
+Vice's public [game_icons.py](https://github.com/splitshotz/Vice/blob/main/vice/game_icons.py)
+and presence construction informed the behavior; no Vice source is copied. Unlike Vice's runtime
+lookup, ClipCraft uses only three fixed references and no discovery API in the product.
+Discord documents external image references in its
+[ActivityAssets reference](https://discord.com/developers/docs/social-sdk/classdiscordpp_1_1ActivityAssets.html).
+This avoids redistributing publisher image files; it is not a claim to own or relicense their marks.
 
 ## Updates, failure and clearing
 

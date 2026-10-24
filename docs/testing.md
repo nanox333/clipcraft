@@ -1,5 +1,26 @@
 # Testing
 
+## Discord CDN artwork verification (M10.2c, Windows, 2026-10-24)
+
+`cargo test -p clipcraft-engine presence --lib` covers fixed CDN image selection, game-name
+consent, unchanged owned IPC identity, unknown/hostile-label fallback, bounded fields and
+the original product badge. Publisher image files are not bundled. The native offline preview
+explicitly uses CUT rather than requesting remote images.
+
+The explicitly ignored Windows `real_discord_game_artwork_preview` test requires saved presence
+and game-name consent. It publishes three fixed **Artwork preview** labels (CS2/Dota/League),
+holds each for at most 60 seconds for inspection, and requests clear/shutdown on exit or error.
+All three received real-client acknowledgments. The original hidden-profile cause was Discord's
+global **Share my activity** switch being off. The maintainer enabled it manually; real CS2,
+Dota 2 and League cards then displayed their actual game icons plus CUT badge. Native profile/portal screenshots and
+test logs remain in ignored `target/discord-art-evidence/` and `target/discord-art-*.log`.
+The portal saved the CUT app icon and ClipCraft capitalization. A distinct viewer account is
+still needed for audience/privacy verification. Full CI and desktop/CLI release builds pass.
+The final release opened at 1440×900 and showed **Connected to Discord**, the CUT preview and
+the explicit offline/hosted-art explanation in General. The bounded preview run finished and
+its **Artwork preview** card disappeared before normal release startup. No capture was started
+for these branding checks. Existing keyboard-consent regression tests pass in the full gate.
+
 ## CUT identity verification (M10.2b, Windows, 2026-10-24)
 
 The `brand` tests check the C stem/opening and antialiasing at 16, 24, 32, 64 and 256 px,

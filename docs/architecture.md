@@ -5,6 +5,10 @@ dependencies. The native window and Discord product badge share its bounded rast
 the header caches one texture in the egui context. The maintainer exporter produces SVG masters
 and PNG delivery assets from that same geometry. See [brand guide](brand.md).
 
+Optional Discord presence can reference three fixed public Discord CDN game icons, selected
+inside the engine disclosure policy. Only Discord fetches image bytes; ClipCraft adds no HTTP
+client, runtime metadata lookup or artwork cache. Local previews retain offline CUT artwork.
+
 ClipCraft is a **pure-Rust native desktop application**. Every first-party runtime component is a
 Rust crate in the Cargo workspace. The core product has no required backend, web client, account
 system, or server process. Capture, library, edit, and export must work offline. An optional

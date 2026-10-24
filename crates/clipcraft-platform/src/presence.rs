@@ -636,6 +636,70 @@ mod live_tests {
         worker.shutdown();
         result
     }
+
+    #[test]
+    #[ignore = "publishes three explicitly labelled artwork previews to real Discord for visual inspection; requires saved presence and game-name consent"]
+    fn real_discord_game_artwork_preview() -> Result<(), Box<dyn std::error::Error>> {
+        use clipcraft_engine::presence::{PresenceContext, PresenceMode};
+        let path =
+            clipcraft_engine::default_settings_path().ok_or("settings location unavailable")?;
+        let CommandOutput::RecordingSettings(settings) =
+            execute(Command::LoadRecordingSettings { path })?
+        else {
+            return Err("unexpected settings response".into());
+        };
+        if !settings.discord_presence.enabled || !settings.discord_presence.show_game {
+            return Err("artwork inspection requires saved presence and game-name consent".into());
+        }
+        let mut worker = PresenceWorker::start().map_err(|_| "Discord worker could not start")?;
+        let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+            for name in ["Counter-Strike 2", "Dota 2", "League of Legends"] {
+                let context = PresenceContext {
+                    mode: PresenceMode::Clipping,
+                    game_name: Some(name.into()),
+                    snapshot: None,
+                };
+                let CommandOutput::DiscordPresence(Some(mut target)) =
+                    execute(Command::BuildDiscordPresence {
+                        settings: settings.discord_presence.clone(),
+                        context: Box::new(context),
+                    })?
+                else {
+                    return Err("no valid Discord application identity configured".into());
+                };
+                // Clearly identify this synthetic test; do not claim a game is being captured.
+                target.activity.details = "Artwork preview".into();
+                worker
+                    .publish(Some(target))
+                    .map_err(|_| "Discord worker could not accept target")?;
+                // 60 seconds includes the bounded update/clear interval and time for manual UI inspection.
+                let deadline = Instant::now() + Duration::from_secs(60);
+                let mut acknowledged = false;
+                while Instant::now() < deadline {
+                    if worker.status() == PresenceStatus::Failed {
+                        return Err("Discord worker failed".into());
+                    }
+                    // A game change clears before replacement; allow the update interval to pass
+                    // before treating Connected as acknowledgment of this particular preview.
+                    if !acknowledged
+                        && deadline.saturating_duration_since(Instant::now())
+                            < Duration::from_secs(50)
+                        && worker.status() == PresenceStatus::Connected
+                    {
+                        println!("Artwork preview acknowledged: {name}");
+                        acknowledged = true;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                if !acknowledged {
+                    return Err("Discord did not acknowledge artwork preview".into());
+                }
+            }
+            Ok(())
+        })();
+        worker.shutdown();
+        result
+    }
 }
 
 #[cfg(all(test, unix))]

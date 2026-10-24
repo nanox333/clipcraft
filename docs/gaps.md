@@ -2,9 +2,12 @@
 
 The selected **A / CUT** branding has shared Rust geometry, scalable monochrome masters,
 small icon exports, light/dark wordmark lockups and a Discord product badge. The native icon
-and header use the same mark. Game artwork is still the old typographic placeholder; publisher
-logos are not bundled. Uploading the new `clipcraft` asset and verifying its actual Discord
-rendering remain open. See the [brand guide](brand.md) for reproduction and constraints.
+and header use the same mark. CS2, Dota 2 and League now reference fixed Discord CDN icons;
+publisher image files are not bundled. Other games use CUT. CDN references can become stale,
+and the offline preview shows CUT rather than downloading game art. The CUT icon is uploaded;
+the real Windows profile rendered CS2, Dota 2 and League icons with the small CUT badge after the maintainer enabled
+Discord's global activity sharing. Other-account audience checks remain open.
+See the [brand guide](brand.md) for reproduction and constraints.
 Verification: small-size/hostile-input and texture-cache regression tests, native 1440×900
 screenshots, Tab/Shift+Tab checks, exporter overwrite refusal and `cargo xtask ci` passed.
 
@@ -99,13 +102,16 @@ tests cover READY/ack/ping, malformed/oversized data, timeout/rejection, coalesc
 privacy clears, reconnect, ID change, late READY after opt-out and shutdown. UI/CLI disclose only
 the permitted fields; capture is independent. See [setup and limits](discord-presence.md).
 
-M10.2a adds Medal-inspired details/state and original typographic game badges, a local card preview
+M10.2a adds Medal-inspired details/state, a local card preview
 without an ID, and a shared build identity (`CLIPCRAFT_DISCORD_APPLICATION_ID`). Normal settings
 need only a toggle; a custom public ID is an advanced developer override. The maintainer supplied
 the shared public ID on 2026-10-24; it is now the default for ordinary builds and empty release
 variables. The former missing-ID blocker and Windows empty-read/disconnect bug are fixed. A live
-Windows client acknowledged basic activity using the configured identity. Uploading the four
-generated badges, actual Discord profile/audience checks, macOS runtime and live games remain
+Windows client acknowledged basic activity using the configured identity. M10.2c removes the
+typographic game badges: three fixed Discord CDN references provide game art, and the uploaded
+CUT application icon supplies product art. No publisher image files or runtime HTTP lookup are
+bundled. All three labelled game-art previews received real Windows acknowledgments.
+Other-account audience checks, macOS runtime and live games remain
 unverified. Mock success/compilation do not close these gates. Clearing is best effort when the
 client/service is unreachable or the app
 is killed; normal exit requests a bounded clear then disconnects. Saved rich clip metadata is

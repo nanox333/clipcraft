@@ -67,3 +67,23 @@ Reference: [PeekNamedPipe](https://learn.microsoft.com/en-us/windows/win32/api/n
 Mock IPC/portable policy/native UI and compile checks cannot establish actual Discord behavior,
 application-name validation, privacy settings, client packaging compatibility or live games.
 Those remain release evidence gates. See [user setup and exact fields](../discord-presence.md).
+
+## M10.2c — hosted artwork references (2026-10-24)
+
+The maintainer requested actual game icons after rejecting typographic badges. Vice's public
+`game_icons.py` and presence construction were inspected for behavior, not copied. Vice resolves
+Discord application metadata and supplies a CDN URL as `large_image`. Discord's public
+[ActivityAssets reference](https://discord.com/developers/docs/social-sdk/classdiscordpp_1_1ActivityAssets.html)
+documents external image URLs alongside uploaded asset keys.
+
+ClipCraft uses a narrower implementation: three fixed public Discord CDN app-icon references
+for CS2, Dota 2 and League, checked against public application metadata on 2026-10-24. Only the
+Discord client/service fetches artwork. No publisher image bytes are copied, bundled, cached,
+uploaded by ClipCraft or claimed under its license. No runtime discovery/metadata API, HTTP
+dependency, arbitrary user URL, account access, third-party IPC identity or image-upload feature
+is added. The existing default-off presence and game-name consent gates both the game label and
+the fixed image reference; editing/browsing omit both. The small badge remains original CUT
+under the owned ClipCraft identity, using its uploaded application-icon CDN reference so no
+second Rich Presence art-key upload is needed. Offline preview and unrecognized games use CUT; old
+typographic game exports are removed. CDN hash changes and fetch failures remain external
+rendering limitations. IPC acknowledgment and native/profile visual evidence are recorded separately.

@@ -914,7 +914,8 @@ ClipCraft clears the presence; capture remains functional when Discord is missin
 **Verification:** engine disclosure/hostile-input matrix; actual Unix mock handshake/set/clear/ping,
 nonce/error/oversize/timeouts, coalescing/rate/privacy/reconnect/ID-change/late-READY/shutdown tests;
 native settings screenshots/keyboard and mock IPC, full gate and Windows/macOS compile checks.
-Actual Discord profile and live-game tests stay open until an Application ID/client is available.
+M10.2c now has owned-identity Windows IPC and actual profile-art evidence. Live-game context,
+other-account audience and broader platform checks remain open.
 **Documentation:** README, gaps/roadmap, architecture/testing/settings/release, Discord guide and
 ADR 0023 ship together. **Dependencies:** M7.1 identity and M7.3 match adapters. **Estimate:** one
 prototype plus independent live Discord/platform verification.
@@ -922,7 +923,8 @@ prototype plus independent live Discord/platform verification.
 ### M10.2a — Medal-inspired presence and automatic end-user setup
 
 **Issue:** [#7](https://github.com/nanox333/clipcraft/issues/7). **Status:** implementation complete;
-maintainer-supplied public identity configured 2026-10-24, art upload and real Discord rendering open.
+maintainer-supplied public identity configured 2026-10-24; M10.2c uploads CUT and verifies actual
+Windows game/CUT artwork. Other-account audience and broader platform evidence remain open.
 Ordinary builds and empty release variables use the product ID; valid explicit overrides remain
 supported. Regression tests cover missing/empty build values and malformed overrides. Windows IPC
 empty reads now wait for data; a deterministic empty/data/disconnect regression and real Discord
@@ -943,7 +945,8 @@ full workspace gate and cross-platform compile checks; real Discord/client/Windo
 
 ### M10.2b — Establish the selected CUT identity
 
-**Status:** implemented and locally verified 2026-10-24; Discord asset upload remains open.
+**Status:** implemented and locally verified 2026-10-24; CUT is uploaded and Windows profile
+artwork is verified by M10.2c.
 
 **Problem / outcome:** the maintainer selected concept A; replace the generic diamond with a
 consistent original C/play identity and deliver reusable artwork.
@@ -963,6 +966,33 @@ fonts/assets have attribution; actual desktop screenshot and keyboard navigation
 overwrite refusal, native 1440×900 desktop screenshots and Tab/Shift+Tab checks passed.
 `cargo xtask ci` passed, including the texture-cache lock regression. See [brand guide](brand.md)
 and [testing evidence](testing.md).
+
+### M10.2c — Discord-hosted game artwork and branded release
+
+**Status:** implemented; all three Windows profile artworks, live IPC, full CI and release builds
+verified 2026-10-24. Other-account audience and broader platform checks remain open.
+
+**Problem / outcome:** replace the rejected typographic game badges with actual Discord-hosted
+CS2, Dota 2 and League icons plus the small CUT product badge.
+
+**Scope:** fixed public CDN references selected by the existing game-name consent; no bundled
+publisher image files, new dependency, HTTP client or runtime discovery endpoint. Remove the
+legacy game asset exporter output. Upload CUT under the owned application and build the release.
+
+**Limitations:** other games and the offline preview use CUT. Fixed CDN hashes can become stale;
+Discord controls fetching/rendering. A protocol ACK alone does not verify displayed artwork.
+
+**Acceptance / verification:** all three fixed references pass policy and live IPC checks;
+game-name consent off and editing/browsing omit game references; arbitrary URLs/hostile labels
+cannot select remote images; owned application identity remains unchanged; exporter writes only
+the original product PNG and license, refusing existing output; native preview/keyboard and
+actual Discord artwork are inspected; `cargo xtask ci` and release builds pass.
+
+**Docs:** README, gaps, presence guide, architecture, release/testing evidence and ADR 0023.
+
+**Evidence:** CUT icon and ClipCraft name saved in the owned portal. Real CS2/Dota/League cards
+displayed game art and the small CUT badge after the maintainer enabled Discord activity sharing.
+Screenshots and labelled-preview logs remain in ignored `target/discord-art-evidence/`.
 
 ### M10.3 — Built-in keyboard/mouse overlays and themes
 

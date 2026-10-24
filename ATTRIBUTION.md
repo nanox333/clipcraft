@@ -13,7 +13,6 @@ See [ADR 0022](docs/adr/0022-local-game-state.md) for the narrowly scoped trust 
 | `assets/brand/mark-black.svg` | Same original CUT geometry, charcoal variant | MIT |
 | `assets/brand/mark-white.svg` | Same original CUT geometry, paper variant | MIT |
 | CUT raster exports (`brand_assets`, `presence_art` product key `clipcraft`) | Original ClipCraft C/play geometry; generated in Rust. Wordmark lockups use Inter SemiBold | MIT (ClipCraft); Inter glyphs remain SIL OFL 1.1, included in exporter output |
-| Legacy game-specific procedural Discord badges (`presence_art`, exported `clipcraft_*.png`) | Original ClipCraft offset-diamond/typographic placeholders; generated in Rust | MIT (ClipCraft); Inter glyphs remain SIL OFL 1.1, included in exporter output. No game/publisher/Medal logos |
 | egui default UI fonts (transitive `epaint_default_fonts` dependency) | egui project | OFL-1.1 and Ubuntu Font Licence 1.0; redistributed under the package's included license files |
 | `assets/fonts/Inter-Regular.ttf` | Inter 4.1, The Inter Project Authors, <https://github.com/rsms/inter/releases/tag/v4.1> | SIL OFL 1.1, unmodified; text in `assets/fonts/OFL-Inter.md` |
 | `assets/fonts/Inter-Medium.ttf` | Inter 4.1, The Inter Project Authors, <https://github.com/rsms/inter/releases/tag/v4.1> | SIL OFL 1.1, unmodified; text in `assets/fonts/OFL-Inter.md` |
@@ -24,6 +23,12 @@ it with its source, author, and license. `cargo xtask assets` checks that each f
 has a sidecar and a matching path in this table. User-provided Medal screenshots and downloaded
 reference images are private planning references, not product assets. Source-code ports are tracked
 separately in [`docs/upstream-ports.md`](docs/upstream-ports.md).
+
+Discord game artwork is referenced by fixed public CDN URLs in `presence::game_icon_url`, not
+redistributed as bundled media or relicensed as ClipCraft artwork. The CS2, Dota 2 and League
+application IDs/icon hashes were checked against public Discord application metadata on 2026-10-24.
+Discord fetches the referenced images after game-name consent. See [presence](docs/discord-presence.md)
+for provenance, limitations and the absence of runtime metadata lookups.
 
 The compiled identification metadata in
 [`game_catalog_data.rs`](crates/clipcraft-engine/src/game_catalog_data.rs) adapts Vice's 347-game
