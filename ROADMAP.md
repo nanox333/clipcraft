@@ -25,6 +25,9 @@ ClipCraft-hosted storage or account. The complete direction and constraints are 
 
 ## Milestones
 
+M10.2b establishes the maintainer-selected A / CUT identity, with shared native/Discord product
+artwork and a reproducible brand kit. Discord artwork upload and game-logo licensing remain open.
+
 Performance work M2.P1 has synthetic CPU measurements for shared replay snapshots, GOP boundary
 caching and redundant pixel-write removal. [The review](docs/performance.md) records the results
 and priorities across the workspace. Windows/AMD now has generated-window GPU-surface capture and

@@ -1,5 +1,10 @@
 # Discord Rich Presence
 
+The `clipcraft` product artwork now uses the selected CUT C/play mark. Generate the complete
+identity kit with the [brand exporter](brand.md), or use the existing `discord_assets` exporter
+below for the same product badge. Existing game-specific exports remain typographic placeholders.
+The application portal must receive the replacement `clipcraft` PNG before Discord can display it.
+
 ClipCraft can optionally publish activity through the **Discord desktop app's local IPC**.
 It is off by default, requires no bot/token or login inside ClipCraft, and never affects capture.
 The first-party implementation is Rust. There is no ClipCraft server, HTTP client, upload,

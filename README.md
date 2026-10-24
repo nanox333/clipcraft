@@ -1,5 +1,8 @@
 # ClipCraft
 
+ClipCraft's **CUT** identity uses an original lime C/play mark in the native window, header and
+Discord product badge. [Brand guide and reproducible asset kit](docs/brand.md).
+
 **A local-first Rust desktop app for instant game clips, playback, a searchable clip library, and
 quick trims and small clip sequences.** The current build captures and manages clips offline; it has no account, hosted
 backend, backup, upload, sync, or share-link service.

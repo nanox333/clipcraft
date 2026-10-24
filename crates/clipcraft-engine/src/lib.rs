@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::AtomicBool;
 
+pub mod brand;
 mod diagnose;
 mod editor;
 mod editor_draft;

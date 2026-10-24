@@ -904,6 +904,29 @@ bounded and never reveal a game without consent; exporter refuses an existing di
 full workspace gate and cross-platform compile checks; real Discord/client/Windows/mac runtime open.
 **Affected:** engine, egui, CLI, release workflow, documentation. No dependency or transport change.
 
+### M10.2b — Establish the selected CUT identity
+
+**Status:** implemented and locally verified 2026-10-24; Discord asset upload remains open.
+
+**Problem / outcome:** the maintainer selected concept A; replace the generic diamond with a
+consistent original C/play identity and deliver reusable artwork.
+
+**Scope:** shared bounded Rust renderer, native window/header, Discord product badge, SVG/PNG
+masters, small icons, light/dark wordmark lockups and usage/provenance documentation.
+
+**Limitations:** no new dependency, network requirement or capture change. Publisher game logos
+and Discord portal uploads are separate work; legacy game placeholders remain.
+
+**Acceptance:** identical silhouette across exports and app; visible stem/opening at 16–64 px;
+invalid dimensions rejected before allocation; exporters refuse an existing destination;
+fonts/assets have attribution; actual desktop screenshot and keyboard navigation checks pass;
+`cargo xtask ci` passes. Preserve unrelated local settings edits.
+
+**Verification:** brand geometry/hostile-size tests, presence badge tests, asset export and
+overwrite refusal, native 1440×900 desktop screenshots and Tab/Shift+Tab checks passed.
+`cargo xtask ci` passed, including the texture-cache lock regression. See [brand guide](brand.md)
+and [testing evidence](testing.md).
+
 ### M10.3 — Built-in keyboard/mouse overlays and themes
 
 **Status:** planned.

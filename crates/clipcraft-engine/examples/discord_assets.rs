@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         image::DynamicImage::ImageRgba8(image).write_to(&mut writer, image::ImageFormat::Png)?;
         writer.flush()?;
     }
-    let notice = "ClipCraft original procedural badge artwork: MIT.\nInter SemiBold glyphs: SIL Open Font License 1.1; see assets/fonts/OFL-Inter.md in the ClipCraft repository.\nNo game logos or Medal assets. Upload the PNGs to your owned Discord application's Rich Presence Art Assets using the filename stem as the key.\n";
+    let notice = "ClipCraft CUT product mark and legacy typographic game placeholders: original ClipCraft artwork, MIT. CUT was developed from the maintainer-selected AI-assisted concept A.\nInter SemiBold glyphs: SIL Open Font License 1.1; see OFL-Inter.md.\nNo game logos or Medal assets. Upload the PNGs to your owned Discord application's Rich Presence Art Assets using the filename stem as the key.\n";
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)

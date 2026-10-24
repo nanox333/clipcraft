@@ -1,4 +1,4 @@
-//! Original typographic Discord badges, shared by the preview and maintainer asset export.
+//! CUT product mark and legacy game placeholders, shared by preview and asset export.
 use clipcraft_export::{ExportError, SequenceText, TextRaster};
 use clipcraft_time::Tick;
 use image::{Rgba, RgbaImage};
@@ -16,6 +16,16 @@ pub fn badge(key: &str, edge: u32) -> Result<RgbaImage, ExportError> {
         return Err(ExportError::Unsupported(
             "unknown Discord asset or invalid badge size",
         ));
+    }
+    if key == "clipcraft" {
+        let mut image = RgbaImage::from_pixel(edge, edge, Rgba([23, 28, 30, 255]));
+        image::imageops::overlay(
+            &mut image,
+            &crate::brand::icon(edge, crate::brand::LIME)?,
+            0,
+            0,
+        );
+        return Ok(image);
     }
     let mut image = RgbaImage::from_pixel(edge, edge, Rgba([35, 39, 32, 255]));
     for (x, y, pixel) in image.enumerate_pixels_mut() {

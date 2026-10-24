@@ -1,0 +1,2 @@
+# Generated vector masters must remain byte-identical to the Rust exporter on Windows too.
+assets/brand/*.svg text eol=lf
