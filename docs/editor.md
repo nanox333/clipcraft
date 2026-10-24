@@ -296,3 +296,7 @@ No control server, cloud service, .ccproj format or AI upload is involved. Detac
 overlapping video tracks, cross-dissolves and general-purpose multitrack editing remain outside
 this editor. See [ADR 0019](adr/0019-editor-preview-and-export-presets.md) for the shared rendering
 and export decision.
+
+## Layout notes
+
+The preview takes at least half of the top row and the Library the rest; the timeline fills the window below. Move buttons appear only when there is more than one segment. Trim and volume sit behind **Segment settings** (collapsed by default). **Discard saved draft** is a normal button in the footer.

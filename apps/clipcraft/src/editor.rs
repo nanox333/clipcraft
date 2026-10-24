@@ -116,6 +116,7 @@ pub struct EditorState {
     saved: Option<PathBuf>,
     /// Width the person dragged the Library to; `None` lets it follow the 16:9 preview.
     selected_text: Option<u64>,
+    segment_settings: bool,
     title_draft: (u64, String),
     title_drag: Option<(u64, u16, u16)>,
     text_drag: Option<(u64, Tick, Tick)>,
@@ -161,6 +162,7 @@ impl Default for EditorState {
             export_quality: SequenceQuality::default(),
             saved: None,
             selected_text: None,
+            segment_settings: false,
             title_draft: (0, String::new()),
             title_drag: None,
             text_drag: None,
@@ -900,7 +902,7 @@ impl EditorState {
         });
         ui.add_space(10.0);
         let status_height = if self.message.is_some() { 26.0 } else { 0.0 };
-        let full_top = (ui.available_height() - 454.0 - status_height).max(120.0);
+        let full_top = (ui.available_height() - 372.0 - status_height).max(120.0);
         let top = self
             .top_height
             .filter(|height| height.is_finite())
@@ -914,7 +916,10 @@ impl EditorState {
         // gets everything else.
         let picture_height = (top - 90.0).max(40.0);
         let browser = if width >= 700.0 {
-            let preview = (picture_height * 16.0 / 9.0 + 24.0).clamp(360.0, width - 12.0 - 260.0);
+            // The preview gets at least half the row, so it never looks small beside the Library.
+            let preview = (picture_height * 16.0 / 9.0 + 24.0)
+                .max(width * 0.5)
+                .clamp(360.0, width - 12.0 - 260.0);
             let auto = (width - 12.0 - preview).max(260.0);
             self.library_width
                 .filter(|chosen| chosen.is_finite())
@@ -2231,7 +2236,13 @@ impl EditorState {
                 {
                     self.edit(EditorAction::Delete { id });
                 }
-                if let Some(index) = self.session.clips().iter().position(|c| c.id == id) {
+                if let Some(index) = self
+                    .session
+                    .clips()
+                    .iter()
+                    .position(|c| c.id == id)
+                    .filter(|_| self.session.clips().len() > 1)
+                {
                     separator(ui);
                     if tool(
                         ui,
@@ -2896,7 +2907,26 @@ impl EditorState {
         else {
             return;
         };
-        ui.add_space(10.0);
+        ui.add_space(6.0);
+        let label = if self.segment_settings {
+            "Hide segment settings"
+        } else {
+            "Segment settings: trim and volume"
+        };
+        if ui
+            .add(
+                egui::Label::new(RichText::new(label).size(12.5).color(MUTED))
+                    .sense(Sense::click()),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            self.segment_settings = !self.segment_settings;
+        }
+        if !self.segment_settings {
+            return;
+        }
+        ui.add_space(6.0);
         ui.add_enabled_ui(!self.busy(), |ui| {
             egui::Frame::new()
                 .fill(CANVAS)
@@ -3140,7 +3170,7 @@ fn tool(
         FontId::new(12.5, kit::medium()),
         Color32::PLACEHOLDER,
     );
-    let size = Vec2::new(galley.size().x + 38.0, 28.0);
+    let size = Vec2::new(galley.size().x + 40.0, 30.0);
     let sense = if enabled {
         Sense::click()
     } else {
@@ -3150,7 +3180,7 @@ fn tool(
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
     let hovered = response.hovered() && enabled;
     let (fill, content) = match (primary, enabled, hovered) {
-        (_, false, _) => (CARD, FAINT),
+        (_, false, _) => (CARD, Color32::from_gray(112)),
         (true, _, _) => (LIME, Color32::BLACK),
         (false, _, true) => (kit::CONTROL_HOVER, kit::TEXT),
         (false, _, false) => (kit::CONTROL, kit::TEXT),
@@ -4073,6 +4103,12 @@ mod tests {
         let context = crate::kit::test_context();
         context.enable_accesskit();
         let mut state = state();
+        // Move buttons need a second segment; trim and volume are behind a toggle.
+        state.edit(EditorAction::Split {
+            at: Tick::from_units(1, 1),
+        });
+        state.segment_settings = true;
+        state.selected = state.session.clips().last().map(|c| c.id);
         let mut labels = Vec::new();
         for _ in 0..3 {
             if let Some(update) = frame(&mut state, &context, vec![], Vec2::new(1440.0, 900.0))

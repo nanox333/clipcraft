@@ -328,11 +328,8 @@ impl EditorState {
             && !self.draft.loading
             && !self.draft.suppressed
             && !self.media.is_empty()
-            && ui
-                .add_enabled(
-                    !self.draft.discarding,
-                    egui::Button::new(RichText::new("Discard saved draft").small()).frame(false),
-                )
+            && super::button(ui, "Discard saved draft", false, !self.draft.discarding)
+                .on_hover_text("Delete the automatically saved copy of this edit")
                 .clicked()
         {
             self.discard_draft(ui.ctx());
