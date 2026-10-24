@@ -1,6 +1,6 @@
 # Known gaps
 
-**Status:** active prototype · **Last reviewed:** 2026-10-23 · **Target:** local Windows capture-to-export alpha
+**Status:** active prototype · **Last reviewed:** 2026-10-24 · **Target:** local Windows capture-to-export alpha
 
 This is the ranked work list, not a parity claim. Capture, replay, playback, local library
 organization, and no-reencode trim export are implemented. Linux/X11 has end-to-end synthetic
@@ -93,12 +93,13 @@ the permitted fields; capture is independent. See [setup and limits](discord-pre
 
 M10.2a adds Medal-inspired details/state and original typographic game badges, a local card preview
 without an ID, and a shared build identity (`CLIPCRAFT_DISCORD_APPLICATION_ID`). Normal settings
-need only a toggle; a custom public ID is an advanced developer override. No registered production
-ID exists yet: this build says unconfigured and does not probe IPC without an effective ID. The
-maintainer must register the app, upload the four generated badges and configure the release
-variable before automatic connection works for end users. Actual Discord profile/audience
-checks, Windows/macOS IPC runtime and live games remain unverified. Mock success/compilation do
-not close these gates. Clearing is best effort when the client/service is unreachable or the app
+need only a toggle; a custom public ID is an advanced developer override. The maintainer supplied
+the shared public ID on 2026-10-24; it is now the default for ordinary builds and empty release
+variables. The former missing-ID blocker and Windows empty-read/disconnect bug are fixed. A live
+Windows client acknowledged basic activity using the configured identity. Uploading the four
+generated badges, actual Discord profile/audience checks, macOS runtime and live games remain
+unverified. Mock success/compilation do not close these gates. Clearing is best effort when the
+client/service is unreachable or the app
 is killed; normal exit requests a bounded clear then disconnects. Saved rich clip metadata is
 still separate future work.
 

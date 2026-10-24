@@ -17,9 +17,16 @@ client with activity sharing enabled. Game-name and match-detail disclosure rema
 default-off switches. No Application ID, bot, token, ClipCraft account or browser login is needed
 when the build includes the shared ClipCraft identity.
 
-**Current limitation:** no production application has been registered yet. This build says
-**Discord presence is not configured in this build yet** and does not probe IPC without an
-effective valid ID. The local card preview still works; a preview does not mean connected.
+The maintainer supplied public application ID `1563496212554846279` on 2026-10-24. Ordinary builds
+now include it. Previously, a missing build environment variable left the identity unset even
+when presence was enabled. An empty release variable now also uses the product default. A local
+card preview still does not prove a connection or actual Discord profile visibility. Artwork
+upload and live rendering remain separate checks.
+
+A Windows IPC read bug is also fixed: an empty connected byte pipe now waits for data instead of
+being treated as a disconnect before Discord's reply arrives. An explicit live Windows check on
+2026-10-24 received READY and an activity acknowledgment using the shared ID, then requested clear
+and disconnected. This verifies transport acceptance, not the final profile's artwork or audience.
 
 ## One-time maintainer setup
 
@@ -36,9 +43,11 @@ effective valid ID. The local card preview still works; a preview does not mean 
    Use `clipcraft.png` as the application icon too. Upload
    `clipcraft.png`, `clipcraft_cs2.png`, `clipcraft_dota2.png`, `clipcraft_league.png` in Discord's
    application Rich Presence Art Assets, using each filename stem as its asset key.
-3. Set the public repository Actions variable **CLIPCRAFT_DISCORD_APPLICATION_ID** before making
-   release packages. The release workflow passes it at compile time; this is **not a secret**.
-   For a local build, set the same environment variable when running `cargo build`.
+3. ClipCraft's shared public Application ID is included in the Rust source. Optionally set the
+   repository Actions variable **CLIPCRAFT_DISCORD_APPLICATION_ID** to override it for release
+   packages, or the same environment variable for a local build. This is **not a secret**.
+   Missing or empty build values use the product default; an invalid nonempty override disables
+   the shared identity until corrected. A valid saved developer ID still takes priority.
 4. Rebuild/install and verify the actual card in Discord, consent reductions, opt-out, exit,
    unavailable-client/reconnect and each target OS. An IPC acknowledgment does not prove that
    uploaded assets rendered. No release/profile verification is implied by local mock tests.
@@ -119,8 +128,9 @@ cannot report success. No raw Discord error message is copied into diagnostics.
 
 Portable policy and Unix mock IPC tests cover handshake, publish/clear, ping/pong, rejection,
 coalescing, rate limiting, privacy reductions, reconnect, late READY after opt-out and ID changes.
-Windows/macOS compile checks are not runtime proof. A registered ID, actual Discord profile check
-and live-game verification remain manual gates. See [testing](testing.md) and [ADR 0023](adr/0023-discord-presence.md).
+Windows has a basic live activity acknowledgment with the configured ID, plus deterministic
+empty/data/disconnect pipe coverage. Actual Discord profile artwork/audience, macOS runtime and
+live-game verification remain manual gates. See [testing](testing.md) and [ADR 0023](adr/0023-discord-presence.md).
 
 ## CLI
 

@@ -463,7 +463,40 @@ struct WindowsPipe(
 #[cfg(windows)]
 impl Read for WindowsPipe {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
-        self.0.read(bytes)
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        let available = self.available_bytes()?;
+        if available == 0 {
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        let length = bytes.len().min(available);
+        self.0.read(&mut bytes[..length])
+    }
+}
+#[cfg(windows)]
+impl WindowsPipe {
+    #[allow(unsafe_code)]
+    fn available_bytes(&self) -> io::Result<usize> {
+        use std::os::windows::io::{AsHandle, AsRawHandle};
+        use windows::Win32::{Foundation::HANDLE, System::Pipes::PeekNamedPipe};
+
+        let mut available = 0;
+        // SAFETY: the stream owns this borrowed readable OVERLAPPED pipe handle for the entire
+        // synchronous query. Only the initialized count is written; no payload buffer is passed.
+        // This worker is the sole reader. ADR 0023 records the boundary and disconnect fallback.
+        unsafe {
+            PeekNamedPipe(
+                HANDLE(self.0.as_handle().as_raw_handle()),
+                None,
+                0,
+                None,
+                Some(&mut available),
+                None,
+            )
+        }
+        .map_err(io::Error::from)?;
+        Ok(available as usize)
     }
 }
 #[cfg(windows)]
@@ -505,6 +538,104 @@ fn connect(stop: &AtomicBool) -> Result<Box<dyn Connection>, PresenceError> {
 #[cfg(not(any(unix, windows)))]
 fn connect(_: &AtomicBool) -> Result<Box<dyn Connection>, PresenceError> {
     Err(PresenceError::Unavailable)
+}
+
+#[cfg(all(test, windows))]
+mod live_tests {
+    use super::*;
+    use clipcraft_engine::{Command, CommandOutput, execute};
+
+    #[test]
+    fn empty_windows_pipe_waits_for_data_and_detects_disconnect() -> io::Result<()> {
+        use interprocess::os::windows::named_pipe::{
+            DuplexPipeStream, PipeListenerOptions, pipe_mode::Bytes,
+        };
+        let path = format!(
+            r"\\.\pipe\clipcraft-discord-regression-{}",
+            std::process::id()
+        );
+        let listener = PipeListenerOptions::new()
+            .path(path.as_str())
+            .nonblocking(true)
+            .create_duplex::<Bytes>()?;
+        let client = DuplexPipeStream::connect_by_path_with_wait_mode(
+            path,
+            interprocess::ConnectWaitMode::Timeout(Duration::ZERO),
+        )?;
+        client.set_nonblocking(true)?;
+        let mut server = listener.accept()?;
+        server.assume_flushed();
+        let mut client = WindowsPipe(client);
+        let mut bytes = [0_u8; 8];
+        assert_eq!(
+            client.read(&mut bytes).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        assert_eq!(client.read(&mut []).unwrap(), 0);
+        server.write_all(b"READY")?;
+        assert_eq!(client.read(&mut bytes).unwrap(), 5);
+        assert_eq!(&bytes[..5], b"READY");
+        assert_eq!(
+            client.read(&mut bytes).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        // Every written byte was read above; avoid the dependency's background flush/linger
+        // retaining the server handle after this explicit disconnect.
+        server.assume_flushed();
+        drop(server);
+        assert_ne!(
+            client.read(&mut bytes).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "publishes basic activity to a real Discord desktop client; requires saved presence consent"]
+    fn real_discord_accepts_configured_activity() -> Result<(), Box<dyn std::error::Error>> {
+        let path =
+            clipcraft_engine::default_settings_path().ok_or("settings location unavailable")?;
+        let CommandOutput::RecordingSettings(settings) =
+            execute(Command::LoadRecordingSettings { path })?
+        else {
+            return Err("unexpected settings response".into());
+        };
+        if !settings.discord_presence.enabled {
+            return Err("enable Discord presence before explicitly running this live test".into());
+        }
+        // Browsing context has no game, match, media, path or title to disclose.
+        let CommandOutput::DiscordPresence(Some(target)) =
+            execute(Command::BuildDiscordPresence {
+                settings: settings.discord_presence,
+                context: Box::default(),
+            })?
+        else {
+            return Err("no valid Discord application identity configured".into());
+        };
+        let mut worker = PresenceWorker::start().map_err(|_| "Discord worker could not start")?;
+        let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+            worker
+                .publish(Some(target))
+                .map_err(|_| "Discord worker could not accept target")?;
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut previous = None;
+            while Instant::now() < deadline {
+                let current = worker.status();
+                if previous != Some(current) {
+                    println!("Discord live check: {}", current.label());
+                    previous = Some(current);
+                }
+                if current == PresenceStatus::Connected {
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err("Discord did not acknowledge the activity within ten seconds".into())
+        })();
+        // Always request a bounded clear/disconnect, including timeout/error paths.
+        worker.shutdown();
+        result
+    }
 }
 
 #[cfg(all(test, unix))]

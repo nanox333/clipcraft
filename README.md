@@ -90,7 +90,9 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   of capture. No media, paths, clip titles or account identifiers are published. Automatic setup uses a ClipCraft
   build with the shared ClipCraft identity configured once by the maintainer; end users then only
   enable the toggle. A Medal-inspired local card preview works without an ID, with original badges
-  and optional readable match details. No registered production ID is bundled yet. [Setup, exact fields and limits](docs/discord-presence.md).
+  and optional readable match details. The shared public application ID is now included in ordinary
+  builds, and Windows IPC has a real-client activity acknowledgment. Actual Discord rendering and
+  uploaded artwork still need verification. [Setup, exact fields and limits](docs/discord-presence.md).
 - **Settings and diagnostics:** recording, quality, audio, hotkey, storage, game allowlist, and
   general settings are stored locally. [348 known games](docs/game-catalog.md) are recognized
   automatically, with per-game exclusions and a global switch in Settings › Games. The toggle at

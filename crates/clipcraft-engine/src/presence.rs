@@ -2,9 +2,19 @@
 use crate::game_state::{GameIntegration, GameSnapshot};
 use serde::{Deserialize, Serialize};
 
-/// Public product identity supplied once by the maintainer, never a token or a borrowed ID.
+/// Public product identity supplied by the maintainer, never a token or a borrowed ID.
+const DEFAULT_APPLICATION_ID: &str = "1563496212554846279";
+
 pub fn shared_application_id() -> Option<&'static str> {
-    let id = option_env!("CLIPCRAFT_DISCORD_APPLICATION_ID")?;
+    build_application_id(option_env!("CLIPCRAFT_DISCORD_APPLICATION_ID"))
+}
+
+fn build_application_id(override_id: Option<&str>) -> Option<&str> {
+    // The release workflow can supply an empty repository variable. Ordinary builds and
+    // empty overrides must still use the configured product identity.
+    let id = override_id
+        .filter(|id| !id.is_empty())
+        .unwrap_or(DEFAULT_APPLICATION_ID);
     valid_application_id(id).then_some(id)
 }
 pub fn resolve_application_id<'a>(
@@ -206,6 +216,34 @@ fn display_match_label(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ordinary_and_empty_release_builds_use_the_configured_product_identity() {
+        for override_id in [None, Some("")] {
+            assert_eq!(
+                build_application_id(override_id),
+                Some(DEFAULT_APPLICATION_ID)
+            );
+        }
+        assert!(valid_application_id(DEFAULT_APPLICATION_ID));
+    }
+
+    #[test]
+    fn explicit_build_identity_is_validated_before_use() {
+        assert_eq!(
+            build_application_id(Some("234567890123456789")),
+            Some("234567890123456789")
+        );
+        for invalid in [
+            "invalid",
+            " ",
+            "000000000000000000",
+            "18446744073709551616",
+            "1\n23456789012345678",
+        ] {
+            assert!(build_application_id(Some(invalid)).is_none());
+        }
+    }
+
     fn settings() -> PresenceSettings {
         PresenceSettings {
             enabled: true,

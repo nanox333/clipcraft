@@ -887,8 +887,9 @@ input. **Verification:** fake-device tests plus named controller/OS integration 
 ### M10.2 — Optional Discord Rich Presence
 
 **Issue:** [#6](https://github.com/nanox333/clipcraft/issues/6). **Status:** Rust policy, IPC worker,
-General settings/CLI and mock verification implemented; real Discord identity/profile and target-OS
-IPC verification remain open. No registered ClipCraft Application ID is bundled.
+General settings/CLI and mock verification implemented. The maintainer-supplied shared identity and
+basic Windows IPC activity acknowledgment are verified; artwork/profile visibility, live games
+and macOS runtime still need live checks.
 
 **Requirements:** provide opt-in local Rich Presence that can show ClipCraft activity and, only if
 the user enables it, the captured game name and matching fresh map/mode/team score/hero information.
@@ -921,7 +922,11 @@ prototype plus independent live Discord/platform verification.
 ### M10.2a — Medal-inspired presence and automatic end-user setup
 
 **Issue:** [#7](https://github.com/nanox333/clipcraft/issues/7). **Status:** implementation complete;
-production identity/art upload and real Discord rendering remain open.
+maintainer-supplied public identity configured 2026-10-24, art upload and real Discord rendering open.
+Ordinary builds and empty release variables use the product ID; valid explicit overrides remain
+supported. Regression tests cover missing/empty build values and malformed overrides. Windows IPC
+empty reads now wait for data; a deterministic empty/data/disconnect regression and real Discord
+READY/activity acknowledgment pass. Profile artwork/audience and macOS remain open.
 **Requirements:** normal users enable one toggle; maintainer supplies a shared public build ID.
 Keep saved custom IDs in General's advanced section with Apply/reset. Show a local preview without
 connecting; use `Clipping <game>`, `with ClipCraft`, optional readable match details and original

@@ -733,6 +733,33 @@ Private generated configs/mock frames and verification records remain under the 
 root. See [setup/exact fields](discord-presence.md), [ADR 0023](adr/0023-discord-presence.md) and the
 [release checklist](release-checklist.md). Rich per-clip match metadata is not implemented here.
 
+### M10.2a — Shared identity and Windows IPC follow-up (2026-10-24)
+
+The maintainer supplied public ID `1563496212554846279`, now included in ordinary builds. New
+engine regressions cover missing/empty release values, valid explicit overrides and malformed
+nonempty values. The focused presence policy suite passes all six tests.
+
+The first real Windows check reproduced a transport failure: an empty nonblocking byte-pipe read
+returned zero and was treated as EOF before READY. The adapter now queries bounded available bytes
+with `PeekNamedPipe`, preserving genuine disconnect errors. A local real-pipe regression covers
+empty → data → empty → peer close without Discord or account data. The explicit live check then
+received READY and `SET_ACTIVITY` acknowledgment from the desktop client, with basic browsing
+context and saved presence consent, followed by bounded clear/disconnect. No raw payload or account
+data was logged. Run it only with Discord open and presence enabled:
+
+```text
+cargo test -p clipcraft-platform --lib real_discord_accepts_configured_activity -- --ignored --nocapture --test-threads=1
+```
+
+Artwork has been generated with the existing Rust exporter under ignored
+`target/discord-presence-assets-20261024`; uploading it and checking actual profile rendering,
+audience settings, opt-out visibility and macOS remain separate manual gates.
+
+The final desktop/CLI release build, `cargo xtask ci` and `cargo xtask docs-check origin/main`
+pass. The full gate log is `target/discord-presence-ci.log`; the release log is
+`target/discord-presence-release-build.log`. The live check was explicitly run outside the
+restricted environment against the user's running Windows Discord client.
+
 ### M10.2a — Medal-inspired card and shared setup (2026-10-23)
 
 `cargo xtask ci` passes **568 tests across 34 targets**, five existing ignored checks, fmt,
