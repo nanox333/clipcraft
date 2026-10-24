@@ -1748,6 +1748,8 @@ impl EditorState {
             .inner_margin(12)
             .show(ui, |ui| {
                 ui.set_min_height((height - 24.0).max(0.0));
+                // Every tab fills the panel, so the divider never moves when the tab changes.
+                ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     for (tab, name) in [
