@@ -5,6 +5,12 @@ SDR GPU scaling. This is a proposed optimization order, not implemented speedups
 physical-device performance. The review covers all 13 workspace packages; measurements below
 exercise only the stated generated workloads. No product code was changed for this audit.
 
+**Implementation follow-up:** M2.P2 implements priorities 1–3; see the current measurements and
+remaining limits in [performance.md](performance.md) and [ADR 0027](adr/0027-responsive-library.md).
+The table below remains the audit's proposed order at its stated baseline, not a list of still-open work.
+The editor browser already had virtual rows at that baseline; its remaining work was cached search,
+whereas the main clip grid required virtualization.
+
 ## Measured findings
 
 ### Idle keyboard focus drives continuous redraw
@@ -37,8 +43,7 @@ still produce periodic work without the focus loop; fixing it does not imply zer
 `library_content` calls `filtered_entries` to obtain a count and again for cards. That helper sorts
 before applying the selected category. `compare_media_names` allocates two lowercase strings per
 comparison, also used to break date-sort ties. `clip_grid` builds every card regardless of visibility;
-only thumbnail loading is visibility-gated. The editor Library similarly filters/builds its media
-cards each UI frame. Cache and virtualize these before adding more rendering infrastructure.
+only thumbnail loading is visibility-gated. The editor Library already virtualizes rows but rebuilds its search result list each UI frame. Cache and virtualize these before adding more rendering infrastructure.
 
 A standalone safe-Rust diagnostic extracted the current `visible_entries` and comparator **unchanged**
 from `main.rs`; a small entry struct supplies exactly the fields they read. Generated shuffled clip
@@ -69,7 +74,7 @@ No new benchmark executable is required or shipped by the product.
 | Order | Area and current evidence | Proposed change | Verification / main risk |
 | ---: | --- | --- | --- |
 | 1 | Idle UI: `main.rs::draw_focus_ring` schedules its own next frame; measured above. `update` also calls `kit::apply_theme` on every frame | Let input/state changes repaint the static ring; apply the theme at initialization or actual theme change. Preserve genuine playback/recording/worker/timer wakes | Native Tab/mouse/idle/minimized checks and repaint-count regression; visible focus/accessibility must remain correct. Low risk, small slice |
-| 2 | Library: repeated filter/sort and full card construction in `main.rs`, game-name normalization in `organize.rs`, eager editor Library cards | Revision-keyed view indices/counts and normalized search/sort/game keys; filter category before sort. Virtualize card rows with bounded overscan | 1k/5k/10k generated libraries, count/sort/filter parity, metadata invalidation, keyboard/context-menu/scroll checks; variable card height and focus need care. Medium scope |
+| 2 | Library: repeated filter/sort and full card construction in `main.rs`, game-name normalization in `organize.rs`, editor Library search recomputation | Revision-keyed view indices/counts and normalized search/sort/game keys; filter category before sort. Virtualize card rows with bounded overscan | 1k/5k/10k generated libraries, count/sort/filter parity, metadata invalidation, keyboard/context-menu/scroll checks; variable card height and focus need care. Medium scope |
 | 3 | Disk on UI: `library_scan.rs::poll_library_scan` calls `StoreLibraryScan`; `main.rs::save_probes`/`edit_library` execute index writes synchronously. `index.rs::write_index` serializes, writes, syncs and renames | One ordered bounded persistence worker, batched probe updates and explicit completion/errors. Keep one owner for merges and metadata edits. Map probe paths to indices rather than repeated `.find` in UI and `store_probes` | Delayed/failed disk, concurrent favorite/scan/probe edits, shutdown flush, recovery and stale-result tests. Never lose metadata or allow worker/UI overwrites; high correctness importance |
 | 4 | Preview/playback: `clipcraft-player::decode_at` requests a full source picture and converts all pixels to RGBA before editor scaling. M11.1i did not change decode | Add bounded display-size decode hints and/or native-plane reduction before RGBA; full detail for actual inspection/fullscreen as needed. Treat proxy generation as a later fallback | Compare aspect/colour/text geometry, exact seek/step and A/V sync at 1080p/4K; reduced native input may differ from current filter, so preview/export parity needs explicit review. Medium/high risk |
 | 5 | Export: `sequence::render` opens every segment in validation and again during rendering; repeated cuts of the same input recreate decoder caches | Reuse the current source across same-file cuts; separately validate each cut's bounds. Cache bounded source facts/preflight by file identity; evaluate a small LRU only after measuring one-source reuse | Count source opens for repeated cuts, exact reordered/seeking/fractional-cut output, changed/missing sources, memory/cancel/fallback/source preservation. One-source reuse first, no unbounded decoder pool |

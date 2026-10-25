@@ -1055,3 +1055,54 @@ Tab/Shift+Tab focus worked. Both original generated source SHA-256 hashes stayed
 Physical sound hardware is unavailable; this was the ordinary CPU-composition fallback, not a
 physical-GPU benchmark. Log: `/tmp/clipcraft-cleanup-ci.log`; dependency scan:
 `/tmp/clipcraft-cleanup-machete.log`. No test media, scripts or screenshots are tracked/shipped.
+
+## M2.P2 — Idle/library responsiveness (2026-10-25)
+
+Based on fetched main `8022671`; [issue #14](https://github.com/nanox333/clipcraft/issues/14).
+No new dependency, first-party unsafe, schema/index format or ignored test. Rust-only native/offline
+engine commands remain shared with CLI. [ADR 0027](adr/0027-responsive-library.md) records bounds,
+optimistic edits, ordered retry and shutdown limitations.
+
+The static-focus regression was run with the old self-repaint request temporarily restored:
+it failed with `0ns` next repaint. Restoring the fix passes with a focused response and no immediate
+next repaint. Controlled generated 10,000-entry tests compare cached paths, counts and game groups
+with the previous reference for all categories, Unicode queries, missing dates, both sorts and
+metadata invalidation. Repeated unchanged preparation reuses indices. Editor search preserves
+insertion order, reuses its Arc indices and observes media Arc/make_mut changes.
+
+Virtual-grid tests build fewer than 40 cards in a 1200×700 viewport with 10,000 entries. Home/End
+reach both ends with stable IDs. Pointer activation focuses cards; Tab/Shift+Tab cross a virtual
+row without egui double-advancing focus. Native testing exposed the pointer-focus detail before
+completion; the fix is covered by that regression. Text fields/popups retain normal key handling.
+
+Writer tests use controlled barriers for delayed work/admission/polling and exercise count/byte
+bounds (including active work and replies), ID exhaustion, poisoned locks, terminal join failure,
+explicit discard, and failure/panic → pause → ordered retry → drain on shutdown. A real engine
+round trip delays a persisted scan reply while UI favorites/collections, a probe batch and recorded
+label register behind it; the old reply does not undo newer UI state, and all fields survive index
+reload. Generated sources are byte-identical. Normal close cancels closure until accepted writes
+are acknowledged, then requests Close. Existing tests cover unindexed scan metadata preservation,
+latest folders, probe generations, saved-game tagging, failed persistence and source safety.
+
+The native app ran at **1440×900** and **960×640** on the private Xvfb/GL desktop. A temporary index
+containing exactly **5,000 generated/fixture entries** exercised visible rows, Home/End, search/sort
+controls and favorite toggling. A favorite survived normal shutdown in the index. The original
+small fixture index was restored after closing; both original media SHA-256 hashes were unchanged.
+Screenshots under ignored `.clipcraft-local/playback-priority-test/` include
+`performance-idle-fixed-focus.png`, `performance-library-1440x900.png`,
+`performance-library-5000-top.png`, `performance-library-5000-end-fixed.png`,
+`performance-library-5000-home-fixed.png`, `performance-library-5000-960x640.png`.
+Initial End testing identified the pointer-focus omission; final screenshots use the corrected
+card focus. Cloud process CPU and actual cache-helper timings/methods are in [performance](performance.md).
+These are not physical-GPU/audio, Windows/macOS runtime or gaming-PC measurements.
+
+`cargo xtask ci` passes **614 tests across 37 targets**, with five pre-existing ignored/manual
+checks: formatting, workspace/all targets, strict Clippy, layer/asset and dependency audit.
+`cargo xtask docs-check 8022671` passes. Logs: `/tmp/clipcraft-ui-performance-ci.log`,
+`/tmp/clipcraft-ui-performance-docs.log`. The native build uses the same normal development
+optimization policy with local dev/test debug symbols disabled to fit disk; no release flag changed.
+
+Normal close can wait on a non-preemptible filesystem operation. Failed-close discard and force
+quit/crash can lose unacknowledged **metadata**; source clips and the last published index remain.
+Startup index reads, JPEG loading and settings writes have not all moved off the UI. Remaining
+performance proposals are not declared complete by these tests.

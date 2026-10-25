@@ -336,3 +336,7 @@ Media decoding/font rasterization and GPU pixel upload/readback remain; physical
 Metal/DX12 runtime need separate verification. Preview and export use the same composition contract
 for the same RGBA input; codec/native pre-reduction and lossy H.264 can still change final pixels.
 See [ADR 0026](adr/0026-shared-gpu-compositor.md) for exact resource/failure limits.
+
+M2.P2 follow-up: the editor Library already used virtual rows. Its search now caches normalized
+names and insertion-order indices until the media Arc or query changes; imported/probed/relinked
+media invalidates identity. This does not reorder clips or change edit/export rendering.

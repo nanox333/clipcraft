@@ -1,6 +1,8 @@
 //! Browsing the library by favorites, collections, and games.
 
-use clipcraft_engine::{LibraryScanResult, MediaEntry, game_of, games};
+use clipcraft_engine::LibraryScanResult;
+#[cfg(test)]
+use clipcraft_engine::{MediaEntry, game_of};
 use eframe::egui;
 use egui::{Color32, RichText, Vec2};
 
@@ -22,6 +24,7 @@ pub enum LibraryFilter {
 
 impl LibraryFilter {
     /// True when `entry` belongs in this view.
+    #[cfg(test)]
     pub fn matches(&self, entry: &MediaEntry, directory: &str) -> bool {
         match self {
             Self::All => true,
@@ -165,11 +168,12 @@ fn section_header(ui: &mut egui::Ui, title: &str) -> egui::Response {
 pub fn rail(
     ui: &mut egui::Ui,
     result: &LibraryScanResult,
+    view: &crate::library_view::ViewCache,
     filter: &LibraryFilter,
     edit: &mut Option<CollectionEdit>,
 ) -> Vec<RailAction> {
     let mut actions = Vec::new();
-    let favorites = result.entries.iter().filter(|entry| entry.favorite).count();
+    let favorites = view.favorites;
     egui::ScrollArea::vertical()
         .id_salt("library_rail")
         .auto_shrink([false, false])
@@ -204,11 +208,7 @@ pub fn rail(
                     edit_row(ui, edit, &mut actions);
                     continue;
                 }
-                let count = result
-                    .entries
-                    .iter()
-                    .filter(|entry| entry.collections.contains(name))
-                    .count();
+                let count = view.collections.get(name).copied().unwrap_or(0);
                 let selected = matches!(filter, LibraryFilter::Collection(open) if open == name);
                 let response = rail_row(ui, name, count, selected, None);
                 if response.clicked() {
@@ -236,7 +236,7 @@ pub fn rail(
             }
 
             // Games.
-            let groups = games(&result.entries, &result.directory);
+            let groups = &view.games;
             section_header(ui, "Games");
             if groups.is_empty() {
                 ui.label(
@@ -248,7 +248,7 @@ pub fn rail(
             for group in groups {
                 let selected = matches!(filter, LibraryFilter::Game(open) if open.to_lowercase() == group.name.to_lowercase());
                 if rail_row(ui, &group.name, group.clips, selected, None).clicked() {
-                    actions.push(RailAction::Select(LibraryFilter::Game(group.name)));
+                    actions.push(RailAction::Select(LibraryFilter::Game(group.name.clone())));
                 }
             }
             ui.add_space(12.0);

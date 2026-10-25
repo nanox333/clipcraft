@@ -110,6 +110,32 @@ Implemented and measured; `cargo xtask ci` passes on Windows with serial tests a
 audit tool. The default parallel recovery test remains load-sensitive. Real-hardware capture,
 game-frame-time and release-soak checks remain open; see the review for details.
 
+### M2.P2 — Idle, library view and index-write responsiveness
+
+**Issue:** [#14](https://github.com/nanox333/clipcraft/issues/14). **Status:** implemented for audit
+priorities 1–3; decoder/audio/GPU and other proposed work remain separate.
+**Requirements:** stop static focus-ring self-repaint, initialize the theme once; cache normalized
+keys/indices/counts and virtualize main library rows; retain stable keyboard navigation and editor
+browser insertion order. One ordered worker owns desktop scan/edit/probe/recorded-label writes.
+Rebase newer edits on scan replies; batch/map probe paths; preserve metadata and source media.
+**Limits:** pure Rust/native/offline, same engine commands/schema/index format, no new dependency,
+unsafe or hardware claim. 64 outstanding jobs/128 MiB accounted payload; two 48 MiB scan reservations
+maximum. Transient working models/copies and bounded fallback/journal are extra, not total RSS.
+Startup reads/JPEG cache/settings writes remain outside this change. Non-preemptible storage can
+keep normal closing pending; crash/force quit or explicit failed-close discard can lose pending
+metadata. Keep CPU/media/platform behavior, atomic index publication and errors.
+**Acceptance/verification:** failing-before/passing-after focus regression; 10k generated reference
+sort/filter/group/count/invalidation tests; bounded widgets, stable pointer/Tab/Shift+Tab/Home/End
+focus across virtual rows; editor search cache updates on Arc mutation. Controlled delayed writes
+prove UI admission/poll remains available; ordered retry, panic/poison/capacity/exhaustion, stale
+scan/new edit/global collection/probe/save reload and normal-close acknowledgement checks. Native
+1440×900/960×640, 5k clips, keyboard, favorite persistence and unchanged source hashes; full quality/docs
+gates. Timings are manual evidence, not CI thresholds.
+**Affected:** desktop UI/workers and engine probe-batch path lookup. No new operation ID.
+**Docs:** README/gaps/roadmap/backlog, architecture/editor/testing/performance and ADR 0027.
+**Dependencies/estimate:** audit at 8022671 and existing scanner/index; three sequential portable
+slices. Physical Windows/macOS/storage/game evidence remains separate.
+
 ### M2.1 — Windows display/window capture provider
 
 **Status:** implemented to compile; runtime evidence open — Windows Graphics Capture and global

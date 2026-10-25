@@ -340,3 +340,73 @@ Matching-size source frame upload to egui, CPU fallback and GPU transfer costs r
 structural removal of unused work, not a measured FPS/total-RSS or physical-GPU speedup claim.
 Uncalled game/time wrappers and the unintegrated audio-timeline policy are also removed; active
 recording/audio/timing behavior and independent pixel reference tests are unchanged.
+
+## M2.P2 — Idle and library responsiveness (2026-10-25)
+
+Implements the first three priorities of the [audit](performance-audit-2026-10-25.md) at `8022671`:
+static focus redraw removal/theme initialization, cached views/virtual cards, and serial background
+index writes. Remaining decode/audio/capture/GPU proposals stay separate. No codec/quality/time or
+source media change. See [ADR 0027](adr/0027-responsive-library.md) for ownership and bounds.
+
+### Native idle observation
+
+Same managed Debian 13 cloud desktop, 1440×900 Xvfb/GL software rendering, development optimization
+policy and isolated generated library as the audit; debug symbols locally omitted, Discord/capture
+disabled. Process CPU includes its renderer threads, with 100% meaning one logical CPU. Sequential
+3-second observations, not release/gaming-PC budgets or tail-latency measurements:
+
+| Condition | Audit baseline | M2.P2 |
+| --- | ---: | ---: |
+| Mouse idle before Tab | 5.67% | 5.33% |
+| Keyboard-focus idle after Tab | 347.58% | 5.67% |
+| Mouse idle after focus cleared | 5.00% | 5.67% |
+
+Removing the focus ring's request for its own next frame breaks the loop; legitimate input,
+recording/transport/status and worker wakes remain. A regression fails with the old request
+restored (`0ns` next repaint), and passes after removal. Theme setup also moves out of each update.
+Short observations on a shared software-rendered development host are evidence of this idle bug,
+not a universal CPU/power claim. Logs: `/tmp/clipcraft-idle-audit.json`,
+`/tmp/clipcraft-idle-after.json`, `/tmp/clipcraft-focus-before-test.log`,
+`/tmp/clipcraft-focus-after-test.log`.
+
+### Actual cache helper diagnostic
+
+The standalone Rust diagnostic includes the **actual `library_view.rs`** implementation and links
+the built engine for real `MediaEntry` types. The old `visible_entries`/comparator are extracted
+unchanged as the reference. Generated shuffled Unicode names/paths/dates and explicit fixture game,
+All clips/empty query/name order. Result order is asserted equal. One warm-up, seven alternating
+samples, median; Rust 1.99.1, `rustc -O`, same process/shared CPU. Generation is outside timing:
+
+| Entries | Old count + cards: two sorts | New model + view rebuild | Unchanged view prepare |
+| ---: | ---: | ---: | ---: |
+| 1,000 | 5.353 ms | 0.309 ms | 0.000091 ms |
+| 5,000 | 32.660 ms | 1.857 ms | 0.000092 ms |
+| 10,000 | 77.887 ms | 3.571 ms | 0.000092 ms |
+
+The new rebuild includes normalized names/game keys, sidebar aggregates and both sort orders;
+steady prepare is averaged over 1,000 calls per measured sample. These are algorithm/helper
+measurements, **not full UI frame times**: no egui drawing, GPU upload, JPEG I/O, filesystem scan,
+index sync, real media or game contention. Visible-card work is verified separately: the 10,000-entry
+1200×700 regression builds fewer than 40 cards and reaches both ends by keyboard. Native 5,000-entry
+screenshots show scrolling, Home/End, resizing and favorite persistence. Cached JPEG loads remain
+on the UI, so scrolling slow storage can still stall. The editor already had virtual rows; it now
+caches insertion-order search results by Arc identity/query rather than rebuilding them each frame.
+Source/log: `/tmp/clipcraft-library-cache-bench.rs`, `/tmp/clipcraft-library-cache-bench.log`.
+
+### Persistence changes and remaining costs
+
+One worker runs existing scan-merge, metadata-edit, probe-batch and captured-label commands in order.
+The UI no longer serializes/syncs/renames the index for them. Delayed fake storage proves admission
+and polling remain usable; controlled scan completion followed by newer edits/probes/registration
+survives reload without reverting optimistic UI edits. Failure/panic pauses at the head for retry,
+not reordering. Probe paths use maps instead of repeated linear searches in UI and persisted batches.
+No end-to-end disk latency or storage-throughput improvement is claimed; writes still load/validate/
+serialize the bounded index, and optimistic edit staging still clones current metadata.
+
+64 outstanding jobs include active work/replies; 128 MiB accounted payload, 48 MiB reserved per scan,
+at most two concurrent scan reservations. UI data, transient command copies/loaded index, one
+coalesced failure fallback and the <=64-edit rebase journal are additional bounded storage, not
+process RSS. Normal shutdown waits for acknowledgement; failed saving can be retried or explicitly
+discarded. Non-preemptible storage can keep closing pending, and force quit/crash can lose pending
+metadata. Media is untouched and atomic index publication remains. Startup reads, cached JPEG loads,
+settings writes and some explicit file metadata checks remain separate optimization candidates.

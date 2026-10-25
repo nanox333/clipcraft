@@ -1208,9 +1208,15 @@ impl ClipCraftApp {
                     if let (Some(index_path), Some(directory)) =
                         (self.index_path.clone(), report.clip.path.parent())
                     {
-                        metadata_warning = !matches!(clipcraft_engine::execute(clipcraft_engine::Command::RegisterSavedClip {
-                            index_path, directory: directory.to_path_buf(), path: report.clip.path.clone(), game: game.clone(),
-                        }), Ok(clipcraft_engine::CommandOutput::LibraryScan(result)) if result.persisted);
+                        metadata_warning = self
+                            .index_store
+                            .submit(crate::library_store::Write::Saved {
+                                index: index_path,
+                                directory: directory.to_path_buf(),
+                                path: report.clip.path.clone(),
+                                game: game.clone(),
+                            })
+                            .is_err();
                     }
                 }
                 let name = report
@@ -1903,13 +1909,17 @@ mod tests {
                 }))
                 .unwrap();
             app.poll_save();
-            assert_eq!(app.capture.notice.as_ref().unwrap().error, !persist);
             let deadline = Instant::now() + Duration::from_secs(5);
-            while app.scanning.is_some() {
+            while app.scanning.is_some()
+                || (app.index_store.pending() > 0 && app.index_store.error.is_none())
+                || app.library.is_none()
+            {
                 assert!(Instant::now() < deadline);
+                app.poll_index_store(&egui::Context::default());
                 app.poll_library_scan(&egui::Context::default());
                 std::thread::yield_now();
             }
+            assert_eq!(app.index_store.error.is_some(), !persist);
             let library = app.library.as_ref().unwrap();
             assert_eq!(
                 clipcraft_engine::games(&library.entries, &library.directory),
@@ -1932,6 +1942,7 @@ mod tests {
                     Some("Captured Game")
                 );
             }
+            app.index_store.finish();
             let _ = std::fs::remove_dir_all(root);
         }
     }

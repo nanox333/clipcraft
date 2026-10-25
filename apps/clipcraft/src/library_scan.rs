@@ -1,10 +1,10 @@
-//! A replaceable traversal worker. Only the UI thread writes library metadata.
+//! Replaceable traversal; the serial library store owns persisted metadata mutations.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 
-use clipcraft_engine::{Command, CommandOutput, EngineError, LibraryScanResult, execute};
+use clipcraft_engine::{Command, CommandOutput, EngineError, LibraryScanResult};
 use eframe::egui;
 
 use crate::ClipCraftApp;
@@ -105,6 +105,11 @@ impl ClipCraftApp {
     pub(crate) fn scan_library(&mut self) {
         // Dropping a replaced worker cancels traversal and prevents stale results being applied.
         self.scanning = None;
+        let Some(generation) = self.index_store.generation.checked_add(1) else {
+            self.error = Some("Restart ClipCraft before scanning again.".into());
+            return;
+        };
+        self.index_store.generation = generation;
         self.error = None;
         let directory = self.directory_text.trim().to_owned();
         let path = PathBuf::from(&directory);
@@ -154,53 +159,28 @@ impl ClipCraftApp {
         if job.directory != self.directory_text.trim() {
             return;
         }
-        let result = result.and_then(|mut scan| {
-            if let Some(index_path) = self.index_path.clone() {
-                scan = match execute(Command::StoreLibraryScan { index_path, scan })? {
-                    CommandOutput::LibraryScan(scan) => scan,
-                    _ => return Err(EngineError::IndexSaveFailed),
-                };
+        let result = result.and_then(|scan| {
+            if let Some(index) = self.index_path.clone() {
+                self.index_store
+                    .submit(crate::library_store::Write::Scan {
+                        index,
+                        scan,
+                        generation: self.index_store.generation,
+                    })
+                    .map_err(|error| {
+                        self.error = Some(error);
+                        EngineError::IndexSaveFailed
+                    })?;
+                Ok(None)
+            } else {
+                Ok(Some(scan))
             }
-            if !scan.persisted
-                && let Some(previous) = self
-                    .library
-                    .as_ref()
-                    .filter(|previous| previous.directory == scan.directory)
-            {
-                scan.entries =
-                    clipcraft_engine::merge_library_entries(Some(&previous.entries), scan.entries);
-                scan.collections = previous.collections.clone();
-            }
-            // In-memory fallback if no index is configured, or persistence was unavailable.
-            for entry in &mut scan.entries {
-                if entry.recorded_game.is_none() {
-                    entry.recorded_game = self.saved_games.get(&entry.path).cloned();
-                }
-            }
-            Ok(scan)
         });
         match result {
-            Ok(result) => {
-                if self.index_path.is_some() && !result.persisted {
-                    self.error = Some(EngineError::IndexSaveFailed.to_string());
-                }
-                if self
-                    .library
-                    .as_ref()
-                    .is_none_or(|old| old.directory != result.directory)
-                {
-                    self.probe_attempted.clear();
-                    self.thumbnail_attempted.clear();
-                    self.probe_generation = self.probe_generation.wrapping_add(1);
-                    self.probe_receiver = None;
-                    self.thumbnail_receiver = None;
-                    self.unsaved_probes.clear();
-                }
-                self.directory_text = result.directory.clone();
-                self.library = Some(result);
-                self.needs_probe = true;
-                self.needs_thumbnails = true;
+            Ok(Some(result)) => {
+                self.apply_library_scan(result);
             }
+            Ok(None) => {}
             Err(EngineError::ScanCancelled) => {}
             Err(error) => {
                 if error == EngineError::DirectoryUnavailable
@@ -216,6 +196,49 @@ impl ClipCraftApp {
                 self.error = Some(error.to_string());
             }
         }
+    }
+    pub(crate) fn apply_library_scan(&mut self, mut result: LibraryScanResult) {
+        if !result.persisted
+            && let Some(current) = self
+                .library
+                .as_ref()
+                .filter(|l| l.directory == result.directory)
+        {
+            result.entries =
+                clipcraft_engine::merge_library_entries(Some(&current.entries), result.entries);
+            result.collections = current.collections.clone();
+        }
+        for entry in &mut result.entries {
+            if entry.recorded_game.is_none() {
+                entry.recorded_game = self.saved_games.get(&entry.path).cloned();
+            }
+        }
+        if self.index_path.is_some() && !result.persisted {
+            self.error = Some(EngineError::IndexSaveFailed.to_string());
+        }
+        if self
+            .library
+            .as_ref()
+            .is_none_or(|old| old.directory != result.directory)
+        {
+            self.probe_attempted.clear();
+            self.thumbnail_attempted.clear();
+            self.probe_generation = self.probe_generation.wrapping_add(1);
+            self.probe_receiver = None;
+            self.thumbnail_receiver = None;
+            self.unsaved_probes.clear();
+        }
+        self.directory_text = result.directory.clone();
+        self.probe_positions = result
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.path.clone(), i))
+            .collect();
+        self.library = Some(result);
+        self.library_view.invalidate();
+        self.needs_probe = true;
+        self.needs_thumbnails = true;
     }
 }
 

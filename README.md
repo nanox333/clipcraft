@@ -46,6 +46,11 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   a cancellable desktop worker; the CLI uses the same bounded traversal. Game-managed saves remember
   the game active when Save was pressed. Manual labels override that captured game, followed by
   folder/filename guesses; labels survive rescans and restarts in the local index.
+  Search/sort results and sidebar counts are cached; the grid builds visible rows and supports
+  keyboard navigation across offscreen clips. Static keyboard focus no longer keeps redrawing.
+  Index writes run on one bounded background worker, with ordered edits and retry on failure.
+  Closing waits for accepted writes; the app warns before discarding unsaved metadata. Abrupt
+  termination can lose unacknowledged metadata; source clips remain untouched.
 - **Quick trim and export:** mark a range in the player and save an original-quality trim, or
   choose an estimated 10 MB, 25 MB, or custom 1–500 MB small-file export. Compression uses the Rust
   software H.264 encoder, preserves AAC audio tracks, and reduces video to at most 720p/30 fps

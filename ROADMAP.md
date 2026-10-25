@@ -30,6 +30,10 @@ artwork and a reproducible brand kit. M10.2c replaces three typographic game pla
 Discord-hosted icon references; no publisher image files or runtime lookup service are bundled.
 Discord upload and profile rendering are separate verification steps.
 
+M2.P2 fixes idle-focus redraws, caches library views and virtualizes cards, and serializes index
+writes off the UI with explicit retry/shutdown behavior. Generated/cloud measurements and limits
+are in [the performance review](docs/performance.md); broader audit proposals remain planned.
+
 Performance work M2.P1 has synthetic CPU measurements for shared replay snapshots, GOP boundary
 caching and redundant pixel-write removal. [The review](docs/performance.md) records the results
 and priorities across the workspace. Windows/AMD has generated-window GPU-surface capture and

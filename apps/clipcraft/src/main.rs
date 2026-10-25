@@ -14,7 +14,10 @@ mod editor_recovery;
 mod game_data;
 mod game_scan;
 mod kit;
+mod library_grid;
 mod library_scan;
+mod library_store;
+mod library_view;
 mod organize;
 mod playback;
 mod presence;
@@ -64,6 +67,7 @@ fn main() -> eframe::Result<()> {
         Box::new(|creation| {
             // Fonts must be installed before the first frame uses a named family.
             kit::install_fonts(&creation.egui_ctx);
+            kit::apply_theme(&creation.egui_ctx);
             if minimized {
                 creation
                     .egui_ctx
@@ -82,8 +86,11 @@ fn main() -> eframe::Result<()> {
 struct ClipCraftApp {
     directory_text: String,
     library: Option<LibraryScanResult>,
+    library_view: library_view::ViewCache,
+    grid: library_grid::GridState,
     scanning: Option<library_scan::ScanJob>,
     scan_worker: Option<library_scan::ScanWorker>,
+    index_store: library_store::State,
     saved_games: std::collections::HashMap<String, String>,
     selected: Option<MediaEntry>,
     error: Option<String>,
@@ -102,6 +109,7 @@ struct ClipCraftApp {
     probe_receiver: Option<mpsc::Receiver<ProbeMessage>>,
     /// Incremented per worker so results from a replaced folder are ignored.
     probe_generation: u64,
+    probe_positions: std::collections::HashMap<String, usize>,
     needs_probe: bool,
     /// Where thumbnail JPEGs are cached; `None` disables thumbnails.
     thumbnail_dir: Option<PathBuf>,
@@ -212,7 +220,8 @@ enum Page {
 
 impl eframe::App for ClipCraftApp {
     fn update(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
-        kit::apply_theme(context);
+        self.index_store.wake = context.clone();
+        self.poll_index_store(context);
         if self.needs_probe {
             self.needs_probe = false;
             self.start_probing(context);
@@ -251,12 +260,14 @@ impl eframe::App for ClipCraftApp {
         self.poll_find(context);
         self.draw_screen(context);
         self.draw_focus_ring(context);
+        self.index_save_status(context);
         resize_from_the_edges(context);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.presence.shutdown();
         self.editor.flush_recovery();
+        self.index_store.finish();
     }
 }
 
@@ -302,7 +313,17 @@ impl ClipCraftApp {
     fn draw_focus_ring(&mut self, context: &egui::Context) {
         let (navigated, clicked) = context.input(|input| {
             (
-                input.key_pressed(egui::Key::Tab),
+                [
+                    egui::Key::Tab,
+                    egui::Key::ArrowUp,
+                    egui::Key::ArrowDown,
+                    egui::Key::Home,
+                    egui::Key::End,
+                    egui::Key::PageUp,
+                    egui::Key::PageDown,
+                ]
+                .into_iter()
+                .any(|key| input.key_pressed(key)),
                 input.pointer.any_pressed(),
             )
         });
@@ -339,7 +360,6 @@ impl ClipCraftApp {
             Stroke::new(2.0_f32, Color32::WHITE),
             egui::StrokeKind::Outside,
         );
-        context.request_repaint();
     }
 
     /// Draws the current screen: the library, the player, or settings, with their chrome.
@@ -565,6 +585,17 @@ impl ClipCraftApp {
 
     /// Probes clips that have no saved facts on a worker thread so the window stays responsive.
     fn start_probing(&mut self, context: &egui::Context) {
+        self.probe_positions = self
+            .library
+            .as_ref()
+            .map(|l| {
+                l.entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| (e.path.clone(), i))
+                    .collect()
+            })
+            .unwrap_or_default();
         let Some(library) = self.library.as_ref() else {
             return;
         };
@@ -627,11 +658,13 @@ impl ClipCraftApp {
                 let Ok(probe) = probe else {
                     return;
                 };
-                if let Some(entry) = self
-                    .library
-                    .as_mut()
-                    .and_then(|library| library.entries.iter_mut().find(|entry| entry.path == path))
-                {
+                if let Some(entry) = self.library.as_mut().and_then(|library| {
+                    if let Some(&index) = self.probe_positions.get(&path) {
+                        library.entries.get_mut(index).filter(|e| e.path == path)
+                    } else {
+                        library.entries.iter_mut().find(|entry| entry.path == path)
+                    }
+                }) {
                     entry.probe = Some(probe.clone());
                     self.unsaved_probes.push((path, probe));
                 }
@@ -653,11 +686,15 @@ impl ClipCraftApp {
             return;
         }
         // Probe facts are a cache: failing to save them only means probing again next launch.
-        let _ = execute(Command::StoreProbes {
-            index_path,
+        let probes = std::mem::take(&mut self.unsaved_probes);
+        if let Err(error) = self.index_store.submit(library_store::Write::Probes {
+            index: index_path,
             directory: library.directory.clone(),
-            probes: std::mem::take(&mut self.unsaved_probes),
-        });
+            probes: probes.clone(),
+        }) {
+            self.unsaved_probes = probes;
+            self.error = Some(error);
+        }
     }
 
     /// Refresh asynchronously; an unavailable tree retains the previous indexed view.
@@ -784,6 +821,10 @@ impl ClipCraftApp {
     }
 
     fn library_view(&mut self, ui: &mut egui::Ui) {
+        if let Some(result) = &self.library {
+            self.library_view
+                .prepare(result, &self.filter, &self.search_text, self.sort_newest);
+        }
         let show_rail = self.library.is_some() && ui.available_width() >= 720.0;
         let mut rail_actions = Vec::new();
         if show_rail {
@@ -796,8 +837,13 @@ impl ClipCraftApp {
                     Layout::top_down(Align::Min),
                     |ui| {
                         if let Some(result) = self.library.as_ref() {
-                            rail_actions =
-                                organize::rail(ui, result, &self.filter, &mut self.collection_edit);
+                            rail_actions = organize::rail(
+                                ui,
+                                result,
+                                &self.library_view,
+                                &self.filter,
+                                &mut self.collection_edit,
+                            );
                         }
                     },
                 );
@@ -928,12 +974,25 @@ impl ClipCraftApp {
     }
 
     fn edit_library(&mut self, edit: MetaEdit) {
+        if self.index_store.closing {
+            return;
+        }
         self.error = None;
-        let Some(result) = self.library.as_mut() else {
+        let Some(mut result) = self.library.clone() else {
             return;
         };
         if let Err(error) = apply_edit(&mut result.entries, &mut result.collections, &edit) {
             self.error = Some(error.to_string());
+            return;
+        }
+        if let Some(index) = self.index_path.clone()
+            && let Err(error) = self.index_store.submit(library_store::Write::Edit {
+                index,
+                directory: result.directory.clone(),
+                edit,
+            })
+        {
+            self.error = Some(error);
             return;
         }
         if let Some(open) = self.selected.as_mut()
@@ -941,36 +1000,122 @@ impl ClipCraftApp {
         {
             *open = fresh.clone();
         }
-        let directory = result.directory.clone();
-        if let Some(index_path) = self.index_path.clone()
-            && let Err(error) = execute(Command::EditLibraryMeta {
-                index_path,
-                directory,
-                edit,
-            })
-        {
-            self.error = Some(error.to_string());
+        self.probe_positions = result
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.path.clone(), i))
+            .collect();
+        self.library = Some(result);
+        self.library_view.invalidate();
+    }
+
+    fn poll_index_store(&mut self, context: &egui::Context) {
+        for event in self.index_store.poll() {
+            if let library_store::Event::Fallback { generation, scan } = event {
+                if generation == self.index_store.generation
+                    && scan.directory == self.directory_text.trim()
+                {
+                    self.apply_library_scan(scan);
+                }
+                continue;
+            }
+            if let library_store::Event::Done {
+                id,
+                generation,
+                scan: Some(mut scan),
+                ..
+            } = event
+            {
+                if generation == Some(self.index_store.generation)
+                    && scan.directory == self.directory_text.trim()
+                {
+                    match self.index_store.rebase(id, &mut scan) {
+                        Ok(()) => {
+                            // Probe facts arriving after this write remain current for unchanged files.
+                            if let Some(current) = self
+                                .library
+                                .as_ref()
+                                .filter(|l| l.directory == scan.directory)
+                            {
+                                let by_path: std::collections::HashMap<_, _> =
+                                    current.entries.iter().map(|e| (&e.path, e)).collect();
+                                for entry in &mut scan.entries {
+                                    if let Some(old) = by_path.get(&entry.path)
+                                        && old.size_bytes == entry.size_bytes
+                                        && old.modified_unix_seconds == entry.modified_unix_seconds
+                                        && old.probe.is_some()
+                                    {
+                                        entry.probe = old.probe.clone();
+                                    }
+                                }
+                            }
+                            self.apply_library_scan(scan);
+                        }
+                        Err(error) => {
+                            self.error = Some(format!(
+                                "The refresh could not preserve pending changes: {error} Refresh again after saving."
+                            ))
+                        }
+                    }
+                }
+                self.index_store.completed(id);
+            }
         }
+        if self.index_store.pending() == 0
+            && !self.unsaved_probes.is_empty()
+            && self.probe_receiver.is_none()
+        {
+            self.save_probes();
+        }
+        if self.index_store.pending() > 0 && self.index_store.error.is_none() {
+            context.request_repaint_after(std::time::Duration::from_millis(150));
+        }
+    }
+    fn index_save_status(&mut self, context: &egui::Context) {
+        if context.input(|i| i.viewport().close_requested()) && self.index_store.pending() > 0 {
+            context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.index_store.closing = true;
+        }
+        if self.index_store.closing && self.index_store.pending() == 0 {
+            context.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        if !self.index_store.visible() {
+            return;
+        }
+        egui::Window::new("Library changes")
+            .id(egui::Id::new("library-save-status"))
+            .anchor(egui::Align2::RIGHT_BOTTOM, [-18.0, -18.0])
+            .collapsible(false)
+            .resizable(false)
+            .show(context, |ui| {
+                if let Some(error) = &self.index_store.error {
+                    ui.label(error);
+                    ui.horizontal(|ui| {
+                        if ui.button("Retry saving").clicked() {
+                            self.index_store.retry();
+                        }
+                        if self.index_store.closing
+                            && ui.button("Close without saving pending changes").clicked()
+                        {
+                            self.index_store.discard();
+                        }
+                    });
+                } else {
+                    ui.label(if self.index_store.closing {
+                        "Saving library changes before closing…"
+                    } else {
+                        "Saving library changes…"
+                    });
+                    ui.spinner();
+                }
+            });
     }
 
     fn library_content(&mut self, ui: &mut egui::Ui) {
-        let (visible_count, total_count) = self.library.as_ref().map_or((0, 0), |result| {
-            (
-                filtered_entries(
-                    &result.entries,
-                    &self.filter,
-                    &result.directory,
-                    &self.search_text,
-                    self.sort_newest,
-                )
-                .len(),
-                result
-                    .entries
-                    .iter()
-                    .filter(|entry| self.filter.matches(entry, &result.directory))
-                    .count(),
-            )
-        });
+        let (visible_count, total_count) =
+            (self.library_view.indices.len(), self.library_view.total);
 
         // Title row.
         ui.horizontal(|ui| {
@@ -1089,26 +1234,23 @@ impl ClipCraftApp {
         match self.library.as_ref() {
             Some(result) if result.entries.is_empty() => self.empty_state(ui),
             Some(result) => {
-                let entries = filtered_entries(
-                    &result.entries,
+                // Search/sort controls above may have changed this frame.
+                self.library_view.prepare(
+                    result,
                     &self.filter,
-                    &result.directory,
                     &self.search_text,
                     self.sort_newest,
                 );
+                let entries = &self.library_view.indices;
                 if entries.is_empty() && self.search_text.trim().is_empty() {
                     let (headline, help) = self.filter.empty_message();
                     empty_panel(ui, Icon::Library, headline, help, None);
                 } else if entries.is_empty() {
                     self.no_search_results(ui);
                 } else {
-                    card_action = Self::clip_grid(
-                        ui,
-                        &entries,
-                        &mut self.thumbs,
-                        &result.directory,
-                        &result.collections,
-                    );
+                    card_action = self
+                        .grid
+                        .show(ui, result, &self.library_view, &mut self.thumbs);
                 }
             }
             None => self.first_scan_state(ui),
@@ -1192,57 +1334,6 @@ impl ClipCraftApp {
             "Try another title or clear the search field.",
             None,
         );
-    }
-
-    fn clip_grid(
-        ui: &mut egui::Ui,
-        entries: &[&MediaEntry],
-        thumbs: &mut thumbs::Thumbnails,
-        directory: &str,
-        collections: &[String],
-    ) -> Option<ClipCardAction> {
-        let available_width = ui.available_width();
-        let columns: usize = if available_width < 560.0 {
-            1
-        } else if available_width < 850.0 {
-            2
-        } else if available_width < 1_140.0 {
-            3
-        } else if available_width < 1_430.0 {
-            4
-        } else if available_width < 1_720.0 {
-            5
-        } else {
-            6
-        };
-        let card_width = ((available_width - (columns.saturating_sub(1) as f32 * 16.0))
-            / columns as f32)
-            .max(180.0);
-        let mut action = None;
-
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.columns(columns, |column_uis| {
-                for (index, entry) in entries.iter().enumerate() {
-                    let Some(column) = column_uis.get_mut(index % columns) else {
-                        continue;
-                    };
-                    let game = game_of(entry, directory);
-                    if let Some(clicked) = clip_card(
-                        column,
-                        entry,
-                        card_width,
-                        thumbs,
-                        game.as_deref(),
-                        collections,
-                    ) {
-                        action = Some(clicked);
-                    }
-                    column.add_space(16.0);
-                }
-            });
-        });
-
-        action
     }
 
     fn clip_details(&mut self, ui: &mut egui::Ui, entry: &MediaEntry) {
@@ -2335,10 +2426,8 @@ fn clip_card(
     const BODY_HEIGHT: f32 = 66.0;
     const FOOTER_HEIGHT: f32 = 42.0;
     let thumb_height = (width * 0.5625).clamp(120.0, 240.0);
-    let (card, response) = ui.allocate_exact_size(
-        Vec2::new(width, thumb_height + BODY_HEIGHT + FOOTER_HEIGHT),
-        egui::Sense::click(),
-    );
+    let (_, card) = ui.allocate_space(Vec2::new(width, thumb_height + BODY_HEIGHT + FOOTER_HEIGHT));
+    let response = ui.interact(card, library_grid::card_id(entry), egui::Sense::click());
     let thumbnail = egui::Rect::from_min_size(card.min, Vec2::new(width, thumb_height));
     let footer = egui::Rect::from_min_max(
         egui::pos2(card.left(), card.bottom() - FOOTER_HEIGHT),
@@ -2396,6 +2485,11 @@ fn clip_card(
             format!("Favorite {}", entry.title),
         )
     });
+    for control in [&response, &copy, &reveal, &heart] {
+        if control.clicked() {
+            control.request_focus();
+        }
+    }
     let hovered = response.hovered() || copy.hovered() || reveal.hovered() || heart.hovered();
     if hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -2779,6 +2873,7 @@ fn paint_video_placeholder(
 }
 
 /// The clips of the current view, searched and sorted.
+#[cfg(test)]
 fn filtered_entries<'a>(
     entries: &'a [MediaEntry],
     filter: &LibraryFilter,
@@ -2791,6 +2886,7 @@ fn filtered_entries<'a>(
     visible
 }
 
+#[cfg(test)]
 fn visible_entries<'a>(
     entries: &'a [MediaEntry],
     query: &str,
@@ -2814,6 +2910,7 @@ fn visible_entries<'a>(
     visible
 }
 
+#[cfg(test)]
 fn compare_media_names(left: &MediaEntry, right: &MediaEntry) -> std::cmp::Ordering {
     left.title
         .to_lowercase()
@@ -2881,7 +2978,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn media_entry(title: &str, modified_unix_seconds: Option<u64>) -> MediaEntry {
+    pub(crate) fn media_entry(title: &str, modified_unix_seconds: Option<u64>) -> MediaEntry {
         MediaEntry {
             path: format!("/clips/{title}"),
             title: title.to_owned(),
@@ -2898,10 +2995,11 @@ mod tests {
         }
     }
 
-    fn finish_scan(app: &mut ClipCraftApp) {
+    pub(crate) fn finish_scan(app: &mut ClipCraftApp) {
         let context = egui::Context::default();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while app.scanning.is_some() {
+        while app.scanning.is_some() || app.index_store.pending() > 0 {
+            app.poll_index_store(&context);
             assert!(
                 std::time::Instant::now() < deadline,
                 "scan worker timed out"
@@ -2920,6 +3018,34 @@ mod tests {
         ));
         fs::create_dir(&directory).expect("create temporary test directory");
         directory
+    }
+
+    #[test]
+    fn static_keyboard_focus_ring_does_not_schedule_continuous_repaints() {
+        let context = crate::kit::test_context();
+        let mut app = ClipCraftApp {
+            keyboard_focus: true,
+            ..Default::default()
+        };
+        let mut delay = std::time::Duration::ZERO;
+        for _ in 0..8 {
+            let output = context.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let button = ui.button("Focused control");
+                    if ui.memory(|m| m.focused()).is_none() {
+                        button.request_focus();
+                    }
+                });
+                app.draw_focus_ring(ctx);
+            });
+            delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+        }
+        assert!(app.keyboard_focus);
+        assert!(context.memory(|m| m.focused()).is_some());
+        assert!(
+            delay > std::time::Duration::from_secs(1),
+            "static ring requested repaint after {delay:?}"
+        );
     }
 
     #[test]
@@ -2972,6 +3098,7 @@ mod tests {
         assert!(app.error.is_some());
         app.error = None;
 
+        finish_scan(&mut app);
         let relaunched = ClipCraftApp::restored_from(Some(index_path));
         let restored = relaunched.library.as_ref().unwrap();
         assert_eq!(restored.collections, ["Best"]);
@@ -3051,6 +3178,7 @@ mod tests {
         app.recording.shape = OutputShape::Wide16x9;
         app.recording.framing = Framing::Letterbox;
         app.save_recording_settings();
+        finish_scan(&mut app);
         let relaunched = ClipCraftApp::restored_from(Some(index_path));
         assert_eq!(relaunched.recording.container, Container::Mkv);
         assert_eq!(relaunched.recording.framing, Framing::Letterbox);
@@ -3251,6 +3379,7 @@ mod tests {
         // `Done` persists, so a fresh launch shows the duration without probing again.
         app.handle_probe_message(ProbeMessage::Done { generation: 7 });
         assert!(app.unsaved_probes.is_empty());
+        finish_scan(&mut app);
         let relaunched = ClipCraftApp::restored_from(Some(index_path));
         let entry = &relaunched.library.as_ref().expect("library").entries[0];
         assert_eq!(entry.probe, Some(probe_of(9_000)));

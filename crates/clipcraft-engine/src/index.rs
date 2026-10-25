@@ -274,8 +274,16 @@ pub(crate) fn store_probes(
         .iter_mut()
         .find(|folder| folder.directory == directory)
         .ok_or(EngineError::IndexMissing)?;
+    let positions: HashMap<_, _> = folder
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| (entry.path.clone(), index))
+        .collect();
     for (path, probe) in probes {
-        if let Some(entry) = folder.entries.iter_mut().find(|entry| entry.path == path) {
+        if let Some(&index) = positions.get(&path)
+            && let Some(entry) = folder.entries.get_mut(index)
+        {
             entry.probe = Some(probe);
         }
     }

@@ -90,12 +90,25 @@ not a formal clean-room implementation. The small editor additionally consumes p
   and replay segments are disposable app data. There is no user-facing editor-project format in
   the MVP. Library traversal is bounded to eight child levels, 20,000 entries and 5,000 videos,
   skipping symlinks. One desktop worker accepts one replaceable pending scan and supports cooperative
-  cancellation; completed scans merge on the UI thread through `library.store_scan`, preserving
-  edits made while traversing. CLI `library.scan` / `library.refresh` use the same scanner.
+  cancellation; completed scans are persisted through the serial library-store worker using
+  `library.store_scan`. Scan replies rebase newer UI edits before application. CLI `library.scan` / `library.refresh` use the same scanner.
   `library.register_recording` stores `recorded_game` separately from the manual game override;
   `SaveJob` snapshots this label at Save time, including post-roll. Only successful saves register
   metadata, and metadata errors cannot undo the saved media. The optional index field defaults to
   absent for existing version-1 indexes. Game priority is manual, recorded, folder, filename.
+- **Desktop library responsiveness (M2.P2):** revision-invalidated normalized name/game keys,
+  stable sorted indices, search/category counts and sidebar aggregates avoid repeated sorts.
+  Main cards use virtual rows with path-stable control IDs and logical keyboard scrolling. The
+  editor's existing virtual browser caches insertion-order search indices by Weak/Arc identity.
+  One worker serializes scan/metadata/probe/recorded-label commands with 64 outstanding jobs and a
+  128 MiB accounted payload budget; scan reservations are 48 MiB each, at most two. No disk I/O
+  occurs under its mailbox mutex. Failed writes pause at the head for retry; result queues, fallback
+  snapshots and rebase metadata are bounded separately as described in [ADR 0027](adr/0027-responsive-library.md).
+  Current UI edits are not overwritten by old scan replies. Normal close waits for acknowledgement;
+  failed saving can be explicitly discarded, and abrupt termination can lose pending metadata.
+  Atomic index publication/source preservation remain. Startup reads, cached JPEG loading and
+  settings writes are not moved by this slice. Focus/input/workers retain proper wakes without a
+  static focus-ring repaint loop; the fixed theme is installed once.
 - **Replay:** a bounded encoded-segment ring with explicit duration/byte limits. Saving snapshots
   segment references atomically, handles post-roll, and reports any required keyframe re-encode.
 - **Edit/export:** `clipcraft-export` offers sample-copy trim (`clip.trim`) and software H.264

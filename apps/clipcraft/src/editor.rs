@@ -103,6 +103,7 @@ pub struct EditorState {
     seek_pending: bool,
     clock: Option<(Instant, Tick)>,
     search: String,
+    browser_search: crate::library_view::BrowserSearch,
     title: String,
     zoom: f32,
     fit: bool,
@@ -150,6 +151,7 @@ impl Default for EditorState {
             seek_pending: true,
             clock: None,
             search: String::new(),
+            browser_search: crate::library_view::BrowserSearch::default(),
             title: "Untitled edit".into(),
             zoom: 32.0,
             fit: true,
@@ -1839,11 +1841,7 @@ impl EditorState {
                 }
                 crate::settings::search_box(ui, &mut self.search, "Search clips");
                 ui.add_space(10.0);
-                let query = self.search.to_lowercase();
-                let filtered: Vec<_> = media
-                    .iter()
-                    .filter(|e| e.title.to_lowercase().contains(&query))
-                    .collect();
+                let filtered = self.browser_search.prepare(&media, &self.search);
                 let columns = (((ui.available_width() + 8.0) / 148.0).floor() as usize).clamp(2, 6);
                 let card_width = ((ui.available_width() - 8.0 * (columns - 1) as f32)
                     / columns as f32)
@@ -1861,7 +1859,12 @@ impl EditorState {
                         |ui, rows| {
                             for row in rows {
                                 ui.horizontal_top(|ui| {
-                                    for entry in filtered.iter().skip(row * columns).take(columns) {
+                                    for entry in filtered
+                                        .iter()
+                                        .skip(row * columns)
+                                        .take(columns)
+                                        .filter_map(|&i| media.get(i))
+                                    {
                                         ui.allocate_ui_with_layout(
                                             Vec2::new(card_width, card_height),
                                             Layout::top_down(Align::Min),

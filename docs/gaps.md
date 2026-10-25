@@ -19,7 +19,8 @@ the Windows draft-recovery test uses canonical paths. Both jobs passed their tes
 The [current whole-workspace performance audit](performance-audit-2026-10-25.md) identifies a
 confirmed idle keyboard-focus redraw loop, repeated library sorting/layout, synchronous UI index
 writes and remaining decode/audio/transfer work. Its timings are cloud/generated diagnostics,
-not gaming-PC budgets. Fixes are proposed, not implemented by the audit; existing hardware gates remain.
+not gaming-PC budgets. M2.P2 now implements priorities 1–3 (below); the remaining proposals and
+existing hardware gates remain open.
 
 This is the ranked work list, not a parity claim. Capture, replay, playback, local library
 organization, and no-reencode trim export are implemented. Linux/X11 has end-to-end synthetic
@@ -215,6 +216,27 @@ settings/commands, active audio mixing, Windows bindings and failure-injection s
 The old audio utility remains in Git history with its permission provenance recorded. Dependency
 scanning reports no unreviewed unused crate; `windows-core` is an explicit macro-use false positive.
 Full verification and native evidence are in [testing](testing.md).
+
+## Idle and library responsiveness (M2.P2)
+
+The static keyboard-focus redraw loop is fixed, with a failing-before/passing-after regression.
+On the same software-rendered cloud development desktop, Tab-idle process CPU changed from
+347.58% to 5.67% of one logical CPU in short observations; these are not gaming-PC budgets.
+Main library normalized keys, sort/filter indices and sidebar counts are cached, cards use virtual
+rows, and logical keyboard traversal reaches offscreen cards. The already virtualized editor
+browser now caches search results. Mutations invalidate model data; probe facts stay current.
+
+Scan persistence, metadata edits, probe batches and recorded-game registration run on one ordered
+worker. At most 64 jobs/128 MiB accounted payload, including pending acknowledgements; at most two
+48 MiB scan reservations. Engine index/queue limits still apply; loaded engine state, UI data,
+transient copies/fallback and edit journal are additional bounded memory, not a total RSS cap.
+Failed writes pause newer jobs for retry. Normal close waits; explicit failed-close discard or an
+abrupt process exit can lose unacknowledged metadata. Source media and atomic index publication
+are preserved. The 614-test gate, native scan/favorite/shutdown/keyboard screenshots and portable worker/race
+checks are recorded in [testing](testing.md), with measurements in [performance](performance.md).
+Startup index reads, cached JPEG loads, settings writes and some metadata-only source/file checks
+remain synchronous. This does not add decoder pooling, proxies or hardware performance evidence.
+See [ADR 0027](adr/0027-responsive-library.md).
 
 ## Connected workflow evidence (M5.3)
 
