@@ -121,6 +121,30 @@ not a formal clean-room implementation. The small editor additionally consumes p
   quality fields to 720p/30 and validates supplied values. No editor-project file is required;
   see [ADR 0019](adr/0019-editor-preview-and-export-presets.md) and
   [ADR 0021](adr/0021-editor-export-quality.md).
+- **Playback delivery:** M11.1f replaces the unbounded picture-event channel with one latest-picture
+  slot, one opening summary and one terminal slot. `poll()` returns opening/picture/terminal in
+  that order. A mutex serializes seek/step/replay revision increments, invalidation and command
+  enqueueing; workers publish pictures/end markers only for the current revision. Old completions
+  are discarded without terminating playback. Fatal failures remain reportable independently of
+  revision. Notification happens outside the lock. Stop drops pending pixels and wakes the worker;
+  poisoned state/exhausted revisions fail closed. Native pictures are limited to 33,177,600 pixels
+  and 8192 per edge before RGBA conversion. This is a display-result bound, excluding decoded
+  source caches, in-flight work and UI-held pictures. Control and audio queues are not unified or
+  newly bounded in this slice. [ADR 0024](adr/0024-bounded-playback-delivery.md) records the contract.
+- **Decode admission:** M11.1g adds one process-local coordinator with three stage permits, at most
+  one background permit and 64 waiting callers, at most 48 background. Background cannot fill the
+  final 16 waiting registrations. Waiting foreground work wins before a new background
+  stage. Player source open/video and audio blocks are foreground; uncached thumbnails and timeline
+  source open/pictures/waveform chunks/MP4 packets are background. Existing worker threads call it;
+  it spawns no threads, retains no jobs/media and never runs callbacks under its mutex. RAII releases
+  permits/registration on return, cancellation or unwind. Waiting checks cancellation every 20 ms;
+  video waits observe seek revisions and stop, audio observes close, analysis observes its flag.
+  Thumbnail generation has no cancel argument; its FilmCraft source now receives the background
+  hint as analysis already did. Active codec/file calls cannot be preempted. Audio releases admission
+  before pushing/waiting on output; timeline analysis reacquires between chunks. Metadata-only
+  `source_info`, UI JPEG cache loading, export and recording are not gated. See
+  [ADR 0025](adr/0025-cooperative-decode-admission.md); logical permits do not reserve CPU cores or
+  bound decoder caches/internal threads, and this is not a new unified job queue/decoder pool.
 - **Engine:** owns recording sessions, input validation, local index operations, crash recovery,
   background jobs, and stable typed commands. UI and CLI dispatch these same commands. It does not
   provide a user-facing project-file workflow. The bounded `editor.edit` session owns exact source

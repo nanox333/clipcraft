@@ -1,8 +1,5 @@
 # Known gaps
 
-<<<<<<< HEAD
-**Status:** active prototype · **Last reviewed:** 2026-10-23 · **Target:** local Windows capture-to-export alpha
-=======
 The selected **A / CUT** branding has shared Rust geometry, scalable monochrome masters,
 small icon exports, light/dark wordmark lockups and a Discord product badge. The native icon
 and header use the same mark. Game artwork is still the old typographic placeholder; publisher
@@ -11,8 +8,7 @@ rendering remain open. See the [brand guide](brand.md) for reproduction and cons
 Verification: small-size/hostile-input and texture-cache regression tests, native 1440×900
 screenshots, Tab/Shift+Tab checks, exporter overwrite refusal and `cargo xtask ci` passed.
 
-**Status:** active prototype · **Last reviewed:** 2026-10-24 · **Target:** local Windows capture-to-export alpha
->>>>>>> 1845634 (M10.2b Establish CUT branding and native product icons)
+**Status:** active prototype · **Last reviewed:** 2026-10-25 · **Target:** local Windows capture-to-export alpha
 
 This is the ranked work list, not a parity claim. Capture, replay, playback, local library
 organization, and no-reencode trim export are implemented. Linux/X11 has end-to-end synthetic
@@ -117,6 +113,43 @@ M10.2a verification: 568 tests/34 targets pass (five existing ignored checks), i
 identity fallback, bounded art, advanced keyboard Apply/reset and ID-independent preview. Native
 Linux screenshots/private mock and generated-game capture confirm the game/product badge layout;
 CLI previews and exporter no-overwrite checks pass. Windows/macOS compilation is not runtime proof.
+
+## Playback delivery and remaining scheduling work (M11.1f)
+
+The display-result queue now keeps at most one latest RGBA picture, one opening summary and one
+terminal status. Polling returns at most three events, ordered opening → picture → terminal.
+Seek, step and replay invalidate earlier pending/in-flight pictures and old end markers; failures
+remain observable. Shutdown drops pending pixels. Picture dimensions are checked against
+33,177,600 pixels (8K UHD) and an 8192-pixel edge before RGBA conversion.
+
+This bounds pending results only: the UI can still hold a displayed/polled picture, the worker an
+in-flight picture, and FilmCraft its decoder/GOP caches. It is not a total RSS budget. Control/audio
+channels retain their existing separate behavior. M11.1g now coordinates worker-side decoding with
+playback-first admission (below); a unified job queue/decoder pool, proxies and GPU composition
+are not built.
+Decode/file calls remain non-interruptible. Verification: 577 workspace tests pass (five existing
+ignored), including 69 player tests and prepared-editor/keyboard regressions; docs gate passes.
+No export speed, GPU throughput or real-device claim is added. See [architecture](architecture.md), [performance](performance.md) and [testing](testing.md).
+
+## Playback-first decode admission (M11.1g)
+
+A shared coordinator now admits at most three worker-side stages, with at most one background
+stage and 64 waiting callers (at most 48 background, reserving 16 registrations for foreground).
+Queued playback/audio requests take priority over new background
+admission. Player open/video, audio blocks, uncached library thumbnail generation, timeline source
+open/pictures and waveform blocks/MP4 packets participate. Analysis releases its slot between
+chunks. Stop, timeline cancellation and superseded video waits are checked every 20 ms while
+waiting; an already-running codec/file call remains non-interruptible. Thumbnail's legacy API has
+no cancellation parameter. Capacity/poison failures use existing failure reporting, not a crash.
+
+These are logical slots, not reserved CPU cores, OS thread priority, a codec-thread budget, total
+memory cap or measured speedup. Background work may wait under sustained foreground demand.
+There is no unified worker pool or decoder cache; existing callers/queues still own their work.
+Export/recording, metadata-only source-info and cached JPEG loading on the UI are outside this
+coordinator. GPU composition, proxies, hardware throughput and actual game-contention evidence
+remain open. Verification: 584 workspace tests pass (five existing ignored), including 76 player
+cases and generated concurrent playback/thumbnail/waveform coverage. See
+[ADR 0025](adr/0025-cooperative-decode-admission.md) and [testing](testing.md).
 
 ## Connected workflow evidence (M5.3)
 

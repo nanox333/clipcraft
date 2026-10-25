@@ -14,9 +14,17 @@ use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+
+mod delivery;
+mod scheduling;
+use delivery::{Delivery, Publication, Request};
 use std::sync::{Arc, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+/// Largest native picture accepted before full RGBA conversion (8K UHD pixel budget).
+const MAX_FRAME_PIXELS: u64 = 7680 * 4320;
+const MAX_FRAME_EDGE: u32 = 8192;
 
 /// Largest file read whole when no streaming reader exists for its format.
 const MAX_WHOLE_FILE_BYTES: u64 = 64 * 1024 * 1024;
@@ -150,8 +158,8 @@ enum Command {
 
 /// Handle to a clip being played on a worker thread. Dropping it stops the worker.
 pub struct Player {
-    commands: Sender<Command>,
-    events: Receiver<PlayerEvent>,
+    commands: Sender<Request>,
+    events: Arc<Delivery>,
     worker: Option<JoinHandle<()>>,
     audio: Arc<OnceLock<Arc<audio::AudioFeed>>>,
 }
@@ -161,7 +169,8 @@ impl Player {
     /// can wake up and call [`Player::poll`].
     pub fn start(path: PathBuf, notify: impl Fn() + Send + 'static) -> Self {
         let (command_sender, command_receiver) = mpsc::channel();
-        let (event_sender, event_receiver) = mpsc::channel();
+        let events = Arc::new(Delivery::default());
+        let worker_events = events.clone();
         let audio = Arc::new(OnceLock::new());
         let worker_audio = audio.clone();
         let worker = thread::Builder::new()
@@ -171,20 +180,20 @@ impl Player {
                     run(
                         &path,
                         &command_receiver,
-                        &event_sender,
+                        &worker_events,
                         &notify,
                         &worker_audio,
                     );
                 }));
                 if outcome.is_err() {
-                    let _ = event_sender.send(PlayerEvent::Failed(PlayerError::Crashed));
+                    let _ = worker_events.publish(PlayerEvent::Failed(PlayerError::Crashed), 0);
                     notify();
                 }
             })
             .ok();
         Self {
             commands: command_sender,
-            events: event_receiver,
+            events,
             worker,
             audio,
         }
@@ -192,43 +201,48 @@ impl Player {
 
     /// Starts or resumes playback from the current position.
     pub fn play(&self) {
-        let _ = self.commands.send(Command::Play);
+        self.events.dispatch(Command::Play, &self.commands);
     }
 
     /// Resumes the requested position even in the final frame, for a bounded editor range.
     /// Unlike [`Player::play`], this never interprets an end position as a replay request.
     pub fn play_from_current(&self) {
-        let _ = self.commands.send(Command::PlayFromCurrent);
+        self.events
+            .dispatch(Command::PlayFromCurrent, &self.commands);
     }
 
     /// Pauses on the current picture.
     pub fn pause(&self) {
-        let _ = self.commands.send(Command::Pause);
+        self.events.dispatch(Command::Pause, &self.commands);
     }
 
     /// Jumps to `position` and shows that picture. Playback state is kept.
     pub fn seek(&self, position: Tick) {
-        let _ = self.commands.send(Command::Seek(position));
+        self.events
+            .dispatch(Command::Seek(position), &self.commands);
     }
 
     /// Plays at `speed` (0.25 to 4, pitch kept). Takes effect from the current position.
     pub fn set_speed(&self, speed: f64) {
-        let _ = self.commands.send(Command::SetSpeed(speed));
+        self.events
+            .dispatch(Command::SetSpeed(speed), &self.commands);
     }
 
     /// When on, playback restarts from the beginning instead of stopping at the end.
     pub fn set_loop(&self, looping: bool) {
-        let _ = self.commands.send(Command::SetLoop(looping));
+        self.events
+            .dispatch(Command::SetLoop(looping), &self.commands);
     }
 
     /// Pauses and moves by `frames` pictures (negative goes back), showing the new picture.
     pub fn step(&self, frames: i64) {
-        let _ = self.commands.send(Command::Step(frames));
+        self.events.dispatch(Command::Step(frames), &self.commands);
     }
 
     /// Plays audio stream `index` (the order of [`ClipInfoSummary::audio_tracks`]).
     pub fn select_audio(&self, index: usize) {
-        let _ = self.commands.send(Command::SelectAudio(index));
+        self.events
+            .dispatch(Command::SelectAudio(index), &self.commands);
     }
 
     /// The clip's sound feed, available once the clip has opened and only when it has audio.
@@ -240,7 +254,7 @@ impl Player {
 
     /// Requests cancellation without blocking the caller on a decoder or file read.
     pub fn request_stop(&self) {
-        let _ = self.commands.send(Command::Shutdown);
+        self.events.dispatch(Command::Shutdown, &self.commands);
     }
 
     /// Whether the worker has acknowledged cancellation (or failed to start).
@@ -250,10 +264,11 @@ impl Player {
             && self.audio.get().is_none_or(|feed| feed.worker_finished())
     }
 
-    /// Takes every event that arrived since the last call. Returns a worker failure if the thread
+    /// Takes opening status, the latest pending picture, and terminal status (at most three events).
+    /// Superseded pictures are discarded. Returns a worker failure if the thread
     /// could not even start.
     pub fn poll(&self) -> Vec<PlayerEvent> {
-        let mut events: Vec<PlayerEvent> = self.events.try_iter().collect();
+        let mut events = self.events.poll();
         if self.worker.is_none() {
             events.push(PlayerEvent::Failed(PlayerError::Crashed));
         }
@@ -263,7 +278,7 @@ impl Player {
 
 impl Drop for Player {
     fn drop(&mut self) {
-        let _ = self.commands.send(Command::Shutdown);
+        self.events.dispatch(Command::Shutdown, &self.commands);
         // The worker is detached rather than joined: a decoder stuck in a long seek must not
         // freeze the window that is closing the clip. It exits at its next command check.
         drop(self.worker.take());
@@ -297,9 +312,7 @@ fn open_source(path: &Path) -> Result<SharedSource, PlayerError> {
 fn clip_info(source: &SharedSource) -> Result<ClipInfo, PlayerError> {
     let info = source.info();
     let video = info.video.as_ref().ok_or(PlayerError::Unsupported)?;
-    if video.width == 0 || video.height == 0 {
-        return Err(PlayerError::Unsupported);
-    }
+    frame_bytes(video.width, video.height)?;
     Ok(ClipInfo {
         duration: info.duration.max(Tick::ZERO),
         width: video.width,
@@ -338,14 +351,10 @@ fn decode_at(
             MediaError::Io(_) | MediaError::Offline(_) => PlayerError::Unreadable,
             _ => PlayerError::DecodeFailed,
         })?;
+    let expected = frame_bytes(frame.width, frame.height)?;
     let rgba = frame.to_rgba8();
     // A decoder that returns fewer bytes than the picture needs would corrupt the texture upload.
-    let expected = usize::try_from(frame.width)
-        .ok()
-        .zip(usize::try_from(frame.height).ok())
-        .and_then(|(width, height)| width.checked_mul(height))
-        .and_then(|pixels| pixels.checked_mul(4));
-    if frame.width == 0 || frame.height == 0 || expected != Some(rgba.len()) {
+    if expected != rgba.len() {
         return Err(PlayerError::DecodeFailed);
     }
     Ok(DecodedFrame {
@@ -354,6 +363,23 @@ fn decode_at(
         height: frame.height,
         rgba,
     })
+}
+
+/// Check dimensions before requesting a full RGBA allocation. Decoder scratch is separate.
+fn frame_bytes(width: u32, height: u32) -> Result<usize, PlayerError> {
+    let pixels = u64::from(width) * u64::from(height);
+    if width == 0
+        || height == 0
+        || width > MAX_FRAME_EDGE
+        || height > MAX_FRAME_EDGE
+        || pixels > MAX_FRAME_PIXELS
+    {
+        return Err(PlayerError::Unsupported);
+    }
+    usize::try_from(pixels)
+        .ok()
+        .and_then(|p| p.checked_mul(4))
+        .ok_or(PlayerError::Unsupported)
 }
 
 fn frame_period(rate: FrameRate) -> Duration {
@@ -372,23 +398,37 @@ fn ticks_from(elapsed: Duration, speed: f64) -> Tick {
 
 fn run(
     path: &Path,
-    commands: &Receiver<Command>,
-    events: &Sender<PlayerEvent>,
+    commands: &Receiver<Request>,
+    events: &Delivery,
     notify: &impl Fn(),
     audio_slot: &OnceLock<Arc<audio::AudioFeed>>,
 ) {
-    let send = |event: PlayerEvent| {
-        let delivered = events.send(event).is_ok();
-        notify();
-        delivered
+    let send = |event: PlayerEvent, revision: u64| match events.publish(event, revision) {
+        Publication::Accepted => {
+            notify();
+            true
+        }
+        Publication::Superseded => true,
+        Publication::Closed => false,
     };
-    let (source, info) = match open_source(path).and_then(|source| {
-        let info = clip_info(&source)?;
-        Ok((source, info))
-    }) {
+    let opened = {
+        let _permit = match scheduling::foreground(|| events.closed()) {
+            Ok(permit) => permit,
+            Err(scheduling::Error::Cancelled) => return,
+            Err(scheduling::Error::Unavailable) => {
+                send(PlayerEvent::Failed(PlayerError::Crashed), 0);
+                return;
+            }
+        };
+        open_source(path).and_then(|source| {
+            let info = clip_info(&source)?;
+            Ok((source, info))
+        })
+    };
+    let (source, info) = match opened {
         Ok(opened) => opened,
         Err(error) => {
-            send(PlayerEvent::Failed(error));
+            send(PlayerEvent::Failed(error), 0);
             return;
         }
     };
@@ -399,7 +439,7 @@ fn run(
     if let Some(feed) = &feed {
         let _ = audio_slot.set(feed.clone());
     }
-    if !send(PlayerEvent::Opened(ClipInfoSummary::from(&info))) {
+    if !send(PlayerEvent::Opened(ClipInfoSummary::from(&info)), 0) {
         return;
     }
 
@@ -420,22 +460,47 @@ fn run(
         audio_watch: None,
     };
 
+    let mut revision = 0;
     loop {
+        // Opening or a slow decode can accumulate seeks. Apply their final state before the
+        // next decode; publication below rejects an in-flight result invalidated meanwhile.
+        for request in commands.try_iter() {
+            revision = request.revision;
+            if state.apply(request.command, &info, feed.as_deref()) {
+                return;
+            }
+        }
         if state.show {
             state.show = false;
-            match decode_at(&source, &info, state.position) {
+            let decoded = {
+                let _permit = match scheduling::foreground(|| !events.current(revision)) {
+                    Ok(permit) => permit,
+                    Err(scheduling::Error::Cancelled) => {
+                        if events.closed() {
+                            return;
+                        }
+                        continue;
+                    }
+                    Err(scheduling::Error::Unavailable) => {
+                        send(PlayerEvent::Failed(PlayerError::Crashed), revision);
+                        return;
+                    }
+                };
+                decode_at(&source, &info, state.position)
+            };
+            match decoded {
                 Ok(frame) => {
                     state.position = frame.pts;
-                    if !send(PlayerEvent::Frame(frame)) {
+                    if !send(PlayerEvent::Frame(frame), revision) {
                         return;
                     }
                     // `Ended` follows the final picture so the screen shows the true last frame.
-                    if std::mem::take(&mut state.ended) && !send(PlayerEvent::Ended) {
+                    if std::mem::take(&mut state.ended) && !send(PlayerEvent::Ended, revision) {
                         return;
                     }
                 }
                 Err(error) => {
-                    send(PlayerEvent::Failed(error));
+                    send(PlayerEvent::Failed(error), revision);
                     return;
                 }
             }
@@ -450,11 +515,13 @@ fn run(
             Ok(command) => {
                 // Apply everything already queued before decoding, so scrubbing quickly decodes
                 // only the latest position instead of every intermediate one.
-                if state.apply(command, &info, feed.as_deref()) {
+                revision = command.revision;
+                if state.apply(command.command, &info, feed.as_deref()) {
                     return;
                 }
                 for command in commands.try_iter() {
-                    if state.apply(command, &info, feed.as_deref()) {
+                    revision = command.revision;
+                    if state.apply(command.command, &info, feed.as_deref()) {
                         return;
                     }
                 }
@@ -532,6 +599,7 @@ impl State {
         match command {
             Command::Shutdown => return true,
             Command::Play | Command::PlayFromCurrent => {
+                self.show = true;
                 if !self.playing {
                     // Replaying from the end starts over.
                     if matches!(command, Command::Play)

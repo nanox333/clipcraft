@@ -107,6 +107,13 @@ fn check_cancel(cancel: &AtomicBool) -> Result<(), TimelineError> {
     }
 }
 
+fn background(cancel: &AtomicBool) -> Result<super::scheduling::Permit<'static>, TimelineError> {
+    super::scheduling::background(cancel).map_err(|error| match error {
+        super::scheduling::Error::Cancelled => TimelineError::Cancelled,
+        super::scheduling::Error::Unavailable => TimelineError::Crashed,
+    })
+}
+
 fn valid_dimensions(width: u32, height: u32) -> bool {
     width > 0
         && height > 0
@@ -170,9 +177,13 @@ fn analyze_inner(
     request: &TimelineRequest,
     cancel: &AtomicBool,
 ) -> Result<TimelineAnalysis, TimelineError> {
-    mp4::preflight(&request.path, cancel)?;
-    let source = open_source(&request.path)?;
-    let info = clip_info(&source)?;
+    let (source, info) = {
+        let _permit = background(cancel)?;
+        mp4::preflight(&request.path, cancel)?;
+        let source = open_source(&request.path)?;
+        let info = clip_info(&source)?;
+        (source, info)
+    };
     if !valid_dimensions(info.width, info.height)
         || info.duration > Tick::from_units(86_400, 1)
         || info.duration <= Tick::ZERO
@@ -205,6 +216,8 @@ fn analyze_inner(
         check_cancel(cancel)?;
         let position = request.start
             + duration.mul_ratio(i64::from(index) * 2 + 1, i64::from(request.frames) * 2);
+        let _permit = background(cancel)?;
+        check_cancel(cancel)?;
         frames.push(thumbnail(&source, position)?);
     }
     let waveform = if let Some(audio) = audio.filter(|_| mp4) {
@@ -289,6 +302,7 @@ fn waveform(
         .ok_or(TimelineError::InvalidRequest)?;
     let mut cursor = first;
     while cursor < last {
+        let _permit = background(cancel)?;
         check_cancel(cancel)?;
         let frames = usize::try_from((last - cursor).min(AUDIO_CHUNK as i64))
             .map_err(|_| TimelineError::InvalidRequest)?;
