@@ -195,6 +195,9 @@ cargo xtask ci
 cargo run --package clipcraft
 ```
 
+`cargo xtask ci` runs the same checks as GitHub Actions on Linux and Windows; tests clean their scratch
+folders with a retry so a finishing capture worker cannot make them flaky.
+
 Useful local CLI commands:
 
 ```sh

@@ -11,6 +11,9 @@ See the [brand guide](brand.md) for reproduction and constraints.
 Verification: small-size/hostile-input and texture-cache regression tests, native 1440×900
 screenshots, Tab/Shift+Tab checks, exporter overwrite refusal and `cargo xtask ci` passed.
 
+CI note: the Linux job once failed on a scratch-folder cleanup race in a capture test; cleanup now retries and
+the Windows draft-recovery test uses canonical paths. Both jobs passed their test gates on the merged `main`.
+
 **Status:** active prototype · **Last reviewed:** 2026-10-25 · **Target:** local Windows capture-to-export alpha
 
 This is the ranked work list, not a parity claim. Capture, replay, playback, local library

@@ -45,7 +45,9 @@ recorded in [`gaps.md`](gaps.md) and [`release-checklist.md`](release-checklist.
 Run `cargo xtask ci` before completing an issue. CI calls the same command. It includes formatting,
 strict Clippy, workspace tests, layer validation, asset attribution checks, and a `cargo-deny`
 license audit. Keep focused test commands in crate docs, but do not create a second gate with
-different pass criteria.
+different pass criteria. Tests that create scratch folders remove them with a short retry, because a
+capture worker can still be finishing a file when the app is dropped (this once made the Linux job
+fail with "Directory not empty"); leftover temp files never fail a test.
 
 Current focused checks include `cargo test -p clipcraft-time` for time math, `cargo test -p clipcraft-media` for container probing
 including byte-corruption and oversized-header cases, `cargo test -p clipcraft-player` for playback, sound, speed, stepping, looping, track selection, stalled devices, and thumbnails (it encodes its own H.264 clips in pure Rust, so it needs no
