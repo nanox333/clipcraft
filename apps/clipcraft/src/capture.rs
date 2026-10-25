@@ -1620,6 +1620,17 @@ mod tests {
             steam_warning: None,
         }
     }
+    /// Removes a test's scratch folder. A capture worker can still be finishing a file as the app
+    /// is dropped, so retry briefly; leftovers in a temp folder never fail a test.
+    fn remove_scratch(root: PathBuf) {
+        for _ in 0..50 {
+            if std::fs::remove_dir_all(&root).is_ok() || !root.exists() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
     fn automatic_app(mode: DesktopCaptureMode) -> (ClipCraftApp, PathBuf) {
         let root = crate::tests::temporary_directory();
         let mut app = ClipCraftApp {
@@ -1717,7 +1728,7 @@ mod tests {
         app.poll_game_arming(&context);
         assert!(!app.capture.is_active());
         drop(app);
-        std::fs::remove_dir_all(root).unwrap();
+        remove_scratch(root);
     }
 
     #[test]
@@ -1772,7 +1783,7 @@ mod tests {
             ));
         }
         drop(app);
-        std::fs::remove_dir_all(root).unwrap();
+        remove_scratch(root);
     }
     #[test]
     fn always_mode_starts_on_desktop_and_manual_stop_does_not_restart() {
@@ -1790,7 +1801,7 @@ mod tests {
         wait_for_frames(&app);
         app.stop_capture();
         drop(app);
-        std::fs::remove_dir_all(root).unwrap();
+        remove_scratch(root);
     }
     #[test]
     fn a_game_exiting_while_saves_are_busy_cannot_discard_the_retained_desktop_replay() {
@@ -1836,7 +1847,7 @@ mod tests {
             ));
         }
         drop(app);
-        std::fs::remove_dir_all(root).unwrap();
+        remove_scratch(root);
     }
     #[test]
     fn failed_game_open_and_rule_removal_cannot_start_temporary_desktop() {
@@ -1854,7 +1865,7 @@ mod tests {
         assert!(!app.capture.desktop_fallback);
         assert!(!app.capture.is_active());
         drop(app);
-        std::fs::remove_dir_all(root).unwrap();
+        remove_scratch(root);
     }
     #[test]
     fn a_completed_save_updates_game_filters_and_metadata_failure_keeps_the_clip() {
