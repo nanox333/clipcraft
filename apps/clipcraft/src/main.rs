@@ -19,6 +19,7 @@ mod organize;
 mod playback;
 mod presence;
 mod settings;
+mod svg;
 mod thumbs;
 mod trim;
 

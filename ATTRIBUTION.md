@@ -14,6 +14,32 @@ See [ADR 0022](docs/adr/0022-local-game-state.md) for the narrowly scoped trust 
 | `assets/fonts/Inter-Regular.ttf` | Inter 4.1, The Inter Project Authors, <https://github.com/rsms/inter/releases/tag/v4.1> | SIL OFL 1.1, unmodified; text in `assets/fonts/OFL-Inter.md` |
 | `assets/fonts/Inter-Medium.ttf` | Inter 4.1, The Inter Project Authors, <https://github.com/rsms/inter/releases/tag/v4.1> | SIL OFL 1.1, unmodified; text in `assets/fonts/OFL-Inter.md` |
 | `assets/fonts/Inter-SemiBold.ttf` | Inter 4.1, The Inter Project Authors, <https://github.com/rsms/inter/releases/tag/v4.1> | SIL OFL 1.1, unmodified; text in `assets/fonts/OFL-Inter.md` |
+| `assets/icons/chevron-down.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/chevron-left.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/copy.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/exit-fullscreen.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/folder.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/fullscreen.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/gear.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/heart.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/import.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/library.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/loop.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/pause.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/play.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/plus.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/record.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/restart.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/scissors.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/search.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/skip-back.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/skip-forward.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/speaker.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/speaker-off.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/step-back.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/step-forward.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/stop.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/trash.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 
 Add every first-party shipped asset to this table and place a `<filename>.license.md` sidecar beside
 it with its source, author, and license. `cargo xtask assets` checks that each file under `assets/`

@@ -189,246 +189,96 @@ pub enum Icon {
     Restart,
 }
 
+impl Icon {
+    /// Every icon, in declaration order (the cache below is indexed by it).
+    pub const ALL: [Icon; 26] = [
+        Icon::Play,
+        Icon::Pause,
+        Icon::StepBack,
+        Icon::StepForward,
+        Icon::SkipBack,
+        Icon::SkipForward,
+        Icon::Loop,
+        Icon::Fullscreen,
+        Icon::ExitFullscreen,
+        Icon::Speaker,
+        Icon::SpeakerOff,
+        Icon::Copy,
+        Icon::Folder,
+        Icon::Search,
+        Icon::ChevronDown,
+        Icon::ChevronLeft,
+        Icon::Library,
+        Icon::Gear,
+        Icon::Import,
+        Icon::Plus,
+        Icon::Heart,
+        Icon::Record,
+        Icon::Stop,
+        Icon::Scissors,
+        Icon::Trash,
+        Icon::Restart,
+    ];
+
+    /// The icon's file under `assets/icons`, a plain SVG that any vector editor can open.
+    pub(crate) fn source(self) -> &'static str {
+        match self {
+            Icon::Play => include_str!("../../../assets/icons/play.svg"),
+            Icon::Pause => include_str!("../../../assets/icons/pause.svg"),
+            Icon::StepBack => include_str!("../../../assets/icons/step-back.svg"),
+            Icon::StepForward => include_str!("../../../assets/icons/step-forward.svg"),
+            Icon::SkipBack => include_str!("../../../assets/icons/skip-back.svg"),
+            Icon::SkipForward => include_str!("../../../assets/icons/skip-forward.svg"),
+            Icon::Loop => include_str!("../../../assets/icons/loop.svg"),
+            Icon::Fullscreen => include_str!("../../../assets/icons/fullscreen.svg"),
+            Icon::ExitFullscreen => include_str!("../../../assets/icons/exit-fullscreen.svg"),
+            Icon::Speaker => include_str!("../../../assets/icons/speaker.svg"),
+            Icon::SpeakerOff => include_str!("../../../assets/icons/speaker-off.svg"),
+            Icon::Copy => include_str!("../../../assets/icons/copy.svg"),
+            Icon::Folder => include_str!("../../../assets/icons/folder.svg"),
+            Icon::Search => include_str!("../../../assets/icons/search.svg"),
+            Icon::ChevronDown => include_str!("../../../assets/icons/chevron-down.svg"),
+            Icon::ChevronLeft => include_str!("../../../assets/icons/chevron-left.svg"),
+            Icon::Library => include_str!("../../../assets/icons/library.svg"),
+            Icon::Gear => include_str!("../../../assets/icons/gear.svg"),
+            Icon::Import => include_str!("../../../assets/icons/import.svg"),
+            Icon::Plus => include_str!("../../../assets/icons/plus.svg"),
+            Icon::Heart => include_str!("../../../assets/icons/heart.svg"),
+            Icon::Record => include_str!("../../../assets/icons/record.svg"),
+            Icon::Stop => include_str!("../../../assets/icons/stop.svg"),
+            Icon::Scissors => include_str!("../../../assets/icons/scissors.svg"),
+            Icon::Trash => include_str!("../../../assets/icons/trash.svg"),
+            Icon::Restart => include_str!("../../../assets/icons/restart.svg"),
+        }
+    }
+}
+
+/// The icons, read from their SVG files once.
+fn icons() -> &'static [Option<crate::svg::Svg>] {
+    static ICONS: std::sync::OnceLock<Vec<Option<crate::svg::Svg>>> = std::sync::OnceLock::new();
+    ICONS.get_or_init(|| {
+        Icon::ALL
+            .iter()
+            .map(|icon| crate::svg::Svg::parse(icon.source()))
+            .collect()
+    })
+}
+
 /// Draws `icon` centered on `c`, about 18 px across at `scale` 1.0.
 pub fn draw_icon(painter: &Painter, c: Pos2, icon: Icon, color: Color32, scale: f32) {
-    let stroke = Stroke::new(1.8_f32 * scale.max(0.6), color);
-    let at = |x: f32, y: f32| c + Vec2::new(x, y) * scale;
-    // Filled shapes get softened corners from a thin round-joined outline.
-    let fill = |points: Vec<Pos2>| {
-        let mut closed = points.clone();
-        closed.extend(points.first().copied());
-        painter.add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
-        let soften = Stroke::new(1.2_f32 * scale.max(0.6), color);
-        painter.add(egui::Shape::line(closed.clone(), soften));
-        for point in closed {
-            painter.circle_filled(point, soften.width / 2.0, color);
-        }
-    };
-    // Strokes get round ends and round corners: a dot at each end and at each corner of a short
-    // path (long arcs are smooth already).
-    let line = |points: &[Pos2]| {
-        painter.add(egui::Shape::line(points.to_vec(), stroke));
-        let dots: &[Pos2] = if points.len() <= 6 { points } else { &[] };
-        for point in dots.iter().chain(points.first()).chain(points.last()) {
-            painter.circle_filled(*point, stroke.width / 2.0, color);
-        }
-    };
-    let bar = |x: f32, y: f32, w: f32, h: f32, r: f32| {
-        painter.rect_filled(
-            Rect::from_center_size(at(x, y), Vec2::new(w, h) * scale),
-            r,
+    // The files use a 24-unit square; one unit is 0.85 px at scale 1.0.
+    let unit = 0.85 * scale;
+    if let Some(svg) = icons().get(icon as usize).and_then(Option::as_ref) {
+        svg.paint(painter, c, unit, color, false);
+    }
+    if matches!(icon, Icon::SkipBack | Icon::SkipForward) {
+        painter.text(
+            c + Vec2::new(0.0, 0.5 * scale),
+            Align2::CENTER_CENTER,
+            "10",
+            FontId::proportional(8.5 * scale),
             color,
         );
-    };
-    let outline = |from: Pos2, to: Pos2, r: f32| {
-        painter.rect_stroke(
-            Rect::from_min_max(from, to),
-            r * scale,
-            stroke,
-            StrokeKind::Inside,
-        );
-    };
-    match icon {
-        Icon::Play => fill(vec![at(-4.0, -7.0), at(7.0, 0.0), at(-4.0, 7.0)]),
-        Icon::Pause => {
-            bar(-4.0, 0.0, 3.6, 13.0, 1.2);
-            bar(4.0, 0.0, 3.6, 13.0, 1.2);
-        }
-        Icon::StepForward => {
-            fill(vec![at(-6.0, -6.0), at(3.0, 0.0), at(-6.0, 6.0)]);
-            bar(6.0, 0.0, 2.6, 12.0, 0.8);
-        }
-        Icon::StepBack => {
-            fill(vec![at(6.0, -6.0), at(-3.0, 0.0), at(6.0, 6.0)]);
-            bar(-6.0, 0.0, 2.6, 12.0, 0.8);
-        }
-        Icon::SkipBack | Icon::SkipForward => {
-            // An open circle with an arrowhead where it starts, and "10" inside.
-            let direction: f32 = if icon == Icon::SkipForward { 1.0 } else { -1.0 };
-            let radius = 9.0_f32 * scale;
-            let start = -std::f32::consts::FRAC_PI_2 + direction * 0.45;
-            let points: Vec<Pos2> = (0..=22)
-                .map(|step| {
-                    let angle = start - direction * (step as f32) * 0.2;
-                    c + Vec2::new(angle.cos(), angle.sin()) * radius
-                })
-                .collect();
-            painter.add(egui::Shape::line(points, stroke));
-            let tip = c + Vec2::new(start.cos(), start.sin()) * radius;
-            let tangent = Vec2::new(-start.sin(), start.cos()) * direction;
-            let normal = Vec2::new(tangent.y, -tangent.x);
-            fill(vec![
-                tip + tangent * 4.5 * scale,
-                tip - tangent * 1.5 * scale + normal * 3.5 * scale,
-                tip - tangent * 1.5 * scale - normal * 3.5 * scale,
-            ]);
-            painter.text(
-                c,
-                Align2::CENTER_CENTER,
-                "10",
-                FontId::proportional(8.5 * scale),
-                color,
-            );
-        }
-        Icon::Loop => {
-            // Two arrows chasing each other round a rounded rectangle.
-            line(&[at(-9.0, 1.0), at(-9.0, -2.0), at(-6.0, -5.0), at(8.0, -5.0)]);
-            line(&[at(5.0, -8.5), at(8.5, -5.0), at(5.0, -1.5)]);
-            line(&[at(9.0, -1.0), at(9.0, 2.0), at(6.0, 5.0), at(-8.0, 5.0)]);
-            line(&[at(-5.0, 1.5), at(-8.5, 5.0), at(-5.0, 8.5)]);
-        }
-        Icon::Fullscreen | Icon::ExitFullscreen => {
-            let (distance, arm, direction) = if icon == Icon::Fullscreen {
-                (8.0, 5.0, -1.0)
-            } else {
-                (3.5, 5.0, 1.0)
-            };
-            for (sx, sy) in [(-1.0_f32, -1.0_f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-                let corner = at(sx * distance, sy * distance);
-                line(&[
-                    corner + Vec2::new(direction * sx * arm, 0.0) * scale,
-                    corner,
-                    corner + Vec2::new(0.0, direction * sy * arm) * scale,
-                ]);
-            }
-        }
-        Icon::Speaker | Icon::SpeakerOff => {
-            painter.rect_filled(
-                Rect::from_center_size(at(-6.0, 0.0), Vec2::new(4.0, 6.0) * scale),
-                0.0,
-                color,
-            );
-            fill(vec![
-                at(-4.0, -3.0),
-                at(1.0, -7.5),
-                at(1.0, 7.5),
-                at(-4.0, 3.0),
-            ]);
-            if icon == Icon::SpeakerOff {
-                line(&[at(5.0, -4.5), at(10.5, 4.5)]);
-                line(&[at(10.5, -4.5), at(5.0, 4.5)]);
-            } else {
-                for radius in [5.0_f32, 8.5] {
-                    let points: Vec<Pos2> = (-4..=4)
-                        .map(|step| {
-                            let angle = step as f32 * 0.19;
-                            at(2.0 + radius * angle.cos() * 0.9, radius * angle.sin())
-                        })
-                        .collect();
-                    line(&points);
-                }
-            }
-        }
-        Icon::Copy => {
-            line(&[
-                at(-3.0, -5.0),
-                at(-3.0, -8.0),
-                at(8.0, -8.0),
-                at(8.0, 3.0),
-                at(5.0, 3.0),
-            ]);
-            outline(at(-8.0, -4.0), at(4.0, 8.0), 2.0);
-        }
-        Icon::Folder => {
-            outline(at(-9.0, -5.0), at(9.0, 7.0), 2.5);
-            line(&[
-                at(-9.0, -5.0),
-                at(-9.0, -7.5),
-                at(-3.0, -7.5),
-                at(-1.0, -5.0),
-            ]);
-        }
-        Icon::Search => {
-            painter.circle_stroke(at(-2.0, -2.0), 5.5 * scale, stroke);
-            line(&[at(2.0, 2.0), at(8.0, 8.0)]);
-        }
-        Icon::ChevronDown => line(&[at(-5.0, -2.0), at(0.0, 3.0), at(5.0, -2.0)]),
-        Icon::ChevronLeft => line(&[at(2.0, -6.0), at(-3.0, 0.0), at(2.0, 6.0)]),
-        Icon::Library => {
-            for (x, y) in [(-8.0, -8.0), (1.5, -8.0), (-8.0, 1.5), (1.5, 1.5)] {
-                painter.rect_filled(
-                    Rect::from_min_size(at(x, y), Vec2::splat(6.5) * scale),
-                    2.0 * scale,
-                    color,
-                );
-            }
-        }
-        Icon::Gear => {
-            // A toothed wheel outline with a round hole.
-            let mut outline_points = Vec::new();
-            for tooth in 0..8 {
-                let centre = tooth as f32 * std::f32::consts::FRAC_PI_4;
-                for (radius, offset) in [(6.8_f32, -0.34_f32), (9.4, -0.2), (9.4, 0.2), (6.8, 0.34)]
-                {
-                    let angle = centre + offset;
-                    outline_points.push(at(radius * angle.cos(), radius * angle.sin()));
-                }
-            }
-            outline_points.extend(outline_points.first().copied());
-            painter.add(egui::Shape::line(
-                outline_points,
-                Stroke::new(1.6_f32 * scale.max(0.6), color),
-            ));
-            painter.circle_stroke(c, 3.2 * scale, Stroke::new(1.6_f32 * scale.max(0.6), color));
-        }
-        Icon::Plus => {
-            line(&[at(-6.0, 0.0), at(6.0, 0.0)]);
-            line(&[at(0.0, -6.0), at(0.0, 6.0)]);
-        }
-        Icon::Import => {
-            line(&[at(-8.0, 2.0), at(-8.0, 7.0), at(8.0, 7.0), at(8.0, 2.0)]);
-            line(&[at(0.0, -8.0), at(0.0, 3.0)]);
-            line(&[at(-4.0, -1.0), at(0.0, 3.5), at(4.0, -1.0)]);
-        }
-        Icon::Heart => draw_heart(painter, c, color, false, scale),
-        Icon::Record => {
-            painter.circle_filled(c, 6.5 * scale, color);
-        }
-        Icon::Trash => {
-            // A bin: lid, handle, and a body with two slats.
-            line(&[at(-8.0, -5.0), at(8.0, -5.0)]);
-            line(&[at(-3.0, -5.0), at(-3.0, -8.0), at(3.0, -8.0), at(3.0, -5.0)]);
-            line(&[at(-6.0, -5.0), at(-5.0, 8.0), at(5.0, 8.0), at(6.0, -5.0)]);
-            line(&[at(-2.0, -1.0), at(-2.0, 5.0)]);
-            line(&[at(2.0, -1.0), at(2.0, 5.0)]);
-        }
-        Icon::Scissors => {
-            // Two blades crossing, and two rings for the fingers.
-            line(&[at(-3.6, 3.0), at(6.5, -8.0)]);
-            line(&[at(3.6, 3.0), at(-6.5, -8.0)]);
-            painter.circle_stroke(at(-5.5, 6.0), 3.0 * scale, stroke);
-            painter.circle_stroke(at(5.5, 6.0), 3.0 * scale, stroke);
-        }
-        Icon::Restart => {
-            // Most of a circle, with an arrowhead where it ends.
-            let radius = 7.0_f32;
-            let point = |degrees: f32| {
-                let angle = degrees.to_radians();
-                at(radius * angle.cos(), radius * angle.sin())
-            };
-            let arc: Vec<Pos2> = (0..=28)
-                .map(|step| point(25.0 + step as f32 * 10.0))
-                .collect();
-            line(&arc);
-            let end = point(305.0);
-            let tangent = Vec2::new(
-                -(305.0_f32.to_radians().sin()),
-                305.0_f32.to_radians().cos(),
-            );
-            let across = Vec2::new(-tangent.y, tangent.x);
-            fill(vec![
-                end + tangent * 5.0 * scale,
-                end + across * 3.6 * scale,
-                end - across * 3.6 * scale,
-            ]);
-        }
-        Icon::Stop => {
-            painter.rect_filled(
-                Rect::from_center_size(c, Vec2::splat(11.0 * scale)),
-                2.0,
-                color,
-            );
-        }
     }
 }
 
@@ -705,34 +555,9 @@ pub fn test_context() -> egui::Context {
 
 /// A heart about 18 px across at `scale` 1.0, outlined or filled.
 pub fn draw_heart(painter: &Painter, c: Pos2, color: Color32, filled: bool, scale: f32) {
-    if filled {
-        // Two round lobes and a point: simple shapes that need no concave fill.
-        painter.circle_filled(c + Vec2::new(-4.0, -2.5) * scale, 4.7 * scale, color);
-        painter.circle_filled(c + Vec2::new(4.0, -2.5) * scale, 4.7 * scale, color);
-        painter.add(egui::Shape::convex_polygon(
-            vec![
-                c + Vec2::new(-8.4, -0.8) * scale,
-                c + Vec2::new(8.4, -0.8) * scale,
-                c + Vec2::new(0.0, 8.6) * scale,
-            ],
-            color,
-            Stroke::NONE,
-        ));
-        return;
+    if let Some(svg) = icons().get(Icon::Heart as usize).and_then(Option::as_ref) {
+        svg.paint(painter, c, 0.85 * scale, color, filled);
     }
-    let points: Vec<Pos2> = (0..=40)
-        .map(|step| {
-            let t = step as f32 / 40.0 * std::f32::consts::TAU;
-            let x = 16.0 * t.sin().powi(3);
-            let y =
-                13.0 * t.cos() - 5.0 * (2.0 * t).cos() - 2.0 * (3.0 * t).cos() - (4.0 * t).cos();
-            c + Vec2::new(x, -y) * (0.5 * scale) + Vec2::new(0.0, 0.5 * scale)
-        })
-        .collect();
-    painter.add(egui::Shape::line(
-        points,
-        Stroke::new(1.7_f32 * scale.max(0.6), color),
-    ));
 }
 
 /// Names a text box for a screen reader (its hint is not enough) and gives its current text.
@@ -774,6 +599,21 @@ pub fn app_icon() -> egui::IconData {
 #[cfg(test)]
 mod icon_tests {
     use super::*;
+
+    #[test]
+    fn every_icon_file_reads_and_stays_inside_its_square() {
+        for (index, icon) in Icon::ALL.iter().enumerate() {
+            assert_eq!(
+                *icon as usize, index,
+                "{icon:?} is out of order in Icon::ALL"
+            );
+            assert!(
+                crate::svg::Svg::parse(icon.source()).is_some(),
+                "{icon:?} has no drawable shapes"
+            );
+            assert!(icons().get(index).is_some_and(Option::is_some), "{icon:?}");
+        }
+    }
 
     #[test]
     fn the_app_icon_is_a_lime_diamond_on_a_transparent_square() {

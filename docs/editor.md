@@ -310,5 +310,12 @@ preview keeps a usable height (never under about 250 px) instead of shrinking to
 The Clips toolbar narrows the search box and folder pill together so they never overlap, and the
 Storage settings explain why "Delete the oldest clips" is dimmed while no limit is chosen.
 
-Painted icons (play, loop, gear, scissors and the rest in `kit::draw_icon`) use round stroke ends and
-corners, a toothed outline gear and softened filled shapes, so they stay crisp at every size.
+## Icons are SVG files
+
+Every interface icon is a plain SVG in `assets/icons/` (24-unit square, `currentColor`, round caps and
+joins), so any vector editor can open and change them; each has a licence sidecar and an
+`ATTRIBUTION.md` row. `apps/clipcraft/src/svg.rs` is a small built-in renderer for the subset they use
+(path with M L H V C Q A Z, circle, rect, line, polyline, polygon; fill and stroke). It adds no
+dependency, because a full SVG library (resvg) is MPL-2.0, which `deny.toml` allows only for the audio
+decoders. Files over 64 KiB or with unknown content draw nothing instead of failing. This replaces
+the earlier icons painted by code.
