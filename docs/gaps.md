@@ -159,6 +159,15 @@ remain open. Verification: 584 workspace tests pass (five existing ignored), inc
 cases and generated concurrent playback/thumbnail/waveform coverage. See
 [ADR 0025](adr/0025-cooperative-decode-admission.md) and [testing](testing.md).
 
+Native retesting of M11.1g found a percentage-seek shortcut ordering bug (M11.1h): digit keys
+batched into a single UI frame were applied numerically, so the highest digit overrode the final
+request. Playback now chooses the last pressed digit in event order. Popup/text-focus guards and
+other transport shortcuts are unchanged. The failing-before/passing-after regression, native before/after checks and final 585-test gate
+passed. After main's newer branding/performance merge, the combined build passed 602 tests/36
+targets (five existing ignored) and repeated native playback/editor checks. Coordinator tests also
+passed 50 repetitions and mixed-workload playback 10 repetitions. See
+[testing](testing.md). This retest does not verify physical audio devices, GPUs or real games.
+
 ## Connected workflow evidence (M5.3)
 
 The current generated Linux/X11 session covers process/window recognition → F8 replay with virtual

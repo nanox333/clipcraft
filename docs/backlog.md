@@ -1319,6 +1319,19 @@ audio/seek/loop/prepared editor/failure/cancellation tests and full quality/docs
 **Docs:** README/gaps, roadmap, architecture/performance/testing, ADR 0025. **Dependency/estimate:**
 M11.1f/existing workers, one focused portable slice; pooled decoder reuse/GPU/proxies remain later.
 
+### M11.1h — Preserve rapid percentage-seek input order
+
+**Issue:** [#11](https://github.com/nanox333/clipcraft/issues/11). **Status:** fixed during the user-
+requested M11.1g retest. Native generated-clip playback reproduced 1,8,2,9,3 landing at 90% because
+the old handler scanned key codes numerically. Use the last pressed digit in actual event order;
+keep existing focus/popup/error guards and the same player seek/engine/UI layout/file contracts.
+**Acceptance/verification:** regression fails before and passes after for mixed/repeated/reverse
+batches and a final zero; native repeat lands at 30%, with a following frame step near 2.43s on the
+8s fixture. Full workspace/docs gates, repeated coordinator/mixed-workload tests and editor smoke.
+**Limits:** no redesign of every transport shortcut, new API/schema/dependency/unsafe or hardware
+claim. No media is changed; Rust-only/offline constraints apply. **Docs:** README/gaps/testing,
+roadmap/backlog. **Dependency/estimate:** current keyboard event stream; one small corrective slice.
+
 ### M11.2 — Local CLI and MCP footage-management adapter
 
 **Status:** planned; the local Rust CLI exists, but an MCP adapter does not.
