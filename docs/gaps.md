@@ -1,6 +1,6 @@
 # Known gaps
 
-**Status:** active prototype · **Last reviewed:** 2026-10-23 · **Target:** local Windows capture-to-export alpha
+**Status:** active prototype · **Last reviewed:** 2026-10-25 · **Target:** local Windows capture-to-export alpha
 
 This is the ranked work list, not a parity claim. Capture, replay, playback, local library
 organization, and no-reencode trim export are implemented. Linux/X11 has end-to-end synthetic
@@ -105,6 +105,22 @@ M10.2a verification: 568 tests/34 targets pass (five existing ignored checks), i
 identity fallback, bounded art, advanced keyboard Apply/reset and ID-independent preview. Native
 Linux screenshots/private mock and generated-game capture confirm the game/product badge layout;
 CLI previews and exporter no-overwrite checks pass. Windows/macOS compilation is not runtime proof.
+
+## Playback delivery and remaining scheduling work (M11.1f)
+
+The display-result queue now keeps at most one latest RGBA picture, one opening summary and one
+terminal status. Polling returns at most three events, ordered opening → picture → terminal.
+Seek, step and replay invalidate earlier pending/in-flight pictures and old end markers; failures
+remain observable. Shutdown drops pending pixels. Picture dimensions are checked against
+33,177,600 pixels (8K UHD) and an 8192-pixel edge before RGBA conversion.
+
+This bounds pending results only: the UI can still hold a displayed/polled picture, the worker an
+in-flight picture, and FilmCraft its decoder/GOP caches. It is not a total RSS budget. Control/audio
+channels retain their existing separate behavior; a shared bounded scheduler prioritizing playback
+over thumbnails/waveforms, decoder-pool coordination, proxies and GPU composition are not built.
+Decode/file calls remain non-interruptible. Verification: 577 workspace tests pass (five existing
+ignored), including 69 player tests and prepared-editor/keyboard regressions; docs gate passes.
+No export speed, GPU throughput or real-device claim is added. See [architecture](architecture.md), [performance](performance.md) and [testing](testing.md).
 
 ## Connected workflow evidence (M5.3)
 

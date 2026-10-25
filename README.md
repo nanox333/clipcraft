@@ -32,7 +32,8 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   generated sources; real microphone and speaker hardware has not been tested here.
 - **Playback:** open local clips in the app with sound, seek and step frames, adjust volume and
   playback speed, loop, select an audio track, and use fullscreen. Clip thumbnails are decoded and
-  cached locally.
+  cached locally. Playback retains only its newest pending picture when the UI stalls; new seeks
+  discard older pending/in-flight pictures rather than uploading a backlog (M11.1f).
 - **Library:** keep a rebuildable local index, restore the last folder, scan and search clips,
   sort them, view media details, reveal or relink files, and organize clips with favorites,
   collections, and game labels. Scans include subfolders (eight levels), skip symlinks, and run on

@@ -124,7 +124,7 @@ the linked report records current implementation, evidence and remaining gates.
 | 5 | Desktop library: `main.rs`, `organize.rs`, `thumbs.rs` | The grid visits every entry; visibility only defers thumbnail loading. Filtering/sorting runs for both counts and cards; name comparison repeatedly allocates lowercase strings. Measure frame times with 1k/10k/50k generated entries, then virtualize rows and cache sort/search results on model changes. Require screenshots and keyboard checks. |
 | 6 | Engine/index: `index.rs`, library scan/probe workers | `merge_entries` searches the previous list per scanned entry and the merged list per missing entry, yielding quadratic path matching. Metadata updates clone/rewrite the index. Measure scan/refresh and repeated probe updates at 1k/10k/50k entries; use bounded path maps and batch persistence while preserving metadata and atomic recovery. |
 | 7 | Save/export: `mux.rs`, `clipcraft-export` | MP4 saves intentionally write a crash-recoverable copy and the final file. Trim remuxing already avoids re-encoding, but builds/sorts an interleaving vector and allocates packet reads. Measure wall time, allocation peak and disk bytes before considering stream merging/reused read buffers. Preserve recovery, exact cuts and cancellation. |
-| 8 | Player/audio/output: `clipcraft-player`, `clipcraft-audio-out` | Playback decodes full-size RGBA; frame events use an unbounded channel. Audio callback delivery already uses `try_lock`, but capture input locks a growing `VecDeque`; mixing and WSOLA allocate intermediate vectors. Measure minimized/stalled UI queue growth, 4K decode-to-upload cost, callback overruns and speed-change CPU. Evaluate a bounded latest-frame mailbox, scaled preview and preallocated audio storage. |
+| 8 | Player/audio/output: `clipcraft-player`, `clipcraft-audio-out` | Playback decodes full-size RGBA; M11.1f now retains only the newest pending display picture and discards stale seek results. The original unbounded event channel is removed. Audio callback delivery already uses `try_lock`, but capture input locks a growing `VecDeque`; mixing and WSOLA allocate intermediate vectors. Measure minimized/stalled UI queue growth, 4K decode-to-upload cost, callback overruns and speed-change CPU. Evaluate shared playback-first job scheduling, scaled preview and preallocated audio storage; decoder caches/control/audio channels remain separate. |
 | 9 | Frame/time/media/CLI/xtask | Queues already cap items/bytes; edit time stays integer/rational; probes use bounded headers and file-backed reads; CLI calls engine commands. Preserve these bounds. No measured hot-path change is justified here. Profile malformed-file scan cost and verify release builds in packaging. Compiler tuning/LTO needs startup, binary size and runtime measurements rather than blanket settings. |
 
 ## Reference-hardware evidence still required
@@ -229,3 +229,27 @@ and fade amounts, including reuse of the matching RGBA allocation. Existing gene
 cover shared text rendering, audio/cut timestamps, 30/60 FPS, size targets, hardware stand-ins,
 cancellation, collision safety and unchanged sources. Native workflow and final gate evidence is
 recorded in [testing.md](testing.md); physical GPU/Windows/macOS measurements remain open.
+
+## M11.1f — Bound unread playback results (2026-10-25)
+
+Baseline `ba03a60` sends every decoded RGBA picture through an unbounded event channel. The new
+mailbox holds only the latest picture plus fixed opening/terminal slots, so a UI stall cannot
+accumulate historical display frames. A synthetic 10,000-publication test uses 4×4 RGBA pictures:
+the retained pixel payload is 64 bytes, and the eventual poll returns opening/latest/end only.
+At 1920×1080, one pending RGBA picture is 8,294,400 bytes (7.91 MiB); at 3840×2160 it is
+33,177,600 bytes (31.64 MiB). These are exact payload counts, not process RSS measurements.
+An in-flight decode, a returned/displayed UI picture, codec references and allocator retention
+can all coexist with that slot. The pre-conversion native picture limit is 33,177,600 pixels,
+8192 per edge, hence at most 132,710,400 RGBA bytes (126.56 MiB) per pending picture.
+
+Seek/step/replay invalidate pending pixels/end markers and identify in-flight results by a
+serialized revision. Superseded publication skips its UI wake; valid new results continue. Commands
+already queued during source opening are applied before the first picture decode. Existing integer
+clock/frame skipping, audio feed and prepared-source behavior remain. No decoder interruption,
+background-work priority scheduler, control/audio-channel bound or export acceleration is claimed.
+
+Concat `971ad1d9214e85755c05edc8777c05b4d4e255dc` informed the prior technique assessment only.
+This is an independent Rust implementation; no AGPL code/shader, FFmpeg dependency or upstream
+asset was imported. CPU/GPU latency, power, real-game contention and before/after total memory
+still require reference-machine measurements. The deterministic byte/order tests and generated
+MP4 stalled-consumer regression establish the result-retention contract without a speed claim.

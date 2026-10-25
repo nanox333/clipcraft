@@ -754,3 +754,35 @@ Ignored evidence: `.clipcraft-local/discord-presence/medal-before*.png`, `medal-
 private fixture configuration/frames under `/tmp/clipcraft-presence-native`. Public Medal support
 screenshots were inspected as layout references only, never shipped. See [setup](discord-presence.md)
 for the one-time maintainer registration/upload/build-variable requirement.
+
+### M11.1f — Latest-picture mailbox and seek publication (2026-10-25)
+
+`cargo xtask ci` passes **577 tests across 34 targets**, with five pre-existing ignored/manual
+checks: formatting, all workspace targets, strict Clippy, layer/asset and dependency checks.
+`cargo xtask docs-check ba03a60` passes. Rust 1.99.1 on Debian 13; no new dependency, unsafe,
+ignored test or source port. Build prerequisites were restored outside tracked source files.
+
+`cargo test --locked -p clipcraft-player` passes **69 tests**, including nine new cases. A
+10,000-frame synthetic burst retains just the last 4×4 RGBA frame (64 payload bytes) and preserves
+opening → latest frame → terminal order. Seek, step and replay clear queued old frames/Ended;
+a barrier-controlled late completion is rejected and a current-revision result still publishes.
+Four concurrent callers enqueue 2,048 seek commands with strictly ordered revisions. Fatal errors,
+close, disconnected command receivers, poisoned mutex and revision exhaustion are covered, as are
+zero/overflow/oversize dimensions before conversion. Poison handling also wakes a paused worker
+with Shutdown, preventing retirement from waiting on a permanently poisoned mailbox.
+
+A generated one-second 64×48 H.264 MP4 plays completely while the test deliberately never polls;
+it then returns exactly Opened, the true last picture, and Ended. A subsequent seek shows the
+requested frame without a stale end marker, and cancellation acknowledges worker retirement.
+Existing player tests cover exact seeks/stepping, replay/loop/speed, audio selection and sound-clock
+behavior. Desktop egui regressions cover prepared-source promotion at a cut, rapid seeks/reorder/
+reopen worker bounds, editor keyboard transport and recovery. No UI layout changed; these tests
+are not a native display/sound-device or hardware-performance run.
+
+The limit applies to retained display results, not decoder/GOP caches, UI-held frames, in-flight
+conversion, control/audio channels or process RSS. No shared cross-job priority scheduler,
+speculative prefetch, preview proxy, GPU compositor or faster export is claimed. See
+[ADR 0024](adr/0024-bounded-playback-delivery.md) and the [performance accounting](performance.md).
+Local logs: `/tmp/clipcraft-bounded-player.log`, `/tmp/clipcraft-bounded-ci.log` and
+`/tmp/clipcraft-setup-verification.log`. Tests create synthetic media in disposable directories;
+no user clips or downloaded Concat fixtures are read or changed.

@@ -1011,3 +1011,54 @@ mod controls {
         );
     }
 }
+
+#[test]
+fn an_unpolled_player_reaches_the_end_with_only_its_final_picture_pending() {
+    let scratch = Scratch::new();
+    let player = Player::start(scratch.file("stalled-ui.mp4", &make_clip()), || {});
+    player.play();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !player.events.ended() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(player.events.ended(), "unpolled playback did not finish");
+    let events = player.poll();
+    assert_eq!(
+        events.len(),
+        3,
+        "only Opened/latest picture/Ended may be retained"
+    );
+    assert!(matches!(events[0], PlayerEvent::Opened(_)));
+    let PlayerEvent::Frame(frame) = &events[1] else {
+        panic!("final picture missing");
+    };
+    assert_eq!(frame.pts, FrameRate::FPS_30.tick_of(i64::from(FRAMES - 1)));
+    assert_eq!(events[2], PlayerEvent::Ended);
+    assert!(player.poll().is_empty());
+    player.seek(Tick::from_units(10, 30));
+    let sought = collect(&player, |events| !frames(events).is_empty());
+    assert_eq!(frames(&sought)[0].pts, Tick::from_units(10, 30));
+    assert!(!sought.contains(&PlayerEvent::Ended));
+    player.request_stop();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !player.worker_finished() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(player.worker_finished());
+}
+
+#[test]
+fn picture_dimensions_are_bounded_before_rgba_conversion() {
+    for (width, height) in [
+        (0, 1),
+        (1, 0),
+        (u32::MAX, u32::MAX),
+        (8193, 1),
+        (7680, 4321),
+    ] {
+        assert_eq!(frame_bytes(width, height), Err(PlayerError::Unsupported));
+    }
+    assert_eq!(frame_bytes(7680, 4320), Ok(132_710_400));
+    assert_eq!(frame_bytes(4320, 7680), Ok(132_710_400));
+    assert_eq!(frame_bytes(64, 48), Ok(64 * 48 * 4));
+}
