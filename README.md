@@ -76,7 +76,9 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   pending state until the worker stops. Matching-size exports skip redundant frame copies.
   Repeatable software-export measurements and their limits are in [the performance review](docs/performance.md).
   Edits recover from internal local metadata after restart, including text, export preset and quality;
-  undo history starts fresh. Originals remain untouched, and quick trim stays available. See
+  undo history starts fresh. A restored draft never takes over launch: ClipCraft opens on Clips and
+  the Editor tab reopens it. In short windows the editor page scrolls so the preview keeps its
+  height. Originals remain untouched, and quick trim stays available. See
   [the editor guide](docs/editor.md) for controls and limits.
 - **Local match data:** optional CS2/Dota 2 GSI adapters and a League of Legends local API reader
   show selected map/match/player details in Settings → Games. All default off; Valve config setup

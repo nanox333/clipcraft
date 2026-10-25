@@ -146,7 +146,7 @@ Import clips and Send to editor add references, while right-click offers Details
 Undo/redo retains at most 64 edits within an 8 MiB budget. Quick trim remains available.
 
 Limits: one gapless video/linked-audio sequence, no separate segment-count cap, 30-minute total,
-minimum segment 1/30 second and at most 256 text layers. M11.1c adds internal current-state
+minimum segment 1/30 second and at most 256 text layers. Launch stays on Clips after draft recovery and the editor page scrolls in short windows (checked at 960×600 and 1440×900 under a virtual display). M11.1c adds internal current-state
 recovery without a user-facing project format. It restores edits/text/source references/title/
 playhead/preset paused, with fresh undo history. The 16 MiB record is debounced 500 ms; a normal
 exit flush waits at most two seconds. Crash/stalled-filesystem timing can lose recent unsaved
