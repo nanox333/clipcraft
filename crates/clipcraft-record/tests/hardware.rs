@@ -98,6 +98,7 @@ impl HardwareEncoder for Fake {
         &mut self,
         frame: &mut dyn NativeCaptureFrame,
         index: u64,
+        _fit: clipcraft_record::SurfaceFit,
     ) -> Result<Option<Vec<HardwarePacket>>, String> {
         if !self.behaviour.direct_surface {
             return Ok(None);
@@ -357,6 +358,36 @@ fn a_compatible_encoder_receives_native_surfaces_without_cpu_readback() {
     wait_for(&recorder, "native-surface video", |status| {
         status.buffered_seconds >= 1.2
     });
+    assert!(native_calls.load(Ordering::Relaxed) > 0);
+    assert_eq!(readbacks.load(Ordering::Relaxed), 0);
+    assert_eq!(cpu_captures.load(Ordering::Relaxed), 0);
+    assert_eq!(recorder.stop().state, RecordState::Stopped);
+}
+
+#[test]
+fn a_surface_smaller_than_the_source_is_scaled_by_the_encoder_without_cpu_readback() {
+    let readbacks = Arc::new(AtomicUsize::new(0));
+    let cpu_captures = Arc::new(AtomicUsize::new(0));
+    let native_calls = Arc::new(AtomicUsize::new(0));
+    let hardware = provider_counted(
+        Behaviour {
+            direct_surface: true,
+            ..Behaviour::default()
+        },
+        native_calls.clone(),
+    );
+    let source = NativeSource {
+        readbacks: readbacks.clone(),
+        cpu_captures: cpu_captures.clone(),
+    };
+    // The 320x180 surface is encoded at 144 high: the card does the scaling.
+    let mut scaled = config(Some(hardware));
+    scaled.output_height = 144;
+    let recorder = Recorder::start(Box::new(source), scaled).unwrap();
+    wait_for(&recorder, "scaled native-surface video", |status| {
+        status.buffered_seconds >= 1.2
+    });
+    assert_eq!(recorder.status().output, Some((256, 144)));
     assert!(native_calls.load(Ordering::Relaxed) > 0);
     assert_eq!(readbacks.load(Ordering::Relaxed), 0);
     assert_eq!(cpu_captures.load(Ordering::Relaxed), 0);

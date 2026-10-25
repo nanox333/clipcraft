@@ -21,7 +21,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use clipcraft_capture::NativeCaptureFrame;
-use clipcraft_record::{HardwareEncoder, HardwarePacket, HardwareRequest};
+use clipcraft_record::{HardwareEncoder, HardwarePacket, HardwareRequest, SurfaceFit};
 use windows::Win32::Foundation::{FreeLibrary, HMODULE, VARIANT_TRUE};
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::{
@@ -712,7 +712,7 @@ impl MfEncoder {
         if max_samples < 2 {
             return Err("GPU sample pool exceeds its memory budget".to_owned());
         }
-        let converter = Converter::new(surface, self.fps)?;
+        let converter = Converter::new(surface, self.fps, (self.width, self.height))?;
         // SAFETY: live transform; the attribute is optional and absence declines native input.
         let aware = unsafe {
             self.transform
@@ -1239,13 +1239,11 @@ impl HardwareEncoder for MfEncoder {
         &mut self,
         frame: &mut dyn NativeCaptureFrame,
         index: u64,
+        fit: SurfaceFit,
     ) -> Result<Option<Vec<HardwarePacket>>, String> {
         let Some(surface) = frame.as_any_mut().downcast_mut::<Surface>() else {
             return Ok(None);
         };
-        if surface.width() != self.width || surface.height() != self.height {
-            return Ok(None);
-        }
         if self.gpu.is_none()
             && self.gpu_declined.is_none()
             && let Err(why) = self.enable_gpu(surface)
@@ -1255,12 +1253,16 @@ impl HardwareEncoder for MfEncoder {
         let Some(gpu) = &self.gpu else {
             return Ok(None);
         };
+        // A surface of another size than the one this converter was built for takes the CPU path.
+        if !gpu.converter.accepts(surface) {
+            return Ok(None);
+        }
         let conversion_time = crate::d3d11::measure_conversion();
         // SAFETY: a configured bounded allocator; returned sample is exclusively leased until
         // submitted. Empty pools report an error rather than allocating beyond their maximum.
         let sample = unsafe { gpu.allocator.AllocateSample() }
             .map_err(|e| format!("GPU sample unavailable: {e}"))?;
-        gpu.converter.convert(surface, &sample)?;
+        gpu.converter.convert(surface, &sample, fit)?;
         self.sample_time(&sample, index)?;
         self.begin()?;
         drop(conversion_time);

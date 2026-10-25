@@ -3,11 +3,13 @@
 #![warn(clippy::undocumented_unsafe_blocks)]
 
 use clipcraft_capture::{CaptureError, CaptureFrame, MAX_CAPTURE_EDGE, NativeCaptureFrame};
+use clipcraft_record::SurfaceFit;
 use clipcraft_time::Tick;
 use std::any::Any;
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Media::MediaFoundation::{IMFDXGIBuffer, IMFSample};
@@ -342,10 +344,23 @@ pub(crate) struct Converter {
     context: ID3D11VideoContext,
     processor: ID3D11VideoProcessor,
     enumerator: ID3D11VideoProcessorEnumerator,
+    /// The surface size this converter was built for.
+    input: (u32, u32),
+    /// The encoded picture size.
+    output: (u32, u32),
 }
 
 impl Converter {
-    pub(crate) fn new(surface: &Surface, fps: u32) -> Result<Self, String> {
+    /// Builds a converter from `surface`-sized BGRA to an NV12 picture of `output` size; the card
+    /// scales when the sizes differ.
+    pub(crate) fn new(surface: &Surface, fps: u32, output: (u32, u32)) -> Result<Self, String> {
+        if output.0 == 0
+            || output.1 == 0
+            || output.0 > MAX_CAPTURE_EDGE
+            || output.1 > MAX_CAPTURE_EDGE
+        {
+            return Err("encoded picture size is out of range".to_owned());
+        }
         let video: ID3D11VideoDevice = surface.device().cast().map_err(|e| e.to_string())?;
         let context: ID3D11VideoContext = surface.context().cast().map_err(|e| e.to_string())?;
         let desc = D3D11_VIDEO_PROCESSOR_CONTENT_DESC {
@@ -360,8 +375,8 @@ impl Converter {
                 Numerator: fps,
                 Denominator: 1,
             },
-            OutputWidth: surface.width(),
-            OutputHeight: surface.height(),
+            OutputWidth: output.0,
+            OutputHeight: output.1,
             Usage: D3D11_VIDEO_USAGE_PLAYBACK_NORMAL,
         };
         // SAFETY: descriptors use the validated surface dimensions and non-zero encoder FPS.
@@ -391,10 +406,22 @@ impl Converter {
             context,
             processor,
             enumerator,
+            input: (surface.width(), surface.height()),
+            output,
         })
     }
 
-    pub(crate) fn convert(&self, surface: &Surface, sample: &IMFSample) -> Result<(), String> {
+    /// True when `surface` has the size this converter was built for.
+    pub(crate) fn accepts(&self, surface: &Surface) -> bool {
+        self.input == (surface.width(), surface.height())
+    }
+
+    pub(crate) fn convert(
+        &self,
+        surface: &Surface,
+        sample: &IMFSample,
+        fit: SurfaceFit,
+    ) -> Result<(), String> {
         if surface.device() != &self.device {
             return Err("capture GPU device changed".to_owned());
         }
@@ -421,12 +448,71 @@ impl Converter {
         if subresource != 0 {
             return Err("texture-array encoder samples are unsupported".to_owned());
         }
-        self.convert_texture(surface, &texture)
+        self.convert_texture(surface, &texture, fit)
     }
 
-    fn convert_texture(&self, surface: &Surface, texture: &ID3D11Texture2D) -> Result<(), String> {
+    fn convert_texture(
+        &self,
+        surface: &Surface,
+        texture: &ID3D11Texture2D,
+        fit: SurfaceFit,
+    ) -> Result<(), String> {
         if surface.device() != &self.device {
             return Err("capture GPU device changed".to_owned());
+        }
+        if !self.accepts(surface) {
+            return Err("capture surface size changed".to_owned());
+        }
+        let rect = |r: clipcraft_capture::reframe::PixelRect| -> Result<RECT, String> {
+            let edge = |start: u32, length: u32| {
+                start
+                    .checked_add(length)
+                    .and_then(|end| Some((i32::try_from(start).ok()?, i32::try_from(end).ok()?)))
+                    .ok_or_else(|| "picture placement is out of range".to_owned())
+            };
+            let (left, right) = edge(r.x, r.width)?;
+            let (top, bottom) = edge(r.y, r.height)?;
+            Ok(RECT {
+                left,
+                top,
+                right,
+                bottom,
+            })
+        };
+        let (source, destination) = (rect(fit.source)?, rect(fit.destination)?);
+        let target = RECT {
+            left: 0,
+            top: 0,
+            right: i32::try_from(self.output.0).map_err(|e| e.to_string())?,
+            bottom: i32::try_from(self.output.1).map_err(|e| e.to_string())?,
+        };
+        let black = D3D11_VIDEO_COLOR {
+            Anonymous: D3D11_VIDEO_COLOR_0 {
+                RGBA: D3D11_VIDEO_COLOR_RGBA {
+                    R: 0.0,
+                    G: 0.0,
+                    B: 0.0,
+                    A: 1.0,
+                },
+            },
+        };
+        // SAFETY: live processor and context; the rectangles are valid for the call and describe
+        // the validated surface (source) and encoded picture (destination, target). Anything the
+        // destination does not cover is filled with the black background, so a reused encoder
+        // texture never shows an older picture in a letterbox bar.
+        unsafe {
+            self.context
+                .VideoProcessorSetStreamSourceRect(&self.processor, 0, true, Some(&source));
+            self.context.VideoProcessorSetStreamDestRect(
+                &self.processor,
+                0,
+                true,
+                Some(&destination),
+            );
+            self.context
+                .VideoProcessorSetOutputTargetRect(&self.processor, true, Some(&target));
+            self.context
+                .VideoProcessorSetOutputBackgroundColor(&self.processor, false, &black);
         }
         let input_desc = D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC {
             ViewDimension: D3D11_VPIV_DIMENSION_TEXTURE2D,
@@ -621,8 +707,23 @@ mod tests {
                 .copy_texture(&device, &context, &input, &color_desc, Tick(12))
                 .unwrap()
                 .unwrap();
-            let converter = Converter::new(&surface, 30).unwrap();
-            converter.convert_texture(&surface, &nv12).unwrap();
+            let converter = Converter::new(&surface, 30, (64, 64)).unwrap();
+            let full = clipcraft_capture::reframe::PixelRect {
+                x: 0,
+                y: 0,
+                width: 64,
+                height: 64,
+            };
+            converter
+                .convert_texture(
+                    &surface,
+                    &nv12,
+                    SurfaceFit {
+                        source: full,
+                        destination: full,
+                    },
+                )
+                .unwrap();
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
             // SAFETY: identical NV12 descriptors; Map synchronizes the copy before CPU access.
             unsafe {
@@ -664,6 +765,59 @@ mod tests {
                 [expected[0], expected[4096], expected[4097]]
             );
         }
+        // Scaling and letterboxing on the card: a red 32x32 picture is drawn 64 wide and 32 tall in
+        // the middle of a 64x64 output, so the bars above and below are black and the middle red.
+        let small_desc = description(32, 32);
+        let small = create(&small_desc, [0, 0, 255, 255]);
+        let surface = pool
+            .copy_texture(&device, &context, &small, &small_desc, Tick(13))
+            .unwrap()
+            .unwrap();
+        let converter = Converter::new(&surface, 30, (64, 64)).unwrap();
+        assert!(converter.accepts(&surface));
+        let rect = |x, y, width, height| clipcraft_capture::reframe::PixelRect {
+            x,
+            y,
+            width,
+            height,
+        };
+        converter
+            .convert_texture(
+                &surface,
+                &nv12,
+                SurfaceFit {
+                    source: rect(0, 0, 32, 32),
+                    destination: rect(0, 16, 64, 32),
+                },
+            )
+            .unwrap();
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        // SAFETY: identical NV12 descriptors; Map synchronizes the copy before CPU access.
+        unsafe {
+            context.CopyResource(&staging, &nv12);
+            context
+                .Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+                .unwrap();
+        }
+        let luma = |row: usize| {
+            // SAFETY: Map exposes 64 luma rows of RowPitch bytes; the row and column are inside.
+            unsafe {
+                *mapped
+                    .pData
+                    .cast::<u8>()
+                    .add(row * mapped.RowPitch as usize + 32)
+            }
+        };
+        let (bar, picture) = (luma(4), luma(32));
+        // SAFETY: balances the successful Map.
+        unsafe {
+            context.Unmap(&staging, 0);
+        }
+        assert!(bar <= 24, "the letterbox bar is black, not {bar}");
+        assert!(
+            (50..=80).contains(&picture),
+            "the scaled red picture has the luma of red, not {picture}"
+        );
         drop(leases.pop());
         let mut reused = pool
             .copy_texture(&device, &context, &red, &desc, Tick(10))

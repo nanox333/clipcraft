@@ -403,7 +403,8 @@ pub struct RecordingSettings {
     pub game_rules: Vec<GameMatchRule>,
     /// Capture the game's window even when the game is full screen.
     pub force_window_capture: bool,
-    /// Convert HDR games to standard colours so clips look right everywhere.
+    /// Convert HDR games to standard colours so clips look right everywhere. Off by default: the
+    /// standard-colour capture is the fast path that stays on the graphics card (no copy to memory).
     pub hdr_compatibility: bool,
     /// Where clips are saved; empty means the default folder.
     pub capture_folder: String,
@@ -475,7 +476,7 @@ impl Default for RecordingSettings {
             detect_built_in_games: true,
             disabled_builtin_games: Vec::new(),
             force_window_capture: false,
-            hdr_compatibility: true,
+            hdr_compatibility: false,
             capture_folder: String::new(),
             storage_limit_gb: 0,
             delete_oldest_when_full: true,
@@ -929,6 +930,8 @@ mod tests {
         assert_eq!(settings.audio_channels, 2);
         assert_eq!(settings.game_audio_percent, 100);
         assert_eq!(settings.microphone_percent, 100);
+        // Standard-colour capture is the default: it keeps frames on the graphics card.
+        assert!(!settings.hdr_compatibility);
         // A file written before these options existed still loads with their defaults.
         let old: SettingsFile =
             serde_json::from_str(r#"{"version":1,"settings":{"height":720}}"#).unwrap();

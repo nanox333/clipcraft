@@ -7,7 +7,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use clipcraft_capture::reframe::{Framing, OutputShape, Reframe, reframe};
+use clipcraft_capture::reframe::{Framing, OutputShape, PixelRect, Reframe, reframe};
 use clipcraft_capture::{CaptureFrame, CaptureSource, MAX_CAPTURE_EDGE, NativeCaptureFrame};
 use filmcraft_h264enc::{
     Encoder, EncoderConfig, PacketFormat, Preset, Profile, RateControl, YuvFrame,
@@ -16,7 +16,7 @@ use filmcraft_h264enc::{
 use crate::RecordError;
 use crate::audio::{AudioBuffer, AudioEngine, AudioInputStatus, AudioSetup, AudioTrackInfo};
 use crate::convert::{I420, convert, convert_rgba};
-use crate::hardware::{HardwareEncoder, HardwareProvider, HardwareRequest};
+use crate::hardware::{HardwareEncoder, HardwareProvider, HardwareRequest, SurfaceFit};
 use crate::mux::{ClipAudio, ClipFormat, SavedClip, VideoInfo, write_clip};
 use crate::replay::{EncodedSample, ReplayBuffer};
 
@@ -912,7 +912,7 @@ fn encode_hardware(
     pts: i64,
     threads: usize,
 ) -> Result<(), String> {
-    let direct_surface = surface_matches_output(current, frame);
+    let direct_surface = surface_fit(current, frame);
     let Stage::Hardware(encoder) = &mut current.stage else {
         return Err("not a hardware stage".to_owned());
     };
@@ -921,15 +921,11 @@ fn encode_hardware(
         return Err("hardware encoder exceeded its pending-picture bound".to_owned());
     }
     let index = u64::try_from(pts).unwrap_or(0);
-    let native_packets = if direct_surface {
-        match frame {
-            QueuedFrame::Surface { surface, .. } => {
-                encoder.encode_surface(surface.as_mut(), index)?
-            }
-            QueuedFrame::Cpu(_) => None,
+    let native_packets = match (direct_surface, &mut *frame) {
+        (Some(fit), QueuedFrame::Surface { surface, .. }) => {
+            encoder.encode_surface(surface.as_mut(), index, fit)?
         }
-    } else {
-        None
+        _ => None,
     };
     let packets = match native_packets {
         Some(packets) => packets,
@@ -963,26 +959,44 @@ fn encode_hardware(
     Ok(())
 }
 
-/// A direct surface can be encoded only when no GPU-side crop, scale, or letterbox is needed.
-/// More complex transforms stay on the established CPU conversion path until a platform encoder
-/// explicitly supports them.
-fn surface_matches_output(current: &Active, frame: &QueuedFrame) -> bool {
+/// How a surface is fitted on the graphics card, or `None` when the picture must take the CPU
+/// path. The crop and placement come from the same plan the CPU conversion uses, so both routes
+/// give the same picture; the card scales and letterboxes (with black) instead of the processor.
+/// The placement must sit on even pixels, which 4:2:0 chroma needs, and the surface must be the
+/// size the plan was made for (a resized source restarts the plan).
+fn surface_fit(current: &Active, frame: &QueuedFrame) -> Option<SurfaceFit> {
     let QueuedFrame::Surface { surface, .. } = frame else {
-        return false;
+        return None;
     };
     let (width, height) = current.source_size;
-    let full = clipcraft_capture::reframe::PixelRect {
-        x: 0,
-        y: 0,
-        width,
-        height,
+    let plan = &current.plan;
+    let (source, destination) = (plan.source, plan.destination);
+    let inside = |rect: PixelRect, bound_width: u32, bound_height: u32| {
+        rect.width > 0
+            && rect.height > 0
+            && rect
+                .x
+                .checked_add(rect.width)
+                .is_some_and(|edge| edge <= bound_width)
+            && rect
+                .y
+                .checked_add(rect.height)
+                .is_some_and(|edge| edge <= bound_height)
     };
-    surface.width() == width
+    let even = |rect: PixelRect| {
+        [rect.x, rect.y, rect.width, rect.height]
+            .iter()
+            .all(|value| value % 2 == 0)
+    };
+    (surface.width() == width
         && surface.height() == height
-        && current.plan.output_width == width
-        && current.plan.output_height == height
-        && current.plan.source == full
-        && current.plan.destination == full
+        && inside(source, width, height)
+        && inside(destination, plan.output_width, plan.output_height)
+        && even(destination))
+    .then_some(SurfaceFit {
+        source,
+        destination,
+    })
 }
 
 #[cfg(test)]

@@ -35,13 +35,25 @@ pub struct HardwarePacket {
     pub reordered: bool,
 }
 
+/// How a platform surface is fitted into the encoded picture: which part of the surface is used and
+/// where it is drawn. Pixels of the output outside `destination` are black. The encoder's own output
+/// size is the picture size, so a surface of any size can be scaled on the graphics card.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SurfaceFit {
+    /// The part of the surface that is used.
+    pub source: clipcraft_capture::reframe::PixelRect,
+    /// Where that part is drawn in the output picture.
+    pub destination: clipcraft_capture::reframe::PixelRect,
+}
+
 /// A running hardware encoder. Pictures go in as straight 8-bit RGBA; the encoder converts them.
 pub trait HardwareEncoder: Send {
     /// Encodes one picture. `index` is its time in frames.
     fn encode(&mut self, rgba: &[u8], index: u64) -> Result<Vec<HardwarePacket>, String>;
 
     /// Encodes a platform surface directly when this encoder can share its device and pixel
-    /// format. `None` means the caller should read the surface back and use [`Self::encode`].
+    /// format, cropping, scaling and letterboxing it as `fit` says. `None` means the caller should
+    /// read the surface back and use [`Self::encode`].
     ///
     /// The default keeps existing CPU-input encoders source-compatible. A platform implementation
     /// may downcast the opaque surface only inside `clipcraft-platform`.
@@ -49,6 +61,7 @@ pub trait HardwareEncoder: Send {
         &mut self,
         _frame: &mut dyn NativeCaptureFrame,
         _index: u64,
+        _fit: SurfaceFit,
     ) -> Result<Option<Vec<HardwarePacket>>, String> {
         Ok(None)
     }

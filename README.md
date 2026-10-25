@@ -129,8 +129,11 @@ they do not establish game-FPS impact or sustained capture performance.
 - Windows/AMD native SDR capture avoids full-frame CPU readback at matching source/output size.
   Nonblocking latest-frame reads and a bounded SDR update-interval request have one-minute
   generated-window 1080p60 evidence, with fresh captures counted separately from repeated images.
-  HDR compatibility is enabled by default and retains CPU readback; disable it for this SDR path.
-  Resizing/cropping and incompatible encoders also retain CPU fallback. An earlier 32 fps encoder
+  Standard-colour (SDR) capture is the default; the optional HDR compatibility setting retains CPU
+  readback. A source of another size than the clip (scaling, cropping or letterboxing) is now
+  scaled by the graphics card with black bars, when the encoder supports GPU input; incompatible
+  encoders retain the CPU fallback. The scaling is covered by a Windows GPU test and a fake-encoder
+  recorder test, but has not yet been measured on real hardware. An earlier 32 fps encoder
   wait stall did not reproduce before these changes, so its cause remains unexplained.
   See [Windows measurements and reproduction](docs/windows-performance.md). A two-hour 1080p60
   soak, Windows hotkeys, real-game impact and other GPUs remain unverified; macOS capture is not

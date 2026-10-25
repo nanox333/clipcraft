@@ -19,10 +19,12 @@ the latest frame would otherwise prevent a one-slot pool from ever receiving the
 Hardware drain errors now propagate to the recorder's final failed status, including after `halt`,
 instead of being discarded. A regression test verifies that a previously saved clip stays unchanged.
 
-The native route currently requires SDR BGRA and matching capture/output dimensions with original
-framing. Disable HDR compatibility to request BGRA. HDR conversion, resize/crop, incompatible
-encoders and screenshots use CPU readback. The default HDR-compatible setting still uses the
-existing CPU route. NVIDIA's separately selected NVENC adapter does not yet accept these surfaces;
+The native route requires SDR BGRA, which is now the default (HDR compatibility is off unless
+turned on). A different output size, crop or letterbox is applied on the graphics card by the D3D11
+video processor (source and destination rectangles, black background) when the placement sits on
+even pixels; otherwise, and for HDR conversion, incompatible encoders and screenshots, the CPU
+route is used. The GPU scaling has a Windows test (`d3d11` module, a scaled and letterboxed 32x32
+surface) but no real-GPU measurement yet. Turning HDR compatibility on still uses the CPU route. NVIDIA's separately selected NVENC adapter does not yet accept these surfaces;
 only the AMD Media Foundation combination below has runtime evidence. No game injection or driver
 installation is involved.
 
@@ -192,8 +194,8 @@ they are cadence evidence, not precise latency or energy comparisons. More GPU c
 explicit tradeoff for fresh delivery. The setting is an OS eligibility throttle, not a periodic
 delivery guarantee. Unsupported interval requests retry the default only for that specific API
 error. HDR keeps the default interval; CPU callback readbacks are admitted at most once per
-absolute output-rate slot. Default GUI/CLI HDR compatibility remains enabled and uses CPU
-conversion, so these native SDR results require disabling it.
+absolute output-rate slot. These runs were made when HDR compatibility defaulted to on; it now
+defaults to off, so they describe the default path (settings saved earlier keep their value).
 
 The final native run halted before the final save, measured its feed interval and counted actual
 MF output through drain. It requested 1080p60 with generated AAC tone audio:

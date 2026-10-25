@@ -103,7 +103,7 @@ impl Default for CaptureOptions {
     fn default() -> Self {
         Self {
             show_cursor: true,
-            hdr_to_sdr: true,
+            hdr_to_sdr: false,
             requested_fps: 60,
         }
     }

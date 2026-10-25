@@ -929,7 +929,7 @@ pub fn capture_tab(
             ui,
             "HDR compatibility",
             if capabilities.hdr {
-                "Convert an HDR monitor to standard colours, with highlights rolled off instead of clipped, so clips are not washed out when shared. Does nothing on a standard monitor."
+                "Only for an HDR monitor. Converts HDR to standard colours, with highlights rolled off instead of clipped, so clips are not washed out when shared. It makes recording copy every picture through memory, which uses more processor, so leave it off unless your clips look washed out."
             } else {
                 "This computer's capture does not report HDR, so this has no effect here."
             },
