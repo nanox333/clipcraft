@@ -68,6 +68,10 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   or remove cuts, with 64-step undo/redo, linked audio volume/mute, black/white fades and seven colour
   effects. Independent text layers can be moved, trimmed, split, duplicated, faded and recoloured.
   Preview and export share FilmCraft text rendering and the same audio fade envelope.
+  They now also share a bounded compositor for aspect-fit scaling, colour effects, fades and text
+  (M11.1i): compatible hardware uses wgpu, with automatic CPU fallback. Paused edits refresh on
+  the decode worker; portrait/ultrawide sources keep their aspect ratio. Decode/font work and
+  pixel upload/readback remain; physical-GPU speed and Metal/DX12 runtime are not verified here.
   Editor import resolves source bounds with the playback reader, so AAC padding cannot make a
   freshly captured clip's full-length timeline or export fail. Send to editor resolves these facts
   in the background before the clip can be added.

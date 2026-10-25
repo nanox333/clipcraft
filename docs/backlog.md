@@ -1332,6 +1332,31 @@ batches and a final zero; native repeat lands at 30%, with a following frame ste
 claim. No media is changed; Rust-only/offline constraints apply. **Docs:** README/gaps/testing,
 roadmap/backlog. **Dependency/estimate:** current keyboard event stream; one small corrective slice.
 
+### M11.1i — Shared small GPU compositor
+
+**Issue:** [#12](https://github.com/nanox333/clipcraft/issues/12). **Status:** implemented;
+portable and actual software-Vulkan evidence, physical-GPU runtime/performance gates open.
+**Requirements:** one preview/export pixel contract for existing aspect-fit scaling, effects,
+video fades and ordered text masks; optional Vulkan/Metal/DX12 wgpu execution and safe CPU fallback.
+Render on existing workers; paused edits invalidate stale pixels; preserve prepared cuts, source
+files, exact Tick timing, export cancellation and publication. Fit without aspect distortion/upscale.
+**Limits:** CPU decode/font/native YUV reduction/RGBA and GPU upload/readback remain; no zero-copy,
+codec pool/proxy/new editing feature, user shader input, sidecar, server or new first-party unsafe.
+Rust host with original embedded WGSL; permissive pinned wgpu/pollster, unchanged project license.
+Source <=8K UHD pixels/8192 edge; canvas <=4K UHD pixels/3840 edge; <=256 overlays, <=2 Mi pixels
+each and <=16 MiB combined. One reusable GPU context, no queue, CPU on contention. Failed contexts
+retire until restart; 500 ms poll/map waits do not preempt native driver calls.
+**Acceptance:** CPU reference/preview/export agreement; real software-adapter proof within one
+8-bit level across alpha, aspect ratios, all effects, fades and overlapping/cropped text; malformed
+plans rejected before allocation/submission; context loss falls back and keeps inputs; prepared/
+continuous cuts and paused edits retain readiness semantics; full quality/docs gates and native
+screenshots/keyboard smoke. Measure transfer-inclusive CPU/software-GPU stages without hardware
+inference. Physical GPUs and Metal/DX12 remain separate evidence gates.
+**Affected:** export compositor/sequence, engine reexport, existing player worker transform,
+desktop editor/playback; no engine command/schema/setting changes. **Docs:** README/gaps, roadmap,
+architecture/editor/testing/performance and ADR 0026. **Dependency/estimate:** M11.1f–h; focused
+composition slice. Decoder cache/proxy evaluation follows independently.
+
 ### M11.2 — Local CLI and MCP footage-management adapter
 
 **Status:** planned; the local Rust CLI exists, but an MCP adapter does not.

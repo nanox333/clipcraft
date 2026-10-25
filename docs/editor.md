@@ -193,7 +193,7 @@ are clipped to the length of the edit. Its settings are in the Text tab: the tex
 the text in the preview to move it anywhere (one undo step); the position is stored as a fraction
 of the picture, so the export puts it where the preview shows it, kept inside the frame. Preview and
 export share FilmCraft's Inter SemiBold text raster, layout, shadow, wrapping and placement at
-the chosen export canvas size. The preview scales those pixels to its display area. Text rasters
+the chosen export canvas size. The shared compositor bakes them into the preview canvas before the UI scales it to its display area. Text rasters
 are limited to 2,097,152 pixels per layer, with a canvas-height layout cap and separate 16 MiB
 preview/export caches. Moving or fading a layer reuses its pixels.
 At most 256 text layers are accepted. Text layers share the video segments' undo history, and
@@ -319,3 +319,19 @@ joins), so any vector editor can open and change them; each has a licence sideca
 dependency, because a full SVG library (resvg) is MPL-2.0, which `deny.toml` allows only for the audio
 decoders. Files over 64 KiB or with unknown content draw nothing instead of failing. This replaces
 the earlier icons painted by code.
+
+
+### Shared composition and fallback (M11.1i)
+
+Preview and sequence export use the same bounded compositor for scaling, effects, black/white
+fades and text. Video fits the chosen canvas without upscaling or stretching; other aspect ratios
+get black bars. Paused edits refresh on the decode worker. Text dragging still shows selection
+handles; the UI does not draw effects or glyphs a second time. Prepared clips carry their full
+look/text recipe into the next cut.
+
+Compatible hardware uses wgpu automatically. Missing, busy or failed GPU contexts use CPU;
+a failed context is retired until restart. There is no extra setup/server or shader plugin.
+Media decoding/font rasterization and GPU pixel upload/readback remain; physical-GPU speed and
+Metal/DX12 runtime need separate verification. Preview and export use the same composition contract
+for the same RGBA input; codec/native pre-reduction and lossy H.264 can still change final pixels.
+See [ADR 0026](adr/0026-shared-gpu-compositor.md) for exact resource/failure limits.

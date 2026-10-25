@@ -334,6 +334,13 @@ impl EditorState {
                 self.playing = false;
                 self.seek_pending = true;
                 self.invalidate_preload();
+                if self
+                    .preview
+                    .as_ref()
+                    .is_some_and(|preview| preview.editor_error().is_some())
+                {
+                    self.retire_active_preview();
+                }
                 self.clock = None;
                 self.message = None;
                 self.dirty_recovery();
@@ -492,7 +499,7 @@ impl EditorState {
                     self.preview = Some(crate::playback::Playback::prepare_editor(
                         &clip.input.to_string_lossy(),
                         source_time,
-                        clip.look.effect,
+                        self.preview_recipe(&clip),
                         context,
                     ));
                     self.preview_target = Some(source_time);
@@ -511,8 +518,10 @@ impl EditorState {
                 self.clock = None;
             }
         }
+        let recipe = self.preview_recipe(&clip);
         if let Some(preview) = self.preview.as_mut() {
-            if preview.editor_effect(clip.look.effect) {
+            let recipe_changed = preview.editor_recipe(recipe);
+            if preview.editor_effect(clip.look.effect) || recipe_changed {
                 self.seek_pending = true;
                 self.preview_target = None;
             }
@@ -554,6 +563,40 @@ impl EditorState {
         }
     }
 
+    fn preview_recipe(
+        &self,
+        clip: &clipcraft_engine::EditorClip,
+    ) -> clipcraft_engine::PreviewRecipe {
+        clipcraft_engine::PreviewRecipe {
+            canvas: Some({
+                let (w, h) = self.export_canvas().unwrap_or((1280, 720));
+                [w, h]
+            }),
+            source_start: clip.start,
+            source_end: clip.end,
+            timeline_start: self.session.offset_of(clip.id).unwrap_or(Tick::ZERO),
+            look: clip.look.clone(),
+            texts: self
+                .session
+                .texts()
+                .iter()
+                .map(|text| {
+                    let mut layer = text.layer.clone();
+                    let (start, end) = self.live_range(text.id, &layer);
+                    layer.start = start;
+                    layer.end = end;
+                    if let Some((id, x, y)) = self.title_drag
+                        && id == text.id
+                    {
+                        layer.x = x;
+                        layer.y = y;
+                    }
+                    layer
+                })
+                .collect(),
+        }
+    }
+
     fn prepare_next_preview(&mut self, source: &PreviewSource, context: &egui::Context) {
         if !self.playing
             || self.seek_pending
@@ -576,6 +619,7 @@ impl EditorState {
         else {
             return;
         };
+        let recipe = self.preview_recipe(next);
         let next = PreviewSource::from(next);
         if next.input == source.input || self.failed_preload.as_ref() == Some(&next) {
             return;
@@ -584,7 +628,7 @@ impl EditorState {
             playback: crate::playback::Playback::prepare_editor(
                 &next.input.to_string_lossy(),
                 next.start,
-                next.effect,
+                recipe,
                 context,
             ),
             source: next,
@@ -2059,7 +2103,11 @@ impl EditorState {
         let raster_canvas = [raster_width, raster_height];
         let scale = Vec2::new(width / raster_width as f32, height / raster_height as f32);
         let painter = ui.painter().with_clip_rect(canvas);
-        if let Some((fade, amount)) = fade {
+        let composited = self
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.editor_composited());
+        if !composited && let Some((fade, amount)) = fade {
             let color = if fade == Fade::White { 255 } else { 0 };
             painter.rect_filled(
                 canvas,
@@ -2154,12 +2202,14 @@ impl EditorState {
                 entry.size[0] as f32 * scale.x,
                 entry.size[1] as f32 * scale.y,
             );
-            painter.image(
-                entry.texture.id(),
-                egui::Rect::from_min_size(at, size),
-                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                Color32::from_white_alpha((opacity * 255.0).round().clamp(0.0, 255.0) as u8),
-            );
+            if !composited {
+                painter.image(
+                    entry.texture.id(),
+                    egui::Rect::from_min_size(at, size),
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    Color32::from_white_alpha((opacity * 255.0).round().clamp(0.0, 255.0) as u8),
+                );
+            }
             self.preview_text.push_back(entry);
             if self.selected_text == Some(id) && !self.busy() {
                 let rect = egui::Rect::from_min_size(at, size).expand(6.0);

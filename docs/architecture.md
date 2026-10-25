@@ -250,8 +250,8 @@ Dense fit views aggregate subpixel cuts, cull offscreen widgets and bound thumbn
 zooming or ruler seeking still resolves the exact sequence range.
 
 Text preview and export consume the same bounded FilmCraft Inter SemiBold raster, including its
-shadow, layout and wrapping, at canonical export-canvas dimensions. The preview scales those
-pixels into the display area and uses the same placement geometry for dragging. Timing and
+shadow, layout and wrapping, at canonical export-canvas dimensions. The shared compositor bakes those
+pixels into the canonical canvas, which the UI scales into the display area and uses the same placement geometry for dragging. Timing and
 position are separate from raster content, so moving/fading text can reuse cached pixels. Export
 renders active layers through a 16 MiB cache rather than retaining every layer mask. Preview
 textures use a separate 16 MiB LRU; each raster is limited to 2,097,152 pixels and text layout
@@ -259,6 +259,23 @@ height is capped to the canvas before allocation. Preview
 volume applies the same segment fade envelope as the audio exporter without changing the stored
 volume setting. GIF frame delays derive from cumulative integer centisecond timestamps, avoiding
 per-frame rounding drift at frame rates such as 12 and 13 fps.
+
+M11.1i shares the full composition stage between sequence export and editor preview in
+`clipcraft-export::compositor`. A typed immutable `PreviewRecipe` maps source Tick to timeline
+Tick; the existing player decode worker snapshots it and composes before mailbox publication.
+Changed recipes use existing seek generations to reject old pictures. Prepared sources begin with
+the actual recipe; adjacent plain cuts keep their decoder/picture. The UI paints handles only,
+not the baked text/fades. CPU/font raster caches remain bounded; frames and masks are validated.
+No new command ID/schema is needed for this backend of existing editor/preview/export operations.
+
+The compositor no-upscale aspect-fits, applies effects, opaque-black alpha composition, video fades
+and ordered masks. Missing/busy/failed hardware uses CPU; one lazily initialized safe-wgpu context
+with reusable source/mask/output/staging/uniform buffers bounds submissions without a job queue.
+Its original embedded WGSL implements only the fixed operations. Poll/map have bounded waits,
+not preemptible driver calls. Failed contexts retire until restart. Inputs <=8K UHD/8192 edge,
+output <=4K UHD/3840 edge, <=256 overlays and <=16 MiB masks; buffers retain bounded high-water
+capacities. CPU decoding, export's native YUV pre-reduction, RGBA conversion and GPU upload/readback
+remain. See [ADR 0026](adr/0026-shared-gpu-compositor.md) for licensing, budgets and fallbacks.
 
 M11.1e preserves that pixel pipeline while bypassing thumbnail filtering when no size change is
 needed. A matching opaque RGBA frame becomes the canvas directly; smaller or transparent pictures

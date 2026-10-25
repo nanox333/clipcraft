@@ -136,8 +136,8 @@ remain observable. Shutdown drops pending pixels. Picture dimensions are checked
 This bounds pending results only: the UI can still hold a displayed/polled picture, the worker an
 in-flight picture, and FilmCraft its decoder/GOP caches. It is not a total RSS budget. Control/audio
 channels retain their existing separate behavior. M11.1g now coordinates worker-side decoding with
-playback-first admission (below); a unified job queue/decoder pool, proxies and GPU composition
-are not built.
+playback-first admission (below); a unified job queue/decoder pool and proxies are not built.
+M11.1i adds optional GPU composition (below).
 Decode/file calls remain non-interruptible. Verification: 577 workspace tests pass (five existing
 ignored), including 69 player tests and prepared-editor/keyboard regressions; docs gate passes.
 No export speed, GPU throughput or real-device claim is added. See [architecture](architecture.md), [performance](performance.md) and [testing](testing.md).
@@ -157,7 +157,7 @@ These are logical slots, not reserved CPU cores, OS thread priority, a codec-thr
 memory cap or measured speedup. Background work may wait under sustained foreground demand.
 There is no unified worker pool or decoder cache; existing callers/queues still own their work.
 Export/recording, metadata-only source-info and cached JPEG loading on the UI are outside this
-coordinator. GPU composition, proxies, hardware throughput and actual game-contention evidence
+coordinator. Proxies, physical-GPU composition throughput and actual game-contention evidence
 remain open. Verification: 584 workspace tests pass (five existing ignored), including 76 player
 cases and generated concurrent playback/thumbnail/waveform coverage. See
 [ADR 0025](adr/0025-cooperative-decode-admission.md) and [testing](testing.md).
@@ -170,6 +170,31 @@ passed. After main's newer branding/performance merge, the combined build passed
 targets (five existing ignored) and repeated native playback/editor checks. Coordinator tests also
 passed 50 repetitions and mixed-workload playback 10 repetitions. See
 [testing](testing.md). This retest does not verify physical audio devices, GPUs or real games.
+
+## Shared GPU composition (M11.1i)
+
+Preview and sequence export now share aspect-fit scaling, the existing seven colour effects,
+black/white fades and ordered FilmCraft text masks through a bounded wgpu/CPU compositor.
+It preserves aspect ratio without upscaling, fixing the prior independent-axis export fit.
+Preview renders on the decode worker; recipe changes invalidate superseded pictures and prepared
+sources begin with their final look/text settings. UI handles remain interactive without painting
+baked glyphs/fades twice. Library playback remains unchanged.
+
+Missing/unsupported hardware, contention or failed GPU contexts use CPU. Automatic selection
+rejects software adapters; a strict diagnostic used real llvmpipe Vulkan for 96 cases within one
+8-bit channel level of CPU, plus real-context destruction/fallback. Local software timings include
+upload/readback, not decoding or encoding. Physical GPU speed, Metal/DX12 runtime, real-game impact,
+power and broader device-loss recovery remain unverified. Glyph rasterization, media decoding,
+existing export YUV pre-reduction and RGBA conversion remain CPU work. This is not zero-copy.
+
+Inputs remain capped at 8K UHD pixels/8192 edge, output at 4K UHD pixels/3840 edge, 256 masks,
+2 Mi pixels per mask and 16 MiB combined masks. Reused GPU buffers retain their bounded high-water
+capacities until release/restart; driver/codec/CPU copies are extra. Poll/map waits are bounded;
+native driver calls are non-preemptible. No shader plugins, decoder pool, proxy or new sidecar.
+The final workspace gate passes 610 tests (five existing ignored), strict Clippy and dependency
+audits; native generated export/keyboard/screenshot checks preserve both source hashes.
+See [ADR 0026](adr/0026-shared-gpu-compositor.md), [testing](testing.md) and
+[performance](performance.md) for exact evidence and limits.
 
 ## Connected workflow evidence (M5.3)
 

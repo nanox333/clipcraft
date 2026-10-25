@@ -76,6 +76,8 @@ pub enum PlayerError {
     DecodeFailed,
     /// The decoder failed unexpectedly. The clip is untouched.
     Crashed,
+    /// The optional edit renderer rejected its settings/output; the source is intact.
+    RenderFailed,
 }
 
 impl fmt::Display for PlayerError {
@@ -85,6 +87,7 @@ impl fmt::Display for PlayerError {
             Self::Unsupported => "ClipCraft cannot play this video format yet.",
             Self::DecodeFailed => "The video could not be decoded. The file may be damaged.",
             Self::Crashed => "Playback stopped unexpectedly. Your clip is untouched.",
+            Self::RenderFailed => "The edited picture could not be rendered. Reduce text size or output resolution and try again. Your clip is untouched.",
         })
     }
 }
@@ -168,6 +171,15 @@ impl Player {
     /// Starts opening `path` on a worker thread. `notify` is called after every event so the UI
     /// can wake up and call [`Player::poll`].
     pub fn start(path: PathBuf, notify: impl Fn() + Send + 'static) -> Self {
+        Self::start_transformed(path, notify, Ok)
+    }
+
+    /// Optional bounded frame processing on this existing worker, before publication/revision checks.
+    pub fn start_transformed(
+        path: PathBuf,
+        notify: impl Fn() + Send + 'static,
+        mut transform: impl FnMut(DecodedFrame) -> Result<DecodedFrame, PlayerError> + Send + 'static,
+    ) -> Self {
         let (command_sender, command_receiver) = mpsc::channel();
         let events = Arc::new(Delivery::default());
         let worker_events = events.clone();
@@ -183,6 +195,7 @@ impl Player {
                         &worker_events,
                         &notify,
                         &worker_audio,
+                        &mut transform,
                     );
                 }));
                 if outcome.is_err() {
@@ -402,6 +415,7 @@ fn run(
     events: &Delivery,
     notify: &impl Fn(),
     audio_slot: &OnceLock<Arc<audio::AudioFeed>>,
+    transform: &mut impl FnMut(DecodedFrame) -> Result<DecodedFrame, PlayerError>,
 ) {
     let send = |event: PlayerEvent, revision: u64| match events.publish(event, revision) {
         Publication::Accepted => {
@@ -486,7 +500,16 @@ fn run(
                         return;
                     }
                 };
-                decode_at(&source, &info, state.position)
+                decode_at(&source, &info, state.position).and_then(|frame| {
+                    let pts = frame.pts;
+                    let frame = transform(frame)?;
+                    if frame.pts != pts
+                        || frame_bytes(frame.width, frame.height).ok() != Some(frame.rgba.len())
+                    {
+                        return Err(PlayerError::RenderFailed);
+                    }
+                    Ok(frame)
+                })
             };
             match decoded {
                 Ok(frame) => {
@@ -498,6 +521,11 @@ fn run(
                     if std::mem::take(&mut state.ended) && !send(PlayerEvent::Ended, revision) {
                         return;
                     }
+                }
+                Err(PlayerError::RenderFailed) if !events.current(revision) && !events.closed() => {
+                    // Edits can invalidate a recipe while its renderer is running. A stale
+                    // render failure must not reject the newer, valid edit request.
+                    continue;
                 }
                 Err(error) => {
                     send(PlayerEvent::Failed(error), revision);

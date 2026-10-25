@@ -276,5 +276,49 @@ Portable tests prove ordering, cancellation registration cleanup, panic/poison/c
 and concurrency limits. Generated playback/PCM sound, three concurrent thumbnail/waveform callers
 and source-byte checks exercise integration. No before/after playback latency, jitter, CPU, power,
 RSS, export acceleration or game interference measurement was run. Existing worker/result/control
-queues remain separate; decoder pooling, preview proxies and GPU composition are follow-up work.
+queues remain separate; decoder pooling and preview proxies are follow-up work. M11.1i below
+adds optional shared GPU composition.
 No Concat source/shader, native sidecar, new dependency or first-party unsafe was added.
+
+## M11.1i — Shared GPU composition (2026-10-25)
+
+`clipcraft-export::compositor` now runs the same fixed scaling/effect/fade/text contract for
+editor preview and sequence export. Hardware is optional: automatic selection rejects software
+adapters, probes hardware against CPU and uses CPU for missing/busy/failed contexts. Matching
+opaque frames without edits return their owned pixels directly, avoiding GPU transfer entirely.
+
+A strict explicit diagnostic exercised **llvmpipe (LLVM 19.1.7, 256 bits), Vulkan**, on the managed
+Debian 13 CPU container. It passed 96 cases within one 8-bit channel level: four source/canvas
+pairs (matching, downscaled, portrait, ultrawide), eight looks including None, three fade variants,
+alpha and two ordered overlapping/clipped FilmCraft text masks. This is actual shader execution,
+not mocked GPU success or automatic CPU fallback. An actual destroyed software context also
+retired and completed the reference frame on CPU. Physical-GPU/device-loss evidence remains open.
+
+Transfer-inclusive stage measurements from `cargo run -p clipcraft-export --example compositor_verify`:
+
+| Canvas | CPU median | Software Vulkan median |
+| --- | ---: | ---: |
+| 1280×720 | 16.379 ms | 13.274 ms |
+| 1920×1080 | 37.104 ms | 22.151 ms |
+| 3840×2160 | 150.283 ms | 84.034 ms |
+
+One warm-up followed by five measured frames per backend, median shown. Generated opaque RGBA,
+matching canvas, Sepia and 37% white fade, no text in timed frames; parity cases include text.
+Each GPU timing includes buffer upload, submit, poll, readback and returned RGBA allocation.
+A final repeat also passed all 96 cases; CPU/software medians were 18.009/9.220 ms (720p),
+34.945/21.024 ms (1080p), and 146.013/84.131 ms (4K), illustrating short-run variability
+(`/tmp/clipcraft-gpu-final-verify.log`). Source clone is outside the timer. Optimized development profile (export opt-level 3, dependencies
+2), Rust 1.99.1, debug symbols locally disabled to fit workspace disk. Not a release/H.264/end-to-end
+benchmark, throughput guarantee or physical-GPU speedup; llvmpipe itself runs on CPU. Host load and
+software-driver threading affect these short samples. Log: `/tmp/clipcraft-gpu-verify.log`.
+
+Decode, export's existing native YUV box reduction/RGBA conversion, and text glyph rasterization
+remain CPU work. Each composed GPU frame is read back before UI texture upload or encoding.
+Managed reusable GPU buffers are bounded to about 206 MiB at maximum supported dimensions/masks
+and retain high-water capacity until release/restart. Driver storage, host copies, text/decoder
+caches and UI textures are additional. This is neither zero-copy nor a total memory cap. The
+shared GPU mutex never queues a frame: contention chooses CPU. First device/shader initialization
+is lazy on a worker and may block other workers initializing it; native driver calls cannot be
+preempted. Poll/map waits each have a 500 ms limit. Reference GPUs, Metal/DX12, power, real-game
+contention and end-to-end preview/export need separate measurements before tuning thresholds or
+making hardware claims. Decoder reuse/proxies remain follow-up work.
