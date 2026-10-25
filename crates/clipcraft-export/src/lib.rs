@@ -10,6 +10,7 @@
 //! The input is never touched. The output appears only when complete, is never written over an
 //! existing file, and can be cancelled at any moment. Everything read from the input is bounded.
 
+pub mod compositor;
 mod compress;
 mod gif;
 mod hardware;

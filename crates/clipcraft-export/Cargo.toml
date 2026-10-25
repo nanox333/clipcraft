@@ -28,6 +28,9 @@ gif.workspace = true
 image.workspace = true
 serde.workspace = true
 
+wgpu = { version = "=27.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "metal", "dx12"] }
+pollster = "=0.4.0"
+
 [dev-dependencies]
 clipcraft-capture.workspace = true
 clipcraft-record.workspace = true

@@ -940,3 +940,76 @@ filmstrip/waveform and the new CUT/SVG assets render, and source hashes stay unc
 screenshots: `latest-seek-fixed.png`, `latest-editor-playback.png` in the same ignored evidence
 directory. Final logs: `/tmp/clipcraft-latest-retest-ci.log`, `...-build.log`. Documentation gate
 passes against `755c999`. No newer Windows runtime/hardware evidence is inferred from this Linux run.
+
+## M11.1i — Shared compositor (2026-10-25)
+
+Started from fetched main `9d99de8`; no Concat code/shader port or first-party unsafe. The fixed
+original WGSL is embedded in the Rust binary. Pinned wgpu 27.0.1/pollster 0.4.0 and their native
+backend dependencies pass the unchanged license/source/bans audit with one package/version-scoped
+CC0 allowance for Naga's `hexf-parse 0.2.1`; see ADR 0026.
+
+`cargo xtask ci` passes **610 tests across 37 targets**, with five existing ignored/manual cases:
+formatting, all targets, strict Clippy, layer/asset checks and dependency audit. No new ignored test.
+`cargo xtask docs-check 9d99de8` passes. Rust 1.99.1/Debian 13, two build jobs, incremental off.
+Local `CARGO_PROFILE_DEV_DEBUG=0` and `CARGO_PROFILE_TEST_DEBUG=0` omit debug symbols only; the
+normal hot-loop/dependency optimization levels are unchanged. The first default-debug link ran
+out of workspace disk; obsolete generated hashed test executables were removed, preserving source,
+fixtures and evidence, then the complete gate reran under these profile overrides.
+
+Coverage includes aspect-fit portrait/ultrawide/no-upscale geometry, exact RGBA backing length,
+hostile dimensions/NaN/positions/mask shape/count/combined byte budget, no-op ownership retention,
+independent TextRaster alpha reference, and preview/export canvas/look/fade/text at identical Tick.
+Worker tests reject failed/malformed transformed frames without touching sources and use a barrier
+to prove a superseded renderer failure cannot reject a newer seek. Editor tests cover paused recipe
+refresh without audio activation, prepared-next-source promotion, continuous/discontinuous same-file
+cuts, rapid seek/reorder/retirement budgets, text interaction and keyboard transport. Initial editor
+integration exposed prepared/continuous-cut regressions; actual initial recipes and visually
+unchanged plain-cut handling fixed them before completion.
+
+### Actual software GPU proof
+
+Signed Debian `libvulkan1 1.4.309.0-1` and `mesa-vulkan-drivers 25.0.7-2+deb13u1` were extracted to
+`/tmp/clipcraft-vulkan` without system writes. With `LD_LIBRARY_PATH` pointing to its lib directory,
+`VK_DRIVER_FILES` to its `share/vulkan/icd.d/lvp_icd.json`, and owned `XDG_RUNTIME_DIR` and
+`MESA_SHADER_CACHE_DIR`, run:
+
+```sh
+cargo run --locked -p clipcraft-export --example compositor_verify
+cargo test --locked -p clipcraft-export compositor -- --nocapture
+```
+
+The example **requires** a real software adapter and fails if unavailable; it never silently counts
+CPU fallback as GPU success. Actual adapter: **llvmpipe (LLVM 19.1.7, 256 bits), Cpu, Vulkan**.
+All **96** cases passed within one 8-bit channel level: four source/canvas shapes, all eight looks,
+three fade modes, source alpha and two overlapping/cropped text masks. Transfer-inclusive stage
+timings are in [performance.md](performance.md), not an end-to-end or physical-GPU claim. A real
+software device was destroyed; the automatic-path context helper retired it and CPU completed.
+On hosts without a software adapter the unit test reports only CPU fallback; the strict example
+must run separately to establish GPU execution. Logs: `/tmp/clipcraft-gpu-verify.log`,
+`/tmp/clipcraft-gpu-compositor-tests.log`, `/tmp/clipcraft-gpu-ci.log`.
+
+### Native UI and generated export
+
+The rebuilt application ran on a private Xvfb/GL desktop at **1440×900** and **960×640**, with
+isolated local settings/draft/media and Discord/capture disabled. Baseline and final screenshots
+are under ignored `.clipcraft-local/playback-priority-test/`: `gpu-before-look-1440x900.png`,
+`gpu-after-look-matching-tabs.png`, `gpu-paused-invert.png`, `gpu-text-drag.png`,
+`gpu-keyboard-stepped.png`, `gpu-export-dialog.png`, `gpu-export-status.png` and
+`gpu-editor-960x640.png`. They show existing CUT/SVG styling, a generated colour pattern with Sepia,
+white fade and lime lower-third text, paused effect refresh, text drag handles and export controls.
+Mouse drag moved the baked text; Ctrl+Z restored it. Space play/pause, Right frame step and
+Tab/Shift+Tab focus worked. Native display used the ordinary CPU fallback; the separate diagnostic
+above proves software Vulkan. Physical audio output is unavailable in this container; no audible
+hardware check is claimed.
+
+A real native editor export completed: **8.000 s, 1280×720, 30 fps, H.264 + stereo AAC,
+4,014,134 bytes**, reported Software. The external ffprobe oracle confirmed streams/timing and
+ffmpeg decoded the whole output without errors. Extracted frame 63 (2.100 s),
+`gpu-export-frame.png`, matches the preview's Sepia/text placement by inspection; lossy codec/UI
+scaling are not a bit-exact parity test. Both generated source SHA-256 hashes stayed unchanged.
+Temporary scripts/oracles and media are test-only, not product dependencies or tracked assets.
+
+Physical GPUs, Windows DX12/macOS Metal runtime, power, real-game contention and end-to-end speed
+remain open. Decode/native YUV pre-reduction/RGBA and glyph rasterization remain CPU work; GPU
+uploads/readbacks remain. Native driver calls are not preemptible. No decoder pool/proxy or release
+platform gate is closed by this task.

@@ -1104,3 +1104,71 @@ fn playback_and_sound_finish_while_thumbnail_and_waveform_workers_share_admissio
     assert_eq!(std::fs::read(&path).unwrap(), original);
     player.request_stop();
 }
+
+#[test]
+fn optional_frame_processing_failures_and_malformed_output_do_not_publish_or_touch_sources() {
+    for malformed in [false, true] {
+        let scratch = Scratch::new();
+        let original = make_clip();
+        let path = scratch.file("renderer.mp4", &original);
+        let player = Player::start_transformed(
+            path.clone(),
+            || {},
+            move |mut frame| {
+                if malformed {
+                    frame.rgba.clear();
+                    Ok(frame)
+                } else {
+                    Err(PlayerError::RenderFailed)
+                }
+            },
+        );
+        let events = collect(&player, |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, PlayerEvent::Failed(_)))
+        });
+        assert!(events.contains(&PlayerEvent::Failed(PlayerError::RenderFailed)));
+        assert!(frames(&events).is_empty());
+        assert_eq!(std::fs::read(path).unwrap(), original);
+        player.request_stop();
+    }
+}
+
+#[test]
+fn a_superseded_render_failure_does_not_reject_a_newer_seek_recipe() {
+    let scratch = Scratch::new();
+    let path = scratch.file("stale-render.mp4", &make_clip());
+    let (ready, waiting) = mpsc::sync_channel(1);
+    let release = Arc::new(std::sync::Barrier::new(2));
+    let worker_release = release.clone();
+    let mut first = true;
+    let player = Player::start_transformed(
+        path,
+        || {},
+        move |frame| {
+            if first {
+                first = false;
+                ready.send(()).unwrap();
+                worker_release.wait();
+                Err(PlayerError::RenderFailed)
+            } else {
+                Ok(frame)
+            }
+        },
+    );
+    waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+    let target = Tick::from_units(1, 2);
+    player.seek(target);
+    release.wait();
+    let events = collect(&player, |events| {
+        frames(events).iter().any(|frame| frame.pts == target)
+    });
+    assert!(frames(&events).iter().any(|frame| frame.pts == target));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, PlayerEvent::Failed(_)))
+    );
+    player.request_stop();
+}

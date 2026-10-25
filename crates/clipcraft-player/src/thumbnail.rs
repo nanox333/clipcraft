@@ -68,7 +68,7 @@ impl From<PlayerError> for ThumbnailError {
         match error {
             PlayerError::Unreadable => Self::Unreadable,
             PlayerError::Unsupported => Self::Unsupported,
-            PlayerError::DecodeFailed => Self::DecodeFailed,
+            PlayerError::DecodeFailed | PlayerError::RenderFailed => Self::DecodeFailed,
             PlayerError::Crashed => Self::Crashed,
         }
     }

@@ -41,6 +41,7 @@ mod steam_games;
 pub use steam_games::{MAX_STEAM_GAMES, SteamGame, SteamGames};
 mod storage;
 
+pub use clipcraft_export::compositor::{PreviewRecipe, PreviewRenderer};
 pub use clipcraft_export::{
     Effect, FADE_LENGTH, Fade, MAX_TEXT_LAYERS, MAX_TITLE_CHARS, SegmentLook, SequenceQuality,
     SequenceRequest, SequenceResolution, SequenceSegment, SequenceSettings, SequenceText,

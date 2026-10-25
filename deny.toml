@@ -20,6 +20,9 @@ allow = [
 # MPL-2.0 is allowed only for these crates, used unmodified, because FilmCraft's media hub depends
 # on them for MP3/FLAC/Vorbis/AAC audio decoding (docs/adr/0005-mpl-symphonia-exception.md).
 exceptions = [
+    # CC0 public-domain dedication/fallback permission for Naga's hex-float parser only;
+    # exact reviewed registry package, not a global license-policy expansion (ADR 0026).
+    { allow = ["CC0-1.0"], crate = "hexf-parse@0.2.1" },
     { allow = ["MPL-2.0"], crate = "symphonia" },
     { allow = ["MPL-2.0"], crate = "symphonia-bundle-flac" },
     { allow = ["MPL-2.0"], crate = "symphonia-bundle-mp3" },

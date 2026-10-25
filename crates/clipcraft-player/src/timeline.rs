@@ -80,7 +80,7 @@ impl From<PlayerError> for TimelineError {
         match value {
             PlayerError::Unreadable => Self::Unreadable,
             PlayerError::Unsupported => Self::Unsupported,
-            PlayerError::DecodeFailed => Self::DecodeFailed,
+            PlayerError::DecodeFailed | PlayerError::RenderFailed => Self::DecodeFailed,
             PlayerError::Crashed => Self::Crashed,
         }
     }

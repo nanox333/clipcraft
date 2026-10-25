@@ -541,43 +541,63 @@ fn write_packets(
 
 const TEXT_CACHE_BYTES: usize = 16 * 1024 * 1024;
 
-fn paint_texts(
-    request: &SequenceRequest,
-    cache: &mut HashMap<usize, TextRaster>,
-    canvas: &mut image::RgbaImage,
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compose_frame(
+    image: image::RgbaImage,
+    canvas: [u32; 2],
+    effect: Effect,
+    fade: Option<(Fade, f32)>,
+    texts: &[SequenceText],
     time: Tick,
+    cache: &mut HashMap<usize, TextRaster>,
+    compositor: &mut crate::compositor::Compositor,
     cancel: &AtomicBool,
-) -> Result<(), ExportError> {
-    cache.retain(|index, _| {
-        request
-            .texts
-            .get(*index)
-            .is_some_and(|text| time >= text.start && time < text.end)
+) -> Result<image::RgbaImage, ExportError> {
+    cache.retain(|index, raster| {
+        texts.get(*index).is_some_and(|text| {
+            time >= text.start && time < text.end && raster.matches(text, canvas[0], canvas[1])
+        })
     });
     let mut bytes = cache.values().map(TextRaster::bytes).sum::<usize>();
-    for (index, text) in request.texts.iter().enumerate() {
+    for (index, text) in texts.iter().enumerate() {
         check_cancel(cancel)?;
         if time < text.start || time >= text.end {
             continue;
         }
         if let std::collections::hash_map::Entry::Vacant(entry) = cache.entry(index)
-            && let Some(raster) = TextRaster::render(text, canvas.width(), canvas.height())?
+            && let Some(raster) = TextRaster::render(text, canvas[0], canvas[1])?
         {
             bytes = bytes
                 .checked_add(raster.bytes())
                 .ok_or(ExportError::InvalidSequence)?;
             if bytes > TEXT_CACHE_BYTES {
                 return Err(ExportError::Unsupported(
-                    "active text exceeds its cache budget; remove layers or reduce their size",
+                    "active text exceeds its cache budget; remove layers or reduce size",
                 ));
             }
             entry.insert(raster);
         }
+    }
+    let mut plan = crate::compositor::FramePlan::plain(canvas, effect);
+    plan.fade = fade;
+    for (index, text) in texts.iter().enumerate() {
+        if time < text.start || time >= text.end {
+            continue;
+        }
         if let Some(raster) = cache.get(&index) {
-            raster.draw(canvas, text, text.opacity_at(time - text.start));
+            let [w, h] = raster.size();
+            plan.overlays.push(crate::compositor::Overlay {
+                size: [w as u32, h as u32],
+                rgba: raster.rgba(),
+                position: raster.position(text.x, text.y),
+                opacity: text.opacity_at(time - text.start),
+            });
         }
     }
-    Ok(())
+    check_cancel(cancel)?;
+    let frame = compositor.render(image, &plan)?;
+    check_cancel(cancel)?;
+    Ok(frame)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -589,6 +609,7 @@ fn picture(
     offset: Tick,
     size: (u32, u32),
     cache: &mut HashMap<usize, TextRaster>,
+    compositor: &mut crate::compositor::Compositor,
     cancel: &AtomicBool,
 ) -> Result<image::RgbaImage, ExportError> {
     let (width, height) = size;
@@ -603,19 +624,24 @@ fn picture(
     let frame = small.as_ref().unwrap_or(&decoded);
     let image = image::RgbaImage::from_raw(frame.width, frame.height, frame.to_rgba8())
         .ok_or(ExportError::Damaged)?;
-    let mut canvas = fit_picture(image, size, segment.look.effect);
-    if let Some((fade, amount)) = segment
-        .look
-        .fade_at(time - offset, segment.end - segment.start)
-    {
-        blend_fade(&mut canvas, fade, amount);
-    }
-    paint_texts(request, cache, &mut canvas, time, cancel)?;
-    Ok(canvas)
+    compose_frame(
+        image,
+        [width, height],
+        segment.look.effect,
+        segment
+            .look
+            .fade_at(time - offset, segment.end - segment.start),
+        &request.texts,
+        time,
+        cache,
+        compositor,
+        cancel,
+    )
 }
 
 /// Preserve the original thumbnail/alpha-composition result. Matching opaque pictures already
 /// are the canvas: resizing and compositing them would allocate and traverse two full frames.
+#[cfg(test)]
 fn fit_picture(mut image: image::RgbaImage, size: (u32, u32), effect: Effect) -> image::RgbaImage {
     let (width, height) = size;
     if image.width() > width || image.height() > height {
@@ -700,6 +726,7 @@ fn render(
     };
     let name = video.name();
     let mut text_cache = HashMap::new();
+    let mut compositor = crate::compositor::Compositor::default();
     // Some native encoders only describe their stream after the first input. If that still
     // produces no usable description, software is safer than accumulating unknown packets.
     let mut first = if hardware.is_some() {
@@ -716,6 +743,7 @@ fn render(
             Tick::ZERO,
             size,
             &mut text_cache,
+            &mut compositor,
             cancel,
         )?;
         check_cancel(cancel)?;
@@ -795,6 +823,7 @@ fn render(
                     offset,
                     size,
                     &mut text_cache,
+                    &mut compositor,
                     cancel,
                 )?;
                 check_cancel(cancel)?;
@@ -982,7 +1011,7 @@ fn write_audio_packet(
     .map_err(mp4_error)
 }
 
-fn blend_fade(canvas: &mut image::RgbaImage, fade: Fade, amount: f32) {
+pub(crate) fn blend_fade(canvas: &mut image::RgbaImage, fade: Fade, amount: f32) {
     let color = match fade {
         Fade::None => return,
         Fade::Black => 0.0,

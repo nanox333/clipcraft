@@ -59,6 +59,7 @@ pub struct Playback {
     player: Player,
     texture: Option<egui::TextureHandle>,
     effect: clipcraft_engine::Effect,
+    render_recipe: Option<std::sync::Arc<std::sync::Mutex<clipcraft_engine::PreviewRecipe>>>,
     info: Option<ClipInfoSummary>,
     position: Tick,
     /// The last decoded position, distinct from a seek that has only been requested.
@@ -87,7 +88,47 @@ pub struct Playback {
 impl Playback {
     /// Sets the colour look for later frames; true when it changed (the picture needs a refresh).
     pub(crate) fn editor_effect(&mut self, effect: clipcraft_engine::Effect) -> bool {
+        if let Some(config) = &self.render_recipe
+            && let Ok(mut config) = config.lock()
+        {
+            config.look.effect = effect;
+        }
         std::mem::replace(&mut self.effect, effect) != effect
+    }
+    pub(crate) fn editor_composited(&self) -> bool {
+        self.render_recipe.is_some()
+    }
+    pub(crate) fn editor_recipe(&mut self, recipe: clipcraft_engine::PreviewRecipe) -> bool {
+        if let Some(config) = &self.render_recipe {
+            let changed = match config.lock() {
+                Ok(mut current) => {
+                    if *current != recipe {
+                        // Adjacent plain cuts share identical pixels regardless of their ranges.
+                        let changed = current.canvas != recipe.canvas
+                            || current.look != recipe.look
+                            || !current.texts.is_empty()
+                            || !recipe.texts.is_empty()
+                            || current.look.fade_in != clipcraft_engine::Fade::None
+                            || current.look.fade_out != clipcraft_engine::Fade::None;
+                        *current = recipe;
+                        changed
+                    } else {
+                        false
+                    }
+                }
+                Err(_) => {
+                    self.error =
+                        Some("Editor rendering stopped unexpectedly. Reopen the clip.".into());
+                    false
+                }
+            };
+            if changed {
+                self.player.seek(self.frame_pts.unwrap_or(self.position));
+                self.frame_pts = None;
+            }
+            return changed;
+        }
+        false
     }
     pub(crate) fn editor_ready(&self) -> bool {
         self.error.is_none()
@@ -163,7 +204,7 @@ impl Playback {
     }
     /// Opens `path` and starts playing it.
     pub fn start(path: &str, context: &egui::Context, prefs: Prefs) -> Self {
-        let mut playback = Self::open(path, context, prefs, true);
+        let mut playback = Self::open(path, context, prefs, true, None);
         playback.player.play();
         playback.playing = true;
         playback
@@ -173,9 +214,10 @@ impl Playback {
     pub(crate) fn prepare_editor(
         path: &str,
         start: Tick,
-        effect: clipcraft_engine::Effect,
+        recipe: clipcraft_engine::PreviewRecipe,
         context: &egui::Context,
     ) -> Self {
+        let effect = recipe.look.effect;
         let mut playback = Self::open(
             path,
             context,
@@ -185,6 +227,7 @@ impl Playback {
                 looping: false,
             },
             false,
+            Some(recipe),
         );
         playback.effect = effect;
         playback.position = start;
@@ -192,15 +235,45 @@ impl Playback {
         playback
     }
 
-    fn open(path: &str, context: &egui::Context, prefs: Prefs, audio_enabled: bool) -> Self {
+    fn open(
+        path: &str,
+        context: &egui::Context,
+        prefs: Prefs,
+        audio_enabled: bool,
+        recipe: Option<clipcraft_engine::PreviewRecipe>,
+    ) -> Self {
         let wake = context.clone();
-        let player = Player::start(PathBuf::from(path), move || wake.request_repaint());
+        let render_recipe = recipe.map(|r| std::sync::Arc::new(std::sync::Mutex::new(r)));
+        let worker_recipe = render_recipe.clone();
+        let mut renderer = clipcraft_engine::PreviewRenderer::default();
+        let player = Player::start_transformed(
+            PathBuf::from(path),
+            move || wake.request_repaint(),
+            move |mut frame| {
+                if let Some(config) = &worker_recipe {
+                    let recipe = config
+                        .lock()
+                        .map_err(|_| clipcraft_player::PlayerError::Crashed)?
+                        .clone();
+                    let image = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
+                        .ok_or(clipcraft_player::PlayerError::DecodeFailed)?;
+                    let image = renderer
+                        .frame(image, frame.pts, &recipe)
+                        .map_err(|_| clipcraft_player::PlayerError::RenderFailed)?;
+                    frame.width = image.width();
+                    frame.height = image.height();
+                    frame.rgba = image.into_raw();
+                }
+                Ok(frame)
+            },
+        );
         player.set_loop(prefs.looping);
         Self {
             path: path.to_owned(),
             player,
             texture: None,
             effect: clipcraft_engine::Effect::None,
+            render_recipe,
             info: None,
             position: Tick::ZERO,
             frame_pts: None,
@@ -336,7 +409,9 @@ impl Playback {
                     self.playing = false;
                     return;
                 }
-                let image = if self.effect == clipcraft_engine::Effect::None {
+                let image = if self.render_recipe.is_some()
+                    || self.effect == clipcraft_engine::Effect::None
+                {
                     egui::ColorImage::from_rgba_unmultiplied(size, &frame.rgba)
                 } else {
                     let mut recolored = frame.rgba.to_vec();
@@ -1180,7 +1255,7 @@ mod tests {
         let mut preview = Playback::prepare_editor(
             &path.to_string_lossy(),
             target,
-            clipcraft_engine::Effect::None,
+            clipcraft_engine::PreviewRecipe::default(),
             &context,
         );
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -1204,6 +1279,33 @@ mod tests {
             "preparation must not create an output device"
         );
         assert!(feed.muted());
+
+        // A paused edit must wait for newly composited pixels, then regain readiness.
+        let recipe = clipcraft_engine::PreviewRecipe {
+            canvas: Some([128, 72]),
+            look: clipcraft_engine::SegmentLook {
+                effect: clipcraft_engine::Effect::Sepia,
+                fade_in: clipcraft_engine::Fade::White,
+                ..Default::default()
+            },
+            texts: vec![clipcraft_engine::SequenceText::new(
+                Tick::ZERO,
+                Tick::from_units(1, 1),
+                "Paused edit",
+            )],
+            ..Default::default()
+        };
+        assert!(preview.editor_recipe(recipe.clone()));
+        assert!(!preview.editor_target_ready(target));
+        while !preview.editor_target_ready(target) && Instant::now() < deadline {
+            preview.poll(&context);
+            assert!(preview.editor_error().is_none());
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(preview.editor_target_ready(target));
+        assert!(!preview.editor_recipe(recipe));
+        assert!(!preview.playing);
+        assert!(!feed.driving());
 
         let next = Tick::from_units(2, 3);
         preview.editor_transport(Some(next), false, 0.25);
