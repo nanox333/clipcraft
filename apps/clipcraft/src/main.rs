@@ -1005,6 +1005,10 @@ impl ClipCraftApp {
         ui.add_space(4.0);
 
         // Search, sort, and folder.
+        // In a narrow window the folder pill and the search box both give way so they never touch.
+        let row = ui.available_width();
+        let folder_width = (row * 0.4).clamp(200.0, 340.0);
+        let search_width = (row - folder_width - 190.0).clamp(90.0, 230.0);
         ui.horizontal(|ui| {
             egui::Frame::new()
                 .fill(CARD)
@@ -1017,7 +1021,7 @@ impl ClipCraftApp {
                         egui::TextEdit::singleline(&mut self.search_text)
                             .frame(false)
                             .hint_text("Search clips")
-                            .desired_width(230.0),
+                            .desired_width(search_width),
                     );
                     kit::name_text_box(&search, "Search clips", &self.search_text);
                 });
@@ -1030,7 +1034,7 @@ impl ClipCraftApp {
                     .inner_margin(egui::Margin::symmetric(12, 5))
                     .show(ui, |ui| {
                         // A fixed width, with the field filling it, so the whole pill is clickable.
-                        ui.set_width(340.0);
+                        ui.set_width(folder_width);
                         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                             let (icon, _) =
                                 ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
@@ -1040,7 +1044,7 @@ impl ClipCraftApp {
                                     .frame(false)
                                     .hint_text("Clips folder")
                                     .desired_width(
-                                        (ui.available_width() - 20.0).clamp(150.0, 340.0),
+                                        (ui.available_width() - 20.0).clamp(100.0, 340.0),
                                     ),
                             );
                             kit::name_text_box(&field, "Clips folder", &self.directory_text);

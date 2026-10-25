@@ -306,3 +306,6 @@ The preview takes at least half of the top row and the Library the rest; the tim
 A restored editor draft no longer takes over the launch screen: ClipCraft opens on Clips, says the
 draft was restored, and the Editor tab reopens it. In a short window the editor page scrolls so the
 preview keeps a usable height (never under about 250 px) instead of shrinking to a strip.
+
+The Clips toolbar narrows the search box and folder pill together so they never overlap, and the
+Storage settings explain why "Delete the oldest clips" is dimmed while no limit is chosen.

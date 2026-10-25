@@ -2217,6 +2217,13 @@ pub fn storage_tab(
                 settings.delete_oldest_when_full = false;
             }
         });
+        if !enabled {
+            ui.label(
+                RichText::new("These apply once you choose a storage limit above.")
+                    .size(12.0)
+                    .color(MUTED),
+            );
+        }
         ui.add_space(8.0);
     });
 }
