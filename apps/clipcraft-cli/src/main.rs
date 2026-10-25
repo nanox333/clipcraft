@@ -706,6 +706,7 @@ fn run_record(arguments: &[OsString]) -> Result<(), CliError> {
         &clipcraft_platform::CaptureOptions {
             show_cursor: settings.capture_cursor,
             hdr_to_sdr: settings.hdr_compatibility,
+            requested_fps: settings.frames_per_second,
         },
     )
     .map_err(|error| CliError::Capture(error.to_string()))?;

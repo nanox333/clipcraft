@@ -42,11 +42,12 @@ Wordmark lockups have explicit backgrounds; the mark PNGs are transparent. Raste
 are delivery assets; SVG remains the scalable master. Keep generated review boards in ignored
 `target/`, and update the committed SVGs together with the canonical outline when it changes.
 
-The Discord product asset key stays `clipcraft`; replace that asset with the new CUT PNG in
-the application portal. This repository change does not upload artwork. Publisher game logos
-are separate assets and need documented redistribution rights before bundling. The existing
-game-name placeholders remain a limitation; selecting the ClipCraft identity does not resolve
-game artwork. No Medal or publisher artwork is part of this kit.
+Upload the CUT PNG as the owned Discord application icon. The presence payload references its
+fixed public CDN URL; a separate Rich Presence asset-key upload is unnecessary.
+CS2, Dota 2 and League use fixed public Discord CDN icon references in the presence payload.
+Discord loads those images; ClipCraft does not download or bundle publisher artwork. Other
+games and the offline local preview use CUT. The old typographic game exports are removed.
+No Medal or publisher image bytes are part of this kit.
 
 ## Provenance
 

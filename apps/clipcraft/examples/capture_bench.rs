@@ -1,4 +1,4 @@
-//! Generated-window Windows capture evidence. Saves only this example's original test pattern.
+//! Generated-window and headless recorder diagnostics. Saves only generated synthetic media.
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{
@@ -14,6 +14,52 @@ use clipcraft_record::{
 };
 use eframe::egui;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Mode {
+    Idle,
+    Native,
+    NativeSilent,
+    Cpu,
+    Synthetic,
+    SyntheticSilent,
+    Headless,
+    HeadlessSilent,
+}
+
+impl Mode {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "idle" => Ok(Self::Idle),
+            "record" | "native" => Ok(Self::Native),
+            "native-silent" => Ok(Self::NativeSilent),
+            "cpu" => Ok(Self::Cpu),
+            "synthetic" => Ok(Self::Synthetic),
+            "synthetic-silent" => Ok(Self::SyntheticSilent),
+            "headless" => Ok(Self::Headless),
+            "headless-silent" => Ok(Self::HeadlessSilent),
+            _ => Err("unknown capture benchmark mode".to_owned()),
+        }
+    }
+
+    fn synthetic(self) -> bool {
+        matches!(
+            self,
+            Self::Synthetic | Self::SyntheticSilent | Self::Headless | Self::HeadlessSilent
+        )
+    }
+
+    fn headless(self) -> bool {
+        matches!(self, Self::Headless | Self::HeadlessSilent)
+    }
+
+    fn audio(self) -> bool {
+        matches!(
+            self,
+            Self::Native | Self::Cpu | Self::Synthetic | Self::Headless
+        )
+    }
+}
+
 struct Workload {
     started: Instant,
     previous: Instant,
@@ -21,11 +67,10 @@ struct Workload {
     seconds: u64,
     worker: Option<mpsc::Receiver<Result<String, String>>>,
     launched: bool,
-    record: bool,
+    mode: Mode,
     output: PathBuf,
     done: bool,
     failed: Arc<AtomicBool>,
-    cpu_input: bool,
     fps: u32,
     system: sysinfo::System,
     sampled: Instant,
@@ -52,23 +97,29 @@ impl clipcraft_capture::CaptureSource for CpuInput {
     }
 }
 
-fn record(seconds: u64, output: PathBuf, cpu_input: bool, fps: u32) -> Result<String, String> {
-    let target = clipcraft_platform::window_for_process(std::process::id())
+fn record(seconds: u64, output: PathBuf, mode: Mode, fps: u32) -> Result<String, String> {
+    let source: Box<dyn clipcraft_capture::CaptureSource> = if mode.synthetic() {
+        Box::new(clipcraft_capture::SyntheticSource::new(1920, 1080, fps))
+    } else {
+        let target = clipcraft_platform::window_for_process(std::process::id())
+            .map_err(|e| e.to_string())?
+            .ok_or("generated window unavailable")?;
+        clipcraft_platform::open(
+            &target.id,
+            &clipcraft_platform::CaptureOptions {
+                show_cursor: false,
+                hdr_to_sdr: false,
+                requested_fps: fps,
+            },
+        )
         .map_err(|e| e.to_string())?
-        .ok_or("generated window unavailable")?;
-    let source = clipcraft_platform::open(
-        &target.id,
-        &clipcraft_platform::CaptureOptions {
-            show_cursor: false,
-            hdr_to_sdr: false,
-        },
-    )
-    .map_err(|e| e.to_string())?;
-    let source = if cpu_input {
+    };
+    let source = if mode == Mode::Cpu {
         Box::new(CpuInput(source)) as Box<dyn clipcraft_capture::CaptureSource>
     } else {
         source
     };
+    let initial_pipeline = clipcraft_platform::capture_pipeline_stats();
     let recorder = Recorder::start_with_audio(
         source,
         RecordConfig {
@@ -86,7 +137,7 @@ fn record(seconds: u64, output: PathBuf, cpu_input: bool, fps: u32) -> Result<St
             hardware: clipcraft_platform::hardware_provider(),
             gap_restart_seconds: 10,
         },
-        Some(AudioSetup {
+        mode.audio().then(|| AudioSetup {
             config: AudioConfig {
                 sample_rate: 48000,
                 channels: 2,
@@ -112,7 +163,15 @@ fn record(seconds: u64, output: PathBuf, cpu_input: bool, fps: u32) -> Result<St
     let mut next_save = Duration::from_secs(300);
     let mut previous_encoded = 0;
     let mut next_health = Duration::from_secs(10);
+    let mut system = mode.headless().then(sysinfo::System::new);
+    let mut sampled = Instant::now();
     while started.elapsed() < Duration::from_secs(seconds) {
+        if sampled.elapsed() >= Duration::from_secs(1)
+            && let Some(system) = &mut system
+        {
+            report_resources(system, started)?;
+            sampled = Instant::now();
+        }
         let status = recorder.status();
         if let RecordState::Failed(error) = status.state {
             return Err(error.to_string());
@@ -146,6 +205,10 @@ fn record(seconds: u64, output: PathBuf, cpu_input: bool, fps: u32) -> Result<St
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    // Stop admitting work before the final disk write. Include in-flight output/drain below,
+    // and compare against measured feed time rather than requested time.
+    recorder.halt();
+    let feed_elapsed = started.elapsed();
     let status = recorder.status();
     if status.frames_encoded == 0 {
         return Err("no frames encoded".to_owned());
@@ -157,16 +220,70 @@ fn record(seconds: u64, output: PathBuf, cpu_input: bool, fps: u32) -> Result<St
     if let RecordState::Failed(error) = stopped.state {
         return Err(error.to_string());
     }
+    let pipeline = clipcraft_platform::capture_pipeline_stats();
+    let expected = u64::try_from(feed_elapsed.as_nanos() * u128::from(fps) / 1_000_000_000)
+        .map_err(|_| "measured frame count overflow")?;
+    let returned = pipeline
+        .mf_output_pictures
+        .saturating_sub(initial_pipeline.mf_output_pictures);
+    let fresh = pipeline
+        .fresh_capture_reads
+        .saturating_sub(initial_pipeline.fresh_capture_reads);
+    let deficit = expected.saturating_sub(returned);
+    let fresh_deficit = expected.saturating_sub(fresh);
+    let mf = if stopped.encoder.contains("Media Foundation:") {
+        format!(
+            "mf_returned={returned} mf_missing={deficit} mf_output_fps={:.3}",
+            returned as f64 / feed_elapsed.as_secs_f64()
+        )
+    } else {
+        "mf_returned=n/a mf_missing=n/a mf_output_fps=n/a".to_owned()
+    };
+    let wgc = if !mode.synthetic() {
+        format!(
+            "wgc_fresh={fresh} wgc_fresh_missing={fresh_deficit} wgc_fresh_fps={:.3}",
+            fresh as f64 / feed_elapsed.as_secs_f64()
+        )
+    } else {
+        "wgc_fresh=n/a wgc_fresh_missing=n/a wgc_fresh_fps=n/a".to_owned()
+    };
+    println!(
+        "cadence requested_seconds={seconds} feed_ms={:.3} expected={expected} {mf} {wgc} counters=post-stop",
+        feed_elapsed.as_secs_f64() * 1000.0
+    );
     Ok(format!(
-        "encoder={} output={:?} captured={} encoded={} dropped={} encode_ms={:.3} pipeline={:?}",
-        status.encoder,
-        status.output,
-        status.frames_captured,
-        status.frames_encoded,
-        status.frames_dropped,
-        status.average_encode_ms,
-        clipcraft_platform::capture_pipeline_stats()
+        "encoder={} mode={mode:?} output={:?} captured={} encoded={} dropped={} encode_ms={:.3} pipeline={:?}",
+        stopped.encoder,
+        stopped.output,
+        stopped.frames_captured,
+        stopped.frames_encoded,
+        stopped.frames_dropped,
+        stopped.average_encode_ms,
+        pipeline
     ))
+}
+
+fn report_resources(system: &mut sysinfo::System, started: Instant) -> Result<(), String> {
+    let pid = sysinfo::Pid::from_u32(std::process::id());
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[pid]),
+        true,
+        sysinfo::ProcessRefreshKind::nothing()
+            .with_cpu()
+            .with_memory(),
+    );
+    if let Some(process) = system.process(pid) {
+        if process.memory() > 512 * 1024 * 1024 {
+            return Err("process exceeded 512 MiB RSS budget".to_owned());
+        }
+        println!(
+            "resource seconds={:.1} cpu_core_percent={:.2} rss_mib={:.2}",
+            started.elapsed().as_secs_f64(),
+            process.cpu_usage(),
+            process.memory() as f64 / 1048576.0
+        );
+    }
+    Ok(())
 }
 
 impl eframe::App for Workload {
@@ -183,28 +300,12 @@ impl eframe::App for Workload {
         self.previous = now;
         if self.sampled.elapsed() >= Duration::from_secs(1) {
             self.sampled = now;
-            let pid = sysinfo::Pid::from_u32(std::process::id());
-            self.system.refresh_processes_specifics(
-                sysinfo::ProcessesToUpdate::Some(&[pid]),
-                true,
-                sysinfo::ProcessRefreshKind::nothing()
-                    .with_cpu()
-                    .with_memory(),
-            );
-            if let Some(process) = self.system.process(pid) {
-                if process.memory() > 512 * 1024 * 1024 {
-                    self.failed.store(true, Ordering::Relaxed);
-                    self.done = true;
-                    eprintln!("FAILED process exceeded 512 MiB RSS budget");
-                    context.send_viewport_cmd(egui::ViewportCommand::Close);
-                    return;
-                }
-                println!(
-                    "resource seconds={:.1} cpu_core_percent={:.2} rss_mib={:.2}",
-                    self.started.elapsed().as_secs_f64(),
-                    process.cpu_usage(),
-                    process.memory() as f64 / 1048576.0
-                );
+            if let Err(error) = report_resources(&mut self.system, self.started) {
+                self.failed.store(true, Ordering::Relaxed);
+                self.done = true;
+                eprintln!("FAILED {error}");
+                context.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
             }
         }
         let phase = self.started.elapsed().as_secs_f32();
@@ -233,16 +334,16 @@ impl eframe::App for Workload {
         });
         if !self.launched && self.started.elapsed() > Duration::from_secs(3) {
             self.launched = true;
-            if self.record {
+            if self.mode != Mode::Idle {
                 let (send, receive) = mpsc::channel();
                 let seconds = self.seconds;
                 let output = self.output.clone();
-                let cpu_input = self.cpu_input;
+                let mode = self.mode;
                 let fps = self.fps;
                 match std::thread::Builder::new()
                     .name("capture-benchmark".to_owned())
                     .spawn(move || {
-                        let _ = send.send(record(seconds, output, cpu_input, fps));
+                        let _ = send.send(record(seconds, output, mode, fps));
                     }) {
                     Ok(_) => self.worker = Some(receive),
                     Err(error) => {
@@ -300,20 +401,13 @@ impl eframe::App for Workload {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() > 4
-        || args
-            .first()
-            .is_some_and(|mode| !matches!(mode.as_str(), "idle" | "record" | "native" | "cpu"))
-    {
+    if args.len() > 4 {
         return Err(
-            "usage: capture_bench [idle|native|cpu] [seconds:5..7200] [output.mp4] [fps:30|60]"
+            "usage: capture_bench [idle|native|native-silent|cpu|synthetic|synthetic-silent|headless|headless-silent] [seconds:5..7200] [output.mp4] [fps:30|60]"
                 .into(),
         );
     }
-    let record = args
-        .first()
-        .is_some_and(|s| s == "record" || s == "cpu" || s == "native");
-    let cpu_input = args.first().is_some_and(|s| s == "cpu");
+    let mode = Mode::parse(args.first().map(String::as_str).unwrap_or("idle"))?;
     let seconds = args
         .get(1)
         .map(|s| s.parse::<u64>())
@@ -335,6 +429,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(String::as_str)
             .unwrap_or("target/capture-bench.mp4"),
     );
+    if mode.headless() {
+        println!("{}", record(seconds, output, mode, fps)?);
+        return Ok(());
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1920.0, 1080.0])
@@ -355,11 +453,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 seconds,
                 worker: None,
                 launched: false,
-                record,
+                mode,
                 output,
                 done: false,
                 failed: worker_failed,
-                cpu_input,
                 fps,
                 system: sysinfo::System::new(),
                 sampled: Instant::now(),

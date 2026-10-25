@@ -6,7 +6,9 @@ The section explains exactly which fields Discord can publish, shows connection/
 shows a local card preview. Normal users do not enter an ID: a shared identity comes from the
 build when configured by the maintainer. A public Application ID override/Apply/reset appears
 only under **Advanced settings** at the bottom of General, before the final advanced toggle.
-No production ID is bundled yet; without an effective ID the build is unconfigured and starts no IPC worker. See [Discord setup and privacy](discord-presence.md).
+The shared public ClipCraft Application ID is included in ordinary builds; an optional valid build
+or saved developer override can replace it. Discord must be running and activity sharing enabled.
+See [Discord setup and privacy](discord-presence.md).
 
 Games also has **Live game data**, separate from capture arming and custom rules. Its CS2/Dota 2/
 League switches default off and expose local setup, waiting/error/live summaries and expandable

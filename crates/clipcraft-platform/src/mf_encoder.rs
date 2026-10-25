@@ -36,6 +36,186 @@ use crate::h264_stream::{annexb_to_length_prefixed, build_avcc, rgba_to_nv12, sp
 
 /// How long to wait for an encoder to accept a picture before calling it stuck.
 const STALL_LIMIT: Duration = Duration::from_secs(2);
+const MAX_OUTPUT_TYPES: u32 = 64;
+const MAX_OUTPUT_BUFFER_BYTES: u32 = 1 << 28;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct OutputContract {
+    major: GUID,
+    subtype: GUID,
+    frame_size: Option<u64>,
+    frame_rate: Option<u64>,
+    bitrate: Option<u32>,
+    profile: Option<u32>,
+    level: Option<u32>,
+}
+
+fn optional_attribute<T>(value: windows::core::Result<T>) -> Result<Option<T>, String> {
+    match value {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.code() == MF_E_ATTRIBUTENOTFOUND => Ok(None),
+        Err(error) => Err(format!("reading encoder output attribute failed: {error}")),
+    }
+}
+
+fn read_output_contract(media: &IMFMediaType) -> Result<OutputContract, String> {
+    // SAFETY: read-only typed attributes on a live media type. Absent attributes describe a
+    // partial advertised type; other errors remain failures rather than becoming defaults.
+    unsafe {
+        Ok(OutputContract {
+            major: media
+                .GetGUID(&MF_MT_MAJOR_TYPE)
+                .map_err(|e| e.to_string())?,
+            subtype: media.GetGUID(&MF_MT_SUBTYPE).map_err(|e| e.to_string())?,
+            frame_size: optional_attribute(media.GetUINT64(&MF_MT_FRAME_SIZE))?,
+            frame_rate: optional_attribute(media.GetUINT64(&MF_MT_FRAME_RATE))?,
+            bitrate: optional_attribute(media.GetUINT32(&MF_MT_AVG_BITRATE))?,
+            profile: optional_attribute(media.GetUINT32(&MF_MT_MPEG2_PROFILE))?,
+            level: optional_attribute(media.GetUINT32(&MF_MT_MPEG2_LEVEL))?,
+        })
+    }
+}
+
+fn equal_frame_rates(left: u64, right: u64) -> bool {
+    let (left_num, left_den) = (left >> 32, left & u64::from(u32::MAX));
+    let (right_num, right_den) = (right >> 32, right & u64::from(u32::MAX));
+    // Each factor is at most u32::MAX, so the cross-products fit in u64.
+    left_num != 0
+        && left_den != 0
+        && right_num != 0
+        && right_den != 0
+        && left_num * right_den == right_num * left_den
+}
+
+fn output_codec_matches(expected: OutputContract, major: GUID, subtype: GUID) -> bool {
+    expected.major == major && expected.subtype == subtype
+}
+
+fn output_contract_matches(expected: OutputContract, actual: OutputContract) -> bool {
+    fn matches<T: PartialEq>(expected: Option<T>, actual: Option<T>) -> bool {
+        match (expected, actual) {
+            (Some(expected), Some(actual)) => expected == actual,
+            (Some(_), None) => false,
+            (None, _) => true,
+        }
+    }
+    let rate_matches = match (expected.frame_rate, actual.frame_rate) {
+        (Some(expected), Some(actual)) => equal_frame_rates(expected, actual),
+        _ => false,
+    };
+    output_codec_matches(expected, actual.major, actual.subtype)
+        && matches(expected.frame_size, actual.frame_size)
+        && rate_matches
+        && matches(expected.bitrate, actual.bitrate)
+        && matches(expected.profile, actual.profile)
+        && matches(expected.level, actual.level)
+}
+
+fn validate_output_contract(
+    contract: OutputContract,
+    width: u32,
+    height: u32,
+    fps: u32,
+) -> Result<(), String> {
+    if contract.major != MFMediaType_Video
+        || contract.subtype != MFVideoFormat_H264
+        || width == 0
+        || height == 0
+        || contract.frame_size != Some(pack(width, height))
+        || !contract
+            .frame_rate
+            .is_some_and(|rate| equal_frame_rates(rate, pack(fps, 1)))
+        || contract.bitrate.is_none_or(|bitrate| bitrate == 0)
+    {
+        return Err("encoder output does not preserve the requested H.264 dimensions, frame rate and bitrate".to_owned());
+    }
+    Ok(())
+}
+
+fn apply_output_contract(media: &IMFMediaType, contract: OutputContract) -> Result<(), String> {
+    // SAFETY: writes known accepted values onto our independent copy, never onto a media type
+    // owned by the transform. A partial advertised type may omit these known format attributes.
+    unsafe {
+        for (key, value) in [
+            (&MF_MT_FRAME_SIZE, contract.frame_size),
+            (&MF_MT_FRAME_RATE, contract.frame_rate),
+        ] {
+            if let Some(value) = value {
+                check(
+                    media.SetUINT64(key, value),
+                    "preserving encoder output geometry/rate",
+                )?;
+            }
+        }
+        for (key, value) in [
+            (&MF_MT_AVG_BITRATE, contract.bitrate),
+            (&MF_MT_MPEG2_PROFILE, contract.profile),
+            (&MF_MT_MPEG2_LEVEL, contract.level),
+        ] {
+            if let Some(value) = value {
+                check(
+                    media.SetUINT32(key, value),
+                    "preserving encoder output settings",
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn output_buffer_requirements(
+    flags: u32,
+    size: u32,
+    alignment: u32,
+) -> Result<(bool, u32), String> {
+    let provides = flags
+        & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0) as u32
+        != 0;
+    if provides {
+        return Ok((true, 0));
+    }
+    if alignment != 0 {
+        return Err(
+            "encoder requires aligned caller-owned output buffers, which are unsupported"
+                .to_owned(),
+        );
+    }
+    if size > MAX_OUTPUT_BUFFER_BYTES {
+        return Err("encoder output buffer exceeds the 256 MiB packet bound".to_owned());
+    }
+    Ok((false, size.max(1 << 16)))
+}
+
+fn update_parameter_sets(
+    current_sps: &mut Option<Vec<u8>>,
+    current_pps: &mut Option<Vec<u8>>,
+    sps: Option<Vec<u8>>,
+    pps: Option<Vec<u8>>,
+    published: bool,
+) -> Result<(), String> {
+    // The recorder publishes avcC with its first picture. Later changes would make existing
+    // buffered pictures incompatible with that file header, even if dimensions/rate match.
+    if published
+        && (sps
+            .as_ref()
+            .is_some_and(|sps| current_sps.as_ref() != Some(sps))
+            || pps
+                .as_ref()
+                .is_some_and(|pps| current_pps.as_ref() != Some(pps)))
+    {
+        return Err(
+            "encoder changed H.264 parameter sets after output; a new recording stream is required"
+                .to_owned(),
+        );
+    }
+    if let Some(sps) = sps {
+        *current_sps = Some(sps);
+    }
+    if let Some(pps) = pps {
+        *current_pps = Some(pps);
+    }
+    Ok(())
+}
 
 type StartupFn = unsafe extern "system" fn(u32, u32) -> HRESULT;
 type ShutdownFn = unsafe extern "system" fn() -> HRESULT;
@@ -175,8 +355,10 @@ pub struct MfEncoder {
     input_credit: u32,
     provides_samples: bool,
     output_size: u32,
+    output_contract: IMFMediaType,
     sps: Option<Vec<u8>>,
     pps: Option<Vec<u8>>,
+    parameter_sets_published: bool,
     last_time: i64,
     streaming: bool,
     gpu: Option<GpuInput>,
@@ -432,16 +614,40 @@ impl MfEncoder {
             .map_err(|why| format!("{name}: {why}"))?;
         }
 
-        // SAFETY: stream-info query and messages on a configured transform.
+        // Copy the accepted contract: stream changes may invalidate GetOutputCurrentType, and
+        // the transform must never be able to mutate the settings retained for renegotiation.
+        let output_contract = media_type(api)?;
+        // SAFETY: both media types and the configured transform are live; CopyAllItems writes
+        // only into our independently created destination. A just-invalidated current type
+        // falls back to the complete output type already accepted above.
+        unsafe {
+            let accepted = match transform.GetOutputCurrentType(0) {
+                Ok(accepted) => accepted,
+                Err(error) if error.code() == MF_E_TRANSFORM_TYPE_NOT_SET => output,
+                Err(error) => {
+                    return Err(format!(
+                        "{name}: reading accepted output type failed: {error}"
+                    ));
+                }
+            };
+            check(
+                accepted.CopyAllItems(&output_contract),
+                "retaining encoder output contract",
+            )?;
+        }
+        validate_output_contract(
+            read_output_contract(&output_contract)?,
+            request.width,
+            request.height,
+            request.fps,
+        )?;
+
+        // SAFETY: stream-info query on a configured transform.
         let (provides_samples, output_size) = unsafe {
             let info = transform
                 .GetOutputStreamInfo(0)
                 .map_err(|error| format!("{name}: output stream info failed: {error}"))?;
-            let provides = info.dwFlags
-                & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0)
-                    as u32
-                != 0;
-            (provides, info.cbSize)
+            output_buffer_requirements(info.dwFlags, info.cbSize, info.cbAlignment)?
         };
 
         let mut encoder = Self {
@@ -456,16 +662,19 @@ impl MfEncoder {
             nv12: Vec::new(),
             input_credit: 0,
             provides_samples,
-            output_size: output_size.max(1 << 16),
+            output_size,
+            output_contract,
             sps: None,
             pps: None,
+            parameter_sets_published: false,
             last_time: i64::MIN,
             streaming: false,
             gpu: None,
             gpu_declined: None,
             _runtime: runtime,
         };
-        encoder.read_sequence_header();
+        encoder.read_sequence_header()?;
+        encoder.record_media_types();
         Ok(encoder)
     }
 
@@ -485,6 +694,7 @@ impl MfEncoder {
                 )?;
             }
             self.streaming = true;
+            self.record_media_types();
         }
         Ok(())
     }
@@ -597,35 +807,56 @@ impl MfEncoder {
     }
 
     /// Takes the parameter sets some encoders publish on the output type.
-    fn read_sequence_header(&mut self) {
+    fn read_sequence_header(&mut self) -> Result<(), String> {
         // SAFETY: reads a blob attribute from the current output type into a buffer sized by the
         // blob's own reported length.
         let blob = unsafe {
-            let Ok(current) = self.transform.GetOutputCurrentType(0) else {
-                return;
+            let current = match self.transform.GetOutputCurrentType(0) {
+                Ok(current) => current,
+                Err(error) if error.code() == MF_E_TRANSFORM_TYPE_NOT_SET => return Ok(()),
+                Err(error) => {
+                    return Err(format!(
+                        "reading output type for parameter sets failed: {error}"
+                    ));
+                }
             };
-            let Ok(length) = current.GetBlobSize(&MF_MT_MPEG_SEQUENCE_HEADER) else {
-                return;
+            let length = match current.GetBlobSize(&MF_MT_MPEG_SEQUENCE_HEADER) {
+                Ok(length) => length,
+                Err(error) if error.code() == MF_E_ATTRIBUTENOTFOUND => return Ok(()),
+                Err(error) => return Err(format!("reading parameter-set size failed: {error}")),
             };
-            if length == 0 || length > 1 << 20 {
-                return;
+            if length == 0 {
+                return Ok(());
+            }
+            if length > 1 << 20 {
+                return Err("encoder parameter-set header exceeds its size bound".to_owned());
             }
             let mut buffer = vec![0_u8; length as usize];
-            if current
+            current
                 .GetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, &mut buffer, None)
-                .is_err()
-            {
-                return;
-            }
+                .map_err(|error| format!("reading parameter-set header failed: {error}"))?;
             buffer
         };
         for unit in split_nal_units(&blob) {
             match unit[0] & 0x1f {
-                7 => self.sps = Some(unit.to_vec()),
-                8 => self.pps = Some(unit.to_vec()),
+                7 => update_parameter_sets(
+                    &mut self.sps,
+                    &mut self.pps,
+                    Some(unit.to_vec()),
+                    None,
+                    self.parameter_sets_published,
+                )?,
+                8 => update_parameter_sets(
+                    &mut self.sps,
+                    &mut self.pps,
+                    None,
+                    Some(unit.to_vec()),
+                    self.parameter_sets_published,
+                )?,
                 _ => {}
             }
         }
+        Ok(())
     }
 
     fn make_sample(&self, index: u64) -> Result<IMFSample, String> {
@@ -723,14 +954,15 @@ impl MfEncoder {
         // SAFETY: a plain attribute read.
         let time = unsafe { sample.GetSampleTime() }.unwrap_or(0);
         let picture = annexb_to_length_prefixed(&bytes)?;
-        if let Some(sps) = picture.sps {
-            self.sps = Some(sps);
-        }
-        if let Some(pps) = picture.pps {
-            self.pps = Some(pps);
-        }
+        update_parameter_sets(
+            &mut self.sps,
+            &mut self.pps,
+            picture.sps,
+            picture.pps,
+            self.parameter_sets_published,
+        )?;
         if self.sps.is_none() || self.pps.is_none() {
-            self.read_sequence_header();
+            self.read_sequence_header()?;
         }
         if self.sps.is_none() || self.pps.is_none() {
             return Err(format!("{}: the encoder gave no parameter sets", self.name));
@@ -742,6 +974,8 @@ impl MfEncoder {
             keyframe: picture.keyframe,
             reordered,
         });
+        self.parameter_sets_published = true;
+        crate::d3d11::output_picture();
         Ok(true)
     }
 
@@ -777,22 +1011,116 @@ impl MfEncoder {
     }
 
     fn renegotiate_output(&mut self) -> Result<(), String> {
-        // SAFETY: asks the transform for its first available output type and sets it, both on a
-        // live transform.
-        unsafe {
-            let wanted = self
-                .transform
-                .GetOutputAvailableType(0, 0)
-                .map_err(|error| {
-                    format!("{}: no output type after a change: {error}", self.name)
-                })?;
-            check(
-                self.transform.SetOutputType(0, &wanted, 0),
-                "renegotiating the output type",
-            )?;
+        crate::d3d11::stream_changed();
+        let expected = read_output_contract(&self.output_contract)?;
+        validate_output_contract(expected, self.width, self.height, self.fps)?;
+        for index in 0..MAX_OUTPUT_TYPES {
+            // SAFETY: bounded enumeration of the configured transform's output stream.
+            let available = match unsafe { self.transform.GetOutputAvailableType(0, index) } {
+                Ok(available) => available,
+                Err(error) if error.code() == MF_E_NO_MORE_TYPES => {
+                    return Err(format!(
+                        "{}: no compatible output type preserves the recording settings after a stream change",
+                        self.name
+                    ));
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "{}: listing output types after a change failed: {error}",
+                        self.name
+                    ));
+                }
+            };
+            // Advertised types are hints and may contain stale/default numeric values. Only
+            // filter the codec identity before completing and testing the retained contract.
+            // SAFETY: read-only mandatory identity attributes on the advertised media type.
+            let (major, subtype) = unsafe {
+                (
+                    available
+                        .GetGUID(&MF_MT_MAJOR_TYPE)
+                        .map_err(|error| error.to_string())?,
+                    available
+                        .GetGUID(&MF_MT_SUBTYPE)
+                        .map_err(|error| error.to_string())?,
+                )
+            };
+            if !output_codec_matches(expected, major, subtype) {
+                continue;
+            }
+            let wanted = media_type(self.api)?;
+            // SAFETY: copy the advertised attributes into our own type. Do not mutate the
+            // driver's advertised object or copy stale codec sequence headers from the old type.
+            let copied = unsafe { available.CopyAllItems(&wanted) };
+            check(copied, "copying advertised output type")?;
+            apply_output_contract(&wanted, expected)?;
+            // SAFETY: test-only validation of our complete candidate leaves the transform's
+            // active type unchanged; rejected candidates are skipped within the bounded list.
+            let tested = unsafe {
+                self.transform
+                    .SetOutputType(0, &wanted, MFT_SET_TYPE_TEST_ONLY.0 as u32)
+            };
+            match tested {
+                Ok(()) => {}
+                Err(error) if error.code() == MF_E_INVALIDMEDIATYPE => continue,
+                Err(error) => {
+                    return Err(format!(
+                        "{}: validating output type after a change failed: {error}",
+                        self.name
+                    ));
+                }
+            }
+            // SAFETY: the transform accepted this complete candidate in test-only mode.
+            let selected = unsafe { self.transform.SetOutputType(0, &wanted, 0) };
+            check(selected, "renegotiating the output type")?;
+            // SAFETY: query the actual accepted type and updated allocation requirements.
+            let (actual, info) = unsafe {
+                (
+                    self.transform.GetOutputCurrentType(0).map_err(|error| {
+                        format!("reading renegotiated output type failed: {error}")
+                    })?,
+                    self.transform.GetOutputStreamInfo(0).map_err(|error| {
+                        format!("reading renegotiated output requirements failed: {error}")
+                    })?,
+                )
+            };
+            if !output_contract_matches(expected, read_output_contract(&actual)?) {
+                return Err(format!(
+                    "{}: renegotiated output changed the recording settings",
+                    self.name
+                ));
+            }
+            (self.provides_samples, self.output_size) =
+                output_buffer_requirements(info.dwFlags, info.cbSize, info.cbAlignment)?;
+            self.read_sequence_header()?;
+            self.record_media_types();
+            return Ok(());
         }
-        self.read_sequence_header();
-        Ok(())
+        Err(format!(
+            "{}: output type enumeration exceeded its bound after a stream change",
+            self.name
+        ))
+    }
+
+    fn record_media_types(&self) {
+        // SAFETY: optional, read-only attributes on configured live COM interfaces. Missing
+        // diagnostics are represented by zero; they do not change negotiation or recording.
+        let (input, output, max_mbps) = unsafe {
+            (
+                self.transform
+                    .GetInputCurrentType(0)
+                    .and_then(|t| t.GetUINT64(&MF_MT_FRAME_RATE))
+                    .unwrap_or(0),
+                self.transform
+                    .GetOutputCurrentType(0)
+                    .and_then(|t| t.GetUINT64(&MF_MT_FRAME_RATE))
+                    .unwrap_or(0),
+                self.transform
+                    .GetAttributes()
+                    .and_then(|a| a.GetUINT32(&MF_VIDEO_MAX_MB_PER_SEC))
+                    .unwrap_or(0),
+            )
+        };
+        crate::d3d11::media_types(input, output, max_mbps);
     }
 
     /// Hands one picture to the encoder and collects what is ready.
@@ -1022,4 +1350,198 @@ pub fn open(request: &HardwareRequest) -> Result<Box<dyn HardwareEncoder>, Strin
         }
     }
     Err(failures.join("; "))
+}
+
+#[cfg(test)]
+mod output_contract_tests {
+    use super::*;
+
+    fn requested() -> OutputContract {
+        OutputContract {
+            major: MFMediaType_Video,
+            subtype: MFVideoFormat_H264,
+            frame_size: Some(pack(1920, 1080)),
+            frame_rate: Some(pack(60, 1)),
+            bitrate: Some(12_000_000),
+            profile: Some(66),
+            level: Some(42),
+        }
+    }
+
+    #[test]
+    fn frame_rate_equivalence_is_exact_and_rejects_hostile_ratios() {
+        assert!(equal_frame_rates(pack(60, 1), pack(120, 2)));
+        assert!(equal_frame_rates(pack(u32::MAX, u32::MAX), pack(1, 1)));
+        assert!(!equal_frame_rates(pack(60, 1), pack(60000, 1001)));
+        assert!(!equal_frame_rates(pack(0, 1), pack(0, 1)));
+        assert!(!equal_frame_rates(pack(60, 0), pack(60, 0)));
+        assert!(!equal_frame_rates(
+            pack(u32::MAX, u32::MAX - 1),
+            pack(u32::MAX - 1, u32::MAX)
+        ));
+    }
+
+    #[test]
+    fn renegotiation_rejects_downgrades_and_selects_an_equivalent_rate() {
+        let expected = requested();
+        let mut downgrade = expected;
+        downgrade.frame_rate = Some(pack(30, 1));
+        let mut equivalent = expected;
+        equivalent.frame_rate = Some(pack(120, 2));
+        let candidates = [downgrade, equivalent];
+        assert_eq!(
+            candidates
+                .into_iter()
+                .position(|candidate| output_contract_matches(expected, candidate)),
+            Some(1)
+        );
+        for changed in [
+            OutputContract {
+                frame_size: Some(pack(1280, 720)),
+                ..expected
+            },
+            OutputContract {
+                bitrate: Some(6_000_000),
+                ..expected
+            },
+            OutputContract {
+                profile: Some(100),
+                ..expected
+            },
+            OutputContract {
+                level: Some(40),
+                ..expected
+            },
+            OutputContract {
+                subtype: MFVideoFormat_NV12,
+                ..expected
+            },
+        ] {
+            assert!(!output_contract_matches(expected, changed));
+        }
+    }
+
+    #[test]
+    fn partial_advertised_types_cannot_be_accepted_as_complete_negotiated_types() {
+        let expected = requested();
+        let partial = OutputContract {
+            frame_size: None,
+            frame_rate: None,
+            bitrate: None,
+            profile: None,
+            level: None,
+            ..expected
+        };
+        assert!(output_codec_matches(
+            expected,
+            partial.major,
+            partial.subtype
+        ));
+        assert!(!output_contract_matches(expected, partial));
+        assert!(validate_output_contract(expected, 1920, 1080, 60).is_ok());
+        assert!(validate_output_contract(partial, 1920, 1080, 60).is_err());
+        assert!(validate_output_contract(expected, 1920, 1080, 30).is_err());
+        assert!(validate_output_contract(expected, 0, 1080, 60).is_err());
+        assert!(validate_output_contract(expected, 1920, 1080, 0).is_err());
+        assert!(
+            validate_output_contract(
+                OutputContract {
+                    bitrate: Some(0),
+                    ..expected
+                },
+                1920,
+                1080,
+                60
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn output_allocation_refresh_respects_sample_ownership_and_packet_bound() {
+        assert_eq!(
+            output_buffer_requirements(0, 0, 0).unwrap(),
+            (false, 1 << 16)
+        );
+        assert_eq!(
+            output_buffer_requirements(0, MAX_OUTPUT_BUFFER_BYTES, 0).unwrap(),
+            (false, MAX_OUTPUT_BUFFER_BYTES)
+        );
+        assert!(output_buffer_requirements(0, MAX_OUTPUT_BUFFER_BYTES + 1, 0).is_err());
+        assert!(output_buffer_requirements(0, u32::MAX, 0).is_err());
+        for alignment in [1, 16, 32, u32::MAX] {
+            assert!(output_buffer_requirements(0, 65_536, alignment).is_err());
+        }
+        for flag in [
+            MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
+            MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES,
+        ] {
+            assert_eq!(
+                output_buffer_requirements(flag.0 as u32, u32::MAX, u32::MAX).unwrap(),
+                (true, 0)
+            );
+        }
+    }
+
+    #[test]
+    fn default_advertised_values_do_not_prevent_testing_the_retained_contract() {
+        let expected = requested();
+        let default_hint = OutputContract {
+            frame_size: Some(pack(640, 480)),
+            frame_rate: Some(pack(30, 1)),
+            bitrate: Some(1_000_000),
+            profile: Some(100),
+            level: Some(31),
+            ..expected
+        };
+        assert!(output_codec_matches(
+            expected,
+            default_hint.major,
+            default_hint.subtype
+        ));
+        assert!(!output_contract_matches(expected, default_hint));
+        assert!(!output_codec_matches(
+            expected,
+            MFMediaType_Video,
+            MFVideoFormat_NV12
+        ));
+    }
+
+    #[test]
+    fn first_picture_can_replace_provisional_parameter_sets_but_later_changes_fail() {
+        let (mut sps, mut pps) = (Some(vec![0x67, 1]), Some(vec![0x68, 1]));
+        update_parameter_sets(
+            &mut sps,
+            &mut pps,
+            Some(vec![0x67, 2]),
+            Some(vec![0x68, 2]),
+            false,
+        )
+        .unwrap();
+        let accepted = (sps.clone(), pps.clone());
+        update_parameter_sets(
+            &mut sps,
+            &mut pps,
+            accepted.0.clone(),
+            accepted.1.clone(),
+            true,
+        )
+        .unwrap();
+        assert!(
+            update_parameter_sets(
+                &mut sps,
+                &mut pps,
+                Some(vec![0x67, 3]),
+                Some(vec![0x68, 3]),
+                true
+            )
+            .is_err()
+        );
+        assert_eq!((sps.clone(), pps.clone()), accepted);
+        assert!(
+            update_parameter_sets(&mut sps, &mut pps, None, Some(vec![0x68, 3]), true).is_err()
+        );
+        assert_eq!((sps.clone(), pps.clone()), accepted);
+        update_parameter_sets(&mut sps, &mut pps, None, None, true).unwrap();
+    }
 }

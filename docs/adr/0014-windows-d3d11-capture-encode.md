@@ -33,6 +33,27 @@ event reference crosses the thread boundary. A mutex/condition variable bounds d
 events; a weak owner reference breaks generator/callback ownership cycles. Callback errors stop
 rearming and wake the encoder worker; input and drain stalls are bounded to two seconds.
 
+The recorder owns output cadence. After the first bounded wait, the provider returns its latest
+immutable frame immediately even when WGC has not delivered a new notification. Repeated and fresh
+reads are counted separately; repeated output is not proof of fresh capture throughput. For SDR
+BGRA, request a minimum update interval of half the configured frame period on supporting Windows
+builds, giving compositor timing headroom without requesting unlimited delivery. Retry the OS
+default only when the API reports the specific unsupported-interval error. HDR keeps the default
+interval, and CPU readback/conversion admission remains bounded to the requested output rate.
+
+Cache an independent copy of the accepted MF output contract. On a stream change, enumerate at
+most 64 advertised H.264 types, overlay retained attributes on an owned copy and test it without
+mutating the driver's type. Advertised dimensions/rates may be stale defaults; verify the actual
+accepted geometry, rational frame rate, bitrate, profile and level, or report a fallback error.
+Refresh buffer-size/ownership requirements after each accepted change and cap caller-provided
+buffers to the existing 256 MiB encoded-packet bound. Decline caller-owned buffers requiring
+nonzero alignment until an aligned allocator is implemented. Driver-owned samples retain their
+own allocation contract. The first actual output may replace provisional SPS/PPS metadata; after
+that, changed parameter sets require a fresh recording stream, preserving the replay's published
+avcC configuration.
+Negotiated-rate, stream-change and actual output-picture counters are process-local diagnostics;
+they do not log media or paths. The encoder-only tool isolates this seam from WGC/audio/UI.
+
 Failure must preserve already saved clips and report a reason. Native setup may decline before
 its first submitted frame; CPU NV12 input then continues. A running GPU/device failure is reported
 through the recorder's existing bounded fallback/restart behavior. Restart clears the incompatible
@@ -54,3 +75,7 @@ Public API specifications:
 - https://learn.microsoft.com/en-us/windows/win32/medfound/mft-message-set-d3d-manager
 - https://learn.microsoft.com/en-us/windows/win32/api/mfidl/nn-mfidl-imfvideosampleallocatorex
 - https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11videocontext-videoprocessorblt
+- https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.graphicscapturesession.minupdateinterval
+- https://learn.microsoft.com/en-us/windows/win32/medfound/handling-stream-changes
+- https://learn.microsoft.com/en-us/windows/win32/api/mftransform/nf-mftransform-imftransform-getoutputavailabletype
+- https://learn.microsoft.com/en-us/windows/win32/api/mftransform/ns-mftransform-mft_output_stream_info

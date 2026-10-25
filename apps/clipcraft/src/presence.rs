@@ -139,7 +139,7 @@ impl State {
                 crate::settings::toggle_row(
                     ui,
                     "Show the captured game's name",
-                    "Adds the currently captured game's name while clipping. Editing and browsing never include saved clips' game labels.",
+                    "Adds the current game's name while clipping. For CS2, Dota 2 and League, Discord also loads its hosted game icon. Editing and browsing never include saved clips' game labels.",
                     &mut settings.show_game,
                     true,
                 );
@@ -223,7 +223,7 @@ impl State {
                                 });
                             });
                         });
-                    ui.label(RichText::new("Preview only. Discord controls the application name and renders the uploaded artwork.").size(11.5).color(crate::kit::FAINT));
+                    ui.label(RichText::new("Preview only; shows the offline ClipCraft artwork. Discord loads supported game icons and controls final rendering.").size(11.5).color(crate::kit::FAINT));
                 }
                 ui.label(RichText::new("Requires the Discord desktop app and activity sharing enabled in Discord. Discord controls visibility to other people. Local recording works without it.").size(12.0).color(crate::kit::FAINT));
             }

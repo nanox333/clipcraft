@@ -333,6 +333,7 @@ fn a_person_picks_a_screen_and_its_pictures_arrive() {
         &CaptureOptions {
             show_cursor: true,
             hdr_to_sdr: true,
+            requested_fps: 60,
         },
     )
     .unwrap_or_else(|error| panic!("the share starts: {error:?}"));

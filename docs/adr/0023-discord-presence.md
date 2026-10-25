@@ -41,7 +41,10 @@ to Discord. Keep the public Application ID separate from tokens: no token/secret
 Without an effective valid ID no worker probes Discord. M10.2a adds a shared compile-time public
 `CLIPCRAFT_DISCORD_APPLICATION_ID` supplied once by the maintainer/release repository variable.
 A valid saved developer override takes priority; it is hidden in General's advanced section.
-No counterfeit production ID is shipped. The maintainer still needs to register the application.
+On 2026-10-24 the maintainer supplied public application ID `1563496212554846279`. It is now the
+product default in Rust source so ordinary builds and empty release variables work without extra
+setup. Nonempty build overrides still require validation; malformed values do not silently select
+another identity. Artwork upload and real Discord rendering remain separate verification gates.
 
 Medal's public support example informed the card hierarchy: game badge, small product badge,
 `Clipping <game>` and `with ClipCraft`. This is independent original art generated in bounded Rust
@@ -52,6 +55,35 @@ No elapsed timestamp is added. Readable map/hero labels remove known internal pr
 selection obeys game-name consent. The local preview uses the same generated art and engine policy.
 Missing uploaded assets cannot be detected by local IPC ACK; real rendering remains a manual gate.
 
+Windows byte-pipe reads first call `PeekNamedPipe` through one platform-only unsafe block. The
+handle is borrowed from the owned OVERLAPPED stream and only an initialized byte-count output is
+passed. The worker is the sole reader. An empty connected pipe returns `WouldBlock`; a broken
+pipe returns an error and takes the existing bounded reconnect path. This prevents the byte-stream
+dependency's empty nonblocking read from being mistaken for EOF before READY or an acknowledgment
+arrives. Reads are capped to both available bytes and the caller's bounded buffer. A local pipe
+regression covers empty/data/empty/disconnect transitions. No other layer receives a native handle.
+Reference: [PeekNamedPipe](https://learn.microsoft.com/en-us/windows/win32/api/namedpipeapi/nf-namedpipeapi-peeknamedpipe).
+
 Mock IPC/portable policy/native UI and compile checks cannot establish actual Discord behavior,
 application-name validation, privacy settings, client packaging compatibility or live games.
 Those remain release evidence gates. See [user setup and exact fields](../discord-presence.md).
+
+## M10.2c — hosted artwork references (2026-10-24)
+
+The maintainer requested actual game icons after rejecting typographic badges. Vice's public
+`game_icons.py` and presence construction were inspected for behavior, not copied. Vice resolves
+Discord application metadata and supplies a CDN URL as `large_image`. Discord's public
+[ActivityAssets reference](https://discord.com/developers/docs/social-sdk/classdiscordpp_1_1ActivityAssets.html)
+documents external image URLs alongside uploaded asset keys.
+
+ClipCraft uses a narrower implementation: three fixed public Discord CDN app-icon references
+for CS2, Dota 2 and League, checked against public application metadata on 2026-10-24. Only the
+Discord client/service fetches artwork. No publisher image bytes are copied, bundled, cached,
+uploaded by ClipCraft or claimed under its license. No runtime discovery/metadata API, HTTP
+dependency, arbitrary user URL, account access, third-party IPC identity or image-upload feature
+is added. The existing default-off presence and game-name consent gates both the game label and
+the fixed image reference; editing/browsing omit both. The small badge remains original CUT
+under the owned ClipCraft identity, using its uploaded application-icon CDN reference so no
+second Rich Presence art-key upload is needed. Offline preview and unrecognized games use CUT; old
+typographic game exports are removed. CDN hash changes and fetch failures remain external
+rendering limitations. IPC acknowledgment and native/profile visual evidence are recorded separately.

@@ -1,14 +1,8 @@
-//! CUT product mark and legacy game placeholders, shared by preview and asset export.
-use clipcraft_export::{ExportError, SequenceText, TextRaster};
-use clipcraft_time::Tick;
+//! Original CUT product badge, shared by offline preview and maintainer asset export.
+use clipcraft_export::ExportError;
 use image::{Rgba, RgbaImage};
 
-pub const ASSET_KEYS: [&str; 4] = [
-    "clipcraft",
-    "clipcraft_cs2",
-    "clipcraft_dota2",
-    "clipcraft_league",
-];
+pub const ASSET_KEYS: [&str; 1] = ["clipcraft"];
 
 /// Fixed keys and a bounded canvas prevent input-driven paths or unbounded allocations.
 pub fn badge(key: &str, edge: u32) -> Result<RgbaImage, ExportError> {
@@ -17,41 +11,13 @@ pub fn badge(key: &str, edge: u32) -> Result<RgbaImage, ExportError> {
             "unknown Discord asset or invalid badge size",
         ));
     }
-    if key == "clipcraft" {
-        let mut image = RgbaImage::from_pixel(edge, edge, Rgba([23, 28, 30, 255]));
-        image::imageops::overlay(
-            &mut image,
-            &crate::brand::icon(edge, crate::brand::LIME)?,
-            0,
-            0,
-        );
-        return Ok(image);
-    }
-    let mut image = RgbaImage::from_pixel(edge, edge, Rgba([35, 39, 32, 255]));
-    for (x, y, pixel) in image.enumerate_pixels_mut() {
-        let border = edge / 18;
-        if x < border || y < border || x >= edge - border || y >= edge - border {
-            *pixel = Rgba([53, 62, 42, 255]);
-        }
-        // Original offset diamond motif; no game or third-party product logos.
-        let distance = x.abs_diff(edge / 2) + y.abs_diff(edge / 3);
-        if distance < edge / 7 && distance > edge / 9 {
-            *pixel = Rgba([194, 248, 79, 255]);
-        }
-    }
-    let label = match key {
-        "clipcraft_cs2" => "CS2",
-        "clipcraft_dota2" => "DOTA 2",
-        "clipcraft_league" => "LoL",
-        _ => "CC",
-    };
-    let mut text = SequenceText::new(Tick::ZERO, Tick::from_units(1, 1), label);
-    text.size = 240;
-    text.y = 620;
-    text.color = [194, 248, 79];
-    if let Some(raster) = TextRaster::render(&text, edge, edge)? {
-        raster.draw(&mut image, &text, 1.0);
-    }
+    let mut image = RgbaImage::from_pixel(edge, edge, Rgba([23, 28, 30, 255]));
+    image::imageops::overlay(
+        &mut image,
+        &crate::brand::icon(edge, crate::brand::LIME)?,
+        0,
+        0,
+    );
     Ok(image)
 }
 

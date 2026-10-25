@@ -1,5 +1,26 @@
 # Testing
 
+## Discord CDN artwork verification (M10.2c, Windows, 2026-10-24)
+
+`cargo test -p clipcraft-engine presence --lib` covers fixed CDN image selection, game-name
+consent, unchanged owned IPC identity, unknown/hostile-label fallback, bounded fields and
+the original product badge. Publisher image files are not bundled. The native offline preview
+explicitly uses CUT rather than requesting remote images.
+
+The explicitly ignored Windows `real_discord_game_artwork_preview` test requires saved presence
+and game-name consent. It publishes three fixed **Artwork preview** labels (CS2/Dota/League),
+holds each for at most 60 seconds for inspection, and requests clear/shutdown on exit or error.
+All three received real-client acknowledgments. The original hidden-profile cause was Discord's
+global **Share my activity** switch being off. The maintainer enabled it manually; real CS2,
+Dota 2 and League cards then displayed their actual game icons plus CUT badge. Native profile/portal screenshots and
+test logs remain in ignored `target/discord-art-evidence/` and `target/discord-art-*.log`.
+The portal saved the CUT app icon and ClipCraft capitalization. A distinct viewer account is
+still needed for audience/privacy verification. Full CI and desktop/CLI release builds pass.
+The final release opened at 1440×900 and showed **Connected to Discord**, the CUT preview and
+the explicit offline/hosted-art explanation in General. The bounded preview run finished and
+its **Artwork preview** card disappeared before normal release startup. No capture was started
+for these branding checks. Existing keyboard-consent regression tests pass in the full gate.
+
 ## CUT identity verification (M10.2b, Windows, 2026-10-24)
 
 The `brand` tests check the C stem/opening and antialiasing at 16, 24, 32, 64 and 256 px,
@@ -211,6 +232,18 @@ remaining real-device checks. Timing is informational and is not a flaky CI asse
   Windows WGC/D3D11 and AMD Media Foundation also have generated-window evidence and an explicit
   real-device lease/readback/resize test. Reproduction and the checkpointed Windows soak example
   are in [windows-performance.md](windows-performance.md). Other GPU/format pairs remain unrun.
+  Follow-up verified 2026-10-23 includes a 60.026-second native SDR 1080p60 generated-window run:
+  3,589 returned pictures (0.333% deficit), 3,602 fresh WGC reads with no repeats, zero readbacks
+  and 177.10 MiB peak sampled RSS. All saved follow-up files fully decode; this is a short
+  throughput check, not a two-hour 60 fps or real-game pass. HDR compatibility remains enabled
+  by default and is outside this native SDR evidence. The encoder-only `encoder_bench` example
+  separates paced/unpaced hardware input from WGC/audio/UI; `capture_bench` also offers silent,
+  synthetic and headless isolation modes. Require actual returned output and fresh-read counts,
+  not input acceptance or constant-rate repeated images. Tests cover cached timestamps and
+  failure precedence, bounded FPS hints, unsupported-only interval fallback, CPU readback
+  admission, rational MF contracts, changed parameter sets and output-allocation bounds.
+  Windows CI also verifies restored editor media with canonical fixture paths, matching production
+  imports (including Windows' verbatim drive prefix) while retaining missing-source checks.
   Real-device evidence names the GPU,
   driver, OS, compositor, capture/encoder APIs, resolution/FPS, CPU use, GPU use, dropped frames, and
   game frame-time delta. Never infer sub-1% CPU use or broad compositor support from a compile or
@@ -734,6 +767,33 @@ mock, match and editor screenshots remain outside Git under `.clipcraft-local/di
 Private generated configs/mock frames and verification records remain under the temporary native
 root. See [setup/exact fields](discord-presence.md), [ADR 0023](adr/0023-discord-presence.md) and the
 [release checklist](release-checklist.md). Rich per-clip match metadata is not implemented here.
+
+### M10.2a — Shared identity and Windows IPC follow-up (2026-10-24)
+
+The maintainer supplied public ID `1563496212554846279`, now included in ordinary builds. New
+engine regressions cover missing/empty release values, valid explicit overrides and malformed
+nonempty values. The focused presence policy suite passes all six tests.
+
+The first real Windows check reproduced a transport failure: an empty nonblocking byte-pipe read
+returned zero and was treated as EOF before READY. The adapter now queries bounded available bytes
+with `PeekNamedPipe`, preserving genuine disconnect errors. A local real-pipe regression covers
+empty → data → empty → peer close without Discord or account data. The explicit live check then
+received READY and `SET_ACTIVITY` acknowledgment from the desktop client, with basic browsing
+context and saved presence consent, followed by bounded clear/disconnect. No raw payload or account
+data was logged. Run it only with Discord open and presence enabled:
+
+```text
+cargo test -p clipcraft-platform --lib real_discord_accepts_configured_activity -- --ignored --nocapture --test-threads=1
+```
+
+Artwork has been generated with the existing Rust exporter under ignored
+`target/discord-presence-assets-20261024`; uploading it and checking actual profile rendering,
+audience settings, opt-out visibility and macOS remain separate manual gates.
+
+The final desktop/CLI release build, `cargo xtask ci` and `cargo xtask docs-check origin/main`
+pass. The full gate log is `target/discord-presence-ci.log`; the release log is
+`target/discord-presence-release-build.log`. The live check was explicitly run outside the
+restricted environment against the user's running Windows Discord client.
 
 ### M10.2a — Medal-inspired card and shared setup (2026-10-23)
 

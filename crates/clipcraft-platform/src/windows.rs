@@ -11,9 +11,11 @@ use clipcraft_capture::{
     NativeCaptureFrame, TargetKind,
 };
 use clipcraft_time::Tick;
-use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
+use windows_capture::capture::{
+    CaptureControl, Context, GraphicsCaptureApiError, GraphicsCaptureApiHandler,
+};
 use windows_capture::frame::Frame;
-use windows_capture::graphics_capture_api::InternalCaptureControl;
+use windows_capture::graphics_capture_api::{Error as CaptureApiError, InternalCaptureControl};
 use windows_capture::monitor::Monitor;
 use windows_capture::settings::{
     ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
@@ -118,6 +120,7 @@ struct Shared {
     latest: Mutex<Latest>,
     changed: Condvar,
     started: Instant,
+    requested_fps: u32,
 }
 
 fn lock(shared: &Shared) -> MutexGuard<'_, Latest> {
@@ -128,6 +131,26 @@ struct Handler {
     shared: Arc<Shared>,
     pool: crate::d3d11::Pool,
     native_disabled: bool,
+    last_cpu_slot: Option<u128>,
+}
+
+/// Admit at most one expensive CPU conversion in each fixed slot at the requested frame rate. Relative
+/// last-frame intervals alias against compositor refresh (for example 165 Hz into 60 fps).
+fn admit_cpu_read(
+    last: &mut Option<u128>,
+    elapsed: Duration,
+    fps: u32,
+) -> Result<bool, &'static str> {
+    if !(1..=240).contains(&fps) {
+        return Err("capture frame rate must be between 1 and 240");
+    }
+    // Duration's maximum nanoseconds multiplied by at most 240 fits comfortably in u128.
+    let slot = elapsed.as_nanos() * u128::from(fps) / 1_000_000_000;
+    if last.is_some_and(|previous| slot <= previous) {
+        return Ok(false);
+    }
+    *last = Some(slot);
+    Ok(true)
 }
 
 impl GraphicsCaptureApiHandler for Handler {
@@ -139,6 +162,7 @@ impl GraphicsCaptureApiHandler for Handler {
             shared: context.flags,
             pool: crate::d3d11::Pool::default(),
             native_disabled: false,
+            last_cpu_slot: None,
         })
     }
 
@@ -168,6 +192,13 @@ impl GraphicsCaptureApiHandler for Handler {
                     // The existing CPU path handles unsupported devices, formats and budgets.
                     Err(_) => self.native_disabled = true,
                 }
+            }
+            if !admit_cpu_read(
+                &mut self.last_cpu_slot,
+                self.shared.started.elapsed(),
+                self.shared.requested_fps,
+            )? {
+                return Ok(());
             }
             let buffer = frame.buffer().map_err(|_| "could not read the frame")?;
             crate::d3d11::readback_count();
@@ -235,6 +266,7 @@ fn settings<T: TryInto<GraphicsCaptureItemType>>(
     item: T,
     cursor: CursorCaptureSettings,
     color: ColorFormat,
+    interval: MinimumUpdateIntervalSettings,
     shared: &Arc<Shared>,
 ) -> Settings<Arc<Shared>, T> {
     Settings::new(
@@ -242,11 +274,69 @@ fn settings<T: TryInto<GraphicsCaptureItemType>>(
         cursor,
         DrawBorderSettings::WithoutBorder,
         SecondaryWindowSettings::Default,
-        MinimumUpdateIntervalSettings::Default,
+        interval,
         DirtyRegionSettings::Default,
         color,
         shared.clone(),
     )
+}
+
+fn capture_update_interval(
+    fps: u32,
+    color: ColorFormat,
+) -> Result<MinimumUpdateIntervalSettings, CaptureError> {
+    if !(1..=240).contains(&fps) {
+        return Err(CaptureError::Failed);
+    }
+    if color == ColorFormat::Bgra8 {
+        // Eligibility below one output period gives display-timed delivery headroom. The
+        // recorder still owns output pacing; the OS does not guarantee fresh periodic frames.
+        Ok(MinimumUpdateIntervalSettings::Custom(Duration::from_nanos(
+            1_000_000_000 / (2 * u64::from(fps)),
+        )))
+    } else {
+        // HDR has CPU readback/tone mapping in the callback; do not request extra HDR work.
+        Ok(MinimumUpdateIntervalSettings::Default)
+    }
+}
+
+fn interval_fallback<T, E>(
+    interval: MinimumUpdateIntervalSettings,
+    mut start: impl FnMut(MinimumUpdateIntervalSettings) -> Result<T, E>,
+    unsupported: impl Fn(&E) -> bool,
+) -> Result<T, E> {
+    match start(interval) {
+        Err(error) if interval != MinimumUpdateIntervalSettings::Default && unsupported(&error) => {
+            start(MinimumUpdateIntervalSettings::Default)
+        }
+        result => result,
+    }
+}
+
+fn interval_is_unsupported(error: &GraphicsCaptureApiError<&'static str>) -> bool {
+    matches!(
+        error,
+        GraphicsCaptureApiError::GraphicsCaptureApiError(
+            CaptureApiError::MinimumUpdateIntervalUnsupported
+        )
+    )
+}
+
+fn start_capture<T: TryInto<GraphicsCaptureItemType> + Copy + Send + 'static>(
+    item: T,
+    cursor: CursorCaptureSettings,
+    color: ColorFormat,
+    interval: MinimumUpdateIntervalSettings,
+    shared: &Arc<Shared>,
+) -> Result<CaptureControl<Handler, &'static str>, CaptureError> {
+    // The dependency initializes WinRT inside start_free_threaded before checking the custom
+    // interval. No capability probe runs on a potentially uninitialized calling thread.
+    interval_fallback(
+        interval,
+        |interval| Handler::start_free_threaded(settings(item, cursor, color, interval, shared)),
+        interval_is_unsupported,
+    )
+    .map_err(|_| CaptureError::Failed)
 }
 
 pub fn open(
@@ -257,6 +347,7 @@ pub fn open(
         latest: Mutex::new(Latest::default()),
         changed: Condvar::new(),
         started: Instant::now(),
+        requested_fps: options.requested_fps,
     });
     let cursor = if options.show_cursor {
         CursorCaptureSettings::WithCursor
@@ -270,6 +361,7 @@ pub fn open(
     } else {
         ColorFormat::Bgra8
     };
+    let interval = capture_update_interval(options.requested_fps, color)?;
     let (control, target) = if let Some(index) = target_id.strip_prefix("monitor:") {
         let index: usize = index.parse().map_err(|_| CaptureError::TargetGone)?;
         let monitor = Monitor::from_index(index).map_err(|_| CaptureError::TargetGone)?;
@@ -277,8 +369,7 @@ pub fn open(
             monitor.width().map_err(|_| CaptureError::Failed)?,
             monitor.height().map_err(|_| CaptureError::Failed)?,
         );
-        let control = Handler::start_free_threaded(settings(monitor, cursor, color, &shared))
-            .map_err(|_| CaptureError::Failed)?;
+        let control = start_capture(monitor, cursor, color, interval, &shared)?;
         (
             control,
             CaptureTarget {
@@ -300,8 +391,7 @@ pub fn open(
             u32::try_from(window.width().map_err(|_| CaptureError::TargetGone)?).unwrap_or(0),
             u32::try_from(window.height().map_err(|_| CaptureError::TargetGone)?).unwrap_or(0),
         );
-        let control = Handler::start_free_threaded(settings(window, cursor, color, &shared))
-            .map_err(|_| CaptureError::Failed)?;
+        let control = start_capture(window, cursor, color, interval, &shared)?;
         (
             control,
             CaptureTarget {
@@ -357,25 +447,21 @@ enum Captured {
 
 impl WindowsSource {
     fn next_frame(&mut self) -> Result<Captured, CaptureError> {
-        // Graphics Capture only delivers a picture when the screen changes, so wait a little for a
-        // new one and otherwise repeat the last.
-        let deadline = Instant::now() + Duration::from_millis(40);
+        // The recorder owns output pacing. WGC only updates on compositor changes: once an image
+        // exists, return the latest lease immediately rather than blocking a frame deadline on a
+        // notification. An unchanged desktop legitimately reuses its latest picture.
+        let deadline = Instant::now() + Duration::from_secs(3);
         let mut latest = lock(&self.shared);
-        while latest.sequence == self.seen && !latest.closed && !latest.failed {
+        while latest.frame.is_none() && latest.surface.is_none() && !latest.closed && !latest.failed
+        {
             let now = Instant::now();
-            // With no picture at all yet, allow a longer wait for the first one.
-            let limit = if latest.frame.is_none() && latest.surface.is_none() {
-                deadline + Duration::from_secs(3)
-            } else {
-                deadline
-            };
-            if now >= limit {
+            if now >= deadline {
                 break;
             }
             latest = self
                 .shared
                 .changed
-                .wait_timeout(latest, limit - now)
+                .wait_timeout(latest, deadline - now)
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
         }
@@ -385,13 +471,16 @@ impl WindowsSource {
         if latest.failed {
             return Err(CaptureError::Failed);
         }
-        self.seen = latest.sequence;
         if let Some(surface) = &latest.surface {
+            crate::d3d11::capture_read(self.seen != latest.sequence);
+            self.seen = latest.sequence;
             self.target.width = surface.width();
             self.target.height = surface.height();
             return Ok(Captured::Surface(surface.clone()));
         }
         let frame = latest.frame.clone().ok_or(CaptureError::Failed)?;
+        crate::d3d11::capture_read(self.seen != latest.sequence);
+        self.seen = latest.sequence;
         self.target.width = frame.width;
         self.target.height = frame.height;
         Ok(Captured::Cpu(frame))
@@ -523,6 +612,154 @@ pub fn active_window() -> Result<Option<CaptureTarget>, CaptureError> {
 mod capture_tests {
     use super::*;
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum StartError {
+        Unsupported,
+        Denied,
+        DeviceLost,
+    }
+
+    #[test]
+    fn update_interval_is_bounded_and_only_requests_extra_eligibility_for_bgra() {
+        assert_eq!(
+            capture_update_interval(60, ColorFormat::Bgra8).unwrap(),
+            MinimumUpdateIntervalSettings::Custom(Duration::from_nanos(8_333_333))
+        );
+        assert_eq!(
+            capture_update_interval(1, ColorFormat::Bgra8).unwrap(),
+            MinimumUpdateIntervalSettings::Custom(Duration::from_millis(500))
+        );
+        assert_eq!(
+            capture_update_interval(240, ColorFormat::Bgra8).unwrap(),
+            MinimumUpdateIntervalSettings::Custom(Duration::from_nanos(2_083_333))
+        );
+        for fps in [1, 60, 240] {
+            assert_eq!(
+                capture_update_interval(fps, ColorFormat::Rgba16F).unwrap(),
+                MinimumUpdateIntervalSettings::Default
+            );
+        }
+        for fps in [0, 241, u32::MAX] {
+            assert!(capture_update_interval(fps, ColorFormat::Bgra8).is_err());
+            assert!(capture_update_interval(fps, ColorFormat::Rgba16F).is_err());
+        }
+    }
+
+    #[test]
+    fn hostile_capture_rates_fail_before_any_target_or_device_is_opened() {
+        for requested_fps in [0, 241, u32::MAX] {
+            let options = CaptureOptions {
+                requested_fps,
+                ..CaptureOptions::default()
+            };
+            assert_eq!(open("unused", &options).err(), Some(CaptureError::Failed));
+        }
+    }
+
+    #[test]
+    fn interval_fallback_retries_default_once_only_for_unsupported_custom_intervals() {
+        let custom = MinimumUpdateIntervalSettings::Custom(Duration::from_millis(8));
+        let mut attempts = Vec::new();
+        let result = interval_fallback(
+            custom,
+            |interval| {
+                attempts.push(interval);
+                if interval == custom {
+                    Err(StartError::Unsupported)
+                } else {
+                    Ok(())
+                }
+            },
+            |error| *error == StartError::Unsupported,
+        );
+        assert_eq!(result, Ok(()));
+        assert_eq!(attempts, [custom, MinimumUpdateIntervalSettings::Default]);
+
+        for error in [StartError::Denied, StartError::DeviceLost] {
+            let mut attempts = Vec::new();
+            let result: Result<(), StartError> = interval_fallback(
+                custom,
+                |interval| {
+                    attempts.push(interval);
+                    Err(error)
+                },
+                |error| *error == StartError::Unsupported,
+            );
+            assert_eq!(result, Err(error));
+            assert_eq!(attempts, [custom]);
+        }
+
+        let mut attempts = Vec::new();
+        let result: Result<(), StartError> = interval_fallback(
+            MinimumUpdateIntervalSettings::Default,
+            |interval| {
+                attempts.push(interval);
+                Err(StartError::Unsupported)
+            },
+            |error| *error == StartError::Unsupported,
+        );
+        assert_eq!(result, Err(StartError::Unsupported));
+        assert_eq!(attempts, [MinimumUpdateIntervalSettings::Default]);
+
+        let mut attempts = 0;
+        let result: Result<(), StartError> = interval_fallback(
+            custom,
+            |_| {
+                attempts += 1;
+                if attempts == 1 {
+                    Err(StartError::Unsupported)
+                } else {
+                    Err(StartError::Denied)
+                }
+            },
+            |error| *error == StartError::Unsupported,
+        );
+        assert_eq!(result, Err(StartError::Denied));
+        assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn interval_fallback_recognizes_the_specific_dependency_error() {
+        let unsupported = GraphicsCaptureApiError::GraphicsCaptureApiError(
+            CaptureApiError::MinimumUpdateIntervalUnsupported,
+        );
+        assert!(interval_is_unsupported(&unsupported));
+        assert!(!interval_is_unsupported(
+            &GraphicsCaptureApiError::FailedToInitWinRT
+        ));
+        assert!(!interval_is_unsupported(
+            &GraphicsCaptureApiError::FailedToStartCaptureThread
+        ));
+    }
+
+    #[test]
+    fn cpu_admission_uses_absolute_slots_without_refresh_rate_aliasing_or_catchup_bursts() {
+        for (source_fps, requested_fps, expected) in [
+            (165, 60, 60),
+            (144, 60, 60),
+            (120, 60, 60),
+            (165, 30, 30),
+            (30, 60, 30),
+        ] {
+            let mut last = None;
+            let mut admitted = 0;
+            for index in 0..source_fps {
+                let elapsed = Duration::from_nanos(index * 1_000_000_000 / source_fps);
+                admitted += usize::from(admit_cpu_read(&mut last, elapsed, requested_fps).unwrap());
+            }
+            assert_eq!(admitted, expected);
+        }
+        let mut last = None;
+        assert!(admit_cpu_read(&mut last, Duration::from_millis(34), 60).unwrap());
+        assert!(!admit_cpu_read(&mut last, Duration::from_millis(35), 60).unwrap());
+        assert!(!admit_cpu_read(&mut last, Duration::from_millis(10), 60).unwrap());
+        assert!(admit_cpu_read(&mut last, Duration::MAX, 240).unwrap());
+        assert!(!admit_cpu_read(&mut last, Duration::MAX, 240).unwrap());
+        for fps in [0, 241, u32::MAX] {
+            assert!(admit_cpu_read(&mut None, Duration::MAX, fps).is_err());
+        }
+    }
+
     fn source(shared: Arc<Shared>) -> WindowsSource {
         WindowsSource {
             shared,
@@ -545,6 +782,7 @@ mod capture_tests {
             latest: Mutex::new(Latest::default()),
             changed: Condvar::new(),
             started: Instant::now(),
+            requested_fps: 60,
         });
         let mut source = source(Arc::clone(&shared));
         let (send, receive) = std::sync::mpsc::channel();
@@ -577,10 +815,52 @@ mod capture_tests {
             }),
             changed: Condvar::new(),
             started: Instant::now(),
+            requested_fps: 60,
         });
         assert_eq!(
             source(shared).capture().err(),
             Some(CaptureError::TargetGone)
         );
+    }
+
+    #[test]
+    fn cached_reads_preserve_capture_time_until_a_new_picture_and_report_later_failure() {
+        let shared = Arc::new(Shared {
+            latest: Mutex::new(Latest {
+                frame: Some(CaptureFrame {
+                    width: 1,
+                    height: 1,
+                    stride: 4,
+                    bgra: vec![1, 2, 3, 255],
+                    captured_at: Tick(7),
+                }),
+                sequence: 1,
+                ..Latest::default()
+            }),
+            changed: Condvar::new(),
+            started: Instant::now(),
+            requested_fps: 60,
+        });
+        let mut source = source(Arc::clone(&shared));
+        let first = source.capture().unwrap();
+        let repeated = source.capture().unwrap();
+        assert_eq!(first, repeated);
+        assert_eq!(repeated.captured_at, Tick(7));
+        assert_eq!(source.seen, 1);
+        {
+            let mut latest = lock(&shared);
+            latest.frame = Some(CaptureFrame {
+                bgra: vec![4, 5, 6, 255],
+                captured_at: Tick(8),
+                ..first
+            });
+            latest.sequence = 2;
+        }
+        let next = source.capture().unwrap();
+        assert_eq!(next.captured_at, Tick(8));
+        assert_eq!(next.bgra, [4, 5, 6, 255]);
+        assert_eq!(source.seen, 2);
+        lock(&shared).failed = true;
+        assert_eq!(source.capture().err(), Some(CaptureError::Failed));
     }
 }

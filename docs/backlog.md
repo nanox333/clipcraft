@@ -370,7 +370,8 @@ still needs measurement. Estimate: initial implementation complete, remaining co
 
 **Status:** partial — crash and full-disk recovery, Linux package, diagnostics, keyboard access, and
 resource soaks are implemented, including a passed two-hour Windows/AMD generated-window 1080p30
-run. Signed Windows/macOS installers, 1080p60, real screen reader, real-device audio, and broader
+run, plus a one-minute native SDR 1080p60 throughput check. Signed Windows/macOS installers,
+a two-hour 1080p60 soak, real screen reader, real-device audio, and broader
 reference-PC performance evidence remain open; see
 [`release-checklist.md`](release-checklist.md).
 
@@ -386,11 +387,12 @@ disabled, full disk, device loss, suspend/resume, and measured CPU/GPU/memory/po
 ### M5.2 — Low-copy GPU capture-to-encode path
 
 **Status:** Windows SDR WGC-to-D3D11-to-Media-Foundation is implemented with bounded owned surface
-leases and CPU fallback. Generated-window AMD runs confirm zero CPU readbacks at matching dimensions;
-both native and CPU paths still encode about 32 fps when requesting 1080p60. See
+leases and CPU fallback. Generated-window AMD runs confirm zero CPU readbacks at matching dimensions,
+including a one-minute native SDR 1080p60 throughput check (M5.2a). See
 [the measurements](windows-performance.md). HDR/scaling, other GPUs, real-game frame times,
 GPU/power comparisons and device-loss integration remain open. The two-hour Windows/AMD generated-window
-1080p30 soak passed with eight drops, zero restarts and 24 decoded clips; 1080p60 remains open.
+1080p30 soak passed with eight drops, zero restarts and 24 decoded clips; a two-hour 1080p60 soak
+remains open. Default HDR compatibility retains CPU conversion.
 M5.2 is partial.
 
 **User problem:** full-frame transfers to CPU memory and CPU-side conversion can use processor time
@@ -445,6 +447,36 @@ vendor, compositor, or OS combination supported from compilation alone.
 **Dependencies:** M2/M3 capture and recording APIs, M5.1 performance baseline, and the relevant
 platform provider (M6.2 for Linux Wayland, future macOS capture for Apple). **Estimate:** large; split
 the work by platform after the feasibility report.
+
+#### M5.2a — Isolate and remove the Windows 1080p60 throughput limit
+
+**Status:** short generated-workload throughput criterion met on Windows/AMD SDR (verified
+2026-10-23); broader diagnosis and hardware gates remain open. Nonblocking cached reads and a
+half-period SDR eligibility request remove a repeatable roughly 55-fresh-frame/s capture limit.
+The 60.026-second run returned 3,589 pictures (0.333% deficit), with 3,602 fresh reads, no repeats,
+zero readbacks/restarts and 177.10 MiB peak sampled RSS. Saved output fully decodes. The historical
+32 fps MF input-wait stall stopped reproducing before functional changes and remains unexplained.
+The two-hour soak still covers 1080p30 only. See [evidence and limits](windows-performance.md).
+
+**User outcome:** supported Windows hardware captures a generated 1080p60 source without a
+half-rate encoder bottleneck, while bounded replay, safe clip saving and CPU fallback remain intact.
+
+**Scope and evidence:** isolate direct generated RGBA input to the hardware encoder from WGC,
+audio, UI and recorder scheduling; count actual output pictures through drain and independently
+decode the MP4. Record requested/negotiated rates, driver macroblock capability and stream changes.
+Compare the same generated workload before/after any fix. Hardware APIs and unsafe code remain
+inside the existing platform boundary; no dependency or vendor-wide support claim is implied.
+
+**Acceptance:** explain the measured bottleneck; preserve requested stream geometry/rate across
+renegotiation or return a fallback error; retain bounded failure/reordering/output-accounting tests.
+For a 1080p60 throughput pass, measure at least 60 seconds with under 1% dropped pictures and under
+1% deficits in both fresh reads and actual returned pictures against the requested cadence, no native
+CPU readbacks, bounded memory and fully decoded saved output. Short encoder-only throughput alone
+does not establish a capture pass or real-game impact. Run `cargo xtask ci` and documentation checks.
+
+**Documentation/dependencies:** update README, gaps, Windows performance evidence and ADR 0014 as
+needed in the same change. Depends on the implemented M5.2 native path and existing hardware;
+estimate depends on isolation results. Device removal, HDR/scaling and other GPUs remain separate.
 
 ### M5.3 — Continuous offline capture-to-export workflow verification
 
@@ -855,8 +887,9 @@ input. **Verification:** fake-device tests plus named controller/OS integration 
 ### M10.2 — Optional Discord Rich Presence
 
 **Issue:** [#6](https://github.com/nanox333/clipcraft/issues/6). **Status:** Rust policy, IPC worker,
-General settings/CLI and mock verification implemented; real Discord identity/profile and target-OS
-IPC verification remain open. No registered ClipCraft Application ID is bundled.
+General settings/CLI and mock verification implemented. The maintainer-supplied shared identity and
+basic Windows IPC activity acknowledgment are verified; artwork/profile visibility, live games
+and macOS runtime still need live checks.
 
 **Requirements:** provide opt-in local Rich Presence that can show ClipCraft activity and, only if
 the user enables it, the captured game name and matching fresh map/mode/team score/hero information.
@@ -881,7 +914,8 @@ ClipCraft clears the presence; capture remains functional when Discord is missin
 **Verification:** engine disclosure/hostile-input matrix; actual Unix mock handshake/set/clear/ping,
 nonce/error/oversize/timeouts, coalescing/rate/privacy/reconnect/ID-change/late-READY/shutdown tests;
 native settings screenshots/keyboard and mock IPC, full gate and Windows/macOS compile checks.
-Actual Discord profile and live-game tests stay open until an Application ID/client is available.
+M10.2c now has owned-identity Windows IPC and actual profile-art evidence. Live-game context,
+other-account audience and broader platform checks remain open.
 **Documentation:** README, gaps/roadmap, architecture/testing/settings/release, Discord guide and
 ADR 0023 ship together. **Dependencies:** M7.1 identity and M7.3 match adapters. **Estimate:** one
 prototype plus independent live Discord/platform verification.
@@ -889,7 +923,12 @@ prototype plus independent live Discord/platform verification.
 ### M10.2a — Medal-inspired presence and automatic end-user setup
 
 **Issue:** [#7](https://github.com/nanox333/clipcraft/issues/7). **Status:** implementation complete;
-production identity/art upload and real Discord rendering remain open.
+maintainer-supplied public identity configured 2026-10-24; M10.2c uploads CUT and verifies actual
+Windows game/CUT artwork. Other-account audience and broader platform evidence remain open.
+Ordinary builds and empty release variables use the product ID; valid explicit overrides remain
+supported. Regression tests cover missing/empty build values and malformed overrides. Windows IPC
+empty reads now wait for data; a deterministic empty/data/disconnect regression and real Discord
+READY/activity acknowledgment pass. Profile artwork/audience and macOS remain open.
 **Requirements:** normal users enable one toggle; maintainer supplies a shared public build ID.
 Keep saved custom IDs in General's advanced section with Apply/reset. Show a local preview without
 connecting; use `Clipping <game>`, `with ClipCraft`, optional readable match details and original
@@ -906,7 +945,8 @@ full workspace gate and cross-platform compile checks; real Discord/client/Windo
 
 ### M10.2b — Establish the selected CUT identity
 
-**Status:** implemented and locally verified 2026-10-24; Discord asset upload remains open.
+**Status:** implemented and locally verified 2026-10-24; CUT is uploaded and Windows profile
+artwork is verified by M10.2c.
 
 **Problem / outcome:** the maintainer selected concept A; replace the generic diamond with a
 consistent original C/play identity and deliver reusable artwork.
@@ -926,6 +966,33 @@ fonts/assets have attribution; actual desktop screenshot and keyboard navigation
 overwrite refusal, native 1440×900 desktop screenshots and Tab/Shift+Tab checks passed.
 `cargo xtask ci` passed, including the texture-cache lock regression. See [brand guide](brand.md)
 and [testing evidence](testing.md).
+
+### M10.2c — Discord-hosted game artwork and branded release
+
+**Status:** implemented; all three Windows profile artworks, live IPC, full CI and release builds
+verified 2026-10-24. Other-account audience and broader platform checks remain open.
+
+**Problem / outcome:** replace the rejected typographic game badges with actual Discord-hosted
+CS2, Dota 2 and League icons plus the small CUT product badge.
+
+**Scope:** fixed public CDN references selected by the existing game-name consent; no bundled
+publisher image files, new dependency, HTTP client or runtime discovery endpoint. Remove the
+legacy game asset exporter output. Upload CUT under the owned application and build the release.
+
+**Limitations:** other games and the offline preview use CUT. Fixed CDN hashes can become stale;
+Discord controls fetching/rendering. A protocol ACK alone does not verify displayed artwork.
+
+**Acceptance / verification:** all three fixed references pass policy and live IPC checks;
+game-name consent off and editing/browsing omit game references; arbitrary URLs/hostile labels
+cannot select remote images; owned application identity remains unchanged; exporter writes only
+the original product PNG and license, refusing existing output; native preview/keyboard and
+actual Discord artwork are inspected; `cargo xtask ci` and release builds pass.
+
+**Docs:** README, gaps, presence guide, architecture, release/testing evidence and ADR 0023.
+
+**Evidence:** CUT icon and ClipCraft name saved in the owned portal. Real CS2/Dota/League cards
+displayed game art and the small CUT badge after the maintainer enabled Discord activity sharing.
+Screenshots and labelled-preview logs remain in ignored `target/discord-art-evidence/`.
 
 ### M10.3 — Built-in keyboard/mouse overlays and themes
 

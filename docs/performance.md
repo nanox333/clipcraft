@@ -111,8 +111,10 @@ fallback tests; it adds no real-GPU evidence. The combined gate log is
 ## Remaining work, ordered by likely user impact
 
 Windows SDR work has since implemented the compatible WGC/D3D11/Media Foundation handoff.
-[Generated-window measurements](windows-performance.md) confirm zero CPU readbacks, but both CPU
-and native routes still miss requested 1080p60. The table below describes the original review;
+[Generated-window measurements](windows-performance.md) confirm zero CPU readbacks and a passing
+one-minute native SDR 1080p60 throughput check. Default HDR conversion, real-game impact, a two-hour
+60 fps soak and other GPUs remain open; the earlier 32 fps wait stall remains unexplained.
+The table below describes the original review;
 the linked report records current implementation, evidence and remaining gates.
 
 | Priority | Area / source | Observed cost and next measurement |
