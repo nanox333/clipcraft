@@ -39,8 +39,8 @@ git dependencies ([ADR 0004](adr/0004-filmcraft-crates.md)); this is reviewed op
 not a formal clean-room implementation. The small editor additionally consumes pinned
 `filmcraft-edit` and transient `filmcraft-project` track types, without adopting a project-file workflow.
 
-- **Time:** `clipcraft-time` re-exports FilmCraft's exact `Tick` and `FrameRate` and adds validated
-  constructors and audio sample positions. Floating-point seconds are display-only.
+- **Time:** `clipcraft-time` re-exports FilmCraft's exact `Tick` and `FrameRate`. The uncalled local
+  constructors/sample wrappers were removed in M11.1j; production time math uses Tick directly. Floating-point seconds are display-only.
 - **Frame queues:** `clipcraft-frame` provides item- and byte-bounded queues with observable drops.
 - **Playback:** `clipcraft-player` decodes a clip on a worker thread against a wall clock and hands
   RGBA frames to the UI. It reads files in place, skips frames when decoding falls behind, applies
@@ -176,9 +176,9 @@ not a formal clean-room implementation. The small editor additionally consumes p
   [settings.md](settings.md) and [game-catalog.md](game-catalog.md).
   Wayland automatic game-window matching and macOS capture remain unsupported; Windows/live-game
   runtime evidence is still required.
-- **Audio timeline policy:** `clipcraft-record::audio_timeline` aligns timestamped native audio
-  packets. The current `AudioSource` mixer remains clock-driven and does not call this helper until
-  a timestamped platform source is connected.
+- **Audio mixing:** the current `AudioSource` mixer is clock-driven. The never-integrated
+  timestamped audio policy was removed in M11.1j; it can be reviewed from Git history if a future
+  timestamped provider needs it.
 - **Local match data:** engine commands `game_state.parse`/`game_state.install` normalize snapshots
   and install Valve configs. One opt-in platform worker owns authenticated loopback CS2/Dota
   listeners and Windows/macOS League HTTPS, with bounded IO and one current snapshot per game.
@@ -253,9 +253,12 @@ Text preview and export consume the same bounded FilmCraft Inter SemiBold raster
 shadow, layout and wrapping, at canonical export-canvas dimensions. The shared compositor bakes those
 pixels into the canonical canvas, which the UI scales into the display area and uses the same placement geometry for dragging. Timing and
 position are separate from raster content, so moving/fading text can reuse cached pixels. Export
-renders active layers through a 16 MiB cache rather than retaining every layer mask. Preview
-textures use a separate 16 MiB LRU; each raster is limited to 2,097,152 pixels and text layout
-height is capped to the canvas before allocation. Preview
+renders active layers through a 16 MiB cache rather than retaining every layer mask. The preview
+worker has its own 16 MiB raster cache; each raster is limited to 2,097,152 pixels and text layout
+height is capped to the canvas before allocation. M11.1j removes the extra UI texture LRU and old
+UI fade/text/recolour branches. The UI caches only the selected active layer's geometry (one bounded
+key/canvas/size), computing then dropping a raster when its content/canvas changes. Unselected
+layers need no UI raster; deselection/close clear geometry. Source frame upload to egui remains. Preview
 volume applies the same segment fade envelope as the audio exporter without changing the stored
 volume setting. GIF frame delays derive from cumulative integer centisecond timestamps, avoiding
 per-frame rounding drift at frame rates such as 12 and 13 fps.

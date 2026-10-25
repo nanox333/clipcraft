@@ -20,14 +20,12 @@ mod workspace;
 /// The least height the Library and preview row can be dragged down to.
 const MIN_TOP: f32 = 210.0;
 const RATE: FrameRate = FrameRate { num: 30, den: 1 };
-const PREVIEW_TEXT_BYTES: usize = 16 * 1024 * 1024;
 
-struct PreviewText {
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreviewTextGeometry {
     key: SequenceText,
     canvas: [u32; 2],
     size: [usize; 2],
-    texture: egui::TextureHandle,
-    bytes: usize,
 }
 
 struct ExportJob {
@@ -126,7 +124,7 @@ pub struct EditorState {
     /// Height the person dragged the preview row to; `None` gives it all the room there is.
     top_height: Option<f32>,
     /// One bounded set of shared FilmCraft rasters uploaded to the GPU for preview.
-    preview_text: std::collections::VecDeque<PreviewText>,
+    text_geometry: Option<PreviewTextGeometry>,
     draft: workspace::DraftState,
     timeline_media: crate::editor_media::TimelineCache,
 }
@@ -170,7 +168,7 @@ impl Default for EditorState {
             effect_tab: false,
             library_width: None,
             top_height: None,
-            preview_text: std::collections::VecDeque::new(),
+            text_geometry: None,
             draft: workspace::DraftState::default(),
             timeline_media: crate::editor_media::TimelineCache::default(),
         }
@@ -291,7 +289,7 @@ impl EditorState {
         self.invalidate_preload();
         self.retire_active_preview();
         self.clock = None;
-        self.preview_text.clear();
+        self.text_geometry = None;
         self.timeline_media.clear();
     }
     pub fn take_saved(&mut self) -> Option<PathBuf> {
@@ -520,8 +518,7 @@ impl EditorState {
         }
         let recipe = self.preview_recipe(&clip);
         if let Some(preview) = self.preview.as_mut() {
-            let recipe_changed = preview.editor_recipe(recipe);
-            if preview.editor_effect(clip.look.effect) || recipe_changed {
+            if preview.editor_recipe(recipe) {
                 self.seek_pending = true;
                 self.preview_target = None;
             }
@@ -1060,7 +1057,7 @@ impl EditorState {
                                     size,
                                     Vec2::new(canvas.0 as f32, canvas.1 as f32),
                                 );
-                                self.paint_look(ui, area);
+                                self.paint_text_handles(ui, area);
                             } else {
                                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
                                 ui.painter().rect_filled(rect, 12, Color32::BLACK);
@@ -2085,13 +2082,34 @@ impl EditorState {
             }
         }
     }
-    /// Shows the playhead segment's fade, then every text layer that is on at the playhead, as
-    /// the export will. The selected text layer can be dragged to place it anywhere.
-    fn paint_look(&mut self, ui: &mut egui::Ui, area: egui::Rect) {
-        let Some((clip, source_time)) = self.session.at(self.playhead) else {
+    /// Only the selected layer needs geometry here; the worker composites all text pixels.
+    fn paint_text_handles(&mut self, ui: &mut egui::Ui, area: egui::Rect) {
+        let text = self
+            .session
+            .texts()
+            .iter()
+            .find(|text| {
+                let (start, end) = self.live_range(text.id, &text.layer);
+                self.selected_text == Some(text.id)
+                    && self.playhead >= start
+                    && self.playhead < end
+                    && !text.layer.text.trim().is_empty()
+            })
+            .cloned();
+        let Some(text) = text else {
+            self.text_geometry = None;
             return;
         };
-        let fade = clip.look.fade_at(source_time - clip.start, clip.duration());
+        if self.busy() {
+            return;
+        }
+        let id = text.id;
+        let mut layer = text.layer;
+        if let Some((dragged, x, y)) = self.title_drag
+            && dragged == id
+        {
+            (layer.x, layer.y) = (x, y);
+        }
         let (raster_width, raster_height) = self.export_canvas().unwrap_or((1280, 720));
         let aspect = raster_width as f32 / raster_height as f32;
         let (width, height) = if area.width() / area.height().max(1.0) > aspect {
@@ -2102,148 +2120,74 @@ impl EditorState {
         let canvas = egui::Rect::from_center_size(area.center(), Vec2::new(width, height));
         let raster_canvas = [raster_width, raster_height];
         let scale = Vec2::new(width / raster_width as f32, height / raster_height as f32);
-        let painter = ui.painter().with_clip_rect(canvas);
-        let composited = self
-            .preview
+        // Position and timing never change the glyph bounds. Keep geometry only, no UI texture.
+        let mut key = layer.clone();
+        key.start = Tick::ZERO;
+        key.end = Tick(1);
+        key.x = 0;
+        key.y = 0;
+        key.fade_in = Fade::None;
+        key.fade_out = Fade::None;
+        if self
+            .text_geometry
             .as_ref()
-            .is_some_and(|preview| preview.editor_composited());
-        if !composited && let Some((fade, amount)) = fade {
-            let color = if fade == Fade::White { 255 } else { 0 };
-            painter.rect_filled(
-                canvas,
-                0,
-                Color32::from_rgba_unmultiplied(color, color, color, (amount * 255.0) as u8),
+            .is_none_or(|entry| entry.key != key || entry.canvas != raster_canvas)
+        {
+            let raster =
+                match clipcraft_engine::TextRaster::render(&layer, raster_width, raster_height) {
+                    Ok(Some(raster)) => raster,
+                    Ok(None) => {
+                        self.text_geometry = None;
+                        return;
+                    }
+                    Err(error) => {
+                        self.text_geometry = None;
+                        self.message = Some((error.to_string(), true));
+                        return;
+                    }
+                };
+            self.text_geometry = Some(PreviewTextGeometry {
+                key,
+                canvas: raster_canvas,
+                size: raster.size(),
+            });
+        }
+        let Some(entry) = &self.text_geometry else {
+            return;
+        };
+        let position = clipcraft_engine::text_position(entry.size, raster_canvas, layer.x, layer.y);
+        let at = canvas.min + Vec2::new(position[0] as f32 * scale.x, position[1] as f32 * scale.y);
+        let size = Vec2::new(
+            entry.size[0] as f32 * scale.x,
+            entry.size[1] as f32 * scale.y,
+        );
+        let rect = egui::Rect::from_min_size(at, size).expand(6.0);
+        let response = ui
+            .interact(rect, egui::Id::new("editor-title-drag"), Sense::drag())
+            .on_hover_cursor(egui::CursorIcon::Grab)
+            .on_hover_text("Drag to move the text");
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Move text"));
+        if response.hovered() || response.dragged() {
+            ui.painter().with_clip_rect(canvas).rect_stroke(
+                rect,
+                4,
+                Stroke::new(1.0_f32, LIME),
+                egui::StrokeKind::Inside,
             );
         }
-        let layers: Vec<_> = self
-            .session
-            .texts()
-            .iter()
-            .filter(|t| {
-                let (start, end) = self.live_range(t.id, &t.layer);
-                self.playhead >= start && self.playhead < end
-            })
-            .cloned()
-            .collect();
-        for text in layers {
-            let id = text.id;
-            let mut layer = text.layer;
-            if let Some((dragged, x, y)) = self.title_drag
-                && dragged == id
-            {
-                (layer.x, layer.y) = (x, y);
-            }
-            if layer.text.trim().is_empty() {
-                continue;
-            }
-            let (start, _) = self.live_range(id, &layer);
-            let opacity = layer.opacity_at(self.playhead - start);
-            // Placement and timing do not change the pixels, so a drag or fade reuses its texture.
-            let mut key = layer.clone();
-            key.start = Tick::ZERO;
-            key.end = Tick(1);
-            key.x = 0;
-            key.y = 0;
-            key.fade_in = Fade::None;
-            key.fade_out = Fade::None;
-            let cached = self
-                .preview_text
-                .iter()
-                .position(|entry| entry.key == key && entry.canvas == raster_canvas);
-            let cached = cached.and_then(|index| self.preview_text.remove(index));
-            let entry = match cached {
-                Some(entry) => entry,
-                None => {
-                    let raster = match clipcraft_engine::TextRaster::render(
-                        &layer,
-                        raster_width,
-                        raster_height,
-                    ) {
-                        Ok(Some(raster)) => raster,
-                        Ok(None) => continue,
-                        Err(error) => {
-                            self.message = Some((error.to_string(), true));
-                            continue;
-                        }
-                    };
-                    let size = raster.size();
-                    let bytes = raster.bytes();
-                    while self
-                        .preview_text
-                        .iter()
-                        .map(|entry| entry.bytes)
-                        .sum::<usize>()
-                        .saturating_add(bytes)
-                        > PREVIEW_TEXT_BYTES
-                    {
-                        if self.preview_text.pop_front().is_none() {
-                            break;
-                        }
-                    }
-                    let texture = ui.ctx().load_texture(
-                        "editor-text-raster",
-                        egui::ColorImage::from_rgba_unmultiplied(size, raster.rgba()),
-                        egui::TextureOptions::LINEAR,
-                    );
-                    PreviewText {
-                        key,
-                        canvas: raster_canvas,
-                        size,
-                        texture,
-                        bytes,
-                    }
-                }
-            };
-            let position =
-                clipcraft_engine::text_position(entry.size, raster_canvas, layer.x, layer.y);
-            let at =
-                canvas.min + Vec2::new(position[0] as f32 * scale.x, position[1] as f32 * scale.y);
-            let size = Vec2::new(
-                entry.size[0] as f32 * scale.x,
-                entry.size[1] as f32 * scale.y,
-            );
-            if !composited {
-                painter.image(
-                    entry.texture.id(),
-                    egui::Rect::from_min_size(at, size),
-                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                    Color32::from_white_alpha((opacity * 255.0).round().clamp(0.0, 255.0) as u8),
-                );
-            }
-            self.preview_text.push_back(entry);
-            if self.selected_text == Some(id) && !self.busy() {
-                let rect = egui::Rect::from_min_size(at, size).expand(6.0);
-                let response = ui
-                    .interact(rect, egui::Id::new("editor-title-drag"), Sense::drag())
-                    .on_hover_cursor(egui::CursorIcon::Grab)
-                    .on_hover_text("Drag to move the text");
-                response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Move text")
-                });
-                if response.hovered() || response.dragged() {
-                    painter.rect_stroke(
-                        rect,
-                        4,
-                        Stroke::new(1.0_f32, LIME),
-                        egui::StrokeKind::Inside,
-                    );
-                }
-                if response.dragged() {
-                    let delta = response.drag_delta();
-                    let x =
-                        (f32::from(layer.x) + delta.x / width.max(1.0) * 1000.0).clamp(0.0, 1000.0);
-                    let y = (f32::from(layer.y) + delta.y / height.max(1.0) * 1000.0)
-                        .clamp(0.0, 1000.0);
-                    self.title_drag = Some((id, x.round() as u16, y.round() as u16));
-                }
-                if response.drag_stopped()
-                    && let Some((_, x, y)) = self.title_drag.take()
-                {
-                    let mut moved = layer.clone();
-                    (moved.x, moved.y) = (x, y);
-                    self.edit(EditorAction::UpdateText { id, layer: moved });
-                }
-            }
+        if response.dragged() {
+            let delta = response.drag_delta();
+            let x = (f32::from(layer.x) + delta.x / width.max(1.0) * 1000.0).clamp(0.0, 1000.0);
+            let y = (f32::from(layer.y) + delta.y / height.max(1.0) * 1000.0).clamp(0.0, 1000.0);
+            self.title_drag = Some((id, x.round() as u16, y.round() as u16));
+        }
+        if response.drag_stopped()
+            && let Some((_, x, y)) = self.title_drag.take()
+        {
+            let mut moved = layer.clone();
+            (moved.x, moved.y) = (x, y);
+            self.edit(EditorAction::UpdateText { id, layer: moved });
         }
     }
     /// A text layer's range, including a move or trim still being dragged on the timeline.
@@ -4076,33 +4020,54 @@ mod tests {
     }
 
     #[test]
-    fn preview_text_reuses_shared_pixels_for_drags_and_releases_its_cache_on_close() {
+    fn preview_keeps_only_selected_text_geometry_and_releases_it_on_deselect_or_close() {
+        fn draw(state: &mut EditorState, context: &egui::Context, size: Vec2) {
+            let _ = context.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    ..Default::default()
+                },
+                |context| {
+                    egui::CentralPanel::default().show(context, |ui| {
+                        state.paint_text_handles(ui, ui.max_rect());
+                    });
+                },
+            );
+        }
         let context = crate::kit::test_context();
         let mut state = state();
-        state.edit(EditorAction::AddText {
-            start: Tick::ZERO,
-            duration: Tick::from_units(2, 1),
-            text: "Preview and export".into(),
-        });
-        let id = state.session.texts()[0].id;
-        state.playhead = Tick::from_units(1, 1);
-        state.preview = Some(crate::playback::Playback::start(
-            "generated.mp4",
-            &context,
-            crate::playback::Prefs::default(),
-        ));
-        for _ in 0..3 {
-            frame(&mut state, &context, vec![], Vec2::new(1440.0, 900.0));
+        for text in ["Selected", "Other layer"] {
+            state.edit(EditorAction::AddText {
+                start: Tick::ZERO,
+                duration: Tick::from_units(2, 1),
+                text: text.into(),
+            });
         }
-        assert_eq!(state.preview_text.len(), 1);
-        let texture = state.preview_text[0].texture.id();
+        let id = state.session.texts()[0].id;
+        state.selected_text = Some(id);
+        state.playhead = Tick::from_units(1, 1);
+        for _ in 0..3 {
+            draw(&mut state, &context, Vec2::new(1440.0, 900.0));
+        }
+        let geometry = state.text_geometry.clone().unwrap();
+        assert_eq!(geometry.key.text, "Selected");
+        let key_pointer = state.text_geometry.as_ref().unwrap().key.text.as_ptr();
         state.title_drag = Some((id, 850, 200));
-        frame(&mut state, &context, vec![], Vec2::new(1080.0, 760.0));
-        assert_eq!(state.preview_text.len(), 1);
-        assert_eq!(state.preview_text[0].texture.id(), texture);
-        assert!(state.preview_text.iter().map(|r| r.bytes).sum::<usize>() <= PREVIEW_TEXT_BYTES);
+        draw(&mut state, &context, Vec2::new(1080.0, 760.0));
+        assert_eq!(state.text_geometry.as_ref(), Some(&geometry));
+        assert_eq!(
+            state.text_geometry.as_ref().unwrap().key.text.as_ptr(),
+            key_pointer
+        );
+        state.title_drag = None;
+        state.selected_text = None;
+        draw(&mut state, &context, Vec2::new(1440.0, 900.0));
+        assert!(state.text_geometry.is_none());
+        state.selected_text = Some(id);
+        draw(&mut state, &context, Vec2::new(1440.0, 900.0));
+        assert!(state.text_geometry.is_some());
         state.close();
-        assert!(state.preview_text.is_empty());
+        assert!(state.text_geometry.is_none());
     }
 
     #[test]

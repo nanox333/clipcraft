@@ -77,8 +77,8 @@ The proposed leinstay/steamdb download remains unused; local manifests avoid tha
 Reference behavior from Vice now drives the engine's longest-match rule, user-managed game allowlist,
 process observation, and automatic replay arming. The process watcher polls about every two seconds while
 automatic switching is enabled; it stores executable basenames and exact Steam IDs, not command lines or paths.
-ClipRecorder's timestamped audio-gap policy is also ported in `clipcraft-record`, but the current
-untimestamped `AudioSource` mixer does not use it. Upstream revisions, permission provenance, and
+The unused ClipRecorder timestamped audio-gap utility was removed in M11.1j; the active
+clock-driven `AudioSource` mixer is unchanged. Upstream revisions, permission provenance, and
 exact source files are recorded in [`upstream-ports.md`](upstream-ports.md).
 
 ## Local game data (M7.3)
@@ -195,6 +195,21 @@ The final workspace gate passes 610 tests (five existing ignored), strict Clippy
 audits; native generated export/keyboard/screenshot checks preserve both source hashes.
 See [ADR 0026](adr/0026-shared-gpu-compositor.md), [testing](testing.md) and
 [performance](performance.md) for exact evidence and limits.
+
+## Unused-code cleanup (M11.1j)
+
+The desktop no longer paints a second fade/text/effect path or uploads a separate text texture
+cache. Shared worker composition (including CPU fallback) remains authoritative. Only the selected
+active text's key/canvas/bounds are cached for drag handles; a bounded raster is temporarily computed
+when that geometry changes, then its pixels are dropped. Deselection/close clear this metadata.
+The shared compositor retains its existing text/frame budgets; no total RSS or speed claim is made.
+
+Removed uncalled game helpers, the unintegrated ClipRecorder audio-timeline utility and unused
+local time wrappers. Exact-clock regression coverage now calls FilmCraft Tick directly. Sources,
+settings/commands, active audio mixing, Windows bindings and failure-injection seams are preserved.
+The old audio utility remains in Git history with its permission provenance recorded. Dependency
+scanning reports no unreviewed unused crate; `windows-core` is an explicit macro-use false positive.
+Full verification and native evidence are in [testing](testing.md).
 
 ## Connected workflow evidence (M5.3)
 

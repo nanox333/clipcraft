@@ -12,7 +12,6 @@
 //! the pictures use, encoded as AAC, and buffered next to the video.
 
 pub mod audio;
-pub mod audio_timeline;
 pub mod convert;
 pub mod hardware;
 pub mod mux;

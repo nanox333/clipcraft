@@ -58,7 +58,6 @@ pub struct Playback {
     path: String,
     player: Player,
     texture: Option<egui::TextureHandle>,
-    effect: clipcraft_engine::Effect,
     render_recipe: Option<std::sync::Arc<std::sync::Mutex<clipcraft_engine::PreviewRecipe>>>,
     info: Option<ClipInfoSummary>,
     position: Tick,
@@ -86,18 +85,6 @@ pub struct Playback {
 }
 
 impl Playback {
-    /// Sets the colour look for later frames; true when it changed (the picture needs a refresh).
-    pub(crate) fn editor_effect(&mut self, effect: clipcraft_engine::Effect) -> bool {
-        if let Some(config) = &self.render_recipe
-            && let Ok(mut config) = config.lock()
-        {
-            config.look.effect = effect;
-        }
-        std::mem::replace(&mut self.effect, effect) != effect
-    }
-    pub(crate) fn editor_composited(&self) -> bool {
-        self.render_recipe.is_some()
-    }
     pub(crate) fn editor_recipe(&mut self, recipe: clipcraft_engine::PreviewRecipe) -> bool {
         if let Some(config) = &self.render_recipe {
             let changed = match config.lock() {
@@ -217,7 +204,6 @@ impl Playback {
         recipe: clipcraft_engine::PreviewRecipe,
         context: &egui::Context,
     ) -> Self {
-        let effect = recipe.look.effect;
         let mut playback = Self::open(
             path,
             context,
@@ -229,7 +215,6 @@ impl Playback {
             false,
             Some(recipe),
         );
-        playback.effect = effect;
         playback.position = start;
         playback.player.seek(start);
         playback
@@ -272,7 +257,6 @@ impl Playback {
             path: path.to_owned(),
             player,
             texture: None,
-            effect: clipcraft_engine::Effect::None,
             render_recipe,
             info: None,
             position: Tick::ZERO,
@@ -409,15 +393,7 @@ impl Playback {
                     self.playing = false;
                     return;
                 }
-                let image = if self.render_recipe.is_some()
-                    || self.effect == clipcraft_engine::Effect::None
-                {
-                    egui::ColorImage::from_rgba_unmultiplied(size, &frame.rgba)
-                } else {
-                    let mut recolored = frame.rgba.to_vec();
-                    self.effect.apply_rgba(&mut recolored);
-                    egui::ColorImage::from_rgba_unmultiplied(size, &recolored)
-                };
+                let image = egui::ColorImage::from_rgba_unmultiplied(size, &frame.rgba);
                 match self.texture.as_mut() {
                     Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
                     None => {

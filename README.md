@@ -72,6 +72,7 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   (M11.1i): compatible hardware uses wgpu, with automatic CPU fallback. Paused edits refresh on
   the decode worker; portrait/ultrawide sources keep their aspect ratio. Decode/font work and
   pixel upload/readback remain; physical-GPU speed and Metal/DX12 runtime are not verified here.
+  The UI keeps only selected-text handle geometry; it no longer duplicates text textures or effects.
   Editor import resolves source bounds with the playback reader, so AAC padding cannot make a
   freshly captured clip's full-length timeline or export fail. Send to editor resolves these facts
   in the background before the clip can be added.
@@ -181,8 +182,9 @@ workspace crates. ClipCraft also uses pinned open-source FilmCraft crates for ti
 components; the dependency and license decisions are recorded in
 [`docs/adr/0004-filmcraft-crates.md`](docs/adr/0004-filmcraft-crates.md). This is an independent
 Rust product that reuses reviewed open-source dependencies, not a formal clean-room implementation.
-Two small source-to-Rust ports from Vice and ClipRecorder are included under permission reported by
-the maintainer; their source files and boundaries are in [`docs/upstream-ports.md`](docs/upstream-ports.md).
+Selected Vice matching code is included under permission reported by the maintainer. The dormant
+ClipRecorder audio utility was removed in M11.1j because no recording path used it. Current and historical
+source boundaries are in [`docs/upstream-ports.md`](docs/upstream-ports.md).
 GPU Screen Recorder is a capture-behavior reference only. ClipCraft plans an independent Rust
 implementation against public native APIs; its GPL-3.0-only source/runtime is not translated,
 shipped, or used as a runtime dependency. Native operating-system APIs sit behind Rust platform

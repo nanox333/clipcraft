@@ -79,8 +79,8 @@ Follow the ArtCraft documentation model and tailor it to ClipCraft:
 
 The product model and interaction patterns may be inspired by ArtCraft siblings; do not copy their
 source code. Reuse a sibling crate only after checking its license, API fit, and maintenance cost.
-Selected code from Vice and ClipRecorder is being translated into Rust under permission reported by
-the ClipCraft maintainer; the exact ports and upstream revisions are tracked in
+Selected Vice code is implemented in Rust under permission reported by the maintainer. The unintegrated
+ClipRecorder audio utility was removed in M11.1j; exact current/historical ports are tracked in
 [`docs/upstream-ports.md`](docs/upstream-ports.md).
 
 ## Principles taken from the ArtCraft repositories
@@ -93,7 +93,7 @@ the ClipCraft maintainer; the exact ports and upstream revisions are tracked in
 | Medal.tv | one-key capture, replay buffer, clip library, quick editing, local storage controls | keep the familiar capture-to-export loop; omit social, account, and link features; evaluate opt-in encrypted backup separately |
 | [Vice](https://github.com/splitshotz/Vice) | Linux instant replay, game labels/playlists, Discord presence, keyboard overlay, and a built-in editor; GPL-3.0-or-later Python app using a separate GPU recorder and web UI | the longest-match rule, automatic known-game/custom-rule process arming and captured-game library metadata are implemented in Rust; no bundled game database, UI, or non-Rust runtime; exclude daemon-at-login and public link/tunnel behavior |
 | [GPU Screen Recorder](https://git.dec05eba.com/gpu-screen-recorder/) | Linux GPU capture and hardware encoding across vendor/compositor combinations, with driver and permission caveats | implement equivalent behavior independently in Rust against public platform APIs for M5.2; do not translate/copy its GPL-3.0-only source, ship its C/C++/FFmpeg runtime, or require its privileged KMS helper |
-| [ClipRecorder](https://github.com/By183/ClipRecorder) | Windows Graphics Capture → D3D11 conversion → generic Media Foundation H.264 MFT → encoded ring buffer → MP4 save, with WASAPI audio | its timestamped audio gap/overlap policy is ported as a Rust utility; keep the existing Rust capture/encoder path and do not add the C++ app or assets |
+| [ClipRecorder](https://github.com/By183/ClipRecorder) | Windows Graphics Capture → D3D11 conversion → generic Media Foundation H.264 MFT → encoded ring buffer → MP4 save, with WASAPI audio | capture-behavior reference; the unintegrated timestamped audio utility was removed in M11.1j. Keep the active Rust capture/encoder path; no C++ app/assets |
 | [Segra](https://segra.tv/) | community and creator-facing product patterns | review for product research; community features are explicitly out of scope |
 | [NVIDIA ShadowPlay](https://www.nvidia.com/en-us/geforce/geforce-experience/shadowplay/) | game-triggered capture, replay, and controller-oriented save-clip flow | use as a behavior reference; no NVIDIA-only SDK or vendor lock-in |
 | ScreenCraft | focused creator-video editing patterns | review for small editor interactions; do not let an editor-first product reshape the capture-first MVP |

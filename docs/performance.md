@@ -322,3 +322,17 @@ is lazy on a worker and may block other workers initializing it; native driver c
 preempted. Poll/map waits each have a 500 ms limit. Reference GPUs, Metal/DX12, power, real-game
 contention and end-to-end preview/export need separate measurements before tuning thresholds or
 making hardware claims. Decoder reuse/proxies remain follow-up work.
+
+
+## M11.1j — Remove redundant UI work (2026-10-25)
+
+After M11.1i, all production editor frames already contain effects/fades/text. The old UI painter
+still rasterized active text and uploaded a separate <=16 MiB text texture cache that was never
+drawn in that workflow. This cleanup removes that cache and the obsolete UI paint/recolour paths.
+Only the selected active layer needs UI geometry: one content key/canvas/size is retained for
+handles. A bounded raster is computed on key/canvas changes then immediately discarded; unselected
+layers get no UI raster. The worker and export still own their existing bounded pixel caches.
+Matching-size source frame upload to egui, CPU fallback and GPU transfer costs remain. This is
+structural removal of unused work, not a measured FPS/total-RSS or physical-GPU speedup claim.
+Uncalled game/time wrappers and the unintegrated audio-timeline policy are also removed; active
+recording/audio/timing behavior and independent pixel reference tests are unchanged.

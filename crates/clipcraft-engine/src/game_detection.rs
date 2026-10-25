@@ -149,19 +149,11 @@ impl GameArmingState {
         self.paused = false;
     }
 
-    pub fn desktop_started(&mut self) {
-        self.desktop_started_at(Duration::ZERO);
-    }
-
     pub fn desktop_started_at(&mut self, now: Duration) {
         self.recording = None;
         self.desktop = true;
         self.desktop_since = Some(now);
         self.paused = false;
-    }
-
-    pub fn is_desktop(&self) -> bool {
-        self.desktop
     }
 
     /// Records that the user stopped capture, suppressing automatic restart until the game exits.

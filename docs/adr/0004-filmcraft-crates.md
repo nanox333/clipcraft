@@ -55,3 +55,7 @@ an independent product implementation, not a formal clean-room implementation.
 M11.1a follow-up: [ADR 0017](0017-small-filmcraft-sequence-editor.md) adds pinned `filmcraft-edit`
 and transient `filmcraft-project` track types for the small editor, plus AAC encoding in sequence
 export. The full FilmCraft application, renderer and project-file workflow remain unused.
+
+M11.1j follow-up: uncalled `checked_frame_rate`, `SampleRate` and `TimeError` wrappers were removed.
+`clipcraft-time` remains the common FilmCraft clock reexport; exact sample/frame regression checks
+call `Tick::from_units`/`to_units_floor` directly. No production caller or timing format changed.

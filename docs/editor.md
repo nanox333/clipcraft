@@ -195,7 +195,8 @@ of the picture, so the export puts it where the preview shows it, kept inside th
 export share FilmCraft's Inter SemiBold text raster, layout, shadow, wrapping and placement at
 the chosen export canvas size. The shared compositor bakes them into the preview canvas before the UI scales it to its display area. Text rasters
 are limited to 2,097,152 pixels per layer, with a canvas-height layout cap and separate 16 MiB
-preview/export caches. Moving or fading a layer reuses its pixels.
+preview-worker/export caches. Moving or fading a layer reuses its pixels. The UI holds only the
+selected active layer's geometry for dragging; it does not retain duplicate text pixels/textures.
 At most 256 text layers are accepted. Text layers share the video segments' undo history, and
 Reset clears both tracks.
 

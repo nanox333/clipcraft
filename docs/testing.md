@@ -1013,3 +1013,45 @@ Physical GPUs, Windows DX12/macOS Metal runtime, power, real-game contention and
 remain open. Decode/native YUV pre-reduction/RGBA and glyph rasterization remain CPU work; GPU
 uploads/readbacks remain. Native driver calls are not preemptible. No decoder pool/proxy or release
 platform gate is closed by this task.
+
+## M11.1j — Unused-code cleanup (2026-10-25)
+
+Based on fetched main `62bed30`; [issue #13](https://github.com/nanox333/clipcraft/issues/13).
+Removed obsolete UI effect/fade/text painting and the unused text texture LRU. The UI now keeps
+only selected-active-text key/canvas/size metadata; a bounded raster is temporary when this geometry
+changes. Unselected layers need no UI raster. Shared worker composition, including CPU fallback,
+its per-worker pixel budget, FilmCraft text placement and normal frame texture uploads remain.
+
+Removed two uncalled game helpers, the never-integrated ClipRecorder audio-timeline module and
+unused `checked_frame_rate`/`SampleRate`/`TimeError` wrappers. Exact frame/sample/hour-long clock
+regressions still test FilmCraft Tick directly. Deleted tests exercised only the removed APIs;
+no active workflow regression was removed or ignored. The source port/provenance is recoverable
+from Git history; current docs no longer claim it is integrated or present. The public text blend
+method stays because the brand asset exporter and independent compositor reference tests use it.
+Platform fault-injection/separate-display APIs remain for integration testing.
+
+`cargo xtask ci` passes **602 tests across 37 targets**, five existing ignored/manual cases:
+formatting, workspace/all targets, strict Clippy, layer/asset and dependency/license/source checks.
+The test total is lower because the dormant utility and unused wrapper tests were deleted, not
+because active checks were skipped. `cargo xtask docs-check 62bed30` passes. Rust 1.99.1 on Debian
+13, existing optimized development policy with debug symbols disabled locally for disk capacity.
+`cargo-machete 0.9.2 --with-metadata` reports no unused dependencies. `windows-core` is explicitly
+listed as a false positive: `windows::core::implement` generates `::windows_core` references for
+Media Foundation callbacks; it cannot be removed based on Linux lexical scanning.
+
+The geometry regression checks selected-layer-only caching, unchanged key allocation/bounds during
+drag and viewport resize, and cache release on deselection/close. Existing tests cover text layers,
+paused recipe refresh, prepared and continuous/discontinuous cuts, keyboard transport, source-safe
+export, malformed media and cancellation. These tests do not establish new physical GPU/platform
+runtime or speed evidence.
+
+Native private Xvfb/GL smoke at **1440×900** and **960×640** used isolated generated clips/draft,
+Discord disabled and capture stopped. Ignored screenshots under `.clipcraft-local/playback-priority-test/`:
+`cleanup-before-1440x900.png`, `cleanup-after-1440x900.png`, `cleanup-selected-handles.png`,
+`cleanup-text-drag.png`, `cleanup-keyboard-1440x900.png`, `cleanup-after-960x640.png`.
+The Sepia/white-fade/lime-text draft rendered without duplicate glyphs; selecting/dragging its
+handle moved the baked text, Ctrl+Z restored it, Space play/pause, Right frame-step and
+Tab/Shift+Tab focus worked. Both original generated source SHA-256 hashes stayed unchanged.
+Physical sound hardware is unavailable; this was the ordinary CPU-composition fallback, not a
+physical-GPU benchmark. Log: `/tmp/clipcraft-cleanup-ci.log`; dependency scan:
+`/tmp/clipcraft-cleanup-machete.log`. No test media, scripts or screenshots are tracked/shipped.

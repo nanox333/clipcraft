@@ -72,3 +72,7 @@ example checks 96 real software-Vulkan cases including alpha, framing, all effec
 ordered/clipped text; normal CI checks CPU/reference/preview parity and adapter retirement when
 available. Physical GPUs, Metal/DX12 runtime, power and end-to-end preview/export performance need
 separate measurements. See [testing](../testing.md) and [performance](../performance.md).
+
+M11.1j follow-up: removes the obsolete UI fade/text/recolour paths and the extra UI text texture
+cache. The UI keeps one selected-active-text geometry key/canvas/size only, dropping a temporary
+bounded raster after measuring it. Preview worker/export pixel caches and CPU fallback are unchanged.

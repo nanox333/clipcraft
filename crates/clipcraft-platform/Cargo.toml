@@ -10,6 +10,10 @@ description = "Operating-system capture providers and global hotkeys behind a sa
 [package.metadata.clipcraft]
 layer = 5
 
+# windows::core::implement expands to absolute ::windows_core references on Windows.
+[package.metadata.cargo-machete]
+ignored = ["windows-core"]
+
 [dependencies]
 clipcraft-engine.workspace = true
 serde_json.workspace = true

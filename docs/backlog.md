@@ -591,12 +591,12 @@ describe Windows Graphics Capture
 frames converted by a D3D11 video processor to NV12, a generic Media Foundation H.264 hardware MFT,
 an encoded time ring, WASAPI loopback/microphone audio, and MP4 muxing when the user saves. Its
 timestamp gap, overlap, and microphone recovery policy from `src/audio_timeline.h` has been ported
-to a Rust utility. This
+to a Rust utility, then removed in M11.1j because no production caller used it. This
 closely overlaps ClipCraft's Rust WGC provider, Media Foundation encoder adapter, recorder ring, and
 local export path, so it does not currently offer a missing subsystem to transplant. It starts
 recording when the app launches, which does not fit Game-only default behavior. The repository is
 C++20/Windows-only and has no license grant: GitHub reports no license and the README states
-“unlicensed — all rights reserved.” The port is included under permission reported by the ClipCraft
+“unlicensed — all rights reserved.” The historical port used permission reported by the ClipCraft
 maintainer; see [`upstream-ports.md`](upstream-ports.md). Do not add its C++ app, assets, or runtime.
 Public Windows API documentation and independent test scenarios remain useful references.
 
@@ -614,7 +614,7 @@ dependency direction before proposing reuse. Link primary sources and date the f
 | Vice keyboard overlay and Rich Presence | Keep as later optional features in M10; default off, clearly scoped permissions, no clip transmission. |
 | Vice multi-track editor and session markers | Defer. The first editor expansion remains a one-track evaluation after capture/platform work. |
 | Vice public links, tunnel, social sharing, and always-on daemon | Reject for ClipCraft's local-first/Game-only direction. |
-| ClipRecorder WGC/D3D11/MFT/ring-buffer pipeline | Port only its timestamped audio gap/overlap/microphone-recovery policy as a Rust utility. ClipCraft already has Rust WGC, MF encoder, replay, and export components; validate these on Windows hardware rather than duplicate them. |
+| ClipRecorder WGC/D3D11/MFT/ring-buffer pipeline | The unused timestamped audio utility was removed in M11.1j (history preserves it). ClipCraft already has Rust WGC, MF encoder, replay, and export components; validate these on Windows hardware rather than duplicate them. |
 | ClipRecorder launch-time capture | Reject as the default. The replay ring should remain stopped until an allowlisted game is running. |
 
 **Limitations:** the two source ports are limited to the documented algorithms and depend on the
@@ -1356,6 +1356,23 @@ inference. Physical GPUs and Metal/DX12 remain separate evidence gates.
 desktop editor/playback; no engine command/schema/setting changes. **Docs:** README/gaps, roadmap,
 architecture/editor/testing/performance and ADR 0026. **Dependency/estimate:** M11.1f–h; focused
 composition slice. Decoder cache/proxy evaluation follows independently.
+
+### M11.1j — Remove unused rendering and dormant utilities
+
+**Issue:** [#13](https://github.com/nanox333/clipcraft/issues/13). **Status:** implemented.
+**Requirements:** remove duplicate UI effect/fade/text painting and text textures after M11.1i;
+retain just selected-active-text geometry for handles. Remove uncalled game helpers, the never-wired
+ClipRecorder audio policy, and unused local time wrappers; preserve exact Tick regression coverage.
+**Limits:** pure Rust/native/offline; no new dependency/unsafe/server, command/schema/setting change,
+media mutation or physical-hardware claim. Keep shared CPU/GPU composition, Windows macro bindings,
+asset export tooling and active fault-injection/test APIs. Historical audio provenance remains.
+**Acceptance/verification:** selected geometry reuses its key on drag, has no texture/pixels, and
+clears on deselect/close; prepared cuts, paused edits, keyboard, audio and export tests pass; full
+quality/docs gates and native screenshots/drag/undo/transport preserve generated source hashes.
+Cargo-machete reports clean with a documented `windows-core` macro-use exception.
+**Affected:** desktop editor/playback, engine game helpers, record utility, time wrapper.
+**Docs:** README/gaps, roadmap/backlog/plan, architecture/editor/performance/testing, provenance,
+ADR 0004/0026 follow-ups. **Dependency/estimate:** M11.1i; one maintenance slice, no release gate closed.
 
 ### M11.2 — Local CLI and MCP footage-management adapter
 
