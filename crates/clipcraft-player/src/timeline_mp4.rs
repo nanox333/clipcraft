@@ -156,6 +156,7 @@ fn waveform_reader(
     cancel: &AtomicBool,
     reader: &impl filmcraft_isobmff::ByteSource,
 ) -> Result<Vec<WaveformBucket>, TimelineError> {
+    let opening_permit = super::background(cancel)?;
     preflight::reader(reader, cancel)?;
     let file = filmcraft_isobmff::open(reader).map_err(|_| TimelineError::DecodeFailed)?;
     let (ti, track) = file
@@ -220,7 +221,9 @@ fn waveform_reader(
         )
     };
     let mut output = vec![WaveformBucket::default(); usize::from(request.buckets)];
+    drop(opening_permit);
     for (i, &position) in positions.iter().enumerate().skip(from) {
+        let _permit = super::background(cancel)?;
         check_cancel(cancel)?;
         if position >= last {
             break;

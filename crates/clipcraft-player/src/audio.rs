@@ -414,6 +414,14 @@ fn decode_loop(feed: &AudioFeed, source: &SharedSource) {
             continue;
         }
 
+        let permit = match super::scheduling::foreground(|| feed.closed.load(Ordering::SeqCst)) {
+            Ok(permit) => permit,
+            Err(super::scheduling::Error::Cancelled) => return,
+            Err(super::scheduling::Error::Unavailable) => {
+                feed.failed.store(true, Ordering::SeqCst);
+                return;
+            }
+        };
         let samples = match &mut cursor {
             Cursor::Direct { next_sample } => {
                 if Tick::from_units(*next_sample, i64::from(rate)) >= duration {
@@ -446,6 +454,8 @@ fn decode_loop(feed: &AudioFeed, source: &SharedSource) {
                 interleave(&block, stretcher.hop(), channels)
             }
         };
+        // Never retain admission while waiting for the sound device to consume a full buffer.
+        drop(permit);
         if !feed.push(generation, samples, channels) {
             // Either a seek made this chunk stale (the next loop restarts) or the queue is full;
             // give the device time to drain before trying again.

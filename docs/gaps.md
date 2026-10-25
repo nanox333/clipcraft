@@ -116,11 +116,32 @@ remain observable. Shutdown drops pending pixels. Picture dimensions are checked
 
 This bounds pending results only: the UI can still hold a displayed/polled picture, the worker an
 in-flight picture, and FilmCraft its decoder/GOP caches. It is not a total RSS budget. Control/audio
-channels retain their existing separate behavior; a shared bounded scheduler prioritizing playback
-over thumbnails/waveforms, decoder-pool coordination, proxies and GPU composition are not built.
+channels retain their existing separate behavior. M11.1g now coordinates worker-side decoding with
+playback-first admission (below); a unified job queue/decoder pool, proxies and GPU composition
+are not built.
 Decode/file calls remain non-interruptible. Verification: 577 workspace tests pass (five existing
 ignored), including 69 player tests and prepared-editor/keyboard regressions; docs gate passes.
 No export speed, GPU throughput or real-device claim is added. See [architecture](architecture.md), [performance](performance.md) and [testing](testing.md).
+
+## Playback-first decode admission (M11.1g)
+
+A shared coordinator now admits at most three worker-side stages, with at most one background
+stage and 64 waiting callers (at most 48 background, reserving 16 registrations for foreground).
+Queued playback/audio requests take priority over new background
+admission. Player open/video, audio blocks, uncached library thumbnail generation, timeline source
+open/pictures and waveform blocks/MP4 packets participate. Analysis releases its slot between
+chunks. Stop, timeline cancellation and superseded video waits are checked every 20 ms while
+waiting; an already-running codec/file call remains non-interruptible. Thumbnail's legacy API has
+no cancellation parameter. Capacity/poison failures use existing failure reporting, not a crash.
+
+These are logical slots, not reserved CPU cores, OS thread priority, a codec-thread budget, total
+memory cap or measured speedup. Background work may wait under sustained foreground demand.
+There is no unified worker pool or decoder cache; existing callers/queues still own their work.
+Export/recording, metadata-only source-info and cached JPEG loading on the UI are outside this
+coordinator. GPU composition, proxies, hardware throughput and actual game-contention evidence
+remain open. Verification: 584 workspace tests pass (five existing ignored), including 76 player
+cases and generated concurrent playback/thumbnail/waveform coverage. See
+[ADR 0025](adr/0025-cooperative-decode-admission.md) and [testing](testing.md).
 
 ## Connected workflow evidence (M5.3)
 

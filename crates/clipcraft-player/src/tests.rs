@@ -1062,3 +1062,45 @@ fn picture_dimensions_are_bounded_before_rgba_conversion() {
     assert_eq!(frame_bytes(4320, 7680), Ok(132_710_400));
     assert_eq!(frame_bytes(64, 48), Ok(64 * 48 * 4));
 }
+
+#[test]
+fn playback_and_sound_finish_while_thumbnail_and_waveform_workers_share_admission() {
+    let scratch = Scratch::new();
+    let path = scratch.file("priorities.mp4", &make_clip_with_sound());
+    let original = std::fs::read(&path).unwrap();
+    let player = Player::start(path.clone(), || {});
+    player.play();
+    let background: Vec<_> = (0..3)
+        .map(|_| {
+            let path = path.clone();
+            thread::spawn(move || {
+                for _ in 0..3 {
+                    let thumbnail = thumbnail::generate(&path).unwrap();
+                    assert_eq!(thumbnail.width, WIDTH);
+                    let analysis = timeline::analyze_timeline(
+                        &timeline::TimelineRequest {
+                            path: path.clone(),
+                            start: Tick::ZERO,
+                            end: Tick::from_units(1, 1),
+                            frames: 4,
+                            buckets: 64,
+                        },
+                        &std::sync::atomic::AtomicBool::new(false),
+                    )
+                    .unwrap();
+                    assert_eq!(analysis.frames.len(), 4);
+                    assert_eq!(analysis.waveform.len(), 64);
+                    assert!(analysis.has_audio);
+                }
+            })
+        })
+        .collect();
+    let events = collect(&player, |events| events.contains(&PlayerEvent::Ended));
+    assert!(events.contains(&PlayerEvent::Ended));
+    assert!(frames(&events).len() >= 2);
+    for worker in background {
+        worker.join().unwrap();
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    player.request_stop();
+}

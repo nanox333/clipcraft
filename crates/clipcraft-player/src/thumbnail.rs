@@ -90,10 +90,15 @@ impl std::error::Error for ThumbnailError {}
 
 /// Decodes a picture from the clip at `path` and shrinks it to thumbnail size.
 pub fn generate(path: &Path) -> Result<Thumbnail, ThumbnailError> {
-    catch_unwind(AssertUnwindSafe(|| generate_inner(path))).unwrap_or(Err(ThumbnailError::Crashed))
+    catch_unwind(AssertUnwindSafe(|| {
+        filmcraft_media::cancel::with_background(true, || generate_inner(path))
+    }))
+    .unwrap_or(Err(ThumbnailError::Crashed))
 }
 
 fn generate_inner(path: &Path) -> Result<Thumbnail, ThumbnailError> {
+    let _permit = super::scheduling::background(&std::sync::atomic::AtomicBool::new(false))
+        .map_err(|_| ThumbnailError::Crashed)?;
     let source = open_source(path)?;
     let info = clip_info(&source)?;
     let last_frame = (info.duration - info.frame_rate.frame_duration()).max(Tick::ZERO);

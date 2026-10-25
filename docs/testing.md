@@ -786,3 +786,38 @@ speculative prefetch, preview proxy, GPU compositor or faster export is claimed.
 Local logs: `/tmp/clipcraft-bounded-player.log`, `/tmp/clipcraft-bounded-ci.log` and
 `/tmp/clipcraft-setup-verification.log`. Tests create synthetic media in disposable directories;
 no user clips or downloaded Concat fixtures are read or changed.
+
+### M11.1g — Playback-first decode admission (2026-10-25)
+
+The final `cargo xtask ci` passes **584 tests across 34 targets**, five pre-existing ignored checks,
+formatting, strict Clippy, layers/assets and dependency licenses/bans/sources. The player target
+passes **76 tests**. No UI layout, engine command ID, media schema, dependency or first-party unsafe
+changes. All new work is independent Rust using existing FilmCraft interfaces.
+
+Six isolated-coordinator tests establish: at most three active stages and one background stage;
+two foreground stages can run while background holds its slot; a queued foreground request wins
+the next available slot; cancellation unregisters even while all slots stay occupied; callbacks
+run outside the coordinator mutex; panic/early-return releases permits; waiting capacity/poison
+fails explicitly; a 48-background-waiter budget cannot fill the last 16 foreground registrations.
+Eight concurrent caller threads complete 800 mixed admissions without exceeding active/background
+counts, then return all counters to zero. Cancellation uses a 20 ms polling interval, not a tested
+real-time/OS scheduling guarantee. Tests use private coordinators, so poison/capacity fixtures do
+not corrupt the shared runtime coordinator or other tests.
+
+A generated one-second 64×48 H.264/PCM MP4 plays with the normal audio worker while three background
+threads each generate three thumbnails and timeline picture/waveform analyses. Playback reaches
+Ended, results retain the requested sizes and audio presence, workers complete, and original bytes
+remain unchanged. Existing audio pitch/clock/track, seek/step/loop/shutdown, malformed media and
+packet cancellation cases pass. Full desktop regressions also pass prepared-source promotion,
+rapid seek/reorder/reopen worker bounds, keyboard transport and recovery. These are generated
+portable tests, not a native display/audio-device, GPU or real-game measurement.
+
+Player open/video and audio blocks are foreground; uncached thumbnail generation and timeline
+open/pictures/waveform chunks/MP4 packets are background. Analysis yields between chunks; audio
+releases admission before output-buffer waits. Stop and superseded video waits abandon queued
+admission; analysis/audio use their existing cancellation/close state. Already-running codec/file
+calls cannot be preempted. Metadata-only source-info and UI cached-JPEG loading remain ungated;
+export/recording are outside this coordinator. Thumbnail's legacy API has no cancellation argument.
+No CPU-core/thread/RSS bound, before/after latency, GPU acceleration or stuttering claim is made.
+See [ADR 0025](adr/0025-cooperative-decode-admission.md) and [performance](performance.md).
+Logs are local: `/tmp/clipcraft-priority-player.log`, `/tmp/clipcraft-priority-ci-final.log`.

@@ -1204,6 +1204,31 @@ workspace gate and documentation check. Native playback smoke is supplementary, 
 **Dependencies/estimate:** existing player only; one focused portable slice. Follow-ups: coordinate
 bounded worker priorities/caches, then evaluate a small independent GPU compositor and proxies.
 
+### M11.1g — Cooperative playback-first decode admission
+
+**Issue:** [#10](https://github.com/nanox333/clipcraft/issues/10). **Status:** implemented; portable
+checks documented below, hardware latency/speed measurements open.
+**Problem/evidence:** M11.1f bounded results but each decoder caller still ran independently.
+FilmCraft's background hint changes decoder retention, not admission priority across jobs.
+**Requirements:** a shared coordinator admits <=3 stages, <=1 background stage and <=64 waiters;
+at most 48 waiters are background, reserving 16 registrations for foreground. Queued foreground
+wins; cancellation/unwind releases registration and permits. Gate worker-side
+player open/video and audio as foreground, thumbnail/timeline pictures/waveforms as background.
+Release background admission between analysis chunks, and audio admission before output waits.
+**Limitations:** logical slots are not CPU/codec-thread or memory reservations; no preemption of an
+active codec/file call, full job/decoder pool, proxy, GPU/export/capture change or hardware claim.
+No new UI-blocking gate on cached JPEG/source-info paths; thumbnail's old API has no cancellation
+argument. Capacity/poison use existing failure states. No dependency, unsafe or Concat source port;
+Rust-only, offline, exact timing, source-preservation and existing engine/API contracts remain.
+**Acceptance:** deterministic priority and reserved-capacity checks, cancellation/overflow-capacity/
+poison/panic paths release correctly; active/background counters stay bounded under concurrency;
+generated playback+sound, thumbnails and waveform analysis complete together without source changes;
+audio/seek/loop/prepared editor/failure/cancellation tests and full quality/docs gates pass.
+**Affected:** `clipcraft-player` and existing engine callers; no command ID/schema/UI layout change.
+**Verification:** isolated coordinator tests and a generated MP4 integration; no real device/GPU run.
+**Docs:** README/gaps, roadmap, architecture/performance/testing, ADR 0025. **Dependency/estimate:**
+M11.1f/existing workers, one focused portable slice; pooled decoder reuse/GPU/proxies remain later.
+
 ### M11.2 — Local CLI and MCP footage-management adapter
 
 **Status:** planned; the local Rust CLI exists, but an MCP adapter does not.

@@ -110,6 +110,14 @@ impl Delivery {
         }
         events
     }
+    pub fn closed(&self) -> bool {
+        self.0.lock().map_or(true, |pending| pending.closed)
+    }
+    pub fn current(&self, revision: u64) -> bool {
+        self.0
+            .lock()
+            .is_ok_and(|pending| !pending.closed && pending.revision == revision)
+    }
     #[cfg(test)]
     pub fn ended(&self) -> bool {
         self.0

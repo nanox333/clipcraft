@@ -124,7 +124,7 @@ the linked report records current implementation, evidence and remaining gates.
 | 5 | Desktop library: `main.rs`, `organize.rs`, `thumbs.rs` | The grid visits every entry; visibility only defers thumbnail loading. Filtering/sorting runs for both counts and cards; name comparison repeatedly allocates lowercase strings. Measure frame times with 1k/10k/50k generated entries, then virtualize rows and cache sort/search results on model changes. Require screenshots and keyboard checks. |
 | 6 | Engine/index: `index.rs`, library scan/probe workers | `merge_entries` searches the previous list per scanned entry and the merged list per missing entry, yielding quadratic path matching. Metadata updates clone/rewrite the index. Measure scan/refresh and repeated probe updates at 1k/10k/50k entries; use bounded path maps and batch persistence while preserving metadata and atomic recovery. |
 | 7 | Save/export: `mux.rs`, `clipcraft-export` | MP4 saves intentionally write a crash-recoverable copy and the final file. Trim remuxing already avoids re-encoding, but builds/sorts an interleaving vector and allocates packet reads. Measure wall time, allocation peak and disk bytes before considering stream merging/reused read buffers. Preserve recovery, exact cuts and cancellation. |
-| 8 | Player/audio/output: `clipcraft-player`, `clipcraft-audio-out` | Playback decodes full-size RGBA; M11.1f now retains only the newest pending display picture and discards stale seek results. The original unbounded event channel is removed. Audio callback delivery already uses `try_lock`, but capture input locks a growing `VecDeque`; mixing and WSOLA allocate intermediate vectors. Measure minimized/stalled UI queue growth, 4K decode-to-upload cost, callback overruns and speed-change CPU. Evaluate shared playback-first job scheduling, scaled preview and preallocated audio storage; decoder caches/control/audio channels remain separate. |
+| 8 | Player/audio/output: `clipcraft-player`, `clipcraft-audio-out` | Playback decodes full-size RGBA; M11.1f now retains only the newest pending display picture and discards stale seek results. The original unbounded event channel is removed. Audio callback delivery already uses `try_lock`, but capture input locks a growing `VecDeque`; mixing and WSOLA allocate intermediate vectors. Measure minimized/stalled UI queue growth, 4K decode-to-upload cost, callback overruns and speed-change CPU. M11.1g now coordinates playback-first decode admission; evaluate pooled decoder reuse, scaled preview and preallocated audio storage. Decoder caches/control/audio channels remain separate. |
 | 9 | Frame/time/media/CLI/xtask | Queues already cap items/bytes; edit time stays integer/rational; probes use bounded headers and file-backed reads; CLI calls engine commands. Preserve these bounds. No measured hot-path change is justified here. Profile malformed-file scan cost and verify release builds in packaging. Compiler tuning/LTO needs startup, binary size and runtime measurements rather than blanket settings. |
 
 ## Reference-hardware evidence still required
@@ -253,3 +253,26 @@ This is an independent Rust implementation; no AGPL code/shader, FFmpeg dependen
 asset was imported. CPU/GPU latency, power, real-game contention and before/after total memory
 still require reference-machine measurements. The deterministic byte/order tests and generated
 MP4 stalled-consumer regression establish the result-retention contract without a speed claim.
+
+## M11.1g — Coordinate worker-side decode admission (2026-10-25)
+
+Baseline `f7004b1` limits unread display frames but has no shared decoder admission priority.
+The new coordinator allows three active stages and one background stage at most; up to 64 callers
+can wait, with at most 48 background waiters so they cannot fill the final 16 registrations.
+New background work waits behind registered foreground requests. Metadata is fixed
+counters/condvar/mutex, not a media/job queue, and it creates no threads. These are explicit work
+admission bounds; codec internals may themselves use several threads or retain large buffers.
+
+Player open/video and audio blocks have foreground priority; thumbnail generation and timeline
+pictures/waveform chunks have background priority. Background analysis yields between pictures,
+generic audio chunks and MP4 packets. The two slots unavailable to background work can admit video
+and audio while one background stage runs. They are not reserved cores and cannot promise either
+will finish within a frame budget. Existing codec/file calls are not preempted. Foreground
+saturation can delay background jobs; there is no FIFO/background progress guarantee in that case.
+
+Portable tests prove ordering, cancellation registration cleanup, panic/poison/capacity behavior,
+and concurrency limits. Generated playback/PCM sound, three concurrent thumbnail/waveform callers
+and source-byte checks exercise integration. No before/after playback latency, jitter, CPU, power,
+RSS, export acceleration or game interference measurement was run. Existing worker/result/control
+queues remain separate; decoder pooling, preview proxies and GPU composition are follow-up work.
+No Concat source/shader, native sidecar, new dependency or first-party unsafe was added.

@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 
 mod delivery;
+mod scheduling;
 use delivery::{Delivery, Publication, Request};
 use std::sync::{Arc, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -410,10 +411,21 @@ fn run(
         Publication::Superseded => true,
         Publication::Closed => false,
     };
-    let (source, info) = match open_source(path).and_then(|source| {
-        let info = clip_info(&source)?;
-        Ok((source, info))
-    }) {
+    let opened = {
+        let _permit = match scheduling::foreground(|| events.closed()) {
+            Ok(permit) => permit,
+            Err(scheduling::Error::Cancelled) => return,
+            Err(scheduling::Error::Unavailable) => {
+                send(PlayerEvent::Failed(PlayerError::Crashed), 0);
+                return;
+            }
+        };
+        open_source(path).and_then(|source| {
+            let info = clip_info(&source)?;
+            Ok((source, info))
+        })
+    };
+    let (source, info) = match opened {
         Ok(opened) => opened,
         Err(error) => {
             send(PlayerEvent::Failed(error), 0);
@@ -460,7 +472,23 @@ fn run(
         }
         if state.show {
             state.show = false;
-            match decode_at(&source, &info, state.position) {
+            let decoded = {
+                let _permit = match scheduling::foreground(|| !events.current(revision)) {
+                    Ok(permit) => permit,
+                    Err(scheduling::Error::Cancelled) => {
+                        if events.closed() {
+                            return;
+                        }
+                        continue;
+                    }
+                    Err(scheduling::Error::Unavailable) => {
+                        send(PlayerEvent::Failed(PlayerError::Crashed), revision);
+                        return;
+                    }
+                };
+                decode_at(&source, &info, state.position)
+            };
+            match decoded {
                 Ok(frame) => {
                     state.position = frame.pts;
                     if !send(PlayerEvent::Frame(frame), revision) {
