@@ -1,5 +1,9 @@
 # Performance review
 
+**Current source audit:** [2026-10-25 review at `f0ed9c2`](performance-audit-2026-10-25.md),
+including a measured idle-focus redraw loop and library-sort diagnostic. Start there for the
+current optimization order; the earlier capture/merge descriptions below are historical.
+
 Original recording audit: 2026-10-21. Editor export measurements: 2026-10-23 (M11.1e below).
 
 This review follows the first-party paths across all 13 workspace packages. Findings below are

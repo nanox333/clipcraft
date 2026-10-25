@@ -16,6 +16,11 @@ the Windows draft-recovery test uses canonical paths. Both jobs passed their tes
 
 **Status:** active prototype · **Last reviewed:** 2026-10-25 · **Target:** local Windows capture-to-export alpha
 
+The [current whole-workspace performance audit](performance-audit-2026-10-25.md) identifies a
+confirmed idle keyboard-focus redraw loop, repeated library sorting/layout, synchronous UI index
+writes and remaining decode/audio/transfer work. Its timings are cloud/generated diagnostics,
+not gaming-PC budgets. Fixes are proposed, not implemented by the audit; existing hardware gates remain.
+
 This is the ranked work list, not a parity claim. Capture, replay, playback, local library
 organization, and no-reencode trim export are implemented. Linux/X11 has end-to-end synthetic
 capture evidence; Windows/AMD has generated-window capture and native GPU encoding evidence,
