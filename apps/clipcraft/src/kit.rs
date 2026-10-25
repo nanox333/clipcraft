@@ -611,6 +611,21 @@ mod icon_tests {
     use super::*;
 
     #[test]
+    fn every_icon_file_reads_and_stays_inside_its_square() {
+        for (index, icon) in Icon::ALL.iter().enumerate() {
+            assert_eq!(
+                *icon as usize, index,
+                "{icon:?} is out of order in Icon::ALL"
+            );
+            assert!(
+                crate::svg::Svg::parse(icon.source()).is_some(),
+                "{icon:?} has no drawable shapes"
+            );
+            assert!(icons().get(index).is_some_and(Option::is_some), "{icon:?}");
+        }
+    }
+
+    #[test]
     fn window_icon_uses_the_shared_cut_artwork() {
         let icon = app_icon();
         assert_eq!((icon.width, icon.height), (256, 256));
