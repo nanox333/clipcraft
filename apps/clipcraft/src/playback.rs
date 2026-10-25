@@ -533,10 +533,22 @@ impl Playback {
             egui::Key::Num8,
             egui::Key::Num9,
         ];
-        for (tenth, key) in DIGITS.iter().enumerate() {
-            if pressed(*key) {
-                self.seek_to(self.duration().seconds() * tenth as f64 / 10.0);
-            }
+        // Several key presses can arrive before one UI frame. Respect the user's final
+        // request rather than applying every pressed digit in numeric order.
+        let tenth = context.input(|input| {
+            input.events.iter().rev().find_map(|event| {
+                if let egui::Event::Key {
+                    key, pressed: true, ..
+                } = event
+                {
+                    DIGITS.iter().position(|digit| digit == key)
+                } else {
+                    None
+                }
+            })
+        });
+        if let Some(tenth) = tenth {
+            self.seek_to(self.duration().seconds() * tenth as f64 / 10.0);
         }
     }
 
@@ -1274,6 +1286,21 @@ mod tests {
             height,
             rgba: vec![200; bytes],
         })
+    }
+
+    #[test]
+    fn rapid_percentage_seeks_use_the_last_event_instead_of_the_highest_digit() {
+        use egui::Key::*;
+        for (keys, seconds) in [
+            (vec![Num1, Num8, Num2, Num9, Num3], 3.0),
+            (vec![Num9, Num0], 0.0),
+            (vec![Num9, Num3, Num9, Num3], 3.0),
+        ] {
+            let (mut playback, context) = opened(10.0, 0);
+            press(&mut playback, &context, &keys);
+            assert_eq!(playback.position, Tick::from_seconds_f64(seconds));
+            assert!(playback.playing);
+        }
     }
 
     #[test]

@@ -38,7 +38,8 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   playback speed, loop, select an audio track, and use fullscreen. Clip thumbnails are decoded and
   cached locally. Playback retains only its newest pending picture when the UI stalls; new seeks
   discard older pending/in-flight pictures rather than uploading a backlog (M11.1f). Queued playback
-  and sound decoding now get priority over background thumbnails and waveforms (M11.1g).
+  and sound decoding now get priority over background thumbnails and waveforms (M11.1g). Rapid
+  percentage-seek shortcuts keep the last key you pressed, including within one UI frame.
 - **Library:** keep a rebuildable local index, restore the last folder, scan and search clips,
   sort them, view media details, reveal or relink files, and organize clips with favorites,
   collections, and game labels. Scans include subfolders (eight levels), skip symlinks, and run on

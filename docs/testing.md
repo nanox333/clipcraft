@@ -895,3 +895,46 @@ export/recording are outside this coordinator. Thumbnail's legacy API has no can
 No CPU-core/thread/RSS bound, before/after latency, GPU acceleration or stuttering claim is made.
 See [ADR 0025](adr/0025-cooperative-decode-admission.md) and [performance](performance.md).
 Logs are local: `/tmp/clipcraft-priority-player.log`, `/tmp/clipcraft-priority-ci-final.log`.
+
+### M11.1g retest and M11.1h shortcut correction (2026-10-25)
+
+The user-requested retest began at `e994e1a`: full CI again passed 584 tests/34 targets (five
+existing ignored). The six isolated scheduler tests passed **50 repetitions** and the generated
+mixed playback/sound/thumbnail/waveform regression passed **10 repetitions**, without failure.
+These are repeated executions, not additional unique tests or a hardware benchmark.
+
+Built and opened the actual desktop app on isolated Linux Xvfb :89, 1440×900, with private
+XDG data/cache/runtime roots and two generated H.264/AAC MP4 clips (1280×720/8s and 640×360/6s).
+Checked library thumbnails, advancing picture/clock, pause, rapid number seeks, frame step,
+Send to editor, adding the source to the timeline, editor playback, decoded filmstrip/waveform,
+ruler seek and normal close/relaunch with draft recovery. No source/user media was imported from
+outside the disposable fixture directory. Fixture hashes remained unchanged after the corrected
+native run. Actual audio-device output was unavailable (ALSA default device rejected); the app
+reported video-only playback and continued on its wall clock. Generated audio/pitch/clock tests
+passed, but no audible speaker/microphone or physical GPU/game test is implied.
+
+Native rapid 1,8,2,9,3 input exposed M11.1h: the old numeric shortcut scan could apply 90% last
+within a batched UI frame. Added a one-frame egui regression that failed before correction (9s
+instead of 3s on a 10s synthetic description), including final-zero and repeated-key cases.
+The handler now takes the last pressed digit in event order. Native repeat followed by one frame
+step shows 2.433s/frame 73 rather than the prior 7.233s/frame 217 on the 8s fixture. Existing
+text-focus/popup guards and all other transport controls retain their original paths.
+
+After correction, `cargo xtask ci` passes **585 tests across 34 targets**, five existing ignored,
+plus fmt/strict Clippy/layers/assets/dependency checks; docs gate passes against `e994e1a`.
+No new dependency, unsafe, layout, command/schema or Concat source port. Screenshots remain ignored
+under `.clipcraft-local/playback-priority-test/` (`playback-advancing.png`, `editor-playback.png`,
+`playback-seek-step.png` before fix and `seek-fixed.png` after). Logs are
+`/tmp/clipcraft-priority-retest-ci.log`, `/tmp/clipcraft-priority-repeat-tests.log`,
+`/tmp/clipcraft-seek-before.log`, `/tmp/clipcraft-seek-fix-ci.log`; private fixture/runtime files
+are under `/tmp/clipcraft-playback-retest`. Only owned test processes were stopped.
+
+During final publication, main advanced to `755c999` (merged branding/SVG icons and Windows
+performance work). Rebased only the seek correction onto that revision, preserved its changes,
+and repeated the full gate: **602 tests across 36 targets pass**, five existing ignored, plus
+strict Clippy/format/layer/asset/dependency checks. Rebuilt that exact combined app and repeated
+native rapid-seek/frame-step and restored-editor playback checks; 2.433s/frame 73 remains correct,
+filmstrip/waveform and the new CUT/SVG assets render, and source hashes stay unchanged. Latest
+screenshots: `latest-seek-fixed.png`, `latest-editor-playback.png` in the same ignored evidence
+directory. Final logs: `/tmp/clipcraft-latest-retest-ci.log`, `...-build.log`. Documentation gate
+passes against `755c999`. No newer Windows runtime/hardware evidence is inferred from this Linux run.
