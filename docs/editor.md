@@ -309,3 +309,6 @@ preview keeps a usable height (never under about 250 px) instead of shrinking to
 
 The Clips toolbar narrows the search box and folder pill together so they never overlap, and the
 Storage settings explain why "Delete the oldest clips" is dimmed while no limit is chosen.
+
+Painted icons (play, loop, gear, scissors and the rest in `kit::draw_icon`) use round stroke ends and
+corners, a toothed outline gear and softened filled shapes, so they stay crisp at every size.

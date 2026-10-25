@@ -57,7 +57,7 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   Joining clips is done in the small editor below.
 - **Small sequence editor:** open its own **Editor** rail icon, **Import clips**, or **Send to editor**
   from Clips. Its resizable Library/Effects/Text panel, large preview and bottom timeline share the
-  app's charcoal/lime styling and embedded Inter typefaces. Append, split, trim, reorder, duplicate
+  app's charcoal/lime styling, round-capped painted icons and embedded Inter typefaces. Append, split, trim, reorder, duplicate
   or remove cuts, with 64-step undo/redo, linked audio volume/mute, black/white fades and seven colour
   effects. Independent text layers can be moved, trimmed, split, duplicated, faded and recoloured.
   Preview and export share FilmCraft text rendering and the same audio fade envelope.

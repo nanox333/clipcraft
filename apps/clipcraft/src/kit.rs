@@ -193,11 +193,25 @@ pub enum Icon {
 pub fn draw_icon(painter: &Painter, c: Pos2, icon: Icon, color: Color32, scale: f32) {
     let stroke = Stroke::new(1.8_f32 * scale.max(0.6), color);
     let at = |x: f32, y: f32| c + Vec2::new(x, y) * scale;
+    // Filled shapes get softened corners from a thin round-joined outline.
     let fill = |points: Vec<Pos2>| {
+        let mut closed = points.clone();
+        closed.extend(points.first().copied());
         painter.add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
+        let soften = Stroke::new(1.2_f32 * scale.max(0.6), color);
+        painter.add(egui::Shape::line(closed.clone(), soften));
+        for point in closed {
+            painter.circle_filled(point, soften.width / 2.0, color);
+        }
     };
+    // Strokes get round ends and round corners: a dot at each end and at each corner of a short
+    // path (long arcs are smooth already).
     let line = |points: &[Pos2]| {
         painter.add(egui::Shape::line(points.to_vec(), stroke));
+        let dots: &[Pos2] = if points.len() <= 6 { points } else { &[] };
+        for point in dots.iter().chain(points.first()).chain(points.last()) {
+            painter.circle_filled(*point, stroke.width / 2.0, color);
+        }
     };
     let bar = |x: f32, y: f32, w: f32, h: f32, r: f32| {
         painter.rect_filled(
@@ -257,10 +271,11 @@ pub fn draw_icon(painter: &Painter, c: Pos2, icon: Icon, color: Color32, scale: 
             );
         }
         Icon::Loop => {
-            line(&[at(-9.0, 2.0), at(-9.0, -3.0), at(6.0, -3.0)]);
-            fill(vec![at(5.0, -7.0), at(10.0, -3.0), at(5.0, 1.0)]);
-            line(&[at(9.0, -2.0), at(9.0, 3.0), at(-6.0, 3.0)]);
-            fill(vec![at(-5.0, -1.0), at(-10.0, 3.0), at(-5.0, 7.0)]);
+            // Two arrows chasing each other round a rounded rectangle.
+            line(&[at(-9.0, 1.0), at(-9.0, -2.0), at(-6.0, -5.0), at(8.0, -5.0)]);
+            line(&[at(5.0, -8.5), at(8.5, -5.0), at(5.0, -1.5)]);
+            line(&[at(9.0, -1.0), at(9.0, 2.0), at(6.0, 5.0), at(-8.0, 5.0)]);
+            line(&[at(-5.0, 1.5), at(-8.5, 5.0), at(-5.0, 8.5)]);
         }
         Icon::Fullscreen | Icon::ExitFullscreen => {
             let (distance, arm, direction) = if icon == Icon::Fullscreen {
@@ -339,15 +354,22 @@ pub fn draw_icon(painter: &Painter, c: Pos2, icon: Icon, color: Color32, scale: 
             }
         }
         Icon::Gear => {
+            // A toothed wheel outline with a round hole.
+            let mut outline_points = Vec::new();
             for tooth in 0..8 {
-                let angle = tooth as f32 * std::f32::consts::FRAC_PI_4;
-                let direction = Vec2::new(angle.cos(), angle.sin());
-                painter.line_segment(
-                    [c + direction * 6.5 * scale, c + direction * 9.5 * scale],
-                    Stroke::new(3.2_f32 * scale, color),
-                );
+                let centre = tooth as f32 * std::f32::consts::FRAC_PI_4;
+                for (radius, offset) in [(6.8_f32, -0.34_f32), (9.4, -0.2), (9.4, 0.2), (6.8, 0.34)]
+                {
+                    let angle = centre + offset;
+                    outline_points.push(at(radius * angle.cos(), radius * angle.sin()));
+                }
             }
-            painter.circle_stroke(c, 5.6 * scale, Stroke::new(2.4_f32 * scale, color));
+            outline_points.extend(outline_points.first().copied());
+            painter.add(egui::Shape::line(
+                outline_points,
+                Stroke::new(1.6_f32 * scale.max(0.6), color),
+            ));
+            painter.circle_stroke(c, 3.2 * scale, Stroke::new(1.6_f32 * scale.max(0.6), color));
         }
         Icon::Plus => {
             line(&[at(-6.0, 0.0), at(6.0, 0.0)]);
@@ -372,10 +394,10 @@ pub fn draw_icon(painter: &Painter, c: Pos2, icon: Icon, color: Color32, scale: 
         }
         Icon::Scissors => {
             // Two blades crossing, and two rings for the fingers.
-            line(&[at(-6.0, 6.0), at(7.0, -8.0)]);
-            line(&[at(6.0, 6.0), at(-7.0, -8.0)]);
-            painter.circle_stroke(at(-6.0, 6.5), 2.6 * scale, stroke);
-            painter.circle_stroke(at(6.0, 6.5), 2.6 * scale, stroke);
+            line(&[at(-3.6, 3.0), at(6.5, -8.0)]);
+            line(&[at(3.6, 3.0), at(-6.5, -8.0)]);
+            painter.circle_stroke(at(-5.5, 6.0), 3.0 * scale, stroke);
+            painter.circle_stroke(at(5.5, 6.0), 3.0 * scale, stroke);
         }
         Icon::Restart => {
             // Most of a circle, with an arrowhead where it ends.
