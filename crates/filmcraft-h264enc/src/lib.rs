@@ -56,7 +56,7 @@ use mbinfo::MbInfo;
 use nal::{
     NAL_AUD, NAL_IDR, NAL_PPS, NAL_SEI, NAL_SLICE, NAL_SPS, Pps, SliceHeader, SliceType, Sps, Vui,
 };
-use picture::{CHROMA_PAD, Frame, LUMA_PAD, RefPic, build_hpel};
+use picture::{CHROMA_PAD, Frame, LUMA_PAD, Plane, RefPic, build_hpel};
 use ratecontrol::RcKind;
 use slice::{Band, EncParams, FrameEnc, Lambdas, SliceEnc, SliceOut};
 use tables::NUM_CTX;
@@ -258,6 +258,8 @@ struct Input {
     display: u64,
     cplx: Complexity,
     aq: Vec<f32>,
+    /// Per macroblock: the picture is identical to the previous one there (empty when not tracked).
+    unchanged: Vec<bool>,
 }
 
 struct Pool {
@@ -290,6 +292,8 @@ pub struct Encoder {
     record_pass1: bool,
     pending: VecDeque<Input>,
     prev_lowres: Option<LowRes>,
+    /// The previous input picture, kept to find macroblocks that did not change.
+    prev_input: Option<Frame>,
     display_count: u64,
     last_idr: u64,
     idr_count: u32,
@@ -418,6 +422,7 @@ impl Encoder {
                 adaptive_t8: false,
                 always_intra: false,
                 cavlc_clamp: !cabac,
+                static_skip: cfg.bframes == 0,
             },
             Preset::Balanced => EncParams {
                 mbw,
@@ -436,6 +441,7 @@ impl Encoder {
                 adaptive_t8: high,
                 always_intra: false,
                 cavlc_clamp: !cabac,
+                static_skip: false,
             },
             Preset::Quality => EncParams {
                 mbw,
@@ -454,6 +460,7 @@ impl Encoder {
                 adaptive_t8: high,
                 always_intra: true,
                 cavlc_clamp: !cabac,
+                static_skip: false,
             },
         };
         let max_refs = if cfg.bframes > 0 { 2 } else { 1 };
@@ -617,6 +624,7 @@ impl Encoder {
             record_pass1,
             pending: VecDeque::new(),
             prev_lowres: None,
+            prev_input: None,
             display_count: 0,
             last_idr: 0,
             idr_count: 0,
@@ -708,6 +716,11 @@ impl Encoder {
             (lowres, cplx, aq)
         });
         self.prev_lowres = Some(lowres);
+        let unchanged = if self.params.static_skip {
+            self.unchanged_map(&src)
+        } else {
+            Vec::new()
+        };
         let display = self.display_count;
         self.display_count += 1;
         self.display_pts.push_back(pts);
@@ -720,6 +733,7 @@ impl Encoder {
             display,
             cplx,
             aq,
+            unchanged,
         };
         let since = display - self.last_idr;
         let fps = self.cfg.fps_num as f64 / self.cfg.fps_den as f64;
@@ -789,6 +803,41 @@ impl Encoder {
             // B-frames are non-reference pictures: encode them all concurrently.
             self.encode_batch(bs, out);
         }
+    }
+
+    /// Which macroblocks of `src` are sample-for-sample identical to the previous input picture.
+    /// Remembers `src` for the next call. Screen content is mostly unchanged from one picture to the
+    /// next, and such macroblocks need no analysis.
+    fn unchanged_map(&mut self, src: &Frame) -> Vec<bool> {
+        let (mbw, mbh) = (self.params.mbw, self.params.mbh);
+        let mut map = vec![false; mbw * mbh];
+        if let Some(prev) = &self.prev_input {
+            let same = |a: &Plane, b: &Plane, x: usize, y: usize, w: usize, h: usize| {
+                (0..h).all(|r| {
+                    let (i, j) = (
+                        a.idx(x as isize, (y + r) as isize),
+                        b.idx(x as isize, (y + r) as isize),
+                    );
+                    match (a.data.get(i..i + w), b.data.get(j..j + w)) {
+                        (Some(p), Some(q)) => p == q,
+                        _ => false,
+                    }
+                })
+            };
+            for my in 0..mbh {
+                for mx in 0..mbw {
+                    map[my * mbw + mx] = same(&src.y, &prev.y, mx * 16, my * 16, 16, 16)
+                        && same(&src.u, &prev.u, mx * 8, my * 8, 8, 8)
+                        && same(&src.v, &prev.v, mx * 8, my * 8, 8, 8);
+                }
+            }
+        }
+        let mut keep = self.prev_input.take().unwrap_or_else(|| self.new_frame());
+        keep.y.data.copy_from_slice(&src.y.data);
+        keep.u.data.copy_from_slice(&src.u.data);
+        keep.v.data.copy_from_slice(&src.v.data);
+        self.prev_input = Some(keep);
+        map
     }
 
     fn import(&mut self, f: &YuvFrame) -> Result<Frame, Error> {
@@ -986,6 +1035,7 @@ impl Encoder {
                     l1: j.l1.map(|i| &this.dpb[i]),
                     qp: j.qp,
                     aq: &j.aq,
+                    unchanged: &j.input.unchanged,
                     hdr: j.hdr.clone(),
                     nal_ref_idc: j.nal_ref_idc,
                     nal_type: if j.idr { NAL_IDR } else { NAL_SLICE },
@@ -1098,6 +1148,23 @@ impl Encoder {
             results.sort_by_key(|r| (r.0, r.1));
             for (pi, _, r) in results {
                 slice_results[pi].push(r);
+            }
+        }
+        if std::env::var_os("CC_STATS").is_some() {
+            for (j, res) in jobs.iter().zip(&slice_results) {
+                let (mut i, mut k, mut n, mut m, mut q) = (0, 0, 0, 0, 0);
+                for r in res {
+                    i += r.stats.intra;
+                    k += r.stats.skip;
+                    n += r.stats.inter;
+                    m += r.stats.mbs;
+                    q += r.stats.qp_sum;
+                }
+                eprintln!(
+                    "STAT {:?} mbs {m} intra {i} skip {k} inter {n} avgqp {:.1}",
+                    j.st,
+                    q as f64 / m.max(1) as f64
+                );
             }
         }
         for ((j, (rec, mbs)), res) in jobs.iter_mut().zip(bufs).zip(slice_results) {

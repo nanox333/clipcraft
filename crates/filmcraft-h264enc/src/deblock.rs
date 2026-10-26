@@ -4,7 +4,7 @@
 //! never filtered (slices are MB-row aligned and either there is one slice, or
 //! `disable_deblocking_filter_idc = 2` is used).
 
-use crate::mbinfo::{MbInfo, Mv};
+use crate::mbinfo::{MbInfo, MbKind, Mv};
 use crate::tables::{ALPHA, BETA, TC0, chroma_qp};
 
 pub struct DeblockParams {
@@ -38,6 +38,16 @@ fn nz8(m: &MbInfo, blk: usize) -> bool {
     } else {
         m.nnz[blk] != 0
     }
+}
+
+/// The motion vector of a P_Skip macroblock (one vector, reference 0, no coefficients).
+#[inline]
+fn skip_vector(m: &MbInfo) -> Option<Mv> {
+    if m.kind != MbKind::PSkip || m.ref_idx != [[0; 4], [-1; 4]] {
+        return None;
+    }
+    let v = m.mv[0][0];
+    m.mv[0].iter().all(|other| *other == v).then_some(v)
 }
 
 #[inline]
@@ -203,6 +213,15 @@ pub fn deblock_band<'a>(
     for my in 0..rows {
         for mx in 0..mbw {
             let q = &mbs[my * mbw + mx];
+            // A P_Skip macroblock next to P_Skip macroblocks that move the same way has no coded
+            // coefficients and no motion difference on any edge: every strength is 0, nothing to
+            // filter. A still screen is mostly this.
+            if let Some(v) = skip_vector(q)
+                && (mx == 0 || skip_vector(&mbs[my * mbw + mx - 1]) == Some(v))
+                && (my == 0 || skip_vector(&mbs[(my - 1) * mbw + mx]) == Some(v))
+            {
+                continue;
+            }
             let cqp = |m: &MbInfo| chroma_qp(m.qp as i32 + dp.chroma_qp_offset) as i32;
             // ---- vertical edges (dir 0) then horizontal (dir 1)
             for dir in 0..2 {
