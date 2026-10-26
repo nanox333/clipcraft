@@ -5,7 +5,10 @@
 //! and hands back a PipeWire node and a connection to it. Nothing here is `unsafe`.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::os::fd::OwnedFd;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -27,7 +30,61 @@ const SOURCE_WINDOW: u32 = 2;
 const CURSOR_HIDDEN: u32 = 1;
 const CURSOR_EMBEDDED: u32 = 2;
 
+/// `PersistMode`: keep the choice until the person revokes it.
+const PERSIST_UNTIL_REVOKED: u32 = 2;
+/// The portal version that can remember a choice (`restore_token`).
+const RESTORE_VERSION: u32 = 4;
+/// Longest saved token read back; real ones are short strings.
+const MAX_TOKEN: usize = 256;
+
 type Results = HashMap<String, OwnedValue>;
+
+/// The saved restore token, if there is a sane one. A token lets the desktop skip its chooser and
+/// share the screen or window the person picked last time.
+pub fn read_token(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let token = text.trim();
+    (!token.is_empty() && token.len() <= MAX_TOKEN && token.chars().all(|c| c.is_ascii_graphic()))
+        .then(|| token.to_owned())
+}
+
+/// Saves the token the desktop handed back, replacing the old one atomically and readable only by
+/// this user. Failure to save only means the chooser shows next time.
+pub fn write_token(path: &Path, token: &str) {
+    if token.is_empty() || token.len() > MAX_TOKEN {
+        return;
+    }
+    let temporary = path.with_extension("partial");
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&temporary)
+        .and_then(|mut file| file.write_all(token.as_bytes()))
+        .and_then(|()| std::fs::rename(&temporary, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+}
+
+/// Forgets the saved choice, so the desktop asks again.
+pub fn forget_token(path: &Path) {
+    let _ = std::fs::remove_file(path);
+}
+
+/// The extra `SelectSources` options that ask the desktop to remember the choice, and to reuse
+/// the one saved earlier. Older portals do not know them, so they get none.
+fn remember_options(version: u32, saved: Option<&str>) -> Vec<(&'static str, Value<'static>)> {
+    if version < RESTORE_VERSION {
+        return Vec::new();
+    }
+    let mut options = vec![("persist_mode", Value::from(PERSIST_UNTIL_REVOKED))];
+    if let Some(token) = saved {
+        options.push(("restore_token", Value::from(token.to_owned())));
+    }
+    options
+}
 
 /// What the desktop agreed to share.
 pub struct Share {
@@ -150,8 +207,16 @@ fn text(results: &Results, key: &str) -> Option<String> {
 }
 
 /// Shows the desktop's chooser and, once a screen or window is picked, returns what to receive.
-pub fn start(connection: Connection, show_cursor: bool) -> Result<Share, CaptureError> {
+/// With `remember`, the choice is saved in that file and reused next time, so the chooser only
+/// shows once.
+pub fn start(
+    connection: Connection,
+    show_cursor: bool,
+    remember: Option<&Path>,
+) -> Result<Share, CaptureError> {
     let screen_cast = portal(&connection)?;
+    let version = screen_cast.get_property::<u32>("version").unwrap_or(0);
+    let saved = remember.and_then(read_token);
 
     let token = unique_token("create");
     let session_token = unique_token("session");
@@ -179,12 +244,15 @@ pub fn start(connection: Connection, show_cursor: bool) -> Result<Share, Capture
     };
     let token = unique_token("select");
     request(&connection, &screen_cast, "SelectSources", &token, || {
-        let options = HashMap::from([
+        let mut options = HashMap::from([
             ("handle_token", Value::from(token.as_str())),
             ("types", Value::from(SOURCE_MONITOR | SOURCE_WINDOW)),
             ("multiple", Value::from(false)),
             ("cursor_mode", Value::from(cursor)),
         ]);
+        if remember.is_some() {
+            options.extend(remember_options(version, saved.as_deref()));
+        }
         screen_cast.call_method("SelectSources", &(&session_path, options))
     })?;
 
@@ -193,6 +261,9 @@ pub fn start(connection: Connection, show_cursor: bool) -> Result<Share, Capture
         let options = HashMap::from([("handle_token", Value::from(token.as_str()))]);
         screen_cast.call_method("Start", &(&session_path, "", options))
     })?;
+    if let (Some(path), Some(token)) = (remember, text(&started, "restore_token")) {
+        write_token(path, &token);
+    }
     let streams: Vec<(u32, Results)> = started
         .get("streams")
         .and_then(|value| value.try_clone().ok())
@@ -222,4 +293,61 @@ pub fn start(connection: Connection, show_cursor: bool) -> Result<Share, Capture
         remote: remote.into(),
         _session: session,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("clipcraft-portal-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch folder");
+        dir
+    }
+
+    #[test]
+    fn a_saved_choice_round_trips_privately_and_bad_files_are_ignored() {
+        let dir = scratch("token");
+        let path = dir.join("screencast-restore-token");
+        assert_eq!(read_token(&path), None);
+        write_token(&path, "abc-123_XYZ");
+        assert_eq!(read_token(&path).as_deref(), Some("abc-123_XYZ"));
+        // Saving again replaces it, and only this user may read the file.
+        write_token(&path, "second");
+        assert_eq!(read_token(&path).as_deref(), Some("second"));
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).expect("file").permissions().mode();
+            assert_eq!(mode & 0o077, 0, "mode {mode:o}");
+        }
+        assert!(!dir.join("screencast-restore-token.partial").exists());
+        // Nonsense is never sent to the desktop.
+        std::fs::write(&path, "has a space").expect("write");
+        assert_eq!(read_token(&path), None);
+        std::fs::write(&path, "x".repeat(MAX_TOKEN + 1)).expect("write");
+        assert_eq!(read_token(&path), None);
+        std::fs::write(&path, "").expect("write");
+        assert_eq!(read_token(&path), None);
+        write_token(&path, "");
+        write_token(&path, &"y".repeat(MAX_TOKEN + 1));
+        assert_eq!(read_token(&path), None);
+        write_token(&path, "again");
+        forget_token(&path);
+        assert_eq!(read_token(&path), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_a_portal_that_can_remember_is_asked_to() {
+        assert!(remember_options(3, Some("t")).is_empty());
+        assert!(remember_options(0, None).is_empty());
+        let first = remember_options(4, None);
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].0, "persist_mode");
+        let again = remember_options(5, Some("t"));
+        assert_eq!(again.len(), 2);
+        assert_eq!(again[1].0, "restore_token");
+    }
 }

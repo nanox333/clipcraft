@@ -136,7 +136,7 @@ GPU/capture limitations are documented in the [performance review](docs/performa
 `cargo run --release -p clipcraft-record --example performance` to reproduce the CPU benchmarks;
 they do not establish game-FPS impact or sustained capture performance.
 
-- Linux/X11 capture and replay have been tested end to end in a virtual display (re-checked on 2026-10-26: start, F8 save, decode and library). X11 capture uses shared memory (about 5x faster at 1080p) and clips are not enlarged beyond the screen, so software encoding keeps up far better; hardware encoding is still the way to 1080p60 on a 4-core machine. Wayland support is
+- Linux/X11 capture and replay have been tested end to end in a virtual display (re-checked on 2026-10-26: start, F8 save, decode and library). X11 capture uses shared memory (about 5x faster at 1080p) and clips are not enlarged beyond the screen, so software encoding keeps up far better; hardware encoding is still the way to 1080p60 on a 4-core machine. Wayland support (see [docs/linux.md](docs/linux.md) for what each Linux setup needs; global hotkeys on Wayland read the keyboards and the chosen screen is remembered) is
   partly verified; no real desktop portal chooser has delivered a frame yet.
 - Windows/AMD native SDR capture avoids full-frame CPU readback at matching source/output size.
   Nonblocking latest-frame reads and a bounded SDR update-interval request have one-minute

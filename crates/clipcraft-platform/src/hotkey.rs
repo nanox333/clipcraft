@@ -79,6 +79,14 @@ impl HotkeyListener {
     pub fn start(bindings: Vec<HotkeyBinding>) -> Result<Self, clipcraft_capture::CaptureError> {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
+            // On Wayland, X11 grabs only see keys while an X window has the focus, so the
+            // keyboards are read instead; when that is not allowed, the grabs are the fallback.
+            #[cfg(target_os = "linux")]
+            if crate::evdev::wanted()
+                && let Ok(listener) = crate::evdev::start(bindings.clone())
+            {
+                return Ok(listener);
+            }
             crate::x11::start_hotkeys(None, bindings)
         }
         #[cfg(windows)]
