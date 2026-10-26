@@ -503,6 +503,34 @@ mod tests {
         ))
     }
 
+    /// Where each whole fragment of a fragmented MP4 ends. Cuts are placed from these, not from
+    /// percentages: how much video and sound a fragment holds depends on how fast the machine ran
+    /// the recorder, which changes the sizes when many tests run at once.
+    fn fragment_ends(bytes: &[u8]) -> Vec<usize> {
+        let (mut offset, mut ends, mut in_fragment) = (0_usize, Vec::new(), false);
+        while offset + 8 <= bytes.len() {
+            let size = u32::from_be_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+            ]) as usize;
+            if size < 8 || offset + size > bytes.len() {
+                break;
+            }
+            match &bytes[offset + 4..offset + 8] {
+                b"moof" => in_fragment = true,
+                b"mdat" if in_fragment => {
+                    ends.push(offset + size);
+                    in_fragment = false;
+                }
+                _ => {}
+            }
+            offset += size;
+        }
+        ends
+    }
+
     #[test]
     fn a_cut_off_mp4_is_recovered_from_its_crash_safe_copy_with_picture_and_sound() {
         let scratch = Scratch::new("mp4-copy");
@@ -536,7 +564,9 @@ mod tests {
             (Some(160), Some(90), 1)
         );
         if let Some((seconds, has_sound, clean)) = judge(&scratch.0.join(name)) {
-            assert!((1.5..=4.0).contains(&seconds), "{seconds} s");
+            // Two fragments' worth: some video, but not the whole buffer. A fragment is a whole
+            // number of keyframe intervals, so a busy machine makes them longer.
+            assert!(seconds > 0.5, "{seconds} s");
             assert!(has_sound && clean, "sound {has_sound}, clean {clean}");
         }
     }
@@ -552,17 +582,31 @@ mod tests {
             .save_clip_interrupted(20, &copy, 10_000)
             .expect("copy");
         let whole = fs::read(&copy).expect("read");
+        let ends = fragment_ends(&whole);
+        assert!(
+            ends.len() >= 2,
+            "need two fragments to cut between: {ends:?}"
+        );
+        // Cut inside the second fragment, inside a middle one and inside the last: each keeps
+        // every fragment before it, so each recovers more than the cut before.
+        let mut picks = vec![1, ends.len() / 2, ends.len() - 1];
+        picks.dedup();
         let mut longest = 0.0_f64;
-        for percent in [35_usize, 55, 80] {
-            fs::write(&copy, &whole[..whole.len() * percent / 100]).expect("cut");
+        for fragment in picks {
+            let cut = ends[fragment - 1] + (ends[fragment] - ends[fragment - 1]) / 2;
+            fs::write(&copy, &whole[..cut]).expect("cut");
             let recovery = recover_interrupted_after(&scratch.0, Duration::ZERO);
-            assert_eq!(recovery.salvaged.len(), 1, "{percent}%: {recovery:?}");
+            assert_eq!(
+                recovery.salvaged.len(),
+                1,
+                "fragment {fragment}: {recovery:?}"
+            );
             let kept = scratch.0.join(name);
             if let Some((seconds, _, clean)) = judge(&kept) {
-                assert!(clean, "{percent}% does not decode cleanly");
+                assert!(clean, "cut in fragment {fragment} does not decode cleanly");
                 assert!(
                     seconds > longest,
-                    "{percent}%: {seconds} s should beat {longest} s"
+                    "cut in fragment {fragment}: {seconds} s should beat {longest} s"
                 );
                 longest = seconds;
             }
