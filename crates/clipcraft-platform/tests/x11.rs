@@ -121,6 +121,84 @@ fn a_monitor_is_listed_and_captured_with_the_right_colours() {
     );
 }
 
+/// The picture taken through shared memory is byte for byte what the plain protocol returns.
+#[test]
+fn shared_memory_pictures_equal_the_plain_protocol_pictures() {
+    let Some(server) = Server::start(67) else {
+        return;
+    };
+    paint_root(&server.display, 0x336699);
+    let _ = make_window_at(&server.display, 40, 30, 200, 120, 0xcc3300);
+    let monitor = list_targets_on(&server.display)
+        .unwrap()
+        .into_iter()
+        .find(|t| t.kind == TargetKind::Display)
+        .expect("a monitor");
+    let mut source = open_on(&server.display, &monitor.id).unwrap();
+    // Twice: the second picture reuses the shared segment.
+    for round in 0..2 {
+        let frame = source.capture().unwrap();
+        let (conn, screen) = RustConnection::connect(Some(&server.display)).unwrap();
+        let root = conn.setup().roots[screen].root;
+        let plain = conn
+            .get_image(
+                x11rb::protocol::xproto::ImageFormat::Z_PIXMAP,
+                root,
+                0,
+                0,
+                frame.width as u16,
+                frame.height as u16,
+                !0,
+            )
+            .unwrap()
+            .reply()
+            .unwrap();
+        assert_eq!(plain.data.len(), frame.bgra.len());
+        for (index, (a, b)) in frame
+            .bgra
+            .chunks_exact(4)
+            .zip(plain.data.chunks_exact(4))
+            .enumerate()
+        {
+            assert_eq!(
+                a[..3],
+                b[..3],
+                "round {round}: pixel {index} (x {}, y {}) differs",
+                index % frame.width as usize,
+                index / frame.width as usize
+            );
+            assert_eq!(a[3], 255);
+        }
+    }
+}
+
+/// A window that changes size between pictures gets a new shared segment, not a torn picture.
+#[test]
+fn a_window_that_changes_size_is_still_captured_whole() {
+    let Some(server) = Server::start(68) else {
+        return;
+    };
+    paint_root(&server.display, 0x101010);
+    let window = make_window(&server.display, 100, 80, 0x00ff00);
+    let mut source = open_on(&server.display, &format!("window:{window:x}")).unwrap();
+    let first = source.capture().unwrap();
+    assert_eq!((first.width, first.height), (100, 80));
+    let (conn, _) = RustConnection::connect(Some(&server.display)).unwrap();
+    conn.configure_window(
+        window,
+        &x11rb::protocol::xproto::ConfigureWindowAux::new()
+            .width(160)
+            .height(120),
+    )
+    .unwrap();
+    conn.flush().unwrap();
+    conn.get_input_focus().unwrap().reply().unwrap();
+    let second = source.capture().unwrap();
+    assert_eq!((second.width, second.height), (160, 120));
+    assert_eq!(second.bgra.len(), 160 * 120 * 4);
+    assert_eq!(pixel(&second, 80, 60), [0x00, 0xff, 0x00]);
+}
+
 #[test]
 fn a_window_is_captured_alone_and_its_loss_is_reported() {
     let Some(server) = Server::start(62) else {

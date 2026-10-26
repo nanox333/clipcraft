@@ -104,6 +104,18 @@ impl RecordConfig {
     }
 }
 
+/// The clip height for a source `source_height` high. A clip that keeps the source's shape is
+/// never made taller than the source: enlarging a 1440x900 desktop to "1080p" adds no detail but
+/// about 45% more pictures' worth of pixels for the software encoder, which is what makes it drop
+/// frames. Other shapes (16:9, 9:16, square...) keep the requested height.
+fn clip_height(config: &RecordConfig, source_height: u32) -> u32 {
+    if config.shape == OutputShape::Source {
+        config.output_height.min(source_height.max(16))
+    } else {
+        config.output_height
+    }
+}
+
 /// The clip frame size a source of `width` x `height` is recorded at.
 pub fn output_size(config: &RecordConfig, width: u32, height: u32) -> Option<(u32, u32)> {
     reframe(
@@ -111,7 +123,7 @@ pub fn output_size(config: &RecordConfig, width: u32, height: u32) -> Option<(u3
         height,
         config.shape,
         config.framing,
-        config.output_height,
+        clip_height(config, height),
     )
     .map(|plan| (plan.output_width, plan.output_height))
 }
@@ -803,7 +815,7 @@ fn new_active(
         source_height,
         config.shape,
         config.framing,
-        config.output_height,
+        clip_height(config, source_height),
     )
     .ok_or(RecordError::BadSize)?;
     // Video from before a size change does not match the new stream's parameters.

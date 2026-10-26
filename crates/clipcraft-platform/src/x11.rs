@@ -1,5 +1,8 @@
 //! Screen, window, and hotkey access on X11 using the core protocol (no `unsafe`).
 
+use std::fs::File;
+use std::os::fd::OwnedFd;
+use std::os::unix::fs::FileExt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -14,6 +17,7 @@ use x11rb::connection::Connection;
 use x11rb::errors::ReplyError;
 use x11rb::protocol::Event;
 use x11rb::protocol::randr::ConnectionExt as _;
+use x11rb::protocol::shm::ConnectionExt as _;
 use x11rb::protocol::xproto::{
     Atom, AtomEnum, ConnectionExt as _, GrabMode, ImageFormat, ImageOrder, ModMask, Window,
 };
@@ -247,13 +251,36 @@ pub fn list_targets(display: Option<&str>) -> Result<Vec<CaptureTarget>, Capture
     Ok(targets)
 }
 
+/// Pictures through shared memory (MIT-SHM with a passed file descriptor): the server draws the
+/// screen straight into a memory file that is read here, instead of sending every picture through
+/// the socket. At 1080p that is several times faster, and the only way to reach 60 pictures a
+/// second on a large screen. Needs no `unsafe`: the file is read, not mapped.
+struct SharedMemory {
+    segment: u32,
+    file: File,
+    size: usize,
+}
+
+enum Shm {
+    /// Not tried yet.
+    Untried,
+    Ready(SharedMemory),
+    /// The server or the target cannot do it; the plain `GetImage` path is used.
+    Unavailable,
+}
+
+/// Largest picture taken through shared memory.
+const MAX_SHM_BYTES: usize = 512 * 1024 * 1024;
+
 struct X11Source {
     conn: RustConnection,
     root: Window,
     place: Place,
     target: CaptureTarget,
     started: Instant,
+    /// The last picture of a window, shown again while the window is minimised.
     last: Option<CaptureFrame>,
+    shm: Shm,
 }
 
 pub fn open(
@@ -313,6 +340,7 @@ pub fn open(
         },
         started: Instant::now(),
         last: None,
+        shm: Shm::Untried,
     }))
 }
 
@@ -329,6 +357,107 @@ fn classify(error: &ReplyError) -> CaptureError {
 }
 
 impl X11Source {
+    /// The picture through shared memory, or `None` when that is not possible (the plain path then
+    /// takes it). A target that is gone is an error either way.
+    fn grab_shared(
+        &mut self,
+        drawable: Window,
+        x: i16,
+        y: i16,
+        width: u32,
+        height: u32,
+    ) -> Result<Option<Vec<u8>>, CaptureError> {
+        if matches!(self.shm, Shm::Unavailable) {
+            return Ok(None);
+        }
+        let size = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .filter(|size| *size <= MAX_SHM_BYTES)
+            .ok_or(CaptureError::BadFrame)?;
+        let (Ok(wide), Ok(high)) = (u16::try_from(width), u16::try_from(height)) else {
+            return Ok(None);
+        };
+        let ready = match &self.shm {
+            Shm::Ready(shared) => shared.size == size,
+            _ => false,
+        };
+        if !ready {
+            self.shm = match self.attach(size) {
+                Some(shared) => Shm::Ready(shared),
+                None => return self.disable_shared(),
+            };
+        }
+        let Shm::Ready(shared) = &self.shm else {
+            return Ok(None);
+        };
+        let reply = match self
+            .conn
+            .shm_get_image(
+                drawable,
+                x,
+                y,
+                wide,
+                high,
+                !0,
+                u8::from(ImageFormat::Z_PIXMAP),
+                shared.segment,
+                0,
+            )
+            .map_err(|_| CaptureError::Failed)
+            .and_then(|cookie| cookie.reply().map_err(|error| classify(&error)))
+        {
+            Ok(reply) => reply,
+            Err(CaptureError::TargetGone) => return Err(CaptureError::TargetGone),
+            Err(CaptureError::Denied) => return Err(CaptureError::Denied),
+            Err(_) => return self.disable_shared(),
+        };
+        let mut bgra = vec![0_u8; size];
+        if usize::try_from(reply.size).ok() != Some(size)
+            || shared.file.read_exact_at(&mut bgra, 0).is_err()
+        {
+            return self.disable_shared();
+        }
+        Ok(Some(bgra))
+    }
+
+    /// Gives up on shared memory for this source, releasing the segment if there is one.
+    fn disable_shared(&mut self) -> Result<Option<Vec<u8>>, CaptureError> {
+        if let Shm::Ready(shared) = &self.shm {
+            let _ = self.conn.shm_detach(shared.segment);
+        }
+        self.shm = Shm::Unavailable;
+        Ok(None)
+    }
+
+    /// Makes a memory file of `size` bytes and shares it with the server (needs MIT-SHM 1.2, the
+    /// version that passes file descriptors).
+    fn attach(&mut self, size: usize) -> Option<SharedMemory> {
+        if let Shm::Ready(old) = &self.shm {
+            let _ = self.conn.shm_detach(old.segment);
+        }
+        let version = self.conn.shm_query_version().ok()?.reply().ok()?;
+        if (version.major_version, version.minor_version) < (1, 2) {
+            return None;
+        }
+        let descriptor =
+            rustix::fs::memfd_create("clipcraft-capture", rustix::fs::MemfdFlags::CLOEXEC).ok()?;
+        let file = File::from(descriptor);
+        file.set_len(u64::try_from(size).ok()?).ok()?;
+        let for_server = OwnedFd::from(file.try_clone().ok()?);
+        let segment = self.conn.generate_id().ok()?;
+        self.conn
+            .shm_attach_fd(segment, for_server, false)
+            .ok()?
+            .check()
+            .ok()?;
+        Some(SharedMemory {
+            segment,
+            file,
+            size,
+        })
+    }
+
     fn grab(&mut self) -> Result<CaptureFrame, CaptureError> {
         let (drawable, x, y, width, height) = match self.place {
             Place::Monitor {
@@ -357,9 +486,14 @@ impl X11Source {
             return Err(CaptureError::BadFrame);
         }
         let stride = width as usize * 4;
+        let mut bgra = self
+            .grab_shared(drawable, x, y, width, height)?
+            .unwrap_or_default();
+        let mut row = if bgra.is_empty() { 0_u32 } else { height };
+        if bgra.is_empty() {
+            bgra.reserve(stride * height as usize);
+        }
         let rows_per_band = (BAND_BYTES / stride).max(1) as u32;
-        let mut bgra = Vec::with_capacity(stride * height as usize);
-        let mut row = 0_u32;
         while row < height {
             let rows = rows_per_band.min(height - row);
             let reply = self
@@ -411,7 +545,10 @@ impl CaptureSource for X11Source {
     fn capture(&mut self) -> Result<CaptureFrame, CaptureError> {
         match self.grab() {
             Ok(frame) => {
-                self.last = Some(frame.clone());
+                // Only a window needs its last picture kept; copying a whole screen is waste.
+                if matches!(self.place, Place::Window(_)) {
+                    self.last = Some(frame.clone());
+                }
                 Ok(frame)
             }
             // A minimised or momentarily unmapped window cannot be read: show the last picture.

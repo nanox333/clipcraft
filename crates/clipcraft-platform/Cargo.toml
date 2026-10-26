@@ -23,9 +23,10 @@ clipcraft-record.workspace = true
 sysinfo.workspace = true
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
-x11rb = { version = "0.14", default-features = false, features = ["randr"] }
+x11rb = { version = "0.14", default-features = false, features = ["randr", "shm"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1", default-features = false, features = ["std", "fs"] }
 libloading.workspace = true
 zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
 
