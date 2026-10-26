@@ -14,6 +14,8 @@ screenshots, Tab/Shift+Tab checks, exporter overwrite refusal and `cargo xtask c
 CI note: the Linux job once failed on a scratch-folder cleanup race in a capture test; cleanup now retries and
 the Windows draft-recovery test uses canonical paths. Both jobs passed their test gates on the merged `main`.
 
+Linux re-check (2026-10-26, virtual X display, 4 cores, no GPU): the desktop app started, Start clipping armed capture, F8 saved a 14 s MP4 that decodes with ffmpeg and appears in the library; `clipcraft-cli capture record` also produced a valid clip. The H.265 and tray changes had left `main` failing the Linux lint (code only used on Windows); that is fixed. With the software encoder only, 1080p60 from a 1440x900 desktop dropped about 55% of frames (about 17 encoded pictures per second on 4 cores); the app shows this as a red warning. A graphics-card encoder on Linux was not available to test.
+
 **Status:** active prototype · **Last reviewed:** 2026-10-25 · **Target:** local Windows capture-to-export alpha
 
 The [current whole-workspace performance audit](performance-audit-2026-10-25.md) identifies a

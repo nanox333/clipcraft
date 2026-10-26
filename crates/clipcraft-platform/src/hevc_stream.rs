@@ -5,6 +5,10 @@
 //!
 //! Pure functions with no operating-system code, so they are tested on every platform.
 
+// Only the Windows Media Foundation encoder calls these; the unit tests run everywhere, so other
+// platforms see them as unused outside tests.
+#![cfg_attr(not(windows), allow(dead_code))]
+
 use crate::h264_stream::split_nal_units;
 
 /// Largest NAL-unit count accepted in one encoded picture.

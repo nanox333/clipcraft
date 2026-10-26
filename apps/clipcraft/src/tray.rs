@@ -3,8 +3,10 @@
 //! (`tray_menu`), which is drawn by ClipCraft rather than by the operating system. Windows only;
 //! other platforms have no tray and close normally.
 
-/// What the tray asks the window to do.
+/// What the tray asks the window to do. Only the Windows tray sends the menu request; the other
+/// platforms have no tray, so they never construct it.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum Action {
     /// Show the tray menu at this screen position, in physical pixels.
     Menu {
