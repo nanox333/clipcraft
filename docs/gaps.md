@@ -20,6 +20,8 @@ Linux speed (2026-10-26, 4-core cloud VM, Xvfb): X11 capture now uses MIT-SHM sh
 
 Linux compatibility (2026-10-26): [docs/linux.md](linux.md) lists what works on X11 and Wayland, what each needs, and what is unverified. New: global hotkeys on Wayland by reading the keyboards (evdev; needs the `input` group or an optional udev rule, `packaging/linux/`), with X11 grabs as the fallback; the Wayland portal's chosen screen is remembered between runs (`restore_token`); `diagnose` reports the session type and hotkey access. Verified against a real PipeWire server with a fake desktop portal and with synthetic device files; **no real Wayland desktop or physical keyboard was tried**, and the download needs glibc 2.35 or newer and ALSA.
 
+Encoder ownership (2026-10-26): the pure-Rust H.264 encoder (and its bit writer) now lives in `crates/filmcraft-h264enc` and `crates/filmcraft-bitstream`, vendored from FilmCraft commit `6c3948a` with licences and provenance kept (ADR 0029), so ClipCraft can tune it for screen recording. No behaviour change yet; FilmCraft's ffmpeg-oracle tests were not copied (they need its private test kit), so tuning work must add equivalent checks.
+
 **Status:** active prototype · **Last reviewed:** 2026-10-25 · **Target:** local Windows capture-to-export alpha
 
 The [current whole-workspace performance audit](performance-audit-2026-10-25.md) identifies a
