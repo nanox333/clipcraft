@@ -154,7 +154,8 @@ they do not establish game-FPS impact or sustained capture performance.
   Windows window-to-process adapters are implemented; this environment verifies X11 with a
   synthetic window, not a real game. Wayland does not expose the
   process-to-window mapping used by Game source, and macOS capture is not available.
-- Linux hardware encoders have only been exercised against stand-ins here. Windows/AMD has the
+- Linux hardware encoders have only been exercised against stand-ins here (the picture conversion they
+  share is 2.5x faster and bit-identical; GPU scaling and zero-copy input for Linux are not done). Windows/AMD has the
   native capture-to-encode evidence described above, with CPU fallback for incompatible settings.
   Linux frames still pass through CPU-owned memory and conversion. Performance on gaming PCs and
   other GPUs needs measurement; Vice's reported sub-1% CPU use is not a ClipCraft performance claim.
