@@ -182,7 +182,7 @@ sharing links, and a community layer are not planned. The small editor includes 
 text layers, colour effects and simple fades. Overlapping video, cross-dissolves, detached audio
 and general-purpose multitrack editing remain outside its scope.
 
-The software H.264 encoder lives in this repository (`crates/filmcraft-h264enc`, copied from FilmCraft under
+The software H.264 encoder lives in this repository and is tuned for screen recording (static-content skip, faster mode decision; `crates/filmcraft-h264enc`, copied from FilmCraft under
 its MIT/Apache licence; see [upstream ports](docs/upstream-ports.md)), so it can be tuned for screen recording.
 
 ## Rust and local-data design

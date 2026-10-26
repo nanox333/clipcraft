@@ -101,8 +101,41 @@ fn satd_strip<const N: usize, const H: usize>(a: &[u8], sa: usize, b: &[u8], sb:
     total
 }
 
+/// SATD of one 4x4 block, straight-line (the inner loop of intra 4x4 mode decision, where it runs
+/// hundreds of thousands of times per picture). Equal to the general function for `w = h = 4`.
+#[inline]
+fn satd4x4(a: &[u8], sa: usize, b: &[u8], sb: usize) -> u32 {
+    let row = |p: &[u8], stride: usize, r: usize| -> Option<[i32; 4]> {
+        let q = p.get(r * stride..)?.first_chunk::<4>()?;
+        Some([q[0] as i32, q[1] as i32, q[2] as i32, q[3] as i32])
+    };
+    let mut t = [[0i32; 4]; 4];
+    for r in 0..4 {
+        let (Some(x), Some(y)) = (row(a, sa, r), row(b, sb, r)) else {
+            return 0;
+        };
+        let (d0, d1, d2, d3) = (x[0] - y[0], x[1] - y[1], x[2] - y[2], x[3] - y[3]);
+        let (s01, d01, s23, d23) = (d0 + d1, d0 - d1, d2 + d3, d2 - d3);
+        t[r] = [s01 + s23, s01 - s23, d01 + d23, d01 - d23];
+    }
+    let mut total = 0u32;
+    for c in 0..4 {
+        let (s01, d01) = (t[0][c] + t[1][c], t[0][c] - t[1][c]);
+        let (s23, d23) = (t[2][c] + t[3][c], t[2][c] - t[3][c]);
+        total += (s01 + s23).unsigned_abs()
+            + (s01 - s23).unsigned_abs()
+            + (d01 + d23).unsigned_abs()
+            + (d01 - d23).unsigned_abs();
+    }
+    // The sum of |H| over a Hadamard transform's outputs is even; the metric is half of it.
+    total >> 1
+}
+
 /// Sum of absolute 4x4 Hadamard-transformed differences (halved), for w, h multiples of 4.
 pub fn satd(a: &[u8], sa: usize, b: &[u8], sb: usize, w: usize, h: usize) -> u32 {
+    if w == 4 && h == 4 {
+        return satd4x4(a, sa, b, sb);
+    }
     let mut total = 0;
     for by in (0..h).step_by(4) {
         let (ao, bo) = (by * sa, by * sb);
@@ -150,6 +183,49 @@ pub fn block_var(a: &[u8], sa: usize, w: usize, h: usize) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn satd4x4_matches_the_general_strip_on_random_blocks_and_strides() {
+        let mut seed = 99u32;
+        let mut rnd = || {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            (seed >> 16) as u8
+        };
+        for round in 0..500 {
+            let (sa, sb) = (4 + round % 13, 4 + (round / 3) % 11);
+            let a: Vec<u8> = (0..sa * 4).map(|_| rnd()).collect();
+            let b: Vec<u8> = (0..sb * 4).map(|_| rnd()).collect();
+            // The strip path, forced by asking for the same block as part of an 8x4 (the 4-wide
+            // strip handles it identically): compare with the Hadamard reference.
+            let mut d = [0i32; 16];
+            for r in 0..4 {
+                for c in 0..4 {
+                    d[r * 4 + c] = a[r * sa + c] as i32 - b[r * sb + c] as i32;
+                }
+            }
+            assert_eq!(
+                satd(&a, sa, &b, sb, 4, 4),
+                hadamard4x4_sum(&d) / 2,
+                "round {round}"
+            );
+        }
+        // Extremes: every sign pattern of +-255 differences.
+        for pattern in 0..(1u32 << 16) {
+            let a: Vec<u8> = (0..16)
+                .map(|i| if pattern >> i & 1 == 1 { 255 } else { 0 })
+                .collect();
+            let b = vec![0u8; 16];
+            let mut d = [0i32; 16];
+            for i in 0..16 {
+                d[i] = a[i] as i32;
+            }
+            assert_eq!(
+                satd(&a, 4, &b, 4, 4, 4),
+                hadamard4x4_sum(&d) / 2,
+                "pattern {pattern}"
+            );
+        }
+    }
+
     #[test]
     fn satd_of_dc_difference() {
         let a = [10u8; 16];

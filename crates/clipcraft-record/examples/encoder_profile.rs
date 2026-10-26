@@ -95,7 +95,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 file.write_all(&packet.data)?;
             }
         }
-        slowest = slowest.max(one.elapsed().as_secs_f64() * 1000.0);
+        let took = one.elapsed().as_secs_f64() * 1000.0;
+        slowest = slowest.max(took);
+        if std::env::var_os("FRAMES").is_some() {
+            eprintln!("frame {index:3}: {took:6.1} ms");
+        }
     }
     for packet in encoder.flush() {
         bytes += packet.data.len();

@@ -42,6 +42,9 @@ pub struct EncParams {
     pub always_intra: bool,
     /// Maximum CAVLC level magnitude (Baseline).
     pub cavlc_clamp: bool,
+    /// Try the six diagonal 4x4 intra modes only when plain, horizontal and vertical prediction
+    /// leave a block poorly predicted.
+    pub fast_intra: bool,
     /// Code macroblocks that did not change since the previous picture as P_Skip without analysis.
     /// Only valid when every P picture references the one just before it (no B-frames).
     pub static_skip: bool,
@@ -157,23 +160,6 @@ impl Cand {
             cost: u64::MAX,
         })
     }
-}
-
-/// TEMPORARY tuning hook: reads an integer setting from the environment once.
-fn knob(name: &str, default: i64) -> i64 {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<HashMap<String, i64>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let Ok(mut map) = cache.lock() else {
-        return default;
-    };
-    *map.entry(name.to_owned()).or_insert_with(|| {
-        std::env::var(name)
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(default)
-    })
 }
 
 #[inline]
@@ -509,6 +495,18 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
         let qp = (f.qp as i32 + aq).clamp(0, 51) as u8;
         let av = self.avail(mx, my);
         let (px, py) = (mx * 16, my * 16);
+        // Nothing changed here since the previous picture and the skip vector is zero: P_Skip,
+        // without looking at anything else.
+        if f.st == SliceType::P
+            && f.p.static_skip
+            && f.unchanged.get(my * mbw + mx) == Some(&true)
+            && let Some(r) = f.l0
+            && self.pskip_mv(mx, my) == Mv::ZERO
+            && self.mv_ok(px, py, 16, 16, Mv::ZERO)
+        {
+            self.commit_unchanged(mx, my, r);
+            return;
+        }
         let mut src_y = [0u8; 256];
         let mut src_u = [0u8; 64];
         let mut src_v = [0u8; 64];
@@ -620,6 +618,64 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
                 }
                 cavlc::write_mb(w, &nb, &c.code);
             }
+        }
+    }
+
+    /// A macroblock that did not change since the previous picture, coded as P_Skip with a zero
+    /// vector. The same result as analysing it and finding that out, without building a candidate:
+    /// the reconstruction is the reference at the same place, and only the skip flag is coded.
+    fn commit_unchanged(&mut self, mx: usize, my: usize, r: &RefPic) {
+        let (px, py) = (mx * 16, my * 16);
+        let mut y = [0u8; 256];
+        let mut u = [0u8; 64];
+        let mut v = [0u8; 64];
+        self.pred_block(r, px, py, (0, 0, 16, 16), Mv::ZERO, &mut y, &mut u, &mut v);
+        for row in 0..16 {
+            let i = self.ry(px, py + row);
+            self.band.y[i..i + 16].copy_from_slice(&y[row * 16..row * 16 + 16]);
+        }
+        for row in 0..8 {
+            let i = self.rc(px / 2, py / 2 + row);
+            self.band.u[i..i + 8].copy_from_slice(&u[row * 8..row * 8 + 8]);
+            self.band.v[i..i + 8].copy_from_slice(&v[row * 8..row * 8 + 8]);
+        }
+        let prev_dqp_nz = self.prev_dqp_nz;
+        self.prev_dqp_nz = false;
+        let info = MbInfo {
+            ref_idx: [[0; 4], [-1; 4]],
+            kind: MbKind::PSkip,
+            qp: self.last_qp,
+            slice: self.slice_no + 1,
+            ..MbInfo::default()
+        };
+        self.stats.mbs += 1;
+        self.stats.qp_sum += info.qp as u64;
+        self.stats.skip += 1;
+        let idx = (my - self.y0) * self.f.p.mbw + mx;
+        self.mbs[idx] = info;
+        let av = self.avail(mx, my);
+        let left = if av.left {
+            Some(&self.mbs[idx - 1])
+        } else {
+            None
+        };
+        let top = if av.top {
+            Some(&self.mbs[idx - self.f.p.mbw])
+        } else {
+            None
+        };
+        let nb = NbCtx {
+            left,
+            top,
+            cur: &self.mbs[idx],
+            slice_type: self.f.st,
+            prev_dqp_nz,
+            t8x8_mode: self.f.p.t8x8,
+        };
+        if let Some(cab) = self.cabac.as_mut() {
+            cabac_mb::write_skip_flag(cab, &nb, true);
+        } else if self.cavlc.is_some() {
+            self.skip_run += 1;
         }
     }
 
@@ -1396,16 +1452,32 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
                 );
             }
             let mut best = (u32::MAX, 2u8, [0u8; 16]);
-            for mode in 0..9u8 {
-                if !mode_available(mode, ed.has_top, ed.has_left, ed.has_tl) {
-                    continue;
+            // Plain, horizontal and vertical prediction first: flat areas and axis-aligned edges
+            // (screen content) are nearly always served by one of them, and the six diagonal modes
+            // are then not worth their cost.
+            let early = self
+                .f
+                .p
+                .fast_intra
+                .then_some(((lam * 24) >> 8).saturating_add(32));
+            for (round, modes) in [[2u8, 0, 1].as_slice(), &[3, 4, 5, 6, 7, 8]]
+                .iter()
+                .enumerate()
+            {
+                if round == 1 && early.is_some_and(|limit| best.0 <= limit) {
+                    break;
                 }
-                let mut p = [0u8; 16];
-                pred4x4(mode, &ed, &mut p);
-                let bits = if mode == pm { 1 } else { 4 };
-                let cost = satd(&srcb, 4, &p, 4, 4, 4) + ((lam * bits) >> 8);
-                if cost < best.0 {
-                    best = (cost, mode, p);
+                for &mode in *modes {
+                    if !mode_available(mode, ed.has_top, ed.has_left, ed.has_tl) {
+                        continue;
+                    }
+                    let mut p = [0u8; 16];
+                    pred4x4(mode, &ed, &mut p);
+                    let bits = if mode == pm { 1 } else { 4 };
+                    let cost = satd(&srcb, 4, &p, 4, 4, 4) + ((lam * bits) >> 8);
+                    if cost < best.0 {
+                        best = (cost, mode, p);
+                    }
                 }
             }
             total += best.0 as u64;
@@ -1628,11 +1700,8 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
             c
         };
         let mut best: Option<Box<Cand>> = None;
-        let margin = knob("CC_INTRA_MARGIN", 25) as u64;
         let try_nxn = p.i4x4
-            && (inter_cost == u64::MAX
-                || cost16 < inter_cost + inter_cost * margin / 100
-                || p.always_intra);
+            && (inter_cost == u64::MAX || cost16 < inter_cost + inter_cost / 4 || p.always_intra);
         if !try_nxn {
             return Some(mk16());
         }
@@ -2146,17 +2215,16 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
             return ci;
         }
         // --- intra
-        let need_intra = f.p.always_intra
-            || best_cost > (256 * 3 + 16 * lam as u64 / 256) * knob("CC_NEED_INTRA", 2) as u64;
-        if need_intra {
-            if let Some(ic) = self.analyse_intra_against(mx, my, qp, av, e, src, best_cost) {
-                if f.p.rd {
-                    if self.rd_cost(mx, my, &ic, src, qp) < self.rd_cost(mx, my, &ci, src, qp) {
-                        return ic;
-                    }
-                } else if ic.cost < best_cost {
+        let need_intra = f.p.always_intra || best_cost > (256 * 3 + 16 * lam as u64 / 256) * 2;
+        if need_intra
+            && let Some(ic) = self.analyse_intra_against(mx, my, qp, av, e, src, best_cost)
+        {
+            if f.p.rd {
+                if self.rd_cost(mx, my, &ic, src, qp) < self.rd_cost(mx, my, &ci, src, qp) {
                     return ic;
                 }
+            } else if ic.cost < best_cost {
+                return ic;
             }
         }
         if f.p.rd && skip_ok && ci.code.cbp != 0 {
@@ -2531,15 +2599,15 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
             }
         }
         let need_intra = f.p.always_intra || best.cost > (256 * 3 + 16 * lam as u64 / 256) * 3;
-        if need_intra {
-            if let Some(ic) = self.analyse_intra_against(mx, my, qp, av, e, src, best.cost) {
-                if f.p.rd {
-                    if self.rd_cost(mx, my, &ic, src, qp) < self.rd_cost(mx, my, &best, src, qp) {
-                        return ic;
-                    }
-                } else if ic.cost < best.cost {
+        if need_intra
+            && let Some(ic) = self.analyse_intra_against(mx, my, qp, av, e, src, best.cost)
+        {
+            if f.p.rd {
+                if self.rd_cost(mx, my, &ic, src, qp) < self.rd_cost(mx, my, &best, src, qp) {
                     return ic;
                 }
+            } else if ic.cost < best.cost {
+                return ic;
             }
         }
         best

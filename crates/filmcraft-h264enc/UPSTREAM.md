@@ -17,8 +17,19 @@ unit tests inside `src/`) cover the encoder through the recorder and exporter, a
 
 ## Changes from upstream
 
-None yet. List each change here with the reason and its measurement, so a later merge from
+All changes are for the Speed preset (what recording uses) unless noted; none changes the stream format. List each change here with the reason and its measurement, so a later merge from
 FilmCraft stays possible:
 
 | Date | Change | Why | Measured |
 | --- | --- | --- | --- |
+| 2026-10-26 | Static-content skip: Speed preset marks macroblocks identical to the previous source picture and codes them as P_Skip without searching | Desktop recordings are mostly unchanged | desktop clip 23.1 -> 10.9 ms/picture (QP26, 2 threads); output size and PSNR unchanged |
+| 2026-10-26 | Zero-residual shortcut: skip transform+quantise for blocks that provably quantise to zero (Cauchy-Schwarz bound on SSD) | Most inter blocks on screen content are all-zero | bit-identical output on all test clips; unit tests incl. adversarial blocks |
+| 2026-10-26 | Deblocking skips edges between same-vector P_Skip neighbours | Filter is a no-op there | bit-identical |
+| 2026-10-26 | Intra candidate gate in P/B pictures (non-RD): skip intra when its cost is >= 1.25x the best inter cost | Intra rarely wins there | measured, no PSNR change on test clips |
+| 2026-10-26 | `fast_intra`: skip diagonal intra 4x4 modes when DC/H/V already fit well | Cuts mode search | keyframes ~30% fewer instructions |
+| 2026-10-26 | Straight-line 4x4 SATD, chroma motion-compensation fast paths for whole/half-pel vectors | Hot inner loops | exhaustive/random tests against the reference |
+
+Measured with `encoder_profile` on 1440x900 clips (desktop, scroll, pan, rotate, game-like), ms per
+picture, before -> after at 2 threads, QP26: desktop 23.1 -> 10.9, scroll 48.9 -> 37.9, pan 51.5 -> 37.4,
+rotate 42.0 -> 27.8, game 55.2 -> 39.6. Rejected (no gain or quality loss): step-1 ME early exit,
+quarter-pel off, adaptive sub-pel, vectorised deblock filter.

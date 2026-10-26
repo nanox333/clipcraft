@@ -423,6 +423,7 @@ impl Encoder {
                 always_intra: false,
                 cavlc_clamp: !cabac,
                 static_skip: cfg.bframes == 0,
+                fast_intra: true,
             },
             Preset::Balanced => EncParams {
                 mbw,
@@ -442,6 +443,7 @@ impl Encoder {
                 always_intra: false,
                 cavlc_clamp: !cabac,
                 static_skip: false,
+                fast_intra: false,
             },
             Preset::Quality => EncParams {
                 mbw,
@@ -461,6 +463,7 @@ impl Encoder {
                 always_intra: true,
                 cavlc_clamp: !cabac,
                 static_skip: false,
+                fast_intra: false,
             },
         };
         let max_refs = if cfg.bframes > 0 { 2 } else { 1 };
@@ -1148,23 +1151,6 @@ impl Encoder {
             results.sort_by_key(|r| (r.0, r.1));
             for (pi, _, r) in results {
                 slice_results[pi].push(r);
-            }
-        }
-        if std::env::var_os("CC_STATS").is_some() {
-            for (j, res) in jobs.iter().zip(&slice_results) {
-                let (mut i, mut k, mut n, mut m, mut q) = (0, 0, 0, 0, 0);
-                for r in res {
-                    i += r.stats.intra;
-                    k += r.stats.skip;
-                    n += r.stats.inter;
-                    m += r.stats.mbs;
-                    q += r.stats.qp_sum;
-                }
-                eprintln!(
-                    "STAT {:?} mbs {m} intra {i} skip {k} inter {n} avgqp {:.1}",
-                    j.st,
-                    q as f64 / m.max(1) as f64
-                );
             }
         }
         for ((j, (rec, mbs)), res) in jobs.iter_mut().zip(bufs).zip(slice_results) {

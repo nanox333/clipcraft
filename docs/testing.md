@@ -68,7 +68,9 @@ to simulate sleep.
 (run it under a virtual display with a full-screen test video). `cargo run --release -p
 clipcraft-record --example encoder_profile W H raw.yuv` times the software encoder on raw I420
 pictures (`ffmpeg -i clip.mp4 -pix_fmt yuv420p -f rawvideo raw.yuv`). Both report this machine only;
-they are not game-FPS evidence.
+they are not game-FPS evidence. `QP=26` fixes the quantiser and `FRAMES=n` limits pictures; `OUT=x.h264` writes
+the stream so before/after outputs can be compared byte for byte and PSNR-checked with ffmpeg (give both
+inputs `-framerate 60`). Encoder changes must stay bit-identical or show equal PSNR and size.
 
 ## Documentation gate
 
