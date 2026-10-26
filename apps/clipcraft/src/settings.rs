@@ -7,13 +7,15 @@ use std::time::Duration;
 use clipcraft_audio_out::{DeviceNames, MicMeter, list_devices};
 use clipcraft_engine::{
     AUDIO_KBPS, CaptureSource, Command, CommandOutput, Container, DesktopCaptureMode,
-    EncoderPreset, FRAME_RATES, Framing, GameMatchRule, HEIGHTS, HotkeyAction, KEYFRAME_SECONDS,
-    OutputShape, POST_ROLL_SECONDS, QualityMode, REPLAY_SECONDS, RateControl, RecordingSettings,
-    SAMPLE_RATES, StorageUsage, VIDEO_KBPS, VideoCodec, VideoEncoder, execute, format_bytes,
+    EncoderPreset, Framing, GameMatchRule, HEIGHTS, HotkeyAction, OutputShape, QualityMode,
+    RateControl, RecordingSettings, StorageUsage, VideoCodec, VideoEncoder, execute, format_bytes,
     normalize_hotkey,
 };
 use eframe::egui;
 use egui::{Color32, RichText, Stroke, Vec2};
+
+mod pages;
+pub(crate) use pages::*;
 
 use crate::kit::{self, BORDER, CARD, CARD_HOVER, DANGER, FAINT, LIME, MUTED, TEXT};
 
@@ -237,7 +239,7 @@ pub(crate) fn card_plain(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut 
 }
 
 /// Paints an on/off switch into `rect` (about 40 x 22).
-fn paint_switch(painter: &egui::Painter, rect: egui::Rect, on: bool) {
+pub(crate) fn paint_switch(painter: &egui::Painter, rect: egui::Rect, on: bool) {
     painter.rect_filled(
         rect,
         11.0,
@@ -320,34 +322,6 @@ pub(crate) fn divider(ui: &mut egui::Ui) {
     let (line, _) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
     ui.painter().rect_filled(line, 0.0, BORDER);
-}
-
-/// A row with a 0-100 percent slider.
-pub(crate) fn percent_row(
-    ui: &mut egui::Ui,
-    title: &str,
-    help: &str,
-    value: &mut u32,
-    enabled: bool,
-) {
-    ui.add_space(14.0);
-    ui.label(
-        RichText::new(title)
-            .color(if enabled { TEXT } else { FAINT })
-            .size(14.5)
-            .family(kit::semibold()),
-    );
-    ui.label(RichText::new(help).color(MUTED).size(12.5));
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        let width = (ui.available_width() - 80.0).max(0.0);
-        if let Some(next) = kit::slim_slider(ui, width, *value as f32 / 100.0, enabled, title) {
-            *value = (next * 100.0).round() as u32;
-        }
-        ui.add_space(8.0);
-        ui.label(RichText::new(format!("{value}%")).color(MUTED));
-    });
-    ui.add_space(14.0);
 }
 
 /// A label on the left and its value on the right, for facts rather than settings.
@@ -623,167 +597,6 @@ fn clip_size_note(ui: &mut egui::Ui, settings: &RecordingSettings) {
     );
 }
 
-pub fn quality_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, gpu: &GpuProbe) {
-    card_plain(ui, "Recording quality", |ui| {
-        ui.add_space(10.0);
-        let gap = 10.0;
-        let width = (ui.available_width() - gap * 3.0) / 4.0;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            for mode in QualityMode::ALL {
-                let selected = settings.quality == mode;
-                if quality_tile(ui, width, mode, selected, &tile_facts(mode, settings)) {
-                    settings.quality = mode;
-                }
-            }
-        });
-        clip_size_note(ui, settings);
-        if settings.quality == QualityMode::Custom {
-            ui.add_space(14.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = Vec2::new(14.0, 12.0);
-                let heights: Vec<(String, bool)> =
-                    HEIGHTS.iter().map(|h| (height_label(*h), true)).collect();
-                if let Some(index) =
-                    dropdown(ui, "Resolution", &height_label(settings.height), &heights)
-                {
-                    settings.height = HEIGHTS[index];
-                }
-                let rates: Vec<(String, bool)> =
-                    FRAME_RATES.iter().map(|r| (r.to_string(), true)).collect();
-                if let Some(index) =
-                    dropdown(ui, "FPS", &settings.frames_per_second.to_string(), &rates)
-                {
-                    settings.frames_per_second = FRAME_RATES[index];
-                }
-                let bitrates: Vec<(String, bool)> = VIDEO_KBPS
-                    .iter()
-                    .map(|k| (bitrate_label(*k), true))
-                    .collect();
-                if let Some(index) = dropdown(
-                    ui,
-                    "Bitrate",
-                    &bitrate_label(settings.video_kbps),
-                    &bitrates,
-                ) {
-                    settings.video_kbps = VIDEO_KBPS[index];
-                }
-            });
-            ui.add_space(12.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = Vec2::new(14.0, 12.0);
-                let gpu_label = match gpu {
-                    GpuProbe::Ready(name) => format!("GPU ({name})"),
-                    GpuProbe::Checking | GpuProbe::Unknown => "GPU (checking\u{2026})".to_owned(),
-                    GpuProbe::Unavailable(_) => "GPU (unavailable)".to_owned(),
-                };
-                let encoders = vec![
-                    ("CPU".to_owned(), true),
-                    (gpu_label.clone(), matches!(gpu, GpuProbe::Ready(_))),
-                ];
-                let shown = match settings.video_encoder {
-                    VideoEncoder::Cpu => "CPU".to_owned(),
-                    VideoEncoder::Gpu => gpu_label,
-                };
-                if let Some(index) = dropdown(ui, "Video Encoder", &shown, &encoders) {
-                    settings.video_encoder = VideoEncoder::ALL[index];
-                }
-                let codecs: Vec<(String, bool)> = VideoCodec::ALL
-                    .iter()
-                    .map(|c| (c.label().to_owned(), c.unavailable_reason().is_none()))
-                    .collect();
-                if let Some(index) = dropdown(ui, "Codec", settings.codec.label(), &codecs) {
-                    settings.codec = VideoCodec::ALL[index];
-                }
-            });
-            ui.add_space(8.0);
-            let (note, color) = match gpu {
-                GpuProbe::Ready(name) => (
-                    format!(
-                        "{name} encodes the video, which leaves your processor free for the game. H.265 is not available yet."
-                    ),
-                    FAINT,
-                ),
-                GpuProbe::Unavailable(why) => (
-                    format!(
-                        "GPU encoding is not available on this computer: {why}. Recording uses the CPU. H.265 is not available yet."
-                    ),
-                    FAINT,
-                ),
-                _ => ("Checking the graphics card\u{2026}".to_owned(), FAINT),
-            };
-            ui.label(RichText::new(note).color(color).size(12.0));
-        }
-        ui.add_space(14.0);
-    });
-    card(ui, "File", |ui| {
-        setting_row(ui, "Format", settings.container.detail(), false, |ui| {
-            for container in Container::ALL {
-                let reason = container.unavailable_reason();
-                let hint = reason.map_or_else(|| container.detail().to_owned(), str::to_owned);
-                if choice(
-                    ui,
-                    container.label(),
-                    settings.container == container,
-                    reason.is_none(),
-                    &hint,
-                ) {
-                    settings.container = container;
-                }
-            }
-        });
-        setting_row(
-            ui,
-            "Bitrate mode",
-            settings.rate_control.detail(),
-            false,
-            |ui| {
-                for mode in RateControl::ALL {
-                    if choice(
-                        ui,
-                        mode.label(),
-                        settings.rate_control == mode,
-                        true,
-                        mode.detail(),
-                    ) {
-                        settings.rate_control = mode;
-                    }
-                }
-            },
-        );
-        setting_row(
-            ui,
-            "Video encoder",
-            &encoder_help(settings.video_encoder, gpu),
-            true,
-            |ui| {
-                for encoder in [VideoEncoder::Gpu, VideoEncoder::Cpu] {
-                    let hint = match encoder {
-                        VideoEncoder::Gpu => {
-                            "The graphics card encodes the video. The processor stays free for your game."
-                        }
-                        VideoEncoder::Cpu => {
-                            "The processor encodes the video. Works everywhere, but takes processor time from your game."
-                        }
-                    };
-                    if choice(
-                        ui,
-                        encoder.label(),
-                        settings.video_encoder == encoder,
-                        true,
-                        hint,
-                    ) {
-                        settings.video_encoder = encoder;
-                    }
-                }
-            },
-        );
-    });
-    if settings.show_advanced {
-        advanced_quality(ui, settings);
-    }
-}
-
 /// What the chosen video encoder means on this computer.
 fn encoder_help(chosen: VideoEncoder, gpu: &GpuProbe) -> String {
     match (chosen, gpu) {
@@ -810,136 +623,15 @@ pub fn capture_tab(
     refresh: &mut bool,
     capabilities: clipcraft_capture::Capabilities,
 ) {
-    card(ui, "What to record", |ui| {
-        setting_row(ui, "Capture", settings.source.detail(), false, |ui| {
-            for source in CaptureSource::ALL {
-                if choice(
-                    ui,
-                    source.label(),
-                    settings.source == source,
-                    true,
-                    source.detail(),
-                ) {
-                    settings.source = source;
-                }
-            }
-        });
-        let want_window = settings.source == CaptureSource::Game;
-        let kind = if want_window {
-            clipcraft_capture::TargetKind::Window
-        } else {
-            clipcraft_capture::TargetKind::Display
-        };
-        let choices: Vec<&clipcraft_capture::CaptureTarget> = targets
-            .iter()
-            .filter(|target| target.kind == kind)
-            .collect();
-        let current = match choices
-            .iter()
-            .find(|target| target.id == settings.capture_target)
-        {
-            Some(target) => target.name.clone(),
-            None if !settings.capture_target.is_empty() => {
-                format!("{} (not open)", settings.capture_target_name)
-            }
-            None if want_window => "Choose a window".to_owned(),
-            None => "Main monitor".to_owned(),
-        };
-        let mut options = vec![(
-            if want_window {
-                "None chosen".to_owned()
-            } else {
-                "Main monitor".to_owned()
-            },
-            true,
-        )];
-        options.extend(choices.iter().map(|target| {
-            (
-                format!("{}  ({}\u{d7}{})", target.name, target.width, target.height),
-                true,
-            )
-        }));
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            if let Some(index) = dropdown(
-                ui,
-                if want_window {
-                    "Game window"
-                } else {
-                    "Monitor"
-                },
-                &current,
-                &options,
-            ) {
-                match index.checked_sub(1).and_then(|at| choices.get(at)) {
-                    Some(target) => {
-                        settings.capture_target = target.id.clone();
-                        settings.capture_target_name = target.name.clone();
-                    }
-                    None => {
-                        settings.capture_target.clear();
-                        settings.capture_target_name.clear();
-                    }
-                }
-            }
-            ui.add_space(12.0);
-            ui.vertical(|ui| {
-                ui.add_space(21.0);
-                if kit::labelled_button(ui, kit::Icon::Loop, "Refresh", false, true).clicked() {
-                    *refresh = true;
-                }
-            });
-        });
-        if want_window && choices.is_empty() {
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new("No windows were found. Open the game, then press Refresh.")
-                    .color(FAINT)
-                    .size(12.5),
-            );
-        }
-        ui.add_space(10.0);
-        divider(ui);
-        toggle_row(
-            ui,
-            "Start clipping when ClipCraft opens",
-            "Starts filling the replay buffer as soon as the app starts.",
-            &mut settings.record_on_launch,
-            false,
-        );
-        toggle_row(
-            ui,
-            "Show the mouse cursor",
-            "Draw the pointer in your clips.",
-            &mut settings.capture_cursor,
-            false,
-        );
-        toggle_row(
-            ui,
-            "Force window capture",
-            if capabilities.windows {
-                "Record the window that has the focus (your game) even when you picked a whole monitor, and never the monitor around it. Start clipping with its hotkey while the game is in front. Try this if a game records black."
-            } else {
-                "Window capture is not available on this computer."
-            },
-            &mut settings.force_window_capture,
-            false,
-        );
-        toggle_row(
-            ui,
-            "HDR compatibility",
-            if capabilities.hdr {
-                "Only for an HDR monitor. Converts HDR to standard colours, with highlights rolled off instead of clipped, so clips are not washed out when shared. It makes recording copy every picture through memory, which uses more processor, so leave it off unless your clips look washed out."
-            } else {
-                "This computer's capture does not report HDR, so this has no effect here."
-            },
-            &mut settings.hdr_compatibility,
-            true,
-        );
-    });
-    if settings.show_advanced {
-        advanced_capture(ui, settings);
-    }
+    let gpu = GpuProbe::Unknown;
+    let mut env = pages::Env {
+        gpu: &gpu,
+        capabilities,
+        targets,
+        refresh_targets: refresh,
+    };
+    let mut rows = crate::rows::Rows::new("");
+    pages::capture_rows(&mut rows, ui, settings, &mut env);
 }
 
 /// Process rules that are allowed to start the replay buffer.
@@ -1528,265 +1220,6 @@ fn refresh_devices(state: &mut SettingsState) {
     state.devices = Some(devices);
 }
 
-fn device_dropdown(ui: &mut egui::Ui, label: &str, current: &mut String, names: &[String]) {
-    let mut options = vec![("System default".to_owned(), true)];
-    options.extend(names.iter().map(|name| (name.clone(), true)));
-    let shown = if current.is_empty() {
-        "System default"
-    } else {
-        current.as_str()
-    };
-    let shown = shown.to_owned();
-    if let Some(index) = dropdown(ui, label, &shown, &options) {
-        *current = if index == 0 {
-            String::new()
-        } else {
-            names[index - 1].clone()
-        };
-    }
-}
-
-/// Like [`device_dropdown`], for devices whose saved name differs from the name shown.
-fn output_dropdown(
-    ui: &mut egui::Ui,
-    label: &str,
-    current: &mut String,
-    outputs: &[(String, String)],
-) {
-    let mut options = vec![("System default".to_owned(), true)];
-    options.extend(outputs.iter().map(|(_, shown)| (shown.clone(), true)));
-    let shown = outputs
-        .iter()
-        .find(|(name, _)| name == current)
-        .map_or_else(
-            || {
-                if current.is_empty() {
-                    "System default".to_owned()
-                } else {
-                    current.clone()
-                }
-            },
-            |(_, shown)| shown.clone(),
-        );
-    if let Some(index) = dropdown(ui, label, &shown, &options) {
-        *current = if index == 0 {
-            String::new()
-        } else {
-            outputs[index - 1].0.clone()
-        };
-    }
-}
-
-pub fn audio_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &mut SettingsState) {
-    if state.devices.is_none() {
-        refresh_devices(state);
-    }
-    let devices = state.devices.clone().unwrap_or_default();
-    card(ui, "PC audio", |ui| {
-        toggle_row(
-            ui,
-            "Record game and system sound",
-            "Everything you hear from the output device below.",
-            &mut settings.capture_game_audio,
-            false,
-        );
-        ui.add_space(4.0);
-        output_dropdown(
-            ui,
-            "Output device to record",
-            &mut settings.output_device,
-            &state.outputs,
-        );
-        divider(ui);
-        percent_row(
-            ui,
-            "Game volume",
-            "How loud the game is in the clip.",
-            &mut settings.game_audio_percent,
-            settings.capture_game_audio,
-        );
-    });
-    card(ui, "Microphone", |ui| {
-        toggle_row(
-            ui,
-            "Record microphone",
-            "Your voice goes into the clip.",
-            &mut settings.capture_microphone,
-            false,
-        );
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            device_dropdown(
-                ui,
-                "Microphone",
-                &mut settings.microphone_device,
-                &devices.inputs,
-            );
-            ui.add_space(12.0);
-            ui.vertical(|ui| {
-                ui.add_space(21.0);
-                if kit::labelled_button(ui, kit::Icon::Loop, "Refresh", false, true).clicked() {
-                    refresh_devices(state);
-                }
-            });
-        });
-        ui.add_space(8.0);
-        mic_test(ui, settings, state);
-        ui.add_space(8.0);
-        divider(ui);
-        percent_row(
-            ui,
-            "Microphone volume",
-            "How loud your voice is in the clip.",
-            &mut settings.microphone_percent,
-            settings.capture_microphone,
-        );
-        divider(ui);
-        toggle_row(
-            ui,
-            "Microphone is mono",
-            "Copy a one-channel microphone to both sides so you are not heard from one ear.",
-            &mut settings.microphone_mono,
-            false,
-        );
-        toggle_row(
-            ui,
-            "Push to talk",
-            "Your microphone is only recorded while you hold the push-to-talk key.",
-            &mut settings.push_to_talk,
-            true,
-        );
-        if settings.push_to_talk && settings.hotkeys.get(HotkeyAction::PushToTalk).is_empty() {
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new("No push-to-talk key is set yet. Choose one in Hotkeys.")
-                    .color(DANGER)
-                    .size(12.5),
-            );
-        }
-        ui.add_space(8.0);
-    });
-    card(ui, "Sound effects", |ui| {
-        toggle_row(
-            ui,
-            "Play sound effects",
-            "A short sound when you start or stop clipping, save a clip, take a screenshot, or switch your microphone.",
-            &mut settings.sound_effects,
-            false,
-        );
-        percent_row(
-            ui,
-            "Effects volume",
-            "How loud the sound effects are.",
-            &mut settings.sound_effects_percent,
-            settings.sound_effects,
-        );
-        setting_row(
-            ui,
-            "Hear a sample",
-            "Plays the sound you get when a clip is saved.",
-            true,
-            |ui| {
-                if kit::labelled_button(
-                    ui,
-                    kit::Icon::Speaker,
-                    "Play sample",
-                    false,
-                    settings.sound_effects,
-                )
-                .clicked()
-                {
-                    clipcraft_audio_out::play_cue(
-                        clipcraft_audio_out::Cue::ClipSaved,
-                        settings.sound_effects_percent.min(100) as u8,
-                    );
-                }
-            },
-        );
-    });
-    card(ui, "Tracks", |ui| {
-        toggle_row(
-            ui,
-            "Separate audio tracks",
-            "Save game sound and microphone as their own tracks so you can edit them apart. Without this they are mixed into one.",
-            &mut settings.separate_audio_tracks,
-            true,
-        );
-    });
-    card(ui, "Quality", |ui| {
-        setting_row(
-            ui,
-            "Audio bitrate",
-            "AAC audio, kilobits per second. 256 and above is transparent for most listeners.",
-            false,
-            |ui| {
-                for kbps in AUDIO_KBPS {
-                    if choice(
-                        ui,
-                        &format!("{kbps} kbps"),
-                        settings.audio_kbps == kbps,
-                        true,
-                        "Audio bitrate",
-                    ) {
-                        settings.audio_kbps = kbps;
-                    }
-                }
-            },
-        );
-        setting_row(
-            ui,
-            "Instant replay length",
-            "How much play before the hotkey is kept.",
-            true,
-            |ui| {
-                for seconds in REPLAY_SECONDS {
-                    let label = if seconds >= 60 {
-                        format!("{} min", seconds / 60)
-                    } else {
-                        format!("{seconds} sec")
-                    };
-                    if choice(
-                        ui,
-                        &label,
-                        settings.replay_seconds == seconds,
-                        true,
-                        "Replay length",
-                    ) {
-                        settings.replay_seconds = seconds;
-                    }
-                }
-            },
-        );
-        setting_row(
-            ui,
-            "Keep recording after the hotkey",
-            "Adds the moments after you press the key, such as the reaction. The clip is saved once they have been recorded.",
-            true,
-            |ui| {
-                for seconds in POST_ROLL_SECONDS {
-                    let label = if seconds == 0 {
-                        "Off".to_owned()
-                    } else {
-                        format!("{seconds} sec")
-                    };
-                    if choice(
-                        ui,
-                        &label,
-                        settings.post_roll_seconds == seconds,
-                        true,
-                        "Post-roll length",
-                    ) {
-                        settings.post_roll_seconds = seconds;
-                    }
-                }
-            },
-        );
-    });
-    if settings.show_advanced {
-        advanced_audio(ui, settings);
-    }
-}
-
 /// The microphone test: a button and a live level meter.
 fn mic_test(ui: &mut egui::Ui, settings: &RecordingSettings, state: &mut SettingsState) {
     ui.horizontal(|ui| {
@@ -2172,60 +1605,8 @@ pub fn storage_tab(
         }
         ui.add_space(14.0);
     });
-    card(ui, "Storage limit", |ui| {
-        setting_row(
-            ui,
-            "Most space clips may use",
-            "ClipCraft stops saving new clips, or deletes the oldest, when this is reached.",
-            false,
-            |ui| {
-                for gigabytes in [0_u32, 10, 25, 50, 100, 250, 500, 1000] {
-                    let label = match gigabytes {
-                        0 => "Unlimited".to_owned(),
-                        1000 => "1 TB".to_owned(),
-                        other => format!("{other} GB"),
-                    };
-                    if choice(
-                        ui,
-                        &label,
-                        settings.storage_limit_gb == gigabytes,
-                        true,
-                        "Storage limit",
-                    ) {
-                        settings.storage_limit_gb = gigabytes;
-                    }
-                }
-            },
-        );
-        ui.add_space(8.0);
-        let enabled = settings.storage_limit_gb > 0;
-        ui.add_enabled_ui(enabled, |ui| {
-            if radio_row(
-                ui,
-                "Delete the oldest clips",
-                "Keeps recording by making room.",
-                settings.delete_oldest_when_full,
-            ) {
-                settings.delete_oldest_when_full = true;
-            }
-            if radio_row(
-                ui,
-                "Stop saving new clips",
-                "Nothing is ever deleted for you.",
-                !settings.delete_oldest_when_full,
-            ) {
-                settings.delete_oldest_when_full = false;
-            }
-        });
-        if !enabled {
-            ui.label(
-                RichText::new("These apply once you choose a storage limit above.")
-                    .size(12.0)
-                    .color(MUTED),
-            );
-        }
-        ui.add_space(8.0);
-    });
+    let mut rows = crate::rows::Rows::new("");
+    pages::storage_rows(&mut rows, ui, settings);
 }
 
 /// The About tab: what ClipCraft is, which version this is, and where to find the project.
@@ -2301,153 +1682,10 @@ pub(crate) fn advanced_heading(ui: &mut egui::Ui) {
     ui.add_space(20.0);
 }
 
-fn advanced_capture(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
-    advanced_heading(ui);
-    card(ui, "Video aspect ratio", |ui| {
-        ui.add_space(8.0);
-        let current = match (settings.shape, settings.framing) {
-            (OutputShape::Source, _) => 0,
-            (_, Framing::Letterbox) => 2,
-            (_, Framing::Crop) => 3,
-            _ => 1,
-        };
-        let options = [
-            (
-                "Game aspect ratio",
-                "Clips keep the game's own shape, 4:3 stays 4:3.",
-            ),
-            (
-                "Stretch to fit 16:9",
-                "Fills a widescreen frame. A 4:3 game looks wider.",
-            ),
-            (
-                "Fit 16:9 with black bars",
-                "Keeps the shape and fills the sides with black.",
-            ),
-            (
-                "Crop to 16:9",
-                "Keeps the shape and trims the top and bottom.",
-            ),
-        ];
-        for (index, (title, help)) in options.into_iter().enumerate() {
-            if radio_row(ui, title, help, current == index) {
-                match index {
-                    0 => {
-                        settings.shape = OutputShape::Source;
-                        settings.framing = Framing::Original;
-                    }
-                    1 => {
-                        settings.shape = OutputShape::Wide16x9;
-                        settings.framing = Framing::Stretch;
-                    }
-                    2 => {
-                        settings.shape = OutputShape::Wide16x9;
-                        settings.framing = Framing::Letterbox;
-                    }
-                    _ => {
-                        settings.shape = OutputShape::Wide16x9;
-                        settings.framing = Framing::Crop;
-                    }
-                }
-            }
-        }
-        ui.add_space(8.0);
-    });
-}
-
-fn advanced_quality(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
-    advanced_heading(ui);
-    card(ui, "Encoder effort", |ui| {
-        ui.add_space(8.0);
-        for preset in EncoderPreset::ALL {
-            if radio_row(
-                ui,
-                preset.label(),
-                preset.detail(),
-                settings.encoder_preset == preset,
-            ) {
-                settings.encoder_preset = preset;
-            }
-        }
-        divider(ui);
-        setting_row(
-            ui,
-            "Keyframe interval",
-            "Seconds between keyframes. Shorter clips scrub faster; longer ones are smaller.",
-            true,
-            |ui| {
-                for seconds in KEYFRAME_SECONDS {
-                    if choice(
-                        ui,
-                        &format!("{seconds} s"),
-                        settings.keyframe_seconds == seconds,
-                        true,
-                        "Keyframe interval",
-                    ) {
-                        settings.keyframe_seconds = seconds;
-                    }
-                }
-            },
-        );
-    });
-}
-
-fn advanced_audio(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
-    advanced_heading(ui);
-    card(ui, "Audio", |ui| {
-        setting_row(
-            ui,
-            "Sample rate",
-            "48 kHz is the video standard.",
-            false,
-            |ui| {
-                for rate in SAMPLE_RATES {
-                    if choice(
-                        ui,
-                        &format!("{} kHz", rate as f32 / 1000.0),
-                        settings.audio_sample_rate == rate,
-                        true,
-                        "Sample rate",
-                    ) {
-                        settings.audio_sample_rate = rate;
-                    }
-                }
-            },
-        );
-        setting_row(
-            ui,
-            "Channels",
-            "Stereo keeps left and right apart.",
-            true,
-            |ui| {
-                for (channels, label) in [(2, "Stereo"), (1, "Mono")] {
-                    if choice(ui, label, settings.audio_channels == channels, true, label) {
-                        settings.audio_channels = channels;
-                    }
-                }
-            },
-        );
-    });
-}
-
 /// The start-up switches shown on the General tab.
 pub fn startup_card(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
-    card(ui, "Startup", |ui| {
-        toggle_row(
-            ui,
-            "Launch ClipCraft when I sign in",
-            "Starts quietly in the background so clips are ready when you play.",
-            &mut settings.launch_at_startup,
-            false,
-        );
-        toggle_row(
-            ui,
-            "Start minimized",
-            "Open without showing the window.",
-            &mut settings.start_minimized,
-            true,
-        );
-    });
+    let mut rows = crate::rows::Rows::new("");
+    pages::app_rows(&mut rows, ui, settings);
 }
 
 #[cfg(test)]
@@ -2587,12 +1825,8 @@ mod preset_tests {
         };
         for show_advanced in [false, true] {
             app.recording.show_advanced = show_advanced;
-            for (tab, control) in [
-                (crate::SettingsTab::Games, "Game name"),
-                (crate::SettingsTab::Capture, "Game aspect ratio"),
-                (crate::SettingsTab::Quality, EncoderPreset::ALL[0].label()),
-                (crate::SettingsTab::Audio, "48 kHz"),
-            ] {
+            #[allow(clippy::single_element_loop)]
+            for (tab, control) in [(crate::SettingsTab::Games, "Game name")] {
                 app.settings_tab = tab;
                 let names = category_controls(&mut app);
                 assert_eq!(
@@ -2614,6 +1848,7 @@ mod preset_tests {
     fn general_toggle_and_custom_game_creation_work_with_the_keyboard_and_hiding_preserves_rules() {
         let mut app = crate::ClipCraftApp {
             page: crate::Page::Settings,
+            settings_tab: crate::SettingsTab::General,
             ..Default::default()
         };
         keyboard_activate(&mut app, "Show advanced settings");

@@ -410,3 +410,110 @@ process RSS. Normal shutdown waits for acknowledgement; failed saving can be ret
 discarded. Non-preemptible storage can keep closing pending, and force quit/crash can lose pending
 metadata. Media is untouched and atomic index publication remains. Startup reads, cached JPEG loads,
 settings writes and some explicit file metadata checks remain separate optimization candidates.
+
+## Software encoder pipeline (2026-10-26)
+
+Measured on one Windows machine (16 logical cores, AMD graphics card) by recording a 1080p60 desktop
+with `clipcraft-cli capture record`, 15 seconds plus the post-roll, 1,202 pictures captured:
+
+| Encoder | Before | After |
+| --- | --- | --- |
+| Processor, Fast | 290 of 781 dropped (about 37 %) | 0 dropped |
+| Processor, Balanced | 387 of 782 dropped (about 49 %) | 8 dropped |
+| Processor, Quality | not measured | 167 dropped (about 14 %) |
+| Graphics card | 15 dropped at start (counted as drops) | 0 dropped |
+
+Changes: the software encoder runs on its own thread, so the next picture is read back and converted
+while the encoder works on the last one (the two used to add up inside one picture time); the staging
+texture used to read a picture back from the graphics card is kept between pictures instead of being
+created for every picture, and the buffer is no longer zero-filled before it is overwritten; BGRA to
+I420 conversion reads each pixel as one 32-bit word (single-thread time for 1080p fell from 4.6 ms to
+2.8 ms, bit-identical output); the automatic thread count for the software encoder is up to eight
+(half the cores) instead of four; pictures replaced while the encoder is still starting are no longer
+counted as drops. A pure-Rust alternative encoder (`rusty_h264-encoder` 0.16.1) was measured at 4-5x
+slower than the current one on the same synthetic 1080p60 content and was not adopted. Quality effort
+on the processor still cannot sustain 1080p60 on this machine; the Overview suggests the graphics card.
+
+## Graphics card, timers and playback (2026-10-26)
+
+Measured on the same Windows machine (AMD graphics card, 2560x1440 desktop at 60 fps, H.264 unless
+noted). GPU engine figures are Windows' per-process "GPU Engine" counters averaged over several
+seconds; the other figures are from small harnesses around the real recorder and player.
+
+| What | Before | After |
+| --- | --- | --- |
+| Graphics card video engine, effort Fast | 26 % | 14.4 % |
+| Graphics card video engine, effort Balanced or Quality | 26 % | 26 % (unchanged) |
+| Graphics memory used by recording (no window) | 130 MB | 84 MB |
+| In-app playback of a 1440p60 clip, steady state | 30.6 fps shown, 93 % of pictures skipped | 60.0 fps shown, 1 of 536 skipped |
+| Same clip as H.265 | 29.4 fps | 59.5 fps |
+| Recording, processor used by the recorder alone | about 7 % of one core | not changed |
+
+Causes and changes:
+
+- **Encoder effort now reaches the graphics card.** The Fast, Balanced and Quality setting only
+  affected the processor encoder. It now sets Media Foundation's quality-versus-speed value for the
+  card (0, 75 or 100). On AMD the encoder has two tiers, split at 50, and the fast tier uses about
+  half the video engine. Measured cost of the fast tier on game-like 1080p60 motion at the same 8 Mbps:
+  PSNR 31.09 dB against 31.65 dB, SSIM 0.895 against 0.909. Balanced and Quality keep today's quality.
+- **Windows rounds short sleeps up to 15.6 ms.** Player pacing slept 5 ms and woke after 15 ms, so
+  every other picture was skipped. While recording or while a clip or the editor is open the program now
+  asks for a 1 ms timer (`set_fine_timer`) and gives it back afterwards.
+- **Playback decodes ahead.** About one picture in ten is a full intra picture that takes 30-80 ms to
+  decode at 1440p, against about 5 ms for the rest. A queue of six finished pictures
+  (`clipcraft-player/src/ahead.rs`, bounded to 96 MB) lets the slow ones be decoded while the fast ones
+  are shown, and the playback clock now counts from its last deadline instead of from the moment it woke
+  up, which had dropped a picture every few seconds.
+- **Smaller Media Foundation picture pool.** At most four converted pictures are allocated for the
+  encoder instead of eight, which is where the 46 MB came from. No frames were dropped at 60 or 120 fps.
+
+Left alone because it measured as small: the recorder's own thread costs (about 3 % of a core for the
+hardware encode thread), the idle window (about 1 % of a core, mostly game-process discovery), and startup
+(the window appears in well under a second). Hardware video decoding was tried for playback and was no
+faster than the software decoder on this machine, so it stays off.
+
+## Playback processor cost (2026-10-26)
+
+Playing a 1440p60 H.264 clip through `clipcraft-player` (a harness polling the player, no window)
+used about 455 % of one core and 750 MB. The measured split: sixteen idle-then-spinning workers in
+FilmCraft's thread pool, woken to convert each picture to RGBA, took about 340 %; the decoder's own
+pool and the rest took the remainder.
+
+- **Fixed-point RGBA conversion** (`clipcraft-player/src/rgba.rs`) replaces FilmCraft's floating-point
+  `to_rgba8` for 8-bit Y'CbCr in BT.709 or sRGB. Table lookups, two pixels per chroma sample, a branch-free
+  clamp, and at most four threads in bands: about 8 ms of processor time for a 1440p picture instead of
+  tens of milliseconds spread over every core, within one level of FilmCraft's result on every layout and
+  range (checked on random data). Other colour spaces still use FilmCraft's path.
+- Result: about 250 % of one core and the same 60 fps (834 of 840 pictures delivered over 14 s).
+
+Measured and not adopted:
+
+- **Hardware decoding for playback** was no cheaper (about 450 % of one core) and delivered fewer
+  pictures (611 against 836), so it stays off.
+- **FilmCraft's "background" decode hint** limits the H.264 decoder to two threads: 183 % of one core
+  and 557 MB, but seeks took a median 304 ms against 212 ms. Smooth scrubbing was judged worth more than
+  the saved processor time, so playback keeps the full thread count.
+- A random-data benchmark of the new conversion first looked 5x slower than FilmCraft's, because
+  unpredictable values defeat the branch predictor; picture-like data shows the real cost.
+
+## Does a lower GPU priority protect a game? (2026-10-26)
+
+No, on this machine. A stand-in game (a full-screen pixel-shader pass at 2560x1440 in its own process,
+kept three passes deep, so it always wants the whole card) was run for 17 seconds, with ClipCraft's
+recorder (1440p60, graphics-card H.264) started two seconds in. `IDXGIDevice::SetGPUThreadPriority`
+was applied to the recorder's Direct3D device (capture copies and the video processor) at -7 and +7,
+each run two or three times, with 2 ms passes (about 160 per second) and 1 ms passes (about 1,000).
+
+| Recorder GPU priority | Game with 2 ms passes | Recorder frames dropped (of 900) | Game with 1 ms passes |
+| --- | --- | --- | --- |
+| Game alone | 160.6 / s | | 1,008 / s |
+| Normal | 151.9 / s (-5.4 %) | 54 | 957 / s (-5.1 %) |
+| -7 (less than the game) | 151.8 / s (-5.5 %) | 27 | 954 / s (-5.4 %) |
+| +7 (more than the game) | 154.8 / s (-3.6 %) | 195 | 954 / s (-5.4 %) |
+
+The game's loss does not depend on the priority, so no priority setting was added. It does depend on
+the recorder simply being active: about 4 % at 5 fps and about 7.5 % at 120 fps, 5 % at 30 or 60 fps,
+and the same with effort Fast, a 720p picture, or H.265. It is mostly a fixed cost of capturing the
+screen, not of ClipCraft's own copy and conversion work. Under a saturating game the recorder dropped
+3-6 % of its frames at 2 ms passes (none with 1 ms passes); the cause is the game's long passes
+delaying the recorder's, not something the priority fixes (+7 made it worse).

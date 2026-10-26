@@ -379,7 +379,7 @@ See [the performance review](performance.md) for workloads, limitations and rank
 - **Done:** capture, bounded replay, and MP4/MKV recording with configurable source, framing (stretch, black bars, or crop), resolution, frame rate, replay length, post-roll, and local storage limit are implemented. Settings are validated and saved locally (`recording.load_settings` / `recording.save_settings`, `clipcraft-cli recording settings`); reframe geometry is unit-tested and the Linux/X11 workflow is end-to-end tested.
 - **WebM unavailable:** FilmCraft has VP9 and Opus decoders only. Pure-Rust encoders exist on crates.io (`rusty_vp9`, `opus-pure`, `rav1e`) but are young, carry many `unsafe` blocks, and have not been vetted. WebM stays greyed out until one passes a spike (decode check with ffprobe/ffmpeg) and a licence and `unsafe` review.
 - **Export options:** original-quality trim copies samples to a new MP4. Small-file export can re-encode H.264/AAC MP4/MOV/MKV to H.264 MP4 with estimated 10 MB, 25 MB, or custom 1–500 MB targets. It caps output at 720p/30 fps, preserves AAC tracks, reports actual bytes, and supports progress/cancel. It does not add recording codecs or guarantee a service's upload limit.
-- **H.265:** recording is H.264-only. FilmCraft supplies a pure-Rust HEVC decoder; no H.265 encoder path is connected to ClipCraft's file writer, so H.265 remains unavailable.
+- **H.265 (Windows, graphics card only):** the Video page's Codec setting records H.265 through the graphics card's Media Foundation HEVC encoder (AMD verified: `AMDh265Encoder`, Main profile, 8-bit 4:2:0, no B-frames). MP4 (`hvc1`/`hvcC`) and MKV are written; ffmpeg decodes the clips with no errors; on the same 1440p60 desktop and 10 Mbps target a clip was 5.2 MB against 9.4 MB for H.264. There is no software H.265 encoder: with the processor encoder, on a card without an H.265 encoder, or off Windows, ClipCraft records H.264 and the status says why. NVIDIA through NVENC and VA-API are still H.264 only (NVIDIA's Media Foundation encoder should work but is untested). In-app playback of H.265 decoded at the same speed as H.264 in a harness measurement (both below real time at 2560x1440).
 
 ### Recording settings (applied by M2 where noted below)
 
@@ -388,7 +388,8 @@ See [the performance review](performance.md) for workloads, limitations and rank
 - Audio: PC audio and microphone toggles, output and microphone device pickers, a live microphone level test, push to talk, mono microphone, separate tracks, volumes.
 - Storage: capture folder, usage and free space, a storage limit, and a delete-oldest or stop policy. The limit applies only to ClipCraft's own clips; full-disk and cleanup paths have deterministic Linux tests.
 - Capture: cursor, force window capture, HDR compatibility; aspect ratio (game, stretch, black bars, crop to 16:9) appears in its bottom **Advanced settings** section.
-- General: launch at sign-in (Linux autostart entry, macOS launch agent, Windows Run key) and start minimized. **Show advanced settings** is last, after Help; it appends labeled advanced controls to Games, Capture, Quality and Audio instead of adding a category. Custom-game add/edit controls use the same uniform card layout as every settings tab (verified on Linux/Xvfb only) with padded, responsive fields and appear only when advanced settings are on; hidden rules/encoder/audio values remain active. The local preference and 64-rule budget are unchanged. Keyboard disclosure/creation, category visibility, process-picker stale-ID recovery and layout/accessibility checks cover this behavior; see [settings.md](settings.md) and [testing.md](testing.md). Only the Linux startup path and native UI can be exercised in this container.
+- Settings are rebuilt around rows (`apps/clipcraft/src/rows.rs`, pages in `settings/pages.rs`). An **Overview** page shows the current setup, live recording health (dropped frames, encode time), actionable suggestions (for example "use the graphics card") and three one-click profiles. Pages are grouped as Recording (Capture, Video, Audio, Replay, Games) and Settings (General, Storage, Hotkeys, About). Every row can show it differs from the default and be reset on its own; resolution, frame rate, bitrate, keyframe interval, replay length, post-roll, volumes, audio bitrate and the storage limit are sliders. The search box filters the actual rows in place, so a setting can be changed from the results, and links to the pages whose settings are lists or forms. Encoder, codec, effort, bitrate mode, file format, aspect ratio, sample rate and channels are always shown; the advanced toggle now only reveals custom-game forms.
+- General: launch at sign-in (Linux autostart entry, macOS launch agent, Windows Run key) and start minimized. On Windows a system-tray icon (left click opens; menu drawn by ClipCraft itself on right click, in the app's dark style: a status header, Open ClipCraft, Start/Stop recording, Save clip, Take screenshot, Open clips folder, Library, Settings, Quit ClipCraft; save and screenshot are enabled only while recording; folders open directly instead of being selected in their parent) and **Keep running in the tray** (default on) make the close button minimize instead of quit, so capture keeps running; the taskbar button stays because a hidden egui window stops receiving frames, which would stall capture. Hiding the taskbar button, and the tray on Linux/macOS, are not done. **Show advanced settings** is last, after Help; it appends labeled advanced controls to Games, Capture, Quality and Audio instead of adding a category. Custom-game add/edit controls use the same uniform card layout as every settings tab (verified on Linux/Xvfb only) with padded, responsive fields and appear only when advanced settings are on; hidden rules/encoder/audio values remain active. The local preference and 64-rule budget are unchanged. Keyboard disclosure/creation, category visibility, process-picker stale-ID recovery and layout/accessibility checks cover this behavior; see [settings.md](settings.md) and [testing.md](testing.md). Only the Linux startup path and native UI can be exercised in this container.
 
 ### Library organisation
 
@@ -454,7 +455,7 @@ touches ClipCraft's own clips.
   recorded, and macOS has none; resampling is linear; per-application audio is not separated;
   screenshots are wired to a global hotkey and save PNGs beside clips; push-to-talk works through the global hotkey only (not when ClipCraft
   has the focus). Sound and picture of a clip can differ by up to a frame at the very end.
-- **Settings not yet applied:** H.265 and WebM.
+- **Settings not yet applied:** WebM.
 - **Speed.** Measured on a shared 4-core container with a software-rendered video playing on the
   same screen, using the Fast preset: 360p30 keeps up (10 ms per picture); 720p30 keeps up (25 ms;
   241 of 241 pictures); 720p60 encodes about two of every three pictures (it drops a third); 1080p
@@ -510,7 +511,7 @@ touches ClipCraft's own clips.
   saves at once with what exists. A second press during the wait is ignored. Tested with the
   synthetic screen (engine tests); not yet run against a real game.
 - **Clipping keeps no full recording.** Only the last replay seconds (plus post-roll) live in memory;
-  disk is written only when a clip is saved. The Quality tab says so and shows an estimated size per
+  disk is written only when a clip is saved. The Video tab says so and shows an estimated size per
   clip and per minute (video plus sound bitrate, +2 % container). Variable bitrate can come out
   smaller; the estimate is the target, not a measurement of real clips.
 - **Clip length** can be up to one keyframe interval longer than the replay setting, and a clip
@@ -575,7 +576,7 @@ remain open. No upload, Discord account, link, or network path is added. See
   reorders pictures (handed to the software encoder and the buffer restarted). **No real GPU
   encoder has run**: this container has none, so NVENC and VideoToolbox are untested. AMD and
   Intel graphics are reached through Windows Media Foundation instead (next item). H.265 through the GPU
-  is not wired (the file writer is H.264 only). The Quality tab probes the card once at start-up
+  is wired for Media Foundation only (see the H.265 item). The Video tab probes the card once at start-up
   and greys out GPU when it cannot be used.
 - **AMD and Intel on Windows** record in hardware through a Media Foundation H.264 encoder
   ([ADR 0007](adr/0007-media-foundation-encoder.md)), tried after NVIDIA's. The stream handling

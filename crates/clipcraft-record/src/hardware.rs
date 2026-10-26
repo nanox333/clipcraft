@@ -6,9 +6,21 @@ use clipcraft_capture::NativeCaptureFrame;
 use std::fmt;
 use std::sync::Arc;
 
+/// The video format a stream is encoded in.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum StreamCodec {
+    /// H.264 (AVC), which every player takes.
+    #[default]
+    H264,
+    /// H.265 (HEVC): smaller files, hardware encoders only.
+    H265,
+}
+
 /// What the recorder asks a hardware encoder for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HardwareRequest {
+    /// The format to encode in.
+    pub codec: StreamCodec,
     /// Picture width; even.
     pub width: u32,
     /// Picture height; even.
@@ -21,12 +33,15 @@ pub struct HardwareRequest {
     pub constant_bitrate: bool,
     /// Frames between keyframes.
     pub keyframe_frames: u32,
+    /// How much of the graphics card's encoder to spend on quality. `Fast` leaves it more free
+    /// for the game; `Quality` makes the best picture for the bitrate.
+    pub effort: crate::EncoderSpeed,
 }
 
 /// One encoded picture from a hardware encoder.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HardwarePacket {
-    /// Length-prefixed H.264 NAL units.
+    /// Length-prefixed NAL units.
     pub data: Vec<u8>,
     /// True for a keyframe.
     pub keyframe: bool,
@@ -72,6 +87,12 @@ pub trait HardwareEncoder: Send {
     /// The H.264 decoder configuration record (`avcC`). Only meaningful after the first
     /// picture has been encoded.
     fn avcc(&self) -> Vec<u8>;
+
+    /// The format this encoder produces. `avcc` is then an `avcC` (H.264) or `hvcC` (H.265)
+    /// record.
+    fn codec(&self) -> StreamCodec {
+        StreamCodec::H264
+    }
 
     /// What to call this encoder, such as `NVIDIA NVENC`.
     fn name(&self) -> String;

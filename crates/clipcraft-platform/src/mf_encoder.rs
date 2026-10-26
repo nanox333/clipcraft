@@ -21,7 +21,9 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use clipcraft_capture::NativeCaptureFrame;
-use clipcraft_record::{HardwareEncoder, HardwarePacket, HardwareRequest, SurfaceFit};
+use clipcraft_record::{
+    EncoderSpeed, HardwareEncoder, HardwarePacket, HardwareRequest, StreamCodec, SurfaceFit,
+};
 use windows::Win32::Foundation::{FreeLibrary, HMODULE, VARIANT_TRUE};
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::{
@@ -33,11 +35,27 @@ use windows::core::{GUID, HRESULT, Interface, PCSTR, PWSTR, w};
 
 use crate::d3d11::{Converter, Surface};
 use crate::h264_stream::{annexb_to_length_prefixed, build_avcc, rgba_to_nv12, split_nal_units};
+use crate::hevc_stream;
 
 /// How long to wait for an encoder to accept a picture before calling it stuck.
 const STALL_LIMIT: Duration = Duration::from_secs(2);
 const MAX_OUTPUT_TYPES: u32 = 64;
 const MAX_OUTPUT_BUFFER_BYTES: u32 = 1 << 28;
+
+/// The Media Foundation subtype for a codec.
+fn subtype_of(codec: StreamCodec) -> GUID {
+    match codec {
+        StreamCodec::H264 => MFVideoFormat_H264,
+        StreamCodec::H265 => MFVideoFormat_HEVC,
+    }
+}
+
+fn codec_name(codec: StreamCodec) -> &'static str {
+    match codec {
+        StreamCodec::H264 => "H.264",
+        StreamCodec::H265 => "H.265",
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct OutputContract {
@@ -113,12 +131,13 @@ fn output_contract_matches(expected: OutputContract, actual: OutputContract) -> 
 
 fn validate_output_contract(
     contract: OutputContract,
+    codec: StreamCodec,
     width: u32,
     height: u32,
     fps: u32,
 ) -> Result<(), String> {
     if contract.major != MFMediaType_Video
-        || contract.subtype != MFVideoFormat_H264
+        || contract.subtype != subtype_of(codec)
         || width == 0
         || height == 0
         || contract.frame_size != Some(pack(width, height))
@@ -127,7 +146,10 @@ fn validate_output_contract(
             .is_some_and(|rate| equal_frame_rates(rate, pack(fps, 1)))
         || contract.bitrate.is_none_or(|bitrate| bitrate == 0)
     {
-        return Err("encoder output does not preserve the requested H.264 dimensions, frame rate and bitrate".to_owned());
+        return Err(format!(
+            "encoder output does not preserve the requested {} dimensions, frame rate and bitrate",
+            codec_name(codec)
+        ));
     }
     Ok(())
 }
@@ -356,6 +378,8 @@ pub struct MfEncoder {
     provides_samples: bool,
     output_size: u32,
     output_contract: IMFMediaType,
+    codec: StreamCodec,
+    vps: Option<Vec<u8>>,
     sps: Option<Vec<u8>>,
     pps: Option<Vec<u8>>,
     parameter_sets_published: bool,
@@ -377,10 +401,10 @@ struct GpuInput {
 // trait requires `Send` only so the box can be returned from the opening function.
 unsafe impl Send for MfEncoder {}
 
-fn activates(api: &Api) -> Result<Vec<IMFActivate>, String> {
+fn activates(api: &Api, codec: StreamCodec) -> Result<Vec<IMFActivate>, String> {
     let output = MFT_REGISTER_TYPE_INFO {
         guidMajorType: MFMediaType_Video,
-        guidSubtype: MFVideoFormat_H264,
+        guidSubtype: subtype_of(codec),
     };
     let mut list: *mut *mut c_void = std::ptr::null_mut();
     let mut count = 0_u32;
@@ -412,9 +436,10 @@ fn activates(api: &Api) -> Result<Vec<IMFActivate>, String> {
         unsafe { CoTaskMemFree(Some(list.cast())) };
     }
     if found.is_empty() {
-        return Err(
-            "Windows lists no hardware H.264 encoder (a graphics driver may be missing)".to_owned(),
-        );
+        return Err(format!(
+            "Windows lists no hardware {} encoder (a graphics driver may be missing)",
+            codec_name(codec)
+        ));
     }
     Ok(found)
 }
@@ -523,7 +548,7 @@ impl MfEncoder {
                 "output type",
             )?;
             check(
-                output.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264),
+                output.SetGUID(&MF_MT_SUBTYPE, &subtype_of(request.codec)),
                 "output type",
             )?;
             check(
@@ -543,15 +568,17 @@ impl MfEncoder {
                 "pixel aspect",
             )?;
             check(output.SetUINT32(&MF_MT_INTERLACE_MODE, 2), "interlace mode")?;
-            // Baseline (66) has no B-frames, so pictures come out in the order they went in.
-            check(output.SetUINT32(&MF_MT_MPEG2_PROFILE, 66), "profile")?;
-            // Describe the requested stream accurately: 1080p60 needs level 4.2.
-            let level = u32::from(crate::h264_stream::level_for(
-                request.width,
-                request.height,
-                request.fps,
-            ));
-            check(output.SetUINT32(&MF_MT_MPEG2_LEVEL, level), "H.264 level")?;
+            if request.codec == StreamCodec::H264 {
+                // Baseline (66) has no B-frames, so pictures come out in the order they went in.
+                check(output.SetUINT32(&MF_MT_MPEG2_PROFILE, 66), "profile")?;
+                // Describe the requested stream accurately: 1080p60 needs level 4.2.
+                let level = u32::from(crate::h264_stream::level_for(
+                    request.width,
+                    request.height,
+                    request.fps,
+                ));
+                check(output.SetUINT32(&MF_MT_MPEG2_LEVEL, level), "H.264 level")?;
+            }
             // Some encoders refuse the Baseline tag. Without it they still make in-order pictures,
             // because B-frames are switched off below; reordering is checked on every picture.
             if transform.SetOutputType(0, &output, 0).is_err() {
@@ -579,6 +606,18 @@ impl MfEncoder {
                 request.keyframe_frames.max(1),
             );
             codec_value(&codec, &CODECAPI_AVEncMPVDefaultBPictureCount, 0);
+            // On AMD the encoder has a fast tier at 50 and below that uses about half the video
+            // engine of the quality tier above it, for a little less quality at the same bitrate
+            // (measured: 0.5 dB, 0.014 SSIM on game-like motion).
+            codec_value(
+                &codec,
+                &CODECAPI_AVEncCommonQualityVsSpeed,
+                match request.effort {
+                    EncoderSpeed::Fast => 0,
+                    EncoderSpeed::Balanced => 75,
+                    EncoderSpeed::Quality => 100,
+                },
+            );
             codec_bool(&codec, &CODECAPI_AVLowLatencyMode);
             codec_bool(&codec, &CODECAPI_AVEncCommonRealTime);
         }
@@ -637,6 +676,7 @@ impl MfEncoder {
         }
         validate_output_contract(
             read_output_contract(&output_contract)?,
+            request.codec,
             request.width,
             request.height,
             request.fps,
@@ -664,6 +704,8 @@ impl MfEncoder {
             provides_samples,
             output_size,
             output_contract,
+            codec: request.codec,
+            vps: None,
             sps: None,
             pps: None,
             parameter_sets_published: false,
@@ -708,7 +750,7 @@ impl MfEncoder {
             .and_then(|n| n.checked_mul(3))
             .map(|n| n / 2)
             .ok_or("GPU input size overflow")?;
-        let max_samples = (128 * 1024 * 1024 / bytes.max(1)).min(8) as u32;
+        let max_samples = (128 * 1024 * 1024 / bytes.max(1)).min(4) as u32;
         if max_samples < 2 {
             return Err("GPU sample pool exceeds its memory budget".to_owned());
         }
@@ -806,6 +848,43 @@ impl MfEncoder {
         Ok(())
     }
 
+    /// Remembers the parameter sets an encoder produced. Once the file header has been written
+    /// from them, a change is an error: pictures already buffered would no longer match it.
+    fn take_parameter_sets(
+        &mut self,
+        vps: Option<Vec<u8>>,
+        sps: Option<Vec<u8>>,
+        pps: Option<Vec<u8>>,
+    ) -> Result<(), String> {
+        if self.parameter_sets_published
+            && vps
+                .as_ref()
+                .is_some_and(|vps| self.vps.as_ref() != Some(vps))
+        {
+            return Err(
+                "encoder changed H.265 parameter sets after output; a new recording stream is required"
+                    .to_owned(),
+            );
+        }
+        if let Some(vps) = vps {
+            self.vps = Some(vps);
+        }
+        update_parameter_sets(
+            &mut self.sps,
+            &mut self.pps,
+            sps,
+            pps,
+            self.parameter_sets_published,
+        )
+    }
+
+    /// True once every parameter set the codec needs for its file header is known.
+    fn have_parameter_sets(&self) -> bool {
+        self.sps.is_some()
+            && self.pps.is_some()
+            && (self.codec == StreamCodec::H264 || self.vps.is_some())
+    }
+
     /// Takes the parameter sets some encoders publish on the output type.
     fn read_sequence_header(&mut self) -> Result<(), String> {
         // SAFETY: reads a blob attribute from the current output type into a buffer sized by the
@@ -838,23 +917,20 @@ impl MfEncoder {
             buffer
         };
         for unit in split_nal_units(&blob) {
-            match unit[0] & 0x1f {
-                7 => update_parameter_sets(
-                    &mut self.sps,
-                    &mut self.pps,
-                    Some(unit.to_vec()),
-                    None,
-                    self.parameter_sets_published,
-                )?,
-                8 => update_parameter_sets(
-                    &mut self.sps,
-                    &mut self.pps,
-                    None,
-                    Some(unit.to_vec()),
-                    self.parameter_sets_published,
-                )?,
-                _ => {}
-            }
+            let (vps, sps, pps) = match self.codec {
+                StreamCodec::H264 => match unit[0] & 0x1f {
+                    7 => (None, Some(unit.to_vec()), None),
+                    8 => (None, None, Some(unit.to_vec())),
+                    _ => continue,
+                },
+                StreamCodec::H265 => match hevc_stream::nal_type(unit) {
+                    32 => (Some(unit.to_vec()), None, None),
+                    33 => (None, Some(unit.to_vec()), None),
+                    34 => (None, None, Some(unit.to_vec())),
+                    _ => continue,
+                },
+            };
+            self.take_parameter_sets(vps, sps, pps)?;
         }
         Ok(())
     }
@@ -953,25 +1029,29 @@ impl MfEncoder {
         let bytes = copy_sample(&sample)?;
         // SAFETY: a plain attribute read.
         let time = unsafe { sample.GetSampleTime() }.unwrap_or(0);
-        let picture = annexb_to_length_prefixed(&bytes)?;
-        update_parameter_sets(
-            &mut self.sps,
-            &mut self.pps,
-            picture.sps,
-            picture.pps,
-            self.parameter_sets_published,
-        )?;
-        if self.sps.is_none() || self.pps.is_none() {
+        let (data, keyframe) = match self.codec {
+            StreamCodec::H264 => {
+                let picture = annexb_to_length_prefixed(&bytes)?;
+                self.take_parameter_sets(None, picture.sps, picture.pps)?;
+                (picture.data, picture.keyframe)
+            }
+            StreamCodec::H265 => {
+                let picture = hevc_stream::annexb_to_length_prefixed(&bytes)?;
+                self.take_parameter_sets(picture.vps, picture.sps, picture.pps)?;
+                (picture.data, picture.keyframe)
+            }
+        };
+        if !self.have_parameter_sets() {
             self.read_sequence_header()?;
         }
-        if self.sps.is_none() || self.pps.is_none() {
+        if !self.have_parameter_sets() {
             return Err(format!("{}: the encoder gave no parameter sets", self.name));
         }
         let reordered = time < self.last_time;
         self.last_time = self.last_time.max(time);
         out.push(HardwarePacket {
-            data: picture.data,
-            keyframe: picture.keyframe,
+            data,
+            keyframe,
             reordered,
         });
         self.parameter_sets_published = true;
@@ -1013,7 +1093,7 @@ impl MfEncoder {
     fn renegotiate_output(&mut self) -> Result<(), String> {
         crate::d3d11::stream_changed();
         let expected = read_output_contract(&self.output_contract)?;
-        validate_output_contract(expected, self.width, self.height, self.fps)?;
+        validate_output_contract(expected, self.codec, self.width, self.height, self.fps)?;
         for index in 0..MAX_OUTPUT_TYPES {
             // SAFETY: bounded enumeration of the configured transform's output stream.
             let available = match unsafe { self.transform.GetOutputAvailableType(0, index) } {
@@ -1306,10 +1386,19 @@ impl HardwareEncoder for MfEncoder {
     }
 
     fn avcc(&self) -> Vec<u8> {
-        match (&self.sps, &self.pps) {
-            (Some(sps), Some(pps)) => build_avcc(sps, pps).unwrap_or_default(),
+        match (self.codec, &self.vps, &self.sps, &self.pps) {
+            (StreamCodec::H264, _, Some(sps), Some(pps)) => {
+                build_avcc(sps, pps).unwrap_or_default()
+            }
+            (StreamCodec::H265, Some(vps), Some(sps), Some(pps)) => {
+                hevc_stream::build_hvcc(vps, sps, pps).unwrap_or_default()
+            }
             _ => Vec::new(),
         }
+    }
+
+    fn codec(&self) -> StreamCodec {
+        self.codec
     }
 
     fn name(&self) -> String {
@@ -1339,13 +1428,14 @@ impl Drop for MfEncoder {
     }
 }
 
-/// Opens the first hardware H.264 encoder Windows lists that accepts this request.
+/// Opens the first hardware encoder for the requested codec that Windows lists and that accepts
+/// this request.
 pub fn open(request: &HardwareRequest) -> Result<Box<dyn HardwareEncoder>, String> {
     let api = api()?;
     // Listing encoders needs Media Foundation to be running; this is released last.
     let _runtime = Runtime::start(api)?;
     let mut failures = Vec::new();
-    for activate in activates(api)? {
+    for activate in activates(api, request.codec)? {
         match MfEncoder::open(api, activate, request) {
             Ok(encoder) => return Ok(Box::new(encoder)),
             Err(why) => failures.push(why),
@@ -1361,7 +1451,7 @@ mod output_contract_tests {
     fn requested() -> OutputContract {
         OutputContract {
             major: MFMediaType_Video,
-            subtype: MFVideoFormat_H264,
+            subtype: subtype_of(StreamCodec::H264),
             frame_size: Some(pack(1920, 1080)),
             frame_rate: Some(pack(60, 1)),
             bitrate: Some(12_000_000),
@@ -1440,17 +1530,18 @@ mod output_contract_tests {
             partial.subtype
         ));
         assert!(!output_contract_matches(expected, partial));
-        assert!(validate_output_contract(expected, 1920, 1080, 60).is_ok());
-        assert!(validate_output_contract(partial, 1920, 1080, 60).is_err());
-        assert!(validate_output_contract(expected, 1920, 1080, 30).is_err());
-        assert!(validate_output_contract(expected, 0, 1080, 60).is_err());
-        assert!(validate_output_contract(expected, 1920, 1080, 0).is_err());
+        assert!(validate_output_contract(expected, StreamCodec::H264, 1920, 1080, 60).is_ok());
+        assert!(validate_output_contract(partial, StreamCodec::H264, 1920, 1080, 60).is_err());
+        assert!(validate_output_contract(expected, StreamCodec::H264, 1920, 1080, 30).is_err());
+        assert!(validate_output_contract(expected, StreamCodec::H264, 0, 1080, 60).is_err());
+        assert!(validate_output_contract(expected, StreamCodec::H264, 1920, 1080, 0).is_err());
         assert!(
             validate_output_contract(
                 OutputContract {
                     bitrate: Some(0),
                     ..expected
                 },
+                StreamCodec::H264,
                 1920,
                 1080,
                 60

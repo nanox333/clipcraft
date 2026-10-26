@@ -1,7 +1,7 @@
 //! Discord UI and lifecycle. The engine owns every field allowed out through IPC.
 use clipcraft_engine::presence::{
     PresenceActivity, PresenceContext, PresenceSettings, resolve_application_id,
-    shared_application_id, valid_application_id,
+    shared_application_id,
 };
 use clipcraft_engine::{Command, CommandOutput, execute};
 use clipcraft_platform::presence::{PresenceStatus, PresenceWorker};
@@ -10,7 +10,6 @@ use eframe::egui::{self, RichText};
 #[derive(Default)]
 pub(crate) struct State {
     worker: Option<PresenceWorker>,
-    id_draft: Option<String>,
     failed: bool,
     preview: Option<PresenceActivity>,
     badges: std::collections::HashMap<&'static str, egui::TextureHandle>,
@@ -70,50 +69,6 @@ impl State {
                 ui.request_repaint_after(std::time::Duration::from_millis(250));
             }
         }
-    }
-    pub(crate) fn show_advanced(&mut self, ui: &mut egui::Ui, settings: &mut PresenceSettings) {
-        crate::settings::advanced_heading(ui);
-        crate::settings::card(ui, "Discord developer settings", |ui| {
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new("Discord Application ID")
-                    .family(crate::kit::medium())
-                    .size(14.0),
-            );
-            let draft = self
-                .id_draft
-                .get_or_insert_with(|| settings.application_id.clone());
-            let response = ui.add(
-                egui::TextEdit::singleline(draft)
-                    .char_limit(20)
-                    .hint_text("Application ID — not a bot token")
-                    .desired_width(ui.available_width().min(360.0)),
-            );
-            crate::kit::name_text_box(&response, "Discord Application ID", draft);
-            if crate::kit::labelled_button(
-                ui,
-                crate::kit::Icon::Gear,
-                "Apply Application ID",
-                false,
-                valid_application_id(draft.trim()) && draft.trim() != settings.application_id,
-            )
-            .clicked()
-            {
-                settings.application_id = draft.trim().to_owned();
-            }
-            ui.label(RichText::new("Create an application named ClipCraft in Discord's developer portal, then copy its Application ID from General Information. No bot, secret, token or login inside ClipCraft is needed.").size(12.0).color(crate::kit::MUTED));
-            ui.hyperlink_to(
-                "Discord developer portal",
-                "https://discord.com/developers/applications",
-            );
-            if !settings.application_id.is_empty()
-                && ui.button("Use shared ClipCraft identity").clicked()
-            {
-                settings.application_id.clear();
-                self.id_draft = Some(String::new());
-            }
-            ui.label(RichText::new("This override is for developers. Normal installations use the shared identity included in the build. An Application ID is public; never enter a token or secret.").size(12.0).color(crate::kit::MUTED));
-        });
     }
     pub(crate) fn shutdown(&mut self) {
         if let Some(mut worker) = self.worker.take() {
@@ -253,7 +208,6 @@ mod tests {
                 crate::kit::apply_theme(ctx);
                 egui::CentralPanel::default().show(ctx, |ui| {
                     state.show(ui, settings);
-                    state.show_advanced(ui, settings);
                 });
             },
         )
@@ -314,12 +268,6 @@ mod tests {
         assert!(!settings.show_match);
         activate(&mut state, &mut settings, "Show map, mode, score and hero");
         assert!(settings.show_match);
-        state.id_draft = Some("123456789012345678".into());
-        activate(&mut state, &mut settings, "Apply Application ID");
-        assert_eq!(settings.application_id, "123456789012345678");
-        assert!(state.worker.is_none());
-        activate(&mut state, &mut settings, "Use shared ClipCraft identity");
-        assert!(settings.application_id.is_empty());
         activate(
             &mut state,
             &mut settings,

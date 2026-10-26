@@ -38,6 +38,7 @@ fn full_hd_frames_are_resized_before_encoding() {
         height: 1080,
         fps: 30,
         avcc: encoder.avcc(),
+        codec: clipcraft_record::StreamCodec::H264,
     };
     let luma = vec![100; 1920 * 1080];
     let chroma = vec![128; 960 * 540];

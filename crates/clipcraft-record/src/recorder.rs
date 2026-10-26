@@ -9,16 +9,17 @@ use std::time::{Duration, Instant};
 
 use clipcraft_capture::reframe::{Framing, OutputShape, PixelRect, Reframe, reframe};
 use clipcraft_capture::{CaptureFrame, CaptureSource, MAX_CAPTURE_EDGE, NativeCaptureFrame};
-use filmcraft_h264enc::{
-    Encoder, EncoderConfig, PacketFormat, Preset, Profile, RateControl, YuvFrame,
-};
+use filmcraft_h264enc::{Encoder, EncoderConfig, PacketFormat, Preset, Profile, RateControl};
 
 use crate::RecordError;
 use crate::audio::{AudioBuffer, AudioEngine, AudioInputStatus, AudioSetup, AudioTrackInfo};
-use crate::convert::{I420, convert, convert_rgba};
-use crate::hardware::{HardwareEncoder, HardwareProvider, HardwareRequest, SurfaceFit};
+use crate::convert::{convert, convert_rgba};
+use crate::hardware::{
+    HardwareEncoder, HardwareProvider, HardwareRequest, StreamCodec, SurfaceFit,
+};
 use crate::mux::{ClipAudio, ClipFormat, SavedClip, VideoInfo, write_clip};
 use crate::replay::{EncodedSample, ReplayBuffer};
+use crate::software::{Delivery, SoftwareEncoder};
 
 /// How hard the encoder works.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -57,6 +58,9 @@ pub struct RecordConfig {
     /// Threads the encoder and the pixel conversion may use (0 chooses half the processors, and
     /// never more than four, so a game keeps the rest).
     pub threads: usize,
+    /// The format to record in. Only a hardware encoder can make H.265; without one, or when it
+    /// fails, the recording is H.264 and the status says why.
+    pub codec: StreamCodec,
     /// Opens a hardware encoder to use instead of the software one. When it cannot, or fails
     /// later, the software encoder takes over.
     pub hardware: Option<HardwareProvider>,
@@ -65,8 +69,10 @@ pub struct RecordConfig {
     pub gap_restart_seconds: u32,
 }
 
-/// Most threads the software encoder takes when the number is left to the recorder.
-const MAX_AUTO_THREADS: usize = 4;
+/// Most threads the software encoder takes when the number is left to the recorder. Encoding in
+/// bursts across eight threads finishes each picture sooner than four, which is what keeps 1080p
+/// at 60 pictures a second from dropping pictures.
+const MAX_AUTO_THREADS: usize = 8;
 
 /// Half the processors, but never more than [`MAX_AUTO_THREADS`]: on a big machine the rest stay
 /// free for the game.
@@ -228,6 +234,9 @@ struct Shared {
     wake: Condvar,
     /// A request for the next captured picture, for a screenshot, and where it is left.
     screenshot_wanted: AtomicBool,
+    /// The encoder has opened and taken its first picture. Pictures replaced before that were
+    /// only waiting for it to start, so they are not counted as dropped.
+    encoder_ready: AtomicBool,
     screenshot: Mutex<Option<CaptureFrame>>,
     screenshot_ready: Condvar,
 }
@@ -306,6 +315,7 @@ impl Recorder {
             mailbox: Mutex::new(Mailbox::default()),
             wake: Condvar::new(),
             screenshot_wanted: AtomicBool::new(false),
+            encoder_ready: AtomicBool::new(false),
             screenshot: Mutex::new(None),
             screenshot_ready: Condvar::new(),
         });
@@ -565,7 +575,9 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
                     shared.screenshot_ready.notify_all();
                 }
                 let mut mailbox = lock(&shared.mailbox);
-                if mailbox.slot.replace(Queued { frame, pts }).is_some() {
+                if mailbox.slot.replace(Queued { frame, pts }).is_some()
+                    && shared.encoder_ready.load(Ordering::SeqCst)
+                {
                     lock(&shared.stats).dropped += 1;
                 }
                 drop(mailbox);
@@ -598,7 +610,7 @@ fn audio_loop(shared: &Shared, mut engine: AudioEngine, epoch: Instant) {
 }
 
 enum Stage {
-    Software(Box<Encoder>),
+    Software(SoftwareEncoder),
     Hardware(Box<dyn HardwareEncoder>),
 }
 
@@ -606,7 +618,6 @@ struct Active {
     stage: Stage,
     source_size: (u32, u32),
     plan: Reframe,
-    picture: I420,
     rgba: Vec<u8>,
     /// Times of the pictures a hardware encoder has taken and not yet returned.
     pending: VecDeque<i64>,
@@ -668,6 +679,7 @@ fn encode_loop(shared: &Shared, config: &RecordConfig) {
             shared.fail(error);
             break;
         }
+        shared.encoder_ready.store(true, Ordering::SeqCst);
         lock(&shared.stats).encode_nanos += started.elapsed().as_nanos();
     }
     if let Some(mut finished) = active
@@ -694,9 +706,7 @@ fn store_packet(shared: &Shared, data: Vec<u8>, keyframe: bool, pts: i64) {
 fn flush(shared: &Shared, active: &mut Active) -> Result<(), RecordError> {
     match &mut active.stage {
         Stage::Software(encoder) => {
-            for packet in encoder.flush() {
-                store_packet(shared, packet.data, packet.keyframe, packet.pts);
-            }
+            encoder.flush(&mut |delivery| store_delivery(shared, delivery))?;
         }
         Stage::Hardware(encoder) => {
             let packets = encoder.flush().map_err(|why| {
@@ -722,14 +732,16 @@ fn software_stage(
 ) -> Result<Stage, RecordError> {
     let encoder = Encoder::new(encoder_config(config, plan, threads))
         .map_err(|_| RecordError::EncoderFailed)?;
+    let encoder = SoftwareEncoder::start(encoder, plan.output_width, plan.output_height)?;
     *lock(&shared.video) = Some(VideoInfo {
         width: plan.output_width,
         height: plan.output_height,
         fps: config.fps,
         avcc: encoder.avcc(),
+        codec: StreamCodec::H264,
     });
     *lock(&shared.encoder) = label;
-    Ok(Stage::Software(Box::new(encoder)))
+    Ok(Stage::Software(encoder))
 }
 
 /// Opens the hardware encoder if one was offered and works; otherwise the software encoder, with
@@ -741,15 +753,22 @@ fn open_stage(
     threads: usize,
 ) -> Result<Stage, RecordError> {
     let Some(provider) = config.hardware.as_ref() else {
-        return software_stage(shared, config, plan, threads, "CPU".to_owned());
+        let label = if config.codec == StreamCodec::H265 {
+            "CPU (H.265 needs the graphics card, so this is H.264)"
+        } else {
+            "CPU"
+        };
+        return software_stage(shared, config, plan, threads, label.to_owned());
     };
     let request = HardwareRequest {
+        codec: config.codec,
         width: plan.output_width,
         height: plan.output_height,
         fps: config.fps,
         video_kbps: config.video_kbps,
         constant_bitrate: config.constant_bitrate,
         keyframe_frames: config.keyframe_seconds.saturating_mul(config.fps).max(1),
+        effort: config.speed,
     };
     match provider.open(&request) {
         Ok(encoder) => {
@@ -763,7 +782,11 @@ fn open_stage(
             config,
             plan,
             threads,
-            format!("CPU (GPU unavailable: {why})"),
+            if config.codec == StreamCodec::H265 {
+                format!("CPU (H.265 unavailable, recording H.264: {why})")
+            } else {
+                format!("CPU (GPU unavailable: {why})")
+            },
         ),
     }
 }
@@ -790,10 +813,6 @@ fn new_active(
     Ok(Active {
         stage,
         source_size: (source_width, source_height),
-        picture: I420::black(
-            if software { plan.output_width } else { 2 },
-            if software { plan.output_height } else { 2 },
-        )?,
         rgba: Vec::new(),
         pending: VecDeque::new(),
         avcc_sent: software,
@@ -819,7 +838,6 @@ fn fail_over(
         format!("CPU (GPU stopped: {why})"),
     )?;
     active.stage = stage;
-    active.picture = I420::black(active.plan.output_width, active.plan.output_height)?;
     active.pending.clear();
     active.avcc_sent = true;
     active.last_pts = -1;
@@ -879,28 +897,37 @@ fn encode_one(
         }
         // Fell back to software: this picture is encoded below, as the new stream's first.
     }
-    let pixels = frame.readback()?;
-    convert(pixels, &current.plan, &mut current.picture, threads)?;
-    let picture = &current.picture;
-    let yuv = YuvFrame {
-        y: &picture.y,
-        u: &picture.u,
-        v: &picture.v,
-        y_stride: picture.width as usize,
-        uv_stride: picture.width as usize / 2,
-    };
-    let Stage::Software(encoder) = &mut current.stage else {
+    // The encoder works on the last picture while this one is read back and converted.
+    let Active { stage, plan, .. } = &mut *current;
+    let Stage::Software(encoder) = stage else {
         return Err(RecordError::EncoderFailed);
     };
-    let packets = encoder
-        .try_encode(&yuv, pts)
-        .map_err(|_| RecordError::EncoderFailed)?;
+    let mut deliver = |delivery| store_delivery(shared, delivery);
+    encoder.poll(&mut deliver)?;
+    let pixels = frame.readback()?;
+    let mut picture = encoder.acquire(&mut deliver)?;
+    convert(pixels, plan, &mut picture, threads)?;
+    encoder.submit(picture, pts)?;
     current.last_pts = pts;
-    for packet in packets {
-        store_packet(shared, packet.data, packet.keyframe, packet.pts);
-    }
-    lock(&shared.stats).encoded += 1;
     Ok(())
+}
+
+/// Stores what the software encoder finished: packets go to the replay buffer, and a finished
+/// picture counts as encoded.
+fn store_delivery(shared: &Shared, delivery: Delivery) {
+    match delivery {
+        Delivery::Frame(packets) => {
+            for packet in packets {
+                store_packet(shared, packet.data, packet.keyframe, packet.pts);
+            }
+            lock(&shared.stats).encoded += 1;
+        }
+        Delivery::Tail(packets) => {
+            for packet in packets {
+                store_packet(shared, packet.data, packet.keyframe, packet.pts);
+            }
+        }
+    }
 }
 
 /// Encodes one picture on the hardware encoder. Any error, or a B-frame, hands the stream back
@@ -951,6 +978,7 @@ fn encode_hardware(
                 height: current.plan.output_height,
                 fps: shared.fps,
                 avcc: encoder.avcc(),
+                codec: encoder.codec(),
             });
             current.avcc_sent = true;
         }
@@ -1008,7 +1036,7 @@ mod tests {
         assert_eq!(auto_threads(1), 1);
         assert_eq!(auto_threads(4), 2);
         assert_eq!(auto_threads(8), 4);
-        assert_eq!(auto_threads(16), 4);
-        assert_eq!(auto_threads(128), 4);
+        assert_eq!(auto_threads(16), 8);
+        assert_eq!(auto_threads(128), 8);
     }
 }

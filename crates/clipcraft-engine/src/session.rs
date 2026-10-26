@@ -10,11 +10,13 @@ use clipcraft_capture::CaptureSource;
 use clipcraft_record::{
     AudioConfig, AudioControl, AudioInput, AudioKind, AudioProvider, AudioSetup, ClipFormat,
     EncoderSpeed, HardwareProvider, RecordConfig, RecordError, RecordState, RecordStatus, Recorder,
-    SavedClip,
+    SavedClip, StreamCodec,
 };
 
 use crate::storage::{StoredClip, cleanup_plan, list_clips};
-use crate::{Container, EncoderPreset, EngineError, RateControl, RecordingSettings, VideoEncoder};
+use crate::{
+    Container, EncoderPreset, EngineError, RateControl, RecordingSettings, VideoCodec, VideoEncoder,
+};
 
 /// Every clip ClipCraft saves starts with this, so cleanup only ever deletes its own clips.
 pub const CLIP_PREFIX: &str = "ClipCraft ";
@@ -47,6 +49,10 @@ pub fn record_config(settings: &RecordingSettings) -> RecordConfig {
         max_buffer_bytes: usize::try_from(wanted.clamp(64 * 1024 * 1024, 2 * 1024 * 1024 * 1024))
             .unwrap_or(64 * 1024 * 1024),
         threads: 0,
+        codec: match settings.codec {
+            VideoCodec::H264 => StreamCodec::H264,
+            VideoCodec::H265 => StreamCodec::H265,
+        },
         hardware: None,
         gap_restart_seconds: 10,
     }

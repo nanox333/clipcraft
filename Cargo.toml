@@ -59,6 +59,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 fs4 = "1.1"
 libloading = "0.8"
+tray-icon = { version = "0.26", default-features = false }
 rfd = { version = "0.17.2", default-features = true }
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 

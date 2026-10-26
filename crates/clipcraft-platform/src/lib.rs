@@ -19,6 +19,7 @@ mod h264_headers;
 #[cfg(any(windows, target_os = "linux", test))]
 mod h264_stream;
 mod hardware;
+mod hevc_stream;
 mod hotkey;
 #[cfg(windows)]
 mod mf_encoder;
@@ -29,6 +30,7 @@ mod priority;
 mod process;
 #[cfg(target_os = "linux")]
 mod pulse;
+mod timer;
 #[cfg(target_os = "linux")]
 mod vaapi;
 #[cfg(target_os = "linux")]
@@ -42,6 +44,7 @@ pub use hardware::{hardware_provider, probe_hardware_encoder, register_hardware_
 pub use hotkey::{HotkeyBinding, HotkeyEvent, HotkeyListener, parse_shortcut};
 pub use priority::set_background_priority;
 pub use process::{ProcessObserver, RunningProcess, running_processes, steam_installation_roots};
+pub use timer::set_fine_timer;
 
 /// Process-local counters for measuring the Windows native path without media/path logging.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

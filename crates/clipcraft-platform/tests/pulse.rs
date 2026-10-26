@@ -137,6 +137,7 @@ fn a_clip_of_what_the_computer_played_contains_it() {
         replay_seconds: 10,
         max_buffer_bytes: 64 * 1024 * 1024,
         threads: 2,
+        codec: clipcraft_record::StreamCodec::H264,
         hardware: None,
         gap_restart_seconds: 10,
     };

@@ -117,6 +117,7 @@ fn generate(path: &Path) -> Result<(), Box<dyn Error>> {
         height: H as u32,
         fps: 60,
         avcc: encoder.avcc(),
+        codec: clipcraft_record::StreamCodec::H264,
     };
     let mut y = vec![0; W * H];
     let u = vec![100; W * H / 4];

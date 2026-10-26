@@ -363,6 +363,7 @@ fn a_small_sequence_budget_reduces_the_actual_encoded_canvas() {
         height: 720,
         fps: 1,
         avcc: encoder.avcc(),
+        codec: clipcraft_record::StreamCodec::H264,
     };
     let y = vec![100; 1280 * 720];
     let uv = vec![128; 640 * 360];

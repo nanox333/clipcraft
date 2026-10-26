@@ -21,9 +21,12 @@ mod library_view;
 mod organize;
 mod playback;
 mod presence;
+mod rows;
 mod settings;
 mod svg;
 mod thumbs;
+mod tray;
+mod tray_menu;
 mod trim;
 
 use eframe::egui;
@@ -74,6 +77,7 @@ fn main() -> eframe::Result<()> {
                     .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
             let mut app = ClipCraftApp::restored();
+            app.tray = tray::Tray::new(&creation.egui_ctx);
             if let Some(path) = clipcraft_engine::default_editor_draft_path() {
                 app.editor.enable_recovery(path, &creation.egui_ctx);
             }
@@ -134,6 +138,12 @@ struct ClipCraftApp {
     /// Where the recording settings are saved; `None` keeps them in memory only.
     settings_path: Option<PathBuf>,
     settings_tab: SettingsTab,
+    /// What is typed in the settings search box.
+    settings_search: String,
+    /// The system-tray icon, when the platform has one.
+    tray: Option<tray::Tray>,
+    /// The tray menu, while it is open.
+    tray_menu: Option<tray_menu::TrayMenu>,
     settings_state: settings::SettingsState,
     game_data: game_data::State,
     presence: presence::State,
@@ -168,32 +178,37 @@ enum ProbeMessage {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum SettingsTab {
     #[default]
+    Overview,
     General,
     Storage,
     Hotkeys,
     Games,
     Capture,
-    Quality,
+    Video,
     Audio,
+    Replay,
     About,
 }
 
 impl SettingsTab {
     fn label(self) -> &'static str {
         match self {
+            Self::Overview => "Overview",
             Self::General => "General",
             Self::Storage => "Storage",
             Self::Hotkeys => "Hotkeys",
             Self::Games => "Games",
             Self::Capture => "Capture",
-            Self::Quality => "Quality",
+            Self::Video => "Video",
             Self::Audio => "Audio",
+            Self::Replay => "Replay",
             Self::About => "About",
         }
     }
 
     fn help(self) -> &'static str {
         match self {
+            Self::Overview => "Your setup at a glance, what to fix, and one-click profiles.",
             Self::General => {
                 "Where your clips live, which settings are shown, and when ClipCraft starts."
             }
@@ -201,14 +216,101 @@ impl SettingsTab {
             Self::Hotkeys => "Keyboard shortcuts for recording.",
             Self::Games => "Choose which running games can arm replay capture.",
             Self::Capture => "What gets recorded.",
-            Self::Quality => "How sharp and smooth your clips are, and how big.",
+            Self::Video => {
+                "How sharp and smooth your clips are, which chip encodes them, and how big they get."
+            }
             Self::Audio => "What sound is recorded and how well.",
+            Self::Replay => "How far back a clip reaches and how much comes after the hotkey.",
             Self::About => {
                 "What ClipCraft is, which version you have, and where to find the project."
             }
         }
     }
 }
+
+/// Settings that are not rows (folders, lists, forms), so the search box can still point at them.
+const SETTINGS_INDEX: &[(&str, &str, SettingsTab)] = &[
+    (
+        "Library folder",
+        "clips folder where videos are watched scan",
+        SettingsTab::General,
+    ),
+    (
+        "Discord activity",
+        "rich presence status share profile",
+        SettingsTab::General,
+    ),
+    (
+        "Diagnostics report",
+        "help support copy problem bug",
+        SettingsTab::General,
+    ),
+    (
+        "Clips folder",
+        "save location directory path move",
+        SettingsTab::Storage,
+    ),
+    (
+        "Storage used",
+        "disk space size usage",
+        SettingsTab::Storage,
+    ),
+    (
+        "Save clip hotkey",
+        "shortcut key keybind F8",
+        SettingsTab::Hotkeys,
+    ),
+    (
+        "Record hotkey",
+        "shortcut key toggle recording F9 start stop",
+        SettingsTab::Hotkeys,
+    ),
+    (
+        "Screenshot hotkey",
+        "shortcut key picture F11",
+        SettingsTab::Hotkeys,
+    ),
+    (
+        "Microphone hotkey",
+        "mute push to talk shortcut F10",
+        SettingsTab::Hotkeys,
+    ),
+    (
+        "Games only capture",
+        "game only recognized automatic",
+        SettingsTab::Games,
+    ),
+    (
+        "Desktop replay",
+        "between games after game always desktop continuation",
+        SettingsTab::Games,
+    ),
+    (
+        "Known games",
+        "list supported counter-strike dota league detection",
+        SettingsTab::Games,
+    ),
+    (
+        "Steam games",
+        "installed library detect",
+        SettingsTab::Games,
+    ),
+    (
+        "Custom games",
+        "add game executable rule override",
+        SettingsTab::Games,
+    ),
+    (
+        "Game integrations",
+        "cs2 dota 2 league match details score",
+        SettingsTab::Games,
+    ),
+    (
+        "About ClipCraft",
+        "version license project",
+        SettingsTab::About,
+    ),
+];
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum Page {
@@ -219,6 +321,16 @@ enum Page {
 }
 
 impl eframe::App for ClipCraftApp {
+    /// While the tray menu is open its window is cleared to the menu colour, so it never flashes
+    /// a different colour before the first frame is painted.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        if self.tray_menu.is_some() {
+            kit::PANEL.to_normalized_gamma_f32()
+        } else {
+            Color32::from_rgba_unmultiplied(12, 12, 12, 180).to_normalized_gamma_f32()
+        }
+    }
+
     fn update(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
         self.index_store.wake = context.clone();
         self.poll_index_store(context);
@@ -260,6 +372,8 @@ impl eframe::App for ClipCraftApp {
         self.poll_find(context);
         self.draw_screen(context);
         self.draw_focus_ring(context);
+        self.hide_to_tray(context);
+        self.poll_tray(context);
         self.index_save_status(context);
         resize_from_the_edges(context);
     }
@@ -272,6 +386,80 @@ impl eframe::App for ClipCraftApp {
 }
 
 impl ClipCraftApp {
+    /// Runs what the tray asked for and draws its menu while one is open.
+    fn poll_tray(&mut self, context: &egui::Context) {
+        let recording = self.capture.is_active();
+        let status = tray_menu::Status {
+            recording,
+            text: match (recording, self.capture.game_recording_name()) {
+                (true, Some(game)) => format!("Recording {game}"),
+                (true, None) => "Recording".to_owned(),
+                (false, _) if self.capture.game_capture_paused() => {
+                    "Game capture paused".to_owned()
+                }
+                (false, _) => "Not recording".to_owned(),
+            },
+        };
+        let mut actions = Vec::new();
+        if let Some(tray) = self.tray.as_ref() {
+            while let Some(action) = tray.next_action() {
+                actions.push(action);
+            }
+        }
+        if let Some(menu) = self.tray_menu.as_mut() {
+            let (choice, open) = menu.show(context, &status);
+            actions.extend(choice);
+            if !open {
+                self.tray_menu = None;
+            }
+        }
+        for action in actions {
+            match action {
+                tray::Action::Menu { x, y } => {
+                    self.tray_menu = Some(tray_menu::TrayMenu::at(context, x, y));
+                }
+                tray::Action::Open => tray::show(context),
+                tray::Action::ToggleRecording => {
+                    if recording {
+                        self.stop_capture();
+                    } else {
+                        self.start_capture();
+                    }
+                }
+                tray::Action::SaveClip => self.save_clip(),
+                tray::Action::Screenshot => self.take_screenshot(),
+                tray::Action::OpenClipsFolder => {
+                    if let Some(folder) = self.clips_folder() {
+                        self.reveal_media(folder);
+                    }
+                }
+                tray::Action::OpenLibrary => {
+                    self.page = Page::Library;
+                    tray::show(context);
+                }
+                tray::Action::OpenSettings => {
+                    self.page = Page::Settings;
+                    tray::show(context);
+                }
+                tray::Action::Quit => tray::Tray::quit(context),
+            }
+        }
+    }
+
+    /// Turns a close into a minimize while the tray icon is there to bring the window back.
+    /// Minimized, not hidden: a hidden window stops getting frames, which would stall capture.
+    fn hide_to_tray(&mut self, context: &egui::Context) {
+        if self.tray.is_some()
+            && self.recording.close_to_tray
+            && !self.index_store.closing
+            && !tray::Tray::quitting()
+            && context.input(|i| i.viewport().close_requested())
+        {
+            context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            context.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+    }
+
     fn sync_presence(&mut self, context: &egui::Context) {
         use clipcraft_engine::presence::{PresenceContext, PresenceMode, integration_for_name};
         let mode = if self.editor.open {
@@ -1709,11 +1897,32 @@ impl ClipCraftApp {
         });
     }
 
-    /// The category list on the left of Settings.
+    /// The category list on the left of Settings, with a search that finds any setting.
     fn settings_nav(&mut self, ui: &mut egui::Ui) {
         ui.set_width(ui.available_width());
+        ui.add_space(12.0);
+        ui.allocate_ui(
+            Vec2::new((ui.available_width() - 12.0).max(0.0), 40.0),
+            |ui| {
+                let response =
+                    settings::search_box(ui, &mut self.settings_search, "Search settings");
+                kit::name_text_box(&response, "Search settings", &self.settings_search);
+            },
+        );
         ui.add_space(8.0);
-        let groups: [(&str, Vec<SettingsTab>); 2] = [
+        let searching = !self.settings_search.trim().is_empty();
+        let groups: [(&str, Vec<SettingsTab>); 3] = [
+            ("", vec![SettingsTab::Overview]),
+            (
+                "Recording",
+                vec![
+                    SettingsTab::Capture,
+                    SettingsTab::Video,
+                    SettingsTab::Audio,
+                    SettingsTab::Replay,
+                    SettingsTab::Games,
+                ],
+            ),
             (
                 "Settings",
                 vec![
@@ -1723,63 +1932,158 @@ impl ClipCraftApp {
                     SettingsTab::About,
                 ],
             ),
-            (
-                "Recording",
-                vec![
-                    SettingsTab::Games,
-                    SettingsTab::Capture,
-                    SettingsTab::Quality,
-                    SettingsTab::Audio,
-                ],
-            ),
         ];
         for (group, tabs) in groups {
-            ui.add_space(8.0);
-            ui.label(
-                RichText::new(group.to_uppercase())
-                    .color(FAINT)
-                    .size(11.5)
-                    .family(kit::semibold()),
-            );
-            ui.add_space(4.0);
+            if !group.is_empty() {
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(group.to_uppercase())
+                        .color(FAINT)
+                        .size(11.5)
+                        .family(kit::semibold()),
+                );
+                ui.add_space(4.0);
+            }
             for tab in tabs {
-                let (rect, response) = ui.allocate_exact_size(
-                    Vec2::new((ui.available_width() - 12.0).max(0.0), 34.0),
-                    egui::Sense::click(),
-                );
-                let selected = self.settings_tab == tab;
-                if selected {
-                    ui.painter().rect_filled(rect, 8.0, kit::CARD_HOVER);
-                } else if response.hovered() {
-                    ui.painter().rect_filled(rect, 8.0, kit::CARD);
-                }
-                ui.painter().text(
-                    egui::pos2(rect.left() + 12.0, rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    tab.label(),
-                    egui::FontId::new(14.0, kit::medium()),
-                    if selected { TEXT } else { MUTED },
-                );
-                if response.clicked() {
+                let selected = !searching && self.settings_tab == tab;
+                if self.settings_nav_row(ui, tab.label(), selected) {
                     self.settings_tab = tab;
+                    self.settings_search.clear();
                 }
             }
         }
     }
 
+    /// One row in the settings list.
+    fn settings_nav_row(&self, ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
+        let (rect, response) = ui.allocate_exact_size(
+            Vec2::new((ui.available_width() - 12.0).max(0.0), 34.0),
+            egui::Sense::click(),
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.to_owned())
+        });
+        if selected {
+            ui.painter().rect_filled(rect, 8.0, kit::CARD_HOVER);
+        } else if response.hovered() {
+            ui.painter().rect_filled(rect, 8.0, kit::CARD);
+        }
+        ui.painter().text(
+            egui::pos2(rect.left() + 12.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::new(14.0, kit::medium()),
+            if selected { TEXT } else { MUTED },
+        );
+        response.clicked()
+    }
+
+    /// The search results: every matching row, drawn in place so it can be changed right there,
+    /// then links to the pages whose settings are not rows.
+    fn settings_search_results(&mut self, ui: &mut egui::Ui, query: &str) {
+        let before = self.recording.clone();
+        let mut working = before.clone();
+        let mut refresh = false;
+        let shown = {
+            let gpu = self.capture.gpu.clone();
+            let mut env = settings::Env {
+                gpu: &gpu,
+                capabilities: clipcraft_platform::capabilities(),
+                targets: &self.capture.targets,
+                refresh_targets: &mut refresh,
+            };
+            settings::search_results(ui, query, &mut working, &mut env, &mut self.settings_state)
+        };
+        if refresh {
+            self.capture.refresh_targets();
+        }
+        let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+        let others: Vec<(&str, SettingsTab)> = SETTINGS_INDEX
+            .iter()
+            .filter(|(title, keywords, tab)| {
+                let haystack = format!("{title} {keywords} {}", tab.label()).to_lowercase();
+                words.iter().all(|word| haystack.contains(word))
+            })
+            .map(|(title, _, tab)| (*title, *tab))
+            .collect();
+        if shown == 0 && others.is_empty() {
+            ui.label(
+                RichText::new("No setting matches that.")
+                    .color(MUTED)
+                    .size(14.0),
+            );
+        }
+        if !others.is_empty() {
+            ui.label(
+                RichText::new("Also on these pages")
+                    .color(TEXT)
+                    .size(15.5)
+                    .family(kit::semibold()),
+            );
+            ui.add_space(8.0);
+            for (title, tab) in others {
+                let (rect, response) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), 46.0),
+                    egui::Sense::click(),
+                );
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, title.to_owned())
+                });
+                ui.painter().rect_filled(
+                    rect,
+                    12.0,
+                    if response.hovered() {
+                        kit::CARD_HOVER
+                    } else {
+                        kit::CARD
+                    },
+                );
+                ui.painter().text(
+                    egui::pos2(rect.left() + 18.0, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    title,
+                    egui::FontId::new(14.0, kit::medium()),
+                    TEXT,
+                );
+                ui.painter().text(
+                    egui::pos2(rect.right() - 18.0, rect.center().y),
+                    egui::Align2::RIGHT_CENTER,
+                    format!("{} \u{203a}", tab.label()),
+                    egui::FontId::proportional(12.5),
+                    MUTED,
+                );
+                if response.clicked() {
+                    self.settings_tab = tab;
+                    self.settings_search.clear();
+                }
+                ui.add_space(6.0);
+            }
+        }
+        self.apply_recording(before, working);
+    }
+
     fn settings_content(&mut self, ui: &mut egui::Ui) {
+        let query = self.settings_search.trim().to_owned();
         ui.add_space(22.0);
         ui.label(
-            RichText::new(self.settings_tab.label())
-                .color(TEXT)
-                .size(28.0)
-                .family(kit::semibold()),
+            RichText::new(if query.is_empty() {
+                self.settings_tab.label()
+            } else {
+                "Search"
+            })
+            .color(TEXT)
+            .size(28.0)
+            .family(kit::semibold()),
         );
         ui.add_space(2.0);
         ui.label(
-            RichText::new(self.settings_tab.help())
-                .color(MUTED)
-                .size(14.0),
+            RichText::new(if query.is_empty() {
+                self.settings_tab.help().to_owned()
+            } else {
+                format!("Results for \u{201c}{query}\u{201d}")
+            })
+            .color(MUTED)
+            .size(14.0),
         );
         ui.add_space(24.0);
         if self.capture.is_stale(&self.recording) {
@@ -1827,12 +2131,37 @@ impl ClipCraftApp {
                 self.start_capture();
             }
         }
+        if !query.is_empty() {
+            self.settings_search_results(ui, &query);
+            ui.add_space(8.0);
+            return;
+        }
         let tab = self.settings_tab;
         self.settings_state
             .leave(tab == SettingsTab::Audio, tab == SettingsTab::Hotkeys);
         let before = self.recording.clone();
         let mut working = before.clone();
         match tab {
+            SettingsTab::Overview => {
+                let live = self
+                    .capture
+                    .record_status()
+                    .map(|status| settings::Live {
+                        recording: self.capture.is_active(),
+                        captured: status.frames_captured,
+                        dropped: status.frames_dropped,
+                        encode_ms: status.average_encode_ms,
+                        target_fps: status.target_fps,
+                    })
+                    .unwrap_or(settings::Live {
+                        recording: false,
+                        captured: 0,
+                        dropped: 0,
+                        encode_ms: 0.0,
+                        target_fps: self.recording.frames_per_second,
+                    });
+                settings::overview(ui, &mut working, &self.capture.gpu, &live);
+            }
             SettingsTab::General => self.general_settings(ui, &mut working),
             SettingsTab::Storage => {
                 let folder = self.clips_folder();
@@ -1875,8 +2204,9 @@ impl ClipCraftApp {
                     self.capture.refresh_targets();
                 }
             }
-            SettingsTab::Quality => settings::quality_tab(ui, &mut working, &self.capture.gpu),
+            SettingsTab::Video => settings::video_tab(ui, &mut working, &self.capture.gpu),
             SettingsTab::Audio => settings::audio_tab(ui, &mut working, &mut self.settings_state),
+            SettingsTab::Replay => settings::replay_tab(ui, &mut working),
             SettingsTab::About => settings::about_tab(ui),
         }
         self.apply_recording(before, working);
@@ -1971,10 +2301,6 @@ impl ClipCraftApp {
                 },
             );
         });
-        if working.show_advanced {
-            self.presence
-                .show_advanced(ui, &mut working.discord_presence);
-        }
         card(ui, "Advanced", |ui| {
             toggle_row(
                 ui,
@@ -3567,13 +3893,15 @@ mod tests {
             app.recording.push_to_talk = true;
             app.recording.hotkeys.save_clip.clear();
             for tab in [
+                SettingsTab::Overview,
                 SettingsTab::General,
                 SettingsTab::Storage,
                 SettingsTab::Hotkeys,
                 SettingsTab::Games,
                 SettingsTab::Capture,
-                SettingsTab::Quality,
+                SettingsTab::Video,
                 SettingsTab::Audio,
+                SettingsTab::Replay,
                 SettingsTab::About,
             ] {
                 app.settings_tab = tab;
@@ -3665,13 +3993,15 @@ mod tests {
         )];
         app.recording.quality = clipcraft_engine::QualityMode::Custom;
         for tab in [
+            SettingsTab::Overview,
             SettingsTab::General,
             SettingsTab::Storage,
             SettingsTab::Hotkeys,
             SettingsTab::Games,
             SettingsTab::Capture,
-            SettingsTab::Quality,
+            SettingsTab::Video,
             SettingsTab::Audio,
+            SettingsTab::Replay,
             SettingsTab::About,
         ] {
             app.settings_tab = tab;

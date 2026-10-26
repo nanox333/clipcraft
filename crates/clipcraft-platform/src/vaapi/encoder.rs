@@ -1194,12 +1194,14 @@ mod tests {
 
     fn request() -> HardwareRequest {
         HardwareRequest {
+            codec: clipcraft_record::StreamCodec::H264,
             width: 40,
             height: 20,
             fps: 30,
             video_kbps: 4_000,
             constant_bitrate: true,
             keyframe_frames: 3,
+            effort: clipcraft_record::EncoderSpeed::Balanced,
         }
     }
 

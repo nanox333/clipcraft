@@ -16,6 +16,7 @@ clipcraft-time.workspace = true
 image.workspace = true
 filmcraft-codecs.workspace = true
 filmcraft-media.workspace = true
+filmcraft-color.workspace = true
 filmcraft-frame.workspace = true
 filmcraft-isobmff.workspace = true
 serde.workspace = true

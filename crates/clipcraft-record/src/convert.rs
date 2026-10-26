@@ -73,6 +73,7 @@ fn lerp(a: u32, b: u32, weight: u32) -> u32 {
     (a * (256 - weight) + b * weight + 128) >> 8
 }
 
+#[cfg(test)]
 #[inline]
 fn luma(r: i32, g: i32, b: i32) -> u8 {
     (16 + ((47 * r + 157 * g + 16 * b + 128) >> 8)).clamp(16, 235) as u8
@@ -86,13 +87,17 @@ fn chroma(r: i32, g: i32, b: i32) -> (u8, u8) {
 }
 
 /// Luma of one row of BGRA pixels.
+///
+/// Each pixel is read as one 32-bit word and split with shifts, which the compiler turns into
+/// wide vector arithmetic; reading the channels as separate bytes does not vectorize.
 fn luma_row(row: &[u8], out: &mut [u8]) {
     for (pixel, out) in row.chunks_exact(4).zip(out.iter_mut()) {
-        *out = luma(
-            i32::from(pixel[2]),
-            i32::from(pixel[1]),
-            i32::from(pixel[0]),
-        );
+        let word = u32::from_le_bytes([pixel[0], pixel[1], pixel[2], pixel[3]]);
+        let b = word & 0xff;
+        let g = (word >> 8) & 0xff;
+        let r = (word >> 16) & 0xff;
+        // The weights add to 220, so the result stays inside 16..=235 without clamping.
+        *out = (16 + ((47 * r + 157 * g + 16 * b + 128) >> 8)) as u8;
     }
 }
 
@@ -100,11 +105,15 @@ fn luma_row(row: &[u8], out: &mut [u8]) {
 fn chroma_rows(upper: &[u8], lower: &[u8], u: &mut [u8], v: &mut [u8]) {
     let blocks = upper.chunks_exact(8).zip(lower.chunks_exact(8));
     for ((top, bottom), (u, v)) in blocks.zip(u.iter_mut().zip(v.iter_mut())) {
-        let (mut r, mut g, mut b) = (2_i32, 2_i32, 2_i32);
-        for pixel in top.chunks_exact(4).chain(bottom.chunks_exact(4)) {
-            r += i32::from(pixel[2]);
-            g += i32::from(pixel[1]);
-            b += i32::from(pixel[0]);
+        let mut r = 2_i32;
+        let mut g = 2_i32;
+        let mut b = 2_i32;
+        for half in [top, bottom] {
+            let first = u32::from_le_bytes([half[0], half[1], half[2], half[3]]);
+            let second = u32::from_le_bytes([half[4], half[5], half[6], half[7]]);
+            b += ((first & 0xff) + (second & 0xff)) as i32;
+            g += (((first >> 8) & 0xff) + ((second >> 8) & 0xff)) as i32;
+            r += (((first >> 16) & 0xff) + ((second >> 16) & 0xff)) as i32;
         }
         (*u, *v) = chroma(r / 4, g / 4, b / 4);
     }

@@ -364,7 +364,12 @@ pub fn open(
     let interval = capture_update_interval(options.requested_fps, color)?;
     let (control, target) = if let Some(index) = target_id.strip_prefix("monitor:") {
         let index: usize = index.parse().map_err(|_| CaptureError::TargetGone)?;
-        let monitor = Monitor::from_index(index).map_err(|_| CaptureError::TargetGone)?;
+        // `list_targets` numbers monitors from zero in enumeration order; `Monitor::from_index`
+        // counts from one, so it refused monitor 0 and opened the wrong screen for the rest.
+        let monitor = *Monitor::enumerate()
+            .map_err(|_| CaptureError::Failed)?
+            .get(index)
+            .ok_or(CaptureError::TargetGone)?;
         let (width, height) = (
             monitor.width().map_err(|_| CaptureError::Failed)?,
             monitor.height().map_err(|_| CaptureError::Failed)?,

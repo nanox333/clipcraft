@@ -21,6 +21,9 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
 
 ## What works now
 
+- **System tray (Windows):** a custom-styled tray menu (status, start/stop recording, save clip, screenshot, clips folder, library, settings, quit) and, by default, closing the window
+  minimizes it so capture keeps running (Settings → General → Keep running in the tray). The taskbar
+  button stays; a fully hidden window would stop capture.
 - **Capture and replay:** choose a screen or window, record into a bounded replay buffer, and save
   clips with the global hotkey. Recording supports MP4/MKV, configurable quality and framing,
   replay length, post-roll, and storage limits. Linux/X11 has end-to-end synthetic-screen evidence;
@@ -116,9 +119,8 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   checks remain open. [Setup, exact fields and limits](docs/discord-presence.md).
 - **Settings and diagnostics:** recording, quality, audio, hotkey, storage, game allowlist, and
   general settings are stored locally. [348 known games](docs/game-catalog.md) are recognized
-  automatically, with per-game exclusions and a global switch in Settings › Games. The toggle at
-  the bottom of General reveals clearly headed advanced sections within Games, Capture, Quality
-  and Audio. The [custom-game form](docs/settings.md) is a card like every other settings section, with padded,
+  automatically, with per-game exclusions and a global switch in Settings › Games. The Settings
+  Overview summarizes the setup and suggests fixes; the advanced toggle in General reveals the custom-game forms. The [custom-game form](docs/settings.md) is a card like every other settings section, with padded,
   responsive fields and is advanced-only. Custom rules take priority over the built-in catalog and can match executable-name substrings and exact
   Steam IDs. A bounded background worker reads processes and [local Steam manifests](docs/game-catalog.md)
   to recognize additional installed games without a download; custom rules and exclusions take priority.
@@ -160,7 +162,7 @@ they do not establish game-FPS impact or sustained capture performance.
   small-file export currently accepts H.264/AAC MP4/MOV/MKV, up to 30 minutes per job, and writes
   H.264 MP4. Target sizes are estimates, not guarantees about a changing Discord upload limit.
   Export needs an output filesystem with hard-link support for safe publication; software export
-  speed on gaming PCs is unmeasured. H.265 and WebM recording remain disabled.
+  speed on gaming PCs is unmeasured. WebM recording remains disabled; H.265 recording needs the graphics card (Windows).
 - Game labels come from manual overrides, captured-game metadata or folder/filename guesses.
   Recognition does not retroactively label existing videos. There is no upload or link workflow.
 - Real microphone/speaker capture, Windows device behavior, a real-game performance test, and the

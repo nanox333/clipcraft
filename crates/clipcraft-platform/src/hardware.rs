@@ -7,7 +7,9 @@
 //! back into the recorder's own. B-frames are switched off by using the Baseline profile, and any
 //! reordered packet is reported so the recorder can fall back.
 
-use clipcraft_record::{HardwareEncoder, HardwarePacket, HardwareProvider, HardwareRequest};
+use clipcraft_record::{
+    HardwareEncoder, HardwarePacket, HardwareProvider, HardwareRequest, StreamCodec,
+};
 use filmcraft_export::{
     BitrateMode, EncoderFactory, EncoderFrame, ExportSettings, Format, H264Profile,
     HardwareEncoding, VideoEncoder,
@@ -147,9 +149,13 @@ pub fn register_hardware_decoding() -> Option<&'static str> {
 /// VA-API, which is how AMD (Mesa) and Intel cards are reached.
 fn open(request: &HardwareRequest) -> Result<Box<dyn HardwareEncoder>, String> {
     let mut reasons = Vec::new();
-    match open_filmcraft(request) {
-        Ok(encoder) => return Ok(encoder),
-        Err(why) => reasons.push(why),
+    // FilmCraft's encoders and the VA-API one are H.264 only; H.265 goes through Media Foundation.
+    let h264 = request.codec == StreamCodec::H264;
+    if h264 {
+        match open_filmcraft(request) {
+            Ok(encoder) => return Ok(encoder),
+            Err(why) => reasons.push(why),
+        }
     }
     #[cfg(windows)]
     match crate::mf_encoder::open(request) {
@@ -157,9 +163,14 @@ fn open(request: &HardwareRequest) -> Result<Box<dyn HardwareEncoder>, String> {
         Err(why) => reasons.push(why),
     }
     #[cfg(target_os = "linux")]
-    match crate::vaapi::encoder::open(request) {
-        Ok(encoder) => return Ok(encoder),
-        Err(why) => reasons.push(why),
+    if h264 {
+        match crate::vaapi::encoder::open(request) {
+            Ok(encoder) => return Ok(encoder),
+            Err(why) => reasons.push(why),
+        }
+    }
+    if !h264 && reasons.is_empty() {
+        reasons.push("this computer has no H.265 hardware encoder code".to_owned());
     }
     Err(reasons.join("; "))
 }
@@ -176,12 +187,14 @@ pub fn probe_hardware_encoder() -> Result<String, String> {
     let provider = hardware_provider()
         .ok_or_else(|| "this computer has no supported hardware encoder".to_owned())?;
     let encoder = provider.open(&HardwareRequest {
+        codec: clipcraft_record::StreamCodec::H264,
         width: 256,
         height: 144,
         fps: 30,
         video_kbps: 1_000,
         constant_bitrate: true,
         keyframe_frames: 30,
+        effort: clipcraft_record::EncoderSpeed::Balanced,
     })?;
     Ok(encoder.name())
 }
@@ -209,12 +222,14 @@ mod tests {
         };
         for (width, height) in [(0, 0), (1, 1), (3, 5), (100_000, 100_000)] {
             let result = provider.open(&HardwareRequest {
+                codec: clipcraft_record::StreamCodec::H264,
                 width,
                 height,
                 fps: 30,
                 video_kbps: 1_000,
                 constant_bitrate: false,
                 keyframe_frames: 0,
+                effort: clipcraft_record::EncoderSpeed::Balanced,
             });
             assert!(result.is_err(), "{width}x{height}");
         }

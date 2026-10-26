@@ -92,7 +92,7 @@ impl Container {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VideoCodec {
-    /// H.264 (AVC), written by FilmCraft's pure-Rust encoder.
+    /// H.264 (AVC), written by FilmCraft's pure-Rust encoder or a graphics card.
     #[default]
     H264,
     /// H.265 (HEVC): smaller files at the same quality.
@@ -115,7 +115,9 @@ impl VideoCodec {
     pub fn detail(self) -> &'static str {
         match self {
             Self::H264 => "Works everywhere and encodes fast.",
-            Self::H265 => "About a third smaller at the same quality.",
+            Self::H265 => {
+                "About a third smaller at the same quality. Needs the graphics card to encode it; without one ClipCraft records H.264."
+            }
         }
     }
 
@@ -123,8 +125,9 @@ impl VideoCodec {
     pub fn unavailable_reason(self) -> Option<&'static str> {
         match self {
             Self::H264 => None,
+            Self::H265 if cfg!(windows) => None,
             Self::H265 => Some(
-                "H.265 needs a hardware encoder (NVIDIA, Apple, or Intel/AMD); there is no software encoder yet.",
+                "H.265 is only available on Windows for now; it needs the graphics card's encoder and there is no software encoder.",
             ),
         }
     }
@@ -414,6 +417,8 @@ pub struct RecordingSettings {
     pub delete_oldest_when_full: bool,
     /// Open ClipCraft in the background.
     pub start_minimized: bool,
+    /// Closing the window keeps ClipCraft running in the system tray.
+    pub close_to_tray: bool,
     /// Open ClipCraft when you sign in.
     pub launch_at_startup: bool,
     /// Game sound level, 0 to 100 percent.
@@ -481,6 +486,7 @@ impl Default for RecordingSettings {
             storage_limit_gb: 0,
             delete_oldest_when_full: true,
             start_minimized: false,
+            close_to_tray: true,
             launch_at_startup: false,
             game_audio_percent: 100,
             microphone_percent: 100,
@@ -939,14 +945,22 @@ mod tests {
     }
 
     #[test]
-    fn h265_is_unavailable_and_falls_back_to_h264() {
+    fn h265_is_a_graphics_card_feature_and_falls_back_to_h264_off_windows() {
         assert!(VideoCodec::H264.is_available());
+        assert_eq!(VideoCodec::H265.is_available(), cfg!(windows));
         let settings = RecordingSettings {
             codec: VideoCodec::H265,
             ..RecordingSettings::default()
         }
         .sanitized();
-        assert_eq!(settings.codec, VideoCodec::H264);
+        assert_eq!(
+            settings.codec,
+            if cfg!(windows) {
+                VideoCodec::H265
+            } else {
+                VideoCodec::H264
+            }
+        );
     }
 
     #[test]

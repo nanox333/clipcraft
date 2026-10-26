@@ -158,12 +158,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let provider = clipcraft_platform::hardware_provider().ok_or("no hardware encoder provider")?;
     let opened = Instant::now();
     let mut encoder = provider.open(&HardwareRequest {
+        codec: clipcraft_record::StreamCodec::H264,
         width: WIDTH as u32,
         height: HEIGHT as u32,
         fps: options.fps,
         video_kbps: 12_000,
         constant_bitrate: true,
         keyframe_frames: options.fps * 2,
+        effort: clipcraft_record::EncoderSpeed::Balanced,
     })?;
     let open_ms = opened.elapsed().as_secs_f64() * 1000.0;
     let mut rgba = pattern();
@@ -210,6 +212,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         height: HEIGHT as u32,
         fps: options.fps,
         avcc: encoder.avcc(),
+        codec: clipcraft_record::StreamCodec::H264,
     };
     let saved = write_clip(
         &pictures.samples,

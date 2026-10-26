@@ -5,13 +5,14 @@ use std::io::{BufWriter, ErrorKind};
 use std::path::{Path, PathBuf};
 
 use filmcraft_isobmff::{
-    AvcConfig, Brand, FragmentedWriter, Mp4Writer, SampleEntry, TrackConfig, WriteSample,
-    WriterOptions,
+    AvcConfig, Brand, FragmentedWriter, HevcConfig, Mp4Writer, SampleEntry, TrackConfig,
+    WriteSample, WriterOptions,
 };
 use filmcraft_matroska::{MkvWriter, MuxOptions, TrackKind, TrackSpec};
 
 use crate::RecordError;
 use crate::audio::{AAC_FRAME, AudioPacket, AudioTrackInfo};
+use crate::hardware::StreamCodec;
 use crate::replay::EncodedSample;
 
 /// The file format of a saved clip.
@@ -42,8 +43,10 @@ pub struct VideoInfo {
     pub height: u32,
     /// Frames per second; the unit of every sample time.
     pub fps: u32,
-    /// The H.264 decoder configuration record (`avcC`).
+    /// The decoder configuration record: `avcC` for H.264, `hvcC` for H.265.
     pub avcc: Vec<u8>,
+    /// Which of the two `avcc` is.
+    pub codec: StreamCodec,
 }
 
 /// One track of sound for a clip: how it is described, and its encoded units.
@@ -206,7 +209,13 @@ fn write_partial(
         }
         ClipFormat::Mkv => {
             let mut specs = Vec::new();
-            let mut spec = TrackSpec::new(TrackKind::Video, "V_MPEG4/ISO/AVC");
+            let mut spec = TrackSpec::new(
+                TrackKind::Video,
+                match video.codec {
+                    StreamCodec::H264 => "V_MPEG4/ISO/AVC",
+                    StreamCodec::H265 => "V_MPEGH/ISO/HEVC",
+                },
+            );
             spec.codec_private = video.avcc.clone();
             spec.video_size = Some((video.width, video.height));
             spec.default_duration_ns = Some(1_000_000_000 / u64::from(video.fps));
@@ -342,12 +351,22 @@ fn write_mp4_samples<S: Mp4Sink>(
     audio: &[&ClipAudio],
 ) -> Result<bool, RecordError> {
     let origin = samples.first().map_or(0, |sample| sample.pts);
-    let avc = AvcConfig::parse(&video.avcc).map_err(|_| RecordError::BadStream)?;
-    let entry = SampleEntry::avc(
-        avc,
+    let (width, height) = (
         u16::try_from(video.width).map_err(|_| RecordError::BadStream)?,
         u16::try_from(video.height).map_err(|_| RecordError::BadStream)?,
     );
+    let entry = match video.codec {
+        StreamCodec::H264 => SampleEntry::avc(
+            AvcConfig::parse(&video.avcc).map_err(|_| RecordError::BadStream)?,
+            width,
+            height,
+        ),
+        StreamCodec::H265 => SampleEntry::hevc(
+            HevcConfig::parse(&video.avcc).map_err(|_| RecordError::BadStream)?,
+            width,
+            height,
+        ),
+    };
     let track = mp4.add(TrackConfig::new(entry, video.fps))?;
     // Each sound track: its own timescale (the sample rate) and an edit that skips the decoder's
     // warm-up unit and the part before the first picture.

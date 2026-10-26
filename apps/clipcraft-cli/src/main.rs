@@ -662,6 +662,7 @@ fn run_capture(arguments: &[OsString]) -> Result<(), CliError> {
 }
 
 fn run_record(arguments: &[OsString]) -> Result<(), CliError> {
+    clipcraft_platform::set_fine_timer(true);
     let (mut seconds, mut target, mut out) = (None::<u64>, None::<String>, None::<PathBuf>);
     let mut rest = arguments.iter();
     while let Some(flag) = rest.next() {

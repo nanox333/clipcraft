@@ -488,12 +488,14 @@ fn export_hardware() -> Option<clipcraft_export::FastOpener> {
     Some(std::sync::Arc::new(
         move |request: &clipcraft_export::FastRequest| {
             let encoder = provider.open(&HardwareRequest {
+                codec: clipcraft_record::StreamCodec::H264,
                 width: request.width,
                 height: request.height,
                 fps: request.fps,
                 video_kbps: request.video_kbps,
                 constant_bitrate: false,
                 keyframe_frames: request.keyframe_frames,
+                effort: clipcraft_record::EncoderSpeed::Balanced,
             })?;
             Ok(Box::new(HardwareExport(encoder)) as Box<dyn clipcraft_export::FastEncoder>)
         },
@@ -1212,6 +1214,15 @@ impl FileManager {
 ///
 /// `path` must be absolute so it can never be read as a command-line option.
 fn reveal_invocation(manager: FileManager, path: &Path) -> (&'static str, Vec<OsString>) {
+    // A folder is opened, not selected inside its parent.
+    if path.is_dir() {
+        let program = match manager {
+            FileManager::Explorer => "explorer",
+            FileManager::Finder => "open",
+            FileManager::XdgOpen => "xdg-open",
+        };
+        return (program, vec![path.as_os_str().to_owned()]);
+    }
     match manager {
         FileManager::Explorer => {
             let mut selection = OsString::from("/select,");

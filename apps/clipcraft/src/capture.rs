@@ -121,6 +121,11 @@ impl CaptureState {
         self.session.is_active() || self.opening.is_some()
     }
 
+    /// How the running recording is doing, if one is running.
+    pub fn record_status(&self) -> Option<clipcraft_record::RecordStatus> {
+        self.session.status()
+    }
+
     pub fn game_recording_name(&self) -> Option<&str> {
         self.game_arming
             .recording()
@@ -777,12 +782,9 @@ impl ClipCraftApp {
                     .iter()
                     .find(|target| automatic_desktop_target(target))
             });
+        // This start is automatic, so a failure is retried quietly (see `game_retry_after`)
+        // instead of announcing an error the person did not cause.
         let Some(target) = target else {
-            self.capture.notice = notice(
-                "Desktop continuation is unavailable: no monitor can be opened automatically. Start a desktop capture manually if your desktop requires a chooser.",
-                true,
-                None,
-            );
             return;
         };
         let id = target.id.clone();
@@ -791,27 +793,18 @@ impl ClipCraftApp {
             hdr_to_sdr: self.recording.hdr_compatibility,
             requested_fps: self.recording.frames_per_second,
         };
-        match self.open_capture_source(&id, &options) {
-            Ok(source) => {
-                if self.begin_session(source) {
-                    self.capture.desktop_fallback = true;
-                    self.capture.game_retry_after = None;
-                    let now = self.automatic_now();
-                    self.capture.game_arming.desktop_started_at(now);
-                    self.capture.notice = notice(
-                        "Recording the desktop. A recognized game will switch capture to its window.",
-                        false,
-                        None,
-                    );
-                }
-            }
-            Err(error) => {
-                self.capture.notice = notice(
-                    format!("Desktop continuation could not start: {error}"),
-                    true,
-                    None,
-                )
-            }
+        if let Ok(source) = self.open_capture_source(&id, &options)
+            && self.begin_session(source)
+        {
+            self.capture.desktop_fallback = true;
+            self.capture.game_retry_after = None;
+            let now = self.automatic_now();
+            self.capture.game_arming.desktop_started_at(now);
+            self.capture.notice = notice(
+                "Recording the desktop. A recognized game will switch capture to its window.",
+                false,
+                None,
+            );
         }
     }
 
@@ -1072,6 +1065,9 @@ impl ClipCraftApp {
             clipcraft_platform::set_background_priority(clipping);
             self.capture.background_priority = clipping;
         }
+        // Recording and playing a clip both wait on short timers; Windows rounds those up to
+        // 15.6 ms unless asked for a finer clock, which halved playback to 30 pictures a second.
+        clipcraft_platform::set_fine_timer(clipping || self.playback.is_some() || self.editor.open);
     }
 
     /// Picks up a screen share the desktop's chooser has finished setting up.

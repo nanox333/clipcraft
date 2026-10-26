@@ -65,9 +65,8 @@ retain Discord's cached former capitalization until the client refreshes its app
    unavailable-client/reconnect and each target OS. An IPC acknowledgment does not prove that
    uploaded assets rendered. No release/profile verification is implied by local mock tests.
 
-A public custom Application ID remains available under **General → Show advanced settings →
-Advanced settings → Discord developer settings**, before the final advanced toggle. **Apply
-Application ID** saves the override; **Use shared ClipCraft identity** clears it. A valid saved
+There is no Application ID field in the app. A public custom ID can still be set as `application_id` in the
+settings file by developers; a valid saved
 override takes priority over the shared build ID. Invalid IDs are ignored; without either valid
 identity, nothing connects. No other application's ID is borrowed and no production ID is invented.
 

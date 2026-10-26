@@ -105,6 +105,7 @@ pub fn fixture_sized(
         height,
         fps,
         avcc: encoder.avcc(),
+        codec: clipcraft_record::StreamCodec::H264,
     };
     let mut sound = AudioEngine::new(AudioSetup {
         config: AudioConfig {

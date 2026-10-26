@@ -94,6 +94,7 @@ fn worker(options: &Options) {
         replay_seconds: options.replay,
         max_buffer_bytes: 256 * 1024 * 1024,
         threads: 2,
+        codec: clipcraft_record::StreamCodec::H264,
         hardware: None,
         gap_restart_seconds: 10,
     };

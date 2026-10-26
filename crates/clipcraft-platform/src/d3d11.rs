@@ -145,6 +145,8 @@ struct Slot {
     context: ID3D11DeviceContext,
     width: u32,
     height: u32,
+    /// A CPU-readable copy target kept between readbacks: creating one per picture is slow.
+    staging: std::sync::Mutex<Option<ID3D11Texture2D>>,
 }
 
 /// An immutable lease: the callback cannot overwrite this slot while any consumer owns it.
@@ -241,6 +243,7 @@ impl Pool {
                     context: context.clone(),
                     width: desc.Width,
                     height: desc.Height,
+                    staging: std::sync::Mutex::new(None),
                 }));
                 self.slots.len() - 1
             }
@@ -289,11 +292,21 @@ impl NativeCaptureFrame for Surface {
             CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
             ..Default::default()
         };
-        let mut texture = None;
-        // SAFETY: a bounded CPU-readable staging texture, owned until after Unmap.
-        unsafe { s.device.CreateTexture2D(&desc, None, Some(&mut texture)) }
-            .map_err(|_| CaptureError::Failed)?;
-        let texture = texture.ok_or(CaptureError::Failed)?;
+        let cached = s
+            .staging
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        let texture = match cached {
+            Some(texture) => texture,
+            None => {
+                let mut texture = None;
+                // SAFETY: a bounded CPU-readable staging texture, owned until after Unmap.
+                unsafe { s.device.CreateTexture2D(&desc, None, Some(&mut texture)) }
+                    .map_err(|_| CaptureError::Failed)?;
+                texture.ok_or(CaptureError::Failed)?
+            }
+        };
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         // SAFETY: identical texture dimensions; the live context is internally serialized.
         unsafe {
@@ -307,10 +320,11 @@ impl NativeCaptureFrame for Surface {
         let result = if mapped.pData.is_null() || (mapped.RowPitch as usize) < stride {
             Err(CaptureError::BadFrame)
         } else {
-            let mut bgra = vec![0; stride * s.height as usize];
-            for (row, output) in bgra.chunks_exact_mut(stride).enumerate() {
+            // Filled row by row without zeroing the buffer first, which would touch all of it twice.
+            let mut bgra = Vec::with_capacity(stride * s.height as usize);
+            for row in 0..s.height as usize {
                 // SAFETY: Map provides Height rows of RowPitch bytes, checked above. Only the
-                // visible bytes are read and copied into the exactly sized output row.
+                // visible bytes are read and copied into the output.
                 let input = unsafe {
                     std::slice::from_raw_parts(
                         mapped
@@ -320,7 +334,7 @@ impl NativeCaptureFrame for Surface {
                         stride,
                     )
                 };
-                output.copy_from_slice(input);
+                bgra.extend_from_slice(input);
             }
             Ok(CaptureFrame {
                 width: s.width,
@@ -334,6 +348,9 @@ impl NativeCaptureFrame for Surface {
         unsafe {
             s.context.Unmap(&texture, 0);
         }
+        *s.staging
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(texture);
         result
     }
 }

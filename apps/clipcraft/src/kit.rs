@@ -410,6 +410,19 @@ pub fn slim_slider(
     enabled: bool,
     tooltip: &str,
 ) -> Option<f32> {
+    slim_slider_step(ui, width, value, enabled, tooltip, 0.01)
+}
+
+/// [`slim_slider`] that the arrow keys move by `step` (of the 0 to 1 range) while it has the
+/// focus, and Home and End move to the ends.
+pub fn slim_slider_step(
+    ui: &mut egui::Ui,
+    width: f32,
+    value: f32,
+    enabled: bool,
+    tooltip: &str,
+    step: f32,
+) -> Option<f32> {
     let sense = if enabled {
         Sense::click_and_drag()
     } else {
@@ -435,10 +448,38 @@ pub fn slim_slider(
         if active { 6.5 } else { 5.0 },
         if enabled { Color32::WHITE } else { FAINT },
     );
-    let changed = (response.dragged() || response.clicked())
+    let mut changed = (response.dragged() || response.clicked())
         .then(|| response.interact_pointer_pos())
         .flatten()
         .map(|pointer| ((pointer.x - track.left()) / track.width()).clamp(0.0, 1.0));
+    if enabled && response.has_focus() {
+        let key = ui.input(|input| {
+            if input.key_pressed(egui::Key::ArrowRight) || input.key_pressed(egui::Key::ArrowUp) {
+                Some(value + step)
+            } else if input.key_pressed(egui::Key::ArrowLeft)
+                || input.key_pressed(egui::Key::ArrowDown)
+            {
+                Some(value - step)
+            } else if input.key_pressed(egui::Key::Home) {
+                Some(0.0)
+            } else if input.key_pressed(egui::Key::End) {
+                Some(1.0)
+            } else {
+                None
+            }
+        });
+        if let Some(next) = key {
+            changed = Some(next.clamp(0.0, 1.0));
+        }
+    }
+    if enabled && response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.expand(1.0),
+            4.0,
+            Stroke::new(1.5_f32, LIME),
+            egui::StrokeKind::Outside,
+        );
+    }
     response.on_hover_text(tooltip);
     changed.filter(|_| enabled)
 }

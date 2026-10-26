@@ -245,6 +245,7 @@ fn config(hardware: Option<HardwareProvider>) -> RecordConfig {
         replay_seconds: 10,
         max_buffer_bytes: 64 * 1024 * 1024,
         threads: 2,
+        codec: clipcraft_record::StreamCodec::H264,
         hardware,
         gap_restart_seconds: 10,
     }

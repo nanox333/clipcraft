@@ -15,8 +15,11 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 
+mod ahead;
 mod delivery;
+mod rgba;
 mod scheduling;
+use ahead::Ahead;
 use delivery::{Delivery, Publication, Request};
 use std::sync::{Arc, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -365,7 +368,7 @@ fn decode_at(
             _ => PlayerError::DecodeFailed,
         })?;
     let expected = frame_bytes(frame.width, frame.height)?;
-    let rgba = frame.to_rgba8();
+    let rgba = rgba::to_rgba8(&frame);
     // A decoder that returns fewer bytes than the picture needs would corrupt the texture upload.
     if expected != rgba.len() {
         return Err(PlayerError::DecodeFailed);
@@ -458,6 +461,13 @@ fn run(
     }
 
     let period = frame_period(info.frame_rate);
+    // Pictures decoded ahead of the clock while the clip plays, so one slow picture does not make
+    // the player skip.
+    let ahead = Ahead::start(source.clone(), info.clone());
+    let last_frame = info
+        .frame_rate
+        .frame_at(info.duration - info.frame_rate.frame_duration())
+        .max(0);
     let mut state = State {
         position: Tick::ZERO,
         playing: false,
@@ -480,6 +490,7 @@ fn run(
         // next decode; publication below rejects an in-flight result invalidated meanwhile.
         for request in commands.try_iter() {
             revision = request.revision;
+            ahead.clear();
             if state.apply(request.command, &info, feed.as_deref()) {
                 return;
             }
@@ -500,7 +511,12 @@ fn run(
                         return;
                     }
                 };
-                decode_at(&source, &info, state.position).and_then(|frame| {
+                let wanted = info.frame_rate.frame_at(state.position);
+                match ahead.take(wanted) {
+                    Some(picture) => Ok(picture),
+                    None => decode_at(&source, &info, state.position),
+                }
+                .and_then(|frame| {
                     let pts = frame.pts;
                     let frame = transform(frame)?;
                     if frame.pts != pts
@@ -516,6 +532,13 @@ fn run(
                     state.position = frame.pts;
                     if !send(PlayerEvent::Frame(frame), revision) {
                         return;
+                    }
+                    // Playing forward at normal speed: get the next few pictures ready.
+                    if state.playing && !state.ended && state.speed <= 1.5 {
+                        let current = info.frame_rate.frame_at(state.position);
+                        ahead.run(current + 1, (current + 6).min(last_frame));
+                    } else {
+                        ahead.clear();
                     }
                     // `Ended` follows the final picture so the screen shows the true last frame.
                     if std::mem::take(&mut state.ended) && !send(PlayerEvent::Ended, revision) {
@@ -544,6 +567,7 @@ fn run(
                 // Apply everything already queued before decoding, so scrubbing quickly decodes
                 // only the latest position instead of every intermediate one.
                 revision = command.revision;
+                ahead.clear();
                 if state.apply(command.command, &info, feed.as_deref()) {
                     return;
                 }
@@ -569,6 +593,7 @@ fn run(
                 state.clock_base = Tick::ZERO;
                 state.clock_start = Instant::now();
                 state.show = true;
+                ahead.clear();
                 if let Some(feed) = &feed {
                     feed.seek(Tick::ZERO);
                 }
@@ -590,7 +615,14 @@ fn run(
                 state.position = target;
                 state.show = true;
             }
-            state.next_tick = Instant::now() + period;
+            // Count from the last deadline, not from now: waking a little late each time would
+            // add up to a picture skipped every few seconds. A long stall starts over instead.
+            let due = state.next_tick + period;
+            state.next_tick = if due + period < Instant::now() {
+                Instant::now() + period
+            } else {
+                due
+            };
         }
     }
 }

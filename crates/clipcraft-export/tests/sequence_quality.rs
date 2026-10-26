@@ -96,6 +96,7 @@ fn flat_source(path: &std::path::Path, width: u32, height: u32) {
         height,
         fps: 60,
         avcc: encoder.avcc(),
+        codec: clipcraft_record::StreamCodec::H264,
     };
     let chroma = vec![128; width as usize * height as usize / 4];
     let mut packets = vec![];
