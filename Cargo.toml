@@ -119,3 +119,9 @@ opt-level = 3
 
 [profile.dev.package.filmcraft-color]
 opt-level = 3
+
+# Release builds ship to users: thin LTO and stripped debug info keep the download small and the hot
+# loops inlined across crates. Panics stay `unwind` because the app catches them to keep clips safe.
+[profile.release]
+lto = "thin"
+strip = "debuginfo"

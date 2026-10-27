@@ -245,6 +245,7 @@ or larger than the estimate; the completion message and CLI JSON report its actu
 
 ## Project docs
 
+- [`CHANGELOG.md`](CHANGELOG.md) — what each release contains.
 - [`ROADMAP.md`](ROADMAP.md) — milestone status and release gates.
 - [`PLAN.md`](PLAN.md) — product direction, architecture choices, and intended MVP.
 - [`docs/gaps.md`](docs/gaps.md) — ranked limitations and the evidence behind each status.

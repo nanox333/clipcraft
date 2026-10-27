@@ -23,7 +23,7 @@ alone.
 | Keyboard access | Verified here | Tab reaches every control; the focused control gets a visible ring; Enter activates it (checked in the running app). |
 | Screen reader names | Verified here | A test walks the accessibility tree of the library, clip view, and every settings tab and fails on any unnamed control. Open: an actual screen reader (NVDA, Orca, VoiceOver). |
 | Diagnostics | Verified here | `clipcraft-cli diagnose [--json]` and Settings › General › Copy report. |
-| Installer | Partly | `cargo xtask package` builds a Linux tarball (18 MB; binaries, desktop entry, licences, and `SHA256SUMS`). Run to completion on Linux x86_64: the checksum verifies, the archive unpacks into an empty folder, every shared library the binaries need is present, and `clipcraft-cli diagnose` runs from it. It was not installed on a clean second machine. Open: Windows installer, macOS bundle, code signing and notarisation (need the maintainers' certificates), an update story (there is none by design). |
+| Installer | Partly | `cargo xtask package` builds a Linux tarball (18 MB; binaries, desktop entry, licences, and `SHA256SUMS`). Run to completion on Linux x86_64: the checksum verifies, the archive unpacks into an empty folder, every shared library the binaries need is present, and `clipcraft-cli diagnose` runs from it. It was not installed on a clean second machine. The Windows zip (`cargo xtask package`, 23 MB) was also built and checked on Windows 11: it unpacks into an empty folder, `clipcraft-cli diagnose` runs from it, and `clipcraft.exe` starts. Open: Windows installer, macOS bundle, code signing and notarisation (need the maintainers' certificates), an update story (there is none by design). |
 | Windows capture | Partial | Windows/AMD generated-window WGC-to-MP4 runs, one-minute native SDR 1080p60 throughput and real D3D11 lease/color/resize tests pass. Hotkeys, games, device loss, default HDR performance and a two-hour 1080p60 soak remain open; see [measurements](windows-performance.md). |
 | Hardware encoders | Partial | AMD Media Foundation has generated-window CPU/native-surface evidence. NVENC, VideoToolbox and VA-API real-device claims remain open. |
 | Real sound devices | Partial | The Windows input/denoiser check delivered finite samples; M3.1b's real duplex test delivered 108,000 processed frames to the playback callback, applied live zero gain/mono and cleaned up after Stop, without saving audio. Real speech listening quality and physical unplug/recovery remain open; see [testing](testing.md). |
@@ -53,6 +53,5 @@ Keep this notice with binary redistributions, including manually assembled Windo
 
 The downloads are **not code-signed**, so Windows SmartScreen shows "unknown publisher" until a user
 chooses More info, then Run anyway; `INSTALL.txt` in each download says so. The workflow has **not
-been run yet**: the Linux package is verified locally, the Windows build is only known to compile
-and pass the quality gate on Windows CI, and neither the Windows zip nor the release step has run.
+been run yet**: the Linux package is verified locally, the Windows zip was built and smoke-tested locally on Windows 11, and the release step has not run.
 There is no macOS download (no macOS provider yet).
