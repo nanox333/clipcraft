@@ -193,7 +193,11 @@ fn automatic_desktop_target(target: &CaptureTarget) -> bool {
     target.kind == TargetKind::Display
 }
 
-fn notice(text: impl Into<String>, error: bool, path: Option<PathBuf>) -> Option<Notice> {
+pub(crate) fn notice(
+    text: impl Into<String>,
+    error: bool,
+    path: Option<PathBuf>,
+) -> Option<Notice> {
     Some(Notice {
         text: text.into(),
         error,
@@ -1229,18 +1233,35 @@ impl ClipCraftApp {
                         report.deleted.len()
                     )
                 };
-                self.capture.notice = notice(
-                    format!(
-                        "Saved {name}{removed}{}",
-                        if metadata_warning {
-                            "; game label could not be saved"
-                        } else {
-                            ""
-                        }
-                    ),
-                    metadata_warning,
-                    Some(report.clip.path.clone()),
-                );
+                if self.recording.show_save_notification {
+                    self.saved_toast = Some(crate::saved_toast::SavedToast::new(
+                        report.clip.path.clone(),
+                        report
+                            .recorded_game
+                            .clone()
+                            .unwrap_or_else(|| "Clip".to_owned()),
+                        saved_clip_facts(&report, &self.recording),
+                        self.thumbnail_dir.clone(),
+                    ));
+                }
+                // The card says it all; the top bar only speaks up when there is more to tell.
+                if !self.recording.show_save_notification
+                    || metadata_warning
+                    || !report.deleted.is_empty()
+                {
+                    self.capture.notice = notice(
+                        format!(
+                            "Saved {name}{removed}{}",
+                            if metadata_warning {
+                                "; game label could not be saved"
+                            } else {
+                                ""
+                            }
+                        ),
+                        metadata_warning,
+                        Some(report.clip.path.clone()),
+                    );
+                }
                 self.cue(Cue::ClipSaved);
                 // A saved clip belongs in the library when its folder is the one being browsed.
                 let in_library = self.capture.saved_into.as_ref().is_some_and(|folder| {
@@ -1262,6 +1283,57 @@ impl ClipCraftApp {
         }
         if let Some((job, folder)) = self.capture.queued_save.take() {
             self.launch_save(job, folder);
+        }
+    }
+
+    /// The card for a clip that was just saved: what to do with it. Called every frame.
+    pub(crate) fn saved_toast_frame(&mut self, context: &egui::Context) {
+        let Some(mut toast) = self.saved_toast.take() else {
+            return;
+        };
+        let ppp = context.pixels_per_point().max(0.5);
+        let free = clipcraft_platform::work_area().map(|(left, top, right, bottom)| {
+            egui::Rect::from_min_max(
+                egui::pos2(left as f32 / ppp, top as f32 / ppp),
+                egui::pos2(right as f32 / ppp, bottom as f32 / ppp),
+            )
+        });
+        let (action, alive) = toast.show(context, free);
+        let path = toast.path.clone();
+        match action {
+            Some(crate::saved_toast::ToastAction::Play) => {
+                self.pending_open = Some(path.clone());
+                crate::tray::show(context);
+                self.page = crate::Page::Library;
+            }
+            Some(crate::saved_toast::ToastAction::Show) => self.reveal_media(path.clone()),
+            Some(crate::saved_toast::ToastAction::Delete) => {
+                let title = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.start_trash(path.to_string_lossy().into_owned(), title);
+                toast.mark_deleted();
+            }
+            None => {}
+        }
+        if alive {
+            self.saved_toast = Some(toast);
+            context.request_repaint_after(std::time::Duration::from_millis(16));
+        }
+        // A clip the card was asked to play opens once the library lists it.
+        if let Some(wanted) = self.pending_open.clone() {
+            let found = self.library.as_ref().and_then(|library| {
+                library
+                    .entries
+                    .iter()
+                    .find(|entry| std::path::Path::new(&entry.path) == wanted)
+                    .cloned()
+            });
+            if let Some(entry) = found {
+                self.selected = Some(entry);
+                self.pending_open = None;
+            }
         }
     }
 
@@ -1595,6 +1667,24 @@ impl std::fmt::Display for RecordErrorText {
 /// ClipCraft's own window is never the game, even when it has the focus.
 fn is_own_window(window: &CaptureTarget) -> bool {
     window.name.trim() == "ClipCraft"
+}
+
+/// The line under the title on the card: how long the clip is, how big, and at what size.
+fn saved_clip_facts(
+    report: &clipcraft_engine::SavedClipReport,
+    settings: &clipcraft_engine::RecordingSettings,
+) -> String {
+    let seconds = report.clip.duration_frames / u64::from(settings.frames_per_second.max(1));
+    let length = if seconds >= 60 {
+        format!("{}:{:02}", seconds / 60, seconds % 60)
+    } else {
+        format!("{seconds} s")
+    };
+    format!(
+        "{length} · {} · {}p",
+        clipcraft_engine::format_bytes(report.clip.bytes),
+        settings.height
+    )
 }
 
 #[cfg(test)]

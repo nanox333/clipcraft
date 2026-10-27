@@ -419,6 +419,8 @@ pub struct RecordingSettings {
     pub start_minimized: bool,
     /// Closing the window keeps ClipCraft running in the system tray.
     pub close_to_tray: bool,
+    /// A pop-up card in the corner of the screen when a clip has been saved.
+    pub show_save_notification: bool,
     /// Open ClipCraft when you sign in.
     pub launch_at_startup: bool,
     /// Game sound level, 0 to 100 percent.
@@ -487,6 +489,7 @@ impl Default for RecordingSettings {
             delete_oldest_when_full: true,
             start_minimized: false,
             close_to_tray: true,
+            show_save_notification: true,
             launch_at_startup: false,
             game_audio_percent: 100,
             microphone_percent: 100,

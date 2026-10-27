@@ -223,6 +223,10 @@ pub enum Command {
     RevealInFileManager {
         path: PathBuf,
     },
+    /// Moves a clip to the Recycle Bin (Trash), so the deletion can be undone there.
+    TrashClip {
+        path: PathBuf,
+    },
     /// Looks for a moved clip by name and size in a folder and the folders inside it.
     FindMovedFile {
         name: String,
@@ -283,6 +287,7 @@ impl Command {
             Self::ScanLibrary { .. } => "library.scan",
             Self::LocalMediaPath { .. } => "library.path",
             Self::RevealInFileManager { .. } => "library.reveal",
+            Self::TrashClip { .. } => "library.trash",
             Self::RefreshLibrary { .. } => "library.refresh",
             Self::LoadLibrary { .. } => "library.load",
             Self::StoreLibraryScan { .. } => "library.store_scan",
@@ -753,6 +758,10 @@ pub enum CommandOutput {
     Revealed {
         path: String,
     },
+    /// A clip was moved to the Recycle Bin.
+    Trashed {
+        path: String,
+    },
     /// Container facts read from one clip.
     ClipProbe(MediaProbe),
     /// A clip's thumbnail in the cache.
@@ -812,6 +821,10 @@ pub enum EngineError {
     FileStillExists,
     /// The system file manager could not be started.
     FileManagerUnavailable,
+    /// Only video clips are moved to the Recycle Bin, and only files, never folders.
+    NotAClip,
+    /// There is no Recycle Bin to put the clip in, or the system refused. Nothing was deleted.
+    TrashUnavailable,
     /// No saved library index exists yet.
     IndexMissing,
     /// The saved library index could not be read.
@@ -882,6 +895,12 @@ impl fmt::Display for EngineError {
             Self::EmptyMediaPath => formatter.write_str("Choose a local media file first."),
             Self::FileUnavailable => formatter.write_str(
                 "This file could not be found. It may have been moved or deleted.",
+            ),
+            Self::NotAClip => {
+                formatter.write_str("Only video clips can be moved to the Recycle Bin from here.")
+            }
+            Self::TrashUnavailable => formatter.write_str(
+                "The clip could not be moved to the Recycle Bin, so it was left where it is.",
             ),
             Self::FileStillExists => formatter.write_str(
                 "This file is still on your computer. Delete or move it first, then remove it from the library.",
@@ -1179,6 +1198,9 @@ pub fn execute_cancellable(
         Command::RevealInFileManager { path } => {
             reveal_in_file_manager(&path).map(|path| CommandOutput::Revealed { path })
         }
+        Command::TrashClip { path } => {
+            trash_clip(&path).map(|path| CommandOutput::Trashed { path })
+        }
         Command::LocalMediaPath { path } => {
             if path.as_os_str().is_empty() {
                 return Err(EngineError::EmptyMediaPath);
@@ -1235,6 +1257,50 @@ fn reveal_invocation(manager: FileManager, path: &Path) -> (&'static str, Vec<Os
             vec![path.parent().unwrap_or(path).as_os_str().to_owned()],
         ),
     }
+}
+
+/// Puts a file in the Recycle Bin. The engine cannot reach the operating system itself (that code
+/// lives a layer up), so the program registers it once at start-up.
+type TrashHandler = fn(&Path) -> Result<(), String>;
+
+static TRASH_HANDLER: std::sync::Mutex<Option<TrashHandler>> = std::sync::Mutex::new(None);
+
+/// Registers how this program moves a file to the Recycle Bin. Without it deleting a clip fails
+/// and leaves the file alone.
+pub fn set_trash_handler(handler: TrashHandler) {
+    if let Ok(mut slot) = TRASH_HANDLER.lock() {
+        *slot = Some(handler);
+    }
+}
+
+/// Moves one clip to the Recycle Bin. Only an existing regular file with a video extension is
+/// accepted, so the command cannot be pointed at anything else.
+fn trash_clip(path: &Path) -> Result<String, EngineError> {
+    if path.as_os_str().is_empty() {
+        return Err(EngineError::EmptyMediaPath);
+    }
+    let absolute = std::path::absolute(path).map_err(|_| EngineError::FileUnavailable)?;
+    let metadata = fs::symlink_metadata(&absolute).map_err(|_| EngineError::FileUnavailable)?;
+    let is_video = absolute
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            VIDEO_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
+        });
+    if !metadata.is_file() || !is_video {
+        return Err(EngineError::NotAClip);
+    }
+    let handler = TRASH_HANDLER
+        .lock()
+        .ok()
+        .and_then(|slot| *slot)
+        .ok_or(EngineError::TrashUnavailable)?;
+    handler(&absolute).map_err(|_| EngineError::TrashUnavailable)?;
+    // A handler that reported success but left the file behind is not a deletion.
+    if absolute.exists() {
+        return Err(EngineError::TrashUnavailable);
+    }
+    Ok(absolute.to_string_lossy().into_owned())
 }
 
 fn reveal_in_file_manager(path: &Path) -> Result<String, EngineError> {
@@ -1304,6 +1370,7 @@ pub const fn command_ids() -> &'static [&'static str] {
         "library.scan",
         "library.path",
         "library.reveal",
+        "library.trash",
         "library.refresh",
         "library.load",
         "library.store_scan",
@@ -1346,6 +1413,62 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    fn bin_that_works(path: &std::path::Path) -> Result<(), String> {
+        fs::remove_file(path).map_err(|error| error.to_string())
+    }
+
+    fn bin_that_refuses(_: &std::path::Path) -> Result<(), String> {
+        Err("no bin".to_owned())
+    }
+
+    fn bin_that_lies(_: &std::path::Path) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// One test, because the handler is process-wide and tests run side by side.
+    #[test]
+    fn trashing_a_clip_only_touches_video_files_and_only_when_the_bin_took_it() {
+        let directory = std::env::temp_dir().join(format!(
+            "clipcraft-trash-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::SeqCst)
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let clip = directory.join("ClipCraft test.mp4");
+        let notes = directory.join("notes.txt");
+        let folder = directory.join("folder.mp4");
+        fs::write(&clip, b"clip").unwrap();
+        fs::write(&notes, b"notes").unwrap();
+        fs::create_dir_all(&folder).unwrap();
+        let trash = |path: &PathBuf| super::execute(Command::TrashClip { path: path.clone() });
+
+        super::set_trash_handler(bin_that_refuses);
+        assert_eq!(trash(&clip).unwrap_err(), EngineError::TrashUnavailable);
+        assert!(clip.exists(), "a refused move leaves the clip alone");
+
+        super::set_trash_handler(bin_that_lies);
+        assert_eq!(trash(&clip).unwrap_err(), EngineError::TrashUnavailable);
+
+        super::set_trash_handler(bin_that_works);
+        assert_eq!(trash(&notes).unwrap_err(), EngineError::NotAClip);
+        assert_eq!(trash(&folder).unwrap_err(), EngineError::NotAClip);
+        assert_eq!(
+            trash(&directory.join("missing.mp4")).unwrap_err(),
+            EngineError::FileUnavailable
+        );
+        assert_eq!(
+            trash(&PathBuf::new()).unwrap_err(),
+            EngineError::EmptyMediaPath
+        );
+        assert!(notes.exists() && folder.exists());
+        assert!(matches!(
+            trash(&clip).unwrap(),
+            CommandOutput::Trashed { .. }
+        ));
+        assert!(!clip.exists());
+        let _ = fs::remove_dir_all(&directory);
+    }
 
     #[test]
     fn editor_export_json_keeps_existing_fields_and_accepts_optional_size_presets() {

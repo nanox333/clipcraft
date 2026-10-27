@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    clipcraft_engine::set_trash_handler(clipcraft_platform::move_to_trash);
     match run(std::env::args_os().skip(1).collect()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -311,6 +312,13 @@ fn run_library(arguments: &[OsString]) -> Result<(), CliError> {
                 execute(Command::ScanLibrary { directory: path }).map_err(CliError::Engine)?;
             match output {
                 CommandOutput::LibraryScan(result) => write_json(&result),
+                _ => Err(CliError::UnexpectedOutput),
+            }
+        }
+        "trash" => {
+            let output = execute(Command::TrashClip { path }).map_err(CliError::Engine)?;
+            match output {
+                CommandOutput::Trashed { path } => write_json(&path),
                 _ => Err(CliError::UnexpectedOutput),
             }
         }
@@ -762,6 +770,7 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli library scan <folder>\n",
         "  clipcraft-cli library path <file>\n",
         "  clipcraft-cli library reveal <file>\n",
+        "  clipcraft-cli library trash <file>  (moves the clip to the Recycle Bin)\n",
         "  clipcraft-cli library probe <file>\n",
         "  clipcraft-cli library thumbnail <file>\n",
         "  clipcraft-cli clip trim <input> <output.mp4> <start-seconds> <end-seconds>\n",
