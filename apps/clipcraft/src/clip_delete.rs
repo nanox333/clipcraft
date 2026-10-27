@@ -14,6 +14,7 @@ use crate::{ClipCraftApp, Icon};
 /// A clip being moved to the Recycle Bin on another thread.
 pub(crate) struct Trashing {
     title: String,
+    path: String,
     receiver: mpsc::Receiver<Result<(), EngineError>>,
 }
 
@@ -97,6 +98,7 @@ impl ClipCraftApp {
     /// Moves the clip to the Recycle Bin on a thread. The player may still hold the file for a
     /// moment after it is closed, so a refusal is tried again for a couple of seconds.
     pub(crate) fn start_trash(&mut self, path: String, title: String) {
+        let key = path.clone();
         let path = PathBuf::from(path);
         if self
             .selected
@@ -120,7 +122,11 @@ impl ClipCraftApp {
             }
             let _ = sender.send(last);
         });
-        self.trashing = Some(Trashing { title, receiver });
+        self.trashing = Some(Trashing {
+            title,
+            path: key,
+            receiver,
+        });
     }
 
     /// Picks up the result of a move to the Recycle Bin.
@@ -137,11 +143,14 @@ impl ClipCraftApp {
             Err(mpsc::TryRecvError::Disconnected) => Err(EngineError::TrashUnavailable),
         };
         let title = trashing.title.clone();
+        let path = trashing.path.clone();
         self.trashing = None;
         match result {
             Ok(()) => {
                 self.capture.notice =
                     notice(format!("Moved {title} to the Recycle Bin"), false, None);
+                // Forget the clip at once, so the grid does not keep an offline ghost of it.
+                self.edit_library(clipcraft_engine::MetaEdit::RemoveFromLibrary { path });
                 self.scan_library();
             }
             Err(error) => {

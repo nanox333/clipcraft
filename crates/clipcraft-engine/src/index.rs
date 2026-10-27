@@ -210,7 +210,12 @@ pub(crate) fn register_recording(
 ) -> Result<LibraryScanResult, EngineError> {
     let game = crate::library_meta::clean_recorded_game(game).ok_or(EngineError::NameInvalid)?;
     let metadata = fs::symlink_metadata(path).map_err(|_| EngineError::FileUnavailable)?;
-    if path.parent() != Some(directory) || !metadata.is_file() {
+    // Clips are filed in a folder per game, so the file may sit below the library folder.
+    let inside = path.starts_with(directory)
+        && !path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir));
+    if !inside || !metadata.is_file() {
         return Err(EngineError::FileUnavailable);
     }
     let entry = MediaEntry {
@@ -540,7 +545,7 @@ mod tests {
             Err(EngineError::NameInvalid)
         );
         assert_eq!(
-            register_recording(&index, &scratch.0, &path, "Game"),
+            register_recording(&index, &scratch.0.join("elsewhere"), &path, "Game"),
             Err(EngineError::FileUnavailable)
         );
     }

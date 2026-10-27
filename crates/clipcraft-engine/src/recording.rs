@@ -354,7 +354,7 @@ pub struct RecordingSettings {
     pub rate_control: RateControl,
     /// Audio bitrate in kilobits per second.
     pub audio_kbps: u32,
-    /// Whether extra controls are shown at the bottom of their normal settings categories.
+    /// No longer used (custom games are always shown); kept so older settings files still load.
     pub show_advanced: bool,
     /// How hard the encoder works.
     pub encoder_preset: EncoderPreset,
@@ -426,6 +426,8 @@ pub struct RecordingSettings {
     pub close_to_tray: bool,
     /// A pop-up card in the corner of the screen when a clip has been saved.
     pub show_save_notification: bool,
+    /// Ask GitHub once at start-up whether a newer ClipCraft has been published.
+    pub check_for_updates: bool,
     /// Open ClipCraft when you sign in.
     pub launch_at_startup: bool,
     /// Game sound level, 0 to 100 percent.
@@ -496,6 +498,7 @@ impl Default for RecordingSettings {
             delete_oldest_when_full: true,
             start_minimized: false,
             close_to_tray: true,
+            check_for_updates: true,
             show_save_notification: true,
             launch_at_startup: false,
             game_audio_percent: 100,

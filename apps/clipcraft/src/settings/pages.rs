@@ -767,6 +767,32 @@ pub(crate) fn replay_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut RecordingS
 }
 
 pub fn replay_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
+    // Say how the pieces fit together, since what is recorded is chosen on another page.
+    egui::Frame::new()
+        .fill(CARD)
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .corner_radius(egui::CornerRadius::same(14))
+        .inner_margin(egui::Margin::symmetric(20, 14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                RichText::new("How clipping works")
+                    .color(TEXT)
+                    .size(15.0)
+                    .family(kit::semibold()),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(
+                    "1. Capture (its own page) picks what is recorded: a screen, a window, or whichever game is running.
+                     2. While clipping is on, ClipCraft keeps only the last few moments in memory. Nothing is written to disk yet.
+                     3. Press the save hotkey and that stretch is saved as a clip. The settings below set how long it is.",
+                )
+                .color(MUTED)
+                .size(13.0),
+            );
+        });
+    ui.add_space(14.0);
     let mut rows = Rows::new("");
     replay_rows(&mut rows, ui, settings);
     section_heading(ui, "What a clip will be");
@@ -1478,11 +1504,11 @@ pub(crate) fn app_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut RecordingSett
         ui,
         s,
         Meta::new(
-            "Show advanced settings",
-            "Show extra controls for custom games.",
-            "more developer custom games advanced",
+            "Check for updates",
+            "Once at start-up, ClipCraft asks GitHub which version is newest and offers it if yours is older. Nothing about you or your clips is sent. Off, ClipCraft never goes online.",
+            "update upgrade new version network internet online automatic",
         ),
-        |s| &mut s.show_advanced,
+        |s| &mut s.check_for_updates,
     );
     rows.finish(ui);
 }

@@ -813,7 +813,7 @@ pub fn games_tab(
         ui.add_space(10.0);
         if found == 0 {
             ui.label(
-                RichText::new(if settings.show_advanced { "No known games match. You can add a custom rule below." } else { "No known games match. Enable advanced settings in General to add a custom game." })
+                RichText::new("No known games match. You can add a custom game below.")
                     .color(FAINT)
                     .size(12.5),
             );
@@ -903,20 +903,8 @@ pub fn games_tab(
     });
 
     game_data.show(ui, &mut settings.game_integrations);
-    if !settings.show_advanced && !settings.game_rules.is_empty() {
-        ui.label(
-            RichText::new(format!(
-                "Custom game rules active: {}. Enable advanced settings in General to edit them.",
-                settings.game_rules.len()
-            ))
-            .color(MUTED)
-            .size(12.5),
-        );
-    }
-    if settings.show_advanced {
-        advanced_heading(ui);
-        refresh_processes |= custom_games(ui, settings, state);
-    }
+    custom_games_heading(ui);
+    refresh_processes |= custom_games(ui, settings, state);
     refresh_processes
 }
 
@@ -1766,19 +1754,19 @@ pub fn about_tab(ui: &mut egui::Ui) {
 }
 
 /// The advanced controls stay within their normal category, below its basic settings.
-pub(crate) fn advanced_heading(ui: &mut egui::Ui) {
+pub(crate) fn custom_games_heading(ui: &mut egui::Ui) {
     ui.add_space(4.0);
     divider(ui);
     ui.add_space(26.0);
     ui.label(
-        RichText::new("Advanced settings")
+        RichText::new("Custom games")
             .color(TEXT)
             .size(20.0)
             .family(kit::semibold()),
     );
     ui.add_space(2.0);
     ui.label(
-        RichText::new("Extra controls for fine-tuning. The defaults suit most people.")
+        RichText::new("Add a game ClipCraft does not know yet, by its program name.")
             .color(MUTED)
             .size(13.5),
     );
@@ -2014,42 +2002,17 @@ mod preset_tests {
     }
 
     #[test]
-    fn advanced_controls_are_disclosed_in_their_own_categories_without_a_new_nav_item() {
+    fn custom_game_creation_works_with_the_keyboard_without_any_advanced_switch() {
         let mut app = crate::ClipCraftApp {
             page: crate::Page::Settings,
+            settings_tab: crate::SettingsTab::Games,
             ..Default::default()
         };
-        for show_advanced in [false, true] {
-            app.recording.show_advanced = show_advanced;
-            #[allow(clippy::single_element_loop)]
-            for (tab, control) in [(crate::SettingsTab::Games, "Game name")] {
-                app.settings_tab = tab;
-                let names = category_controls(&mut app);
-                assert_eq!(
-                    names.iter().any(|name| name == control),
-                    show_advanced,
-                    "{tab:?}: {names:?}"
-                );
-                assert_eq!(
-                    names.iter().any(|name| name == "Advanced settings"),
-                    show_advanced,
-                    "{tab:?}: advanced heading missing"
-                );
-                assert!(!names.iter().any(|name| name == "Advanced"));
-            }
-        }
-    }
-
-    #[test]
-    fn general_toggle_and_custom_game_creation_work_with_the_keyboard_and_hiding_preserves_rules() {
-        let mut app = crate::ClipCraftApp {
-            page: crate::Page::Settings,
-            settings_tab: crate::SettingsTab::General,
-            ..Default::default()
-        };
-        keyboard_activate(&mut app, "Show advanced settings");
-        assert!(app.recording.show_advanced);
-        app.settings_tab = crate::SettingsTab::Games;
+        assert!(
+            category_controls(&mut app)
+                .iter()
+                .any(|name| name == "Game name")
+        );
         app.settings_state.builtin_game_search = "no-known-game-matches-this".to_owned();
         app.settings_state.game_name_draft = "My local game".to_owned();
         app.settings_state.game_process_draft = "local-game.exe".to_owned();
@@ -2063,21 +2026,6 @@ mod preset_tests {
         assert_eq!(app.recording.match_game("not-local-game.exe", None), None);
         assert!(app.settings_state.game_name_draft.is_empty());
         assert!(app.settings_state.game_process_draft.is_empty());
-        let rule = app.recording.game_rules[0].clone();
-        app.settings_tab = crate::SettingsTab::General;
-        keyboard_activate(&mut app, "Show advanced settings");
-        assert!(!app.recording.show_advanced);
-        app.settings_tab = crate::SettingsTab::Games;
-        assert!(
-            !category_controls(&mut app)
-                .iter()
-                .any(|name| name == "Game name")
-        );
-        assert_eq!(app.recording.game_rules, [rule]);
-        assert_eq!(
-            app.recording.match_game("local-game.exe", None),
-            Some("My local game")
-        );
     }
 
     #[test]

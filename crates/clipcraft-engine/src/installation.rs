@@ -11,9 +11,8 @@ const MAGIC: &[u8; 16] = b"CUT-INSTALL-0001";
 const LIMIT: u64 = 512 * 1024 * 1024;
 const MARKER: &str = ".clipcraft-install.json";
 /// Only these files may be unpacked or removed. No archive-controlled paths are accepted.
-pub const FILES: [&str; 7] = [
+pub const FILES: [&str; 6] = [
     "bin/clipcraft.exe",
-    "bin/clipcraft-cli.exe",
     "README.md",
     "ATTRIBUTION.md",
     "LICENSE-MIT",

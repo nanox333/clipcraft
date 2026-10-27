@@ -244,6 +244,11 @@ impl ClipCraftApp {
         }
         self.yield_to_the_game();
         self.sync_hotkeys();
+        // Hotkeys are read here, once per frame. Without the focus no input wakes the window (it
+        // may be in the tray or behind a game), so look again often enough to feel instant.
+        if self.capture.listener.is_some() && !context.input(|input| input.focused) {
+            context.request_repaint_after(Duration::from_millis(50));
+        }
         let mut actions = Vec::new();
         if let Some(listener) = self.capture.listener.as_ref() {
             while let Some(event) = listener.try_next() {
@@ -757,9 +762,10 @@ impl ClipCraftApp {
             .capture
             .session
             .prepare_save(&settings, &folder)
+            .map(|job| job.with_game(game))
             .and_then(|job| job.avoid_paths(&reserved))
         {
-            Ok(job) => job.with_game(game),
+            Ok(job) => job,
             Err(error) => {
                 self.capture.notice = notice(
                     format!(
@@ -1472,7 +1478,11 @@ impl ClipCraftApp {
             }
             None => (FAINT, "Not clipping".to_owned()),
         };
-        kit::status_pill(ui, dot, &text);
+        if dot == LIME {
+            kit::live_status_pill(ui, &text);
+        } else {
+            kit::status_pill(ui, dot, &text);
+        }
         ui.add_space(8.0);
 
         let (icon, label) = if active {
@@ -1712,6 +1722,25 @@ fn saved_clip_facts(
 mod tests {
     use super::*;
 
+    /// The clips saved below `root`: one folder per game, then the file.
+    fn saved_mp4s(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(root).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                found.extend(saved_mp4s(&path));
+            } else if path.extension().is_some_and(|extension| extension == "mp4")
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(clipcraft_engine::is_clip_file_name)
+            {
+                found.push(path);
+            }
+        }
+        found
+    }
+
     #[test]
     fn talking_stays_open_until_every_alternative_is_released() {
         let mut keys = clipcraft_engine::Hotkeys::default();
@@ -1941,17 +1970,7 @@ mod tests {
         assert!(!app.capture.is_active());
         assert!(!app.capture.desktop_fallback);
         assert_eq!(std::fs::read(&original).unwrap(), b"original untouched");
-        let clips: Vec<_> = std::fs::read_dir(&root)
-            .unwrap()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("ClipCraft")
-            })
-            .collect();
+        let clips = saved_mp4s(&root);
         assert_eq!(clips.len(), 4);
         assert_eq!(app.saved_games.len(), 2); // game replays tagged; desktop replays untagged
         for path in clips {
@@ -2011,12 +2030,7 @@ mod tests {
         finish_saves(&mut app);
         assert!(!app.capture.is_active());
         assert_eq!(app.saved_games.len(), 1);
-        let clips: Vec<_> = std::fs::read_dir(&root)
-            .unwrap()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|extension| extension == "mp4"))
-            .collect();
+        let clips = saved_mp4s(&root);
         assert_eq!(clips.len(), 2); // both the game replay and the retained desktop replay survive
         for path in clips {
             assert!(matches!(

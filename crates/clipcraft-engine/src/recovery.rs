@@ -8,12 +8,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use crate::session::CLIP_PREFIX;
+use crate::session::is_clip_file_name;
 
 /// Leftovers newer than this might still be being written.
 const SETTLE: Duration = Duration::from_secs(30);
 /// Most directory entries looked at.
 const MAX_ENTRIES: usize = 20_000;
+/// Most per-game folders looked into.
+const MAX_GAME_FOLDERS: usize = 500;
 
 /// What clean-up did.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -61,7 +63,7 @@ impl Recovery {
 /// Whether ClipCraft made a file with this name (without the `.partial`).
 fn is_ours(base: &str) -> bool {
     let playable = base.ends_with(".mp4") || base.ends_with(".mkv");
-    playable && (base.starts_with(CLIP_PREFIX) || base.contains(" (trimmed"))
+    playable && (is_clip_file_name(base) || base.contains(" (trimmed"))
 }
 
 /// Deals with unfinished saves in `folder`. Never fails: what cannot be read or removed is left.
@@ -71,8 +73,28 @@ pub fn recover_interrupted(folder: &Path) -> Recovery {
 
 fn recover_interrupted_after(folder: &Path, settle: Duration) -> Recovery {
     let mut recovery = Recovery::default();
+    // Clips are filed in a folder per game, so look in those too.
+    let mut folders = vec![folder.to_path_buf()];
+    if let Ok(listing) = fs::read_dir(folder) {
+        folders.extend(
+            listing
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+                .take(MAX_GAME_FOLDERS)
+                .map(|entry| entry.path()),
+        );
+    }
+    for folder in &folders {
+        recover_in(folder, settle, &mut recovery);
+    }
+    recovery.removed.sort();
+    recovery.salvaged.sort();
+    recovery
+}
+
+fn recover_in(folder: &Path, settle: Duration, recovery: &mut Recovery) {
     let Ok(listing) = fs::read_dir(folder) else {
-        return recovery;
+        return;
     };
     // Unfinished files first, crash-safe copies after: a finished-but-unrenamed clip is kept as
     // it is, and its copy is then just left over.
@@ -113,7 +135,7 @@ fn recover_interrupted_after(folder: &Path, settle: Duration) -> Recovery {
             continue;
         }
         if recovery_copy {
-            remake_from_recovery_copy(folder, base, &path, &mut recovery);
+            remake_from_recovery_copy(folder, base, &path, recovery);
             continue;
         }
         // A cut-off Matroska file, or an MP4 that was finished but not yet renamed, may still play.
@@ -131,9 +153,6 @@ fn recover_interrupted_after(folder: &Path, settle: Duration) -> Recovery {
             recovery.removed.push(path);
         }
     }
-    recovery.removed.sort();
-    recovery.salvaged.sort();
-    recovery
 }
 
 /// Turns the crash-safe copy of a clip (a fragmented MP4, playable up to its last complete

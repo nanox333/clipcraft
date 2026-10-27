@@ -10,15 +10,19 @@ computer.
 
 ## Download
 
-`cargo xtask package` also builds an offline Windows `-setup.exe` with Start menu shortcuts and an uninstaller.
-New profiles get a short setup for storage, capture, audio and shortcuts; existing preferences
-carry over. Each hotkey action supports up to five shortcuts: use **+** in Settings → Hotkeys.
+On Windows, download **ClipCraft-Setup** from the
+[latest release](https://github.com/nanox333/clipcraft/releases), run it, and ClipCraft is installed
+for your user with a Start menu shortcut and an uninstaller (Windows Settings → Apps). No
+administrator rights or account are needed. Linux gets a tarball with the app. The command line tool
+`clipcraft-cli` is a separate download for people who want it; the app does not need it.
 
-Get the Windows zip or Linux tarball from the
-[latest release](https://github.com/nanox333/clipcraft/releases), check it against `SHA256SUMS.txt`,
-unpack it anywhere, and run `bin\clipcraft.exe` (Windows) or `bin/clipcraft` (Linux). Downloads are
-not code-signed, so Windows SmartScreen may warn: choose *More info*, then *Run anyway*. If recording
-does not work, run `clipcraft-cli diagnose`. See [`CHANGELOG.md`](CHANGELOG.md) for each release.
+Check a download against `SHA256SUMS.txt` if you like. Downloads are not code-signed, so Windows
+SmartScreen may warn: choose *More info*, then *Run anyway*. ClipCraft can tell you when a newer
+version is published and install it for you (Settings → About); turn the automatic check off under
+Settings → General and it never goes online. See [`CHANGELOG.md`](CHANGELOG.md) for each release.
+
+New profiles get a short setup for storage, capture, audio and shortcuts. Each hotkey action
+supports up to five shortcuts: use **+** in Settings → Hotkeys.
 
 ## What it does
 

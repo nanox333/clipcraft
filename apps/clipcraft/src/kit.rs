@@ -565,6 +565,42 @@ pub fn keycap(ui: &mut egui::Ui, text: &str) {
         .text(rect.center(), Align2::CENTER_CENTER, text, font, TEXT);
 }
 
+/// The label shown while ClipCraft is clipping: a lime-tinted pill with a ringed dot and bright
+/// text, so it is clear at a glance that the replay buffer is running. Static, so it costs nothing
+/// to draw while recording.
+pub fn live_status_pill(ui: &mut egui::Ui, text: &str) {
+    let font = FontId::new(13.0, semibold());
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font.clone(), Color32::PLACEHOLDER);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(galley.size().x + 44.0, 30.0), Sense::hover());
+    ui.painter().rect_filled(
+        rect,
+        15.0,
+        Color32::from_rgba_unmultiplied(190, 255, 43, 28),
+    );
+    ui.painter().rect_stroke(
+        rect,
+        15.0,
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(190, 255, 43, 120)),
+        StrokeKind::Inside,
+    );
+    let center = Pos2::new(rect.left() + 17.0, rect.center().y);
+    ui.painter().circle_filled(center, 4.5, LIME);
+    ui.painter().circle_stroke(
+        center,
+        8.0,
+        Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(190, 255, 43, 110)),
+    );
+    ui.painter().text(
+        Pos2::new(rect.left() + 32.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        text,
+        font,
+        TEXT,
+    );
+}
+
 /// A rounded status label with a colored dot, painted at an exact size.
 pub fn status_pill(ui: &mut egui::Ui, dot: Color32, text: &str) {
     let font = FontId::proportional(13.0);

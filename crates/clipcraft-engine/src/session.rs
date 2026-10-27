@@ -410,13 +410,15 @@ impl CaptureSession {
         {
             return Err(EngineError::Record(RecordError::DiskFull));
         }
+        let unix = unix_now();
         Ok(SaveJob {
             recorded_game: None,
+            unix,
             recorder,
             format,
             seconds: settings.replay_seconds + settings.post_roll_seconds,
             post_roll: Duration::from_secs(u64::from(settings.post_roll_seconds)),
-            path: free_clip_path(folder, format, unix_now())?,
+            path: free_clip_path(folder, format, None, unix)?,
             folder: folder.to_path_buf(),
             trim_to: (limit > 0 && settings.delete_oldest_when_full).then_some(limit),
         })
@@ -426,6 +428,7 @@ impl CaptureSession {
 /// A clip save that can run on any thread.
 pub struct SaveJob {
     recorded_game: Option<String>,
+    unix: u64,
     recorder: Arc<Recorder>,
     format: ClipFormat,
     seconds: u32,
@@ -439,6 +442,12 @@ impl SaveJob {
     /// Snapshots a game name before moving threads. Invalid labels never prevent saving media.
     pub fn with_game(mut self, game: Option<&str>) -> Self {
         self.recorded_game = game.and_then(crate::library_meta::clean_recorded_game);
+        // The clip is filed under the game: `<clips>/<Game>/<Game> 2026-10-19 21-04-55.mp4`.
+        if let Some(name) = self.recorded_game.as_deref()
+            && let Ok(path) = free_clip_path(&self.folder, self.format, Some(name), self.unix)
+        {
+            self.path = path;
+        }
         self
     }
     /// Keep two in-flight transition jobs from choosing the same timestamp-based output name.
@@ -536,32 +545,100 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (year, month, day)
 }
 
-/// `ClipCraft 2026-10-19 21-04-55` for a Unix time, in UTC.
-pub fn clip_stem(unix_seconds: u64) -> String {
+/// `2026-10-19 21-04-55` for a Unix time, in UTC.
+fn timestamp(unix_seconds: u64) -> String {
     let days = i64::try_from(unix_seconds / 86_400).unwrap_or(0);
     let (year, month, day) = civil_from_days(days);
     let seconds = unix_seconds % 86_400;
     format!(
-        "{CLIP_PREFIX}{year:04}-{month:02}-{day:02} {:02}-{:02}-{:02}",
+        "{year:04}-{month:02}-{day:02} {:02}-{:02}-{:02}",
         seconds / 3_600,
         seconds % 3_600 / 60,
         seconds % 60
     )
 }
 
+/// `ClipCraft 2026-10-19 21-04-55` for a Unix time, in UTC.
+pub fn clip_stem(unix_seconds: u64) -> String {
+    format!("{CLIP_PREFIX}{}", timestamp(unix_seconds))
+}
+
+/// What a game is called on disk: no characters a file name cannot hold, and never empty.
+pub fn folder_name_for(game: Option<&str>) -> String {
+    let cleaned: String = game
+        .unwrap_or_default()
+        .chars()
+        .map(|c| {
+            if c.is_control() || "<>:\"/\\|?*".contains(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cleaned: String = cleaned.chars().take(60).collect();
+    let cleaned = cleaned.trim_matches(['.', ' ']).to_owned();
+    if cleaned.is_empty() {
+        "Desktop".to_owned()
+    } else {
+        cleaned
+    }
+}
+
+/// `Hades 2026-10-19 21-04-55` for a game (or `Desktop 2026-10-19 21-04-55`), in UTC.
+pub fn game_clip_stem(game: Option<&str>, unix_seconds: u64) -> String {
+    format!("{} {}", folder_name_for(game), timestamp(unix_seconds))
+}
+
+/// True when a file name looks like one ClipCraft saved: the old `ClipCraft ` prefix, or a
+/// game (or `Desktop`) name followed by `2026-10-19 21-04-55`, with an optional ` (2)`.
+pub fn is_clip_file_name(name: &str) -> bool {
+    if name.starts_with(CLIP_PREFIX) {
+        return true;
+    }
+    let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+    let stem = match stem.rsplit_once(" (") {
+        Some((head, tail)) if tail.ends_with(')') => head,
+        _ => stem,
+    };
+    let bytes = stem.as_bytes();
+    // " 2026-10-19 21-04-55" is 20 bytes, after at least one name character.
+    if bytes.len() < 21 {
+        return false;
+    }
+    let tail = &bytes[bytes.len() - 20..];
+    let shape = b" dddd-dd-dd dd-dd-dd";
+    tail.iter().zip(shape).all(|(&got, &want)| {
+        if want == b'd' {
+            got.is_ascii_digit()
+        } else {
+            got == want
+        }
+    })
+}
+
 fn free_clip_path(
     folder: &Path,
     format: ClipFormat,
+    game: Option<&str>,
     unix_seconds: u64,
 ) -> Result<PathBuf, EngineError> {
-    let stem = clip_stem(unix_seconds);
+    let stem = game_clip_stem(game, unix_seconds);
+    let directory = folder.join(folder_name_for(game));
+    // Without the game's folder the clip still saves, beside the others.
+    let directory = if fs::create_dir_all(&directory).is_ok() {
+        directory
+    } else {
+        folder.to_path_buf()
+    };
     for attempt in 1..=999_u32 {
         let name = if attempt == 1 {
             format!("{stem}.{}", format.extension())
         } else {
             format!("{stem} ({attempt}).{}", format.extension())
         };
-        let candidate = folder.join(name);
+        let candidate = directory.join(name);
         if !candidate.exists() {
             return Ok(candidate);
         }
@@ -577,7 +654,7 @@ fn trim_to_limit(folder: &Path, keep: &Path, limit: u64) -> Vec<PathBuf> {
         clip.path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with(CLIP_PREFIX))
+            .is_some_and(is_clip_file_name)
             && clip.path != keep
     };
     let others: u64 = clips
@@ -600,6 +677,22 @@ mod tests {
     use super::*;
     use clipcraft_capture::SyntheticSource;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn clips_are_named_and_filed_by_game() {
+        assert_eq!(game_clip_stem(None, 0), "Desktop 1970-01-01 00-00-00");
+        assert_eq!(
+            game_clip_stem(Some("Counter-Strike: 2"), 3_661),
+            "Counter-Strike 2 1970-01-01 01-01-01"
+        );
+        assert_eq!(folder_name_for(Some("  ??  ")), "Desktop");
+        assert_eq!(folder_name_for(Some("a/b")), "a b");
+        assert!(is_clip_file_name("Hades 2026-10-19 21-04-55.mp4"));
+        assert!(is_clip_file_name("Hades 2026-10-19 21-04-55 (2).mp4"));
+        assert!(is_clip_file_name("ClipCraft 2020-01-01 00-00-00.mp4"));
+        assert!(!is_clip_file_name("holiday.mp4"));
+        assert!(!is_clip_file_name("Hades 2026-10-19.mp4"));
+    }
 
     #[test]
     fn clip_names_are_utc_timestamps() {
@@ -768,8 +861,9 @@ mod tests {
                 .unwrap()
                 .to_str()
                 .unwrap()
-                .starts_with(CLIP_PREFIX)
+                .starts_with("Desktop ")
         );
+        assert_eq!(report.clip.path.parent().unwrap(), dir.join("Desktop"));
         assert_eq!(
             report.clip.path.extension().and_then(|e| e.to_str()),
             Some("mp4")

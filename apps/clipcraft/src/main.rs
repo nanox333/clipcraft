@@ -31,6 +31,7 @@ mod thumbs;
 mod tray;
 mod tray_menu;
 mod trim;
+mod updater;
 
 use eframe::egui;
 use egui::{Align, Color32, Layout, RichText, Stroke, Vec2};
@@ -42,10 +43,11 @@ use kit::{
     BORDER, CANVAS, CARD, CARD_HOVER, DANGER, FAINT, Icon, LIME, MUTED, PANEL, SIDEBAR, TEXT,
 };
 use organize::{CollectionEdit, LibraryFilter, RailAction};
-use settings::{card, setting_row, toggle_row};
+use settings::{card, setting_row};
 
 fn main() -> eframe::Result<()> {
     clipcraft_engine::set_trash_handler(clipcraft_platform::move_to_trash);
+    clipcraft_engine::update::set_http_fetcher(clipcraft_platform::https_get);
     let launch_settings = clipcraft_engine::default_settings_path()
         .and_then(
             |path| match execute(Command::LoadRecordingSettings { path }) {
@@ -109,7 +111,7 @@ struct ClipCraftApp {
     /// When the diagnostics report was last copied, to confirm it on the button.
     diagnostics_copied: Option<std::time::Instant>,
     search_text: String,
-    sort_newest: bool,
+    sort: library_view::Sort,
     page: Page,
     /// Where the rebuildable library index lives; `None` keeps scans in memory only.
     index_path: Option<PathBuf>,
@@ -147,6 +149,14 @@ struct ClipCraftApp {
     settings_search: String,
     /// The system-tray icon, when the platform has one.
     tray: Option<tray::Tray>,
+    /// The taskbar button is hidden because the window is minimized to the tray.
+    taskbar_hidden: bool,
+    updater: updater::Updater,
+    update_checked_on_launch: bool,
+    /// The version whose banner was dismissed with Later.
+    update_dismissed: Option<String>,
+    /// The settings as they were when the Settings page was opened, for Cancel changes.
+    settings_snapshot: Option<RecordingSettings>,
     /// The tray menu, while it is open.
     tray_menu: Option<tray_menu::TrayMenu>,
     /// The pop-up for the clip just saved.
@@ -228,12 +238,14 @@ impl SettingsTab {
             Self::Storage => "Where clips are saved, how much space they use, and a limit.",
             Self::Hotkeys => "Keyboard shortcuts for recording.",
             Self::Games => "Choose which running games can arm replay capture.",
-            Self::Capture => "What gets recorded.",
+            Self::Capture => "What gets recorded: a screen, a window, or your game.",
             Self::Video => {
                 "How sharp and smooth your clips are, which chip encodes them, and how big they get."
             }
             Self::Audio => "What sound is recorded and how well.",
-            Self::Replay => "How far back a clip reaches and how much comes after the hotkey.",
+            Self::Replay => {
+                "How the replay buffer works: how far back a clip reaches and what happens when you save."
+            }
             Self::About => {
                 "What ClipCraft is, which version you have, and where to find the project."
             }
@@ -391,6 +403,11 @@ impl eframe::App for ClipCraftApp {
         self.draw_screen(context);
         self.draw_focus_ring(context);
         self.hide_to_tray(context);
+        self.sync_taskbar_button(context);
+        self.poll_update(context);
+        if !matches!(self.page, Page::Settings) {
+            self.settings_snapshot = None;
+        }
         self.poll_tray(context);
         self.saved_toast_frame(context);
         self.index_save_status(context);
@@ -476,6 +493,26 @@ impl ClipCraftApp {
         {
             context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             context.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+    }
+
+    /// While the window is minimized to the tray, the tray icon is the way back, so the taskbar
+    /// button goes away. Anything else brings it back.
+    fn sync_taskbar_button(&mut self, context: &egui::Context) {
+        let hidden = self.tray.is_some()
+            && self.recording.close_to_tray
+            && clipcraft_platform::window_minimized("ClipCraft");
+        if !hidden && !self.taskbar_hidden {
+            return;
+        }
+        if hidden != self.taskbar_hidden
+            && clipcraft_platform::set_taskbar_button("ClipCraft", !hidden)
+        {
+            self.taskbar_hidden = hidden;
+        }
+        // A minimized window draws no frames of its own, so look again soon.
+        if hidden != self.taskbar_hidden || hidden {
+            context.request_repaint_after(std::time::Duration::from_millis(250));
         }
     }
 
@@ -608,8 +645,10 @@ impl ClipCraftApp {
                     .inner_margin(egui::Margin::same(16)),
             )
             .show(context, |ui| {
+                self.update_banner(ui);
                 if self.editor.open {
                     self.editor.show(ui, &mut self.thumbs);
+                    self.editor.clip_picker(ui.ctx(), self.library.as_ref());
                     if !self.editor.open {
                         self.selected = None;
                     }
@@ -1047,7 +1086,7 @@ impl ClipCraftApp {
     fn library_view(&mut self, ui: &mut egui::Ui) {
         if let Some(result) = &self.library {
             self.library_view
-                .prepare(result, &self.filter, &self.search_text, self.sort_newest);
+                .prepare(result, &self.filter, &self.search_text, self.sort);
         }
         let show_rail = self.library.is_some() && ui.available_width() >= 720.0;
         let mut rail_actions = Vec::new();
@@ -1338,9 +1377,6 @@ impl ClipCraftApp {
     }
 
     fn library_content(&mut self, ui: &mut egui::Ui) {
-        let (visible_count, total_count) =
-            (self.library_view.indices.len(), self.library_view.total);
-
         // Title row.
         ui.horizontal(|ui| {
             ui.label(
@@ -1349,17 +1385,15 @@ impl ClipCraftApp {
                     .size(26.0)
                     .family(kit::semibold()),
             );
-            if self.library.is_some() {
-                let count = if self.search_text.trim().is_empty() {
-                    format!("{total_count}")
-                } else {
-                    format!("{visible_count} of {total_count}")
-                };
-                kit::chip(ui, &count);
-            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if kit::labelled_button(ui, Icon::Import, "Import folder", true, true).clicked() {
-                    self.choose_library_folder();
+                if kit::labelled_button(ui, Icon::Folder, "Open folder", true, true)
+                    .on_hover_text("Show your clips folder in the file manager")
+                    .clicked()
+                {
+                    let folder = self.directory_text.trim();
+                    if !folder.is_empty() {
+                        self.reveal_media(PathBuf::from(folder));
+                    }
                 }
             });
         });
@@ -1400,19 +1434,29 @@ impl ClipCraftApp {
                             let (icon, _) =
                                 ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
                             kit::draw_icon(ui.painter(), icon.center(), Icon::Folder, MUTED, 0.75);
-                            let field = ui.add(
-                                egui::TextEdit::singleline(&mut self.directory_text)
-                                    .frame(false)
-                                    .hint_text("Clips folder")
-                                    .desired_width(
-                                        (ui.available_width() - 20.0).clamp(100.0, 340.0),
-                                    ),
-                            );
-                            kit::name_text_box(&field, "Clips folder", &self.directory_text);
-                            if field.lost_focus()
-                                && ui.input(|input| input.key_pressed(egui::Key::Enter))
-                            {
-                                self.scan_library();
+                            // The folder is chosen here, not typed: new clips are saved in it.
+                            let shown = if self.directory_text.trim().is_empty() {
+                                "Choose where clips are saved".to_owned()
+                            } else {
+                                self.directory_text.clone()
+                            };
+                            let button = ui
+                                .add(
+                                    egui::Label::new(RichText::new(shown).color(TEXT).size(13.0))
+                                        .truncate()
+                                        .sense(egui::Sense::click()),
+                                )
+                                .on_hover_text("Where new clips are saved. Click to change it.")
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            button.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    "Change clips folder",
+                                )
+                            });
+                            if button.clicked() {
+                                self.choose_library_folder();
                             }
                         });
                     });
@@ -1459,12 +1503,8 @@ impl ClipCraftApp {
             Some(result) if result.entries.is_empty() => self.empty_state(ui),
             Some(result) => {
                 // Search/sort controls above may have changed this frame.
-                self.library_view.prepare(
-                    result,
-                    &self.filter,
-                    &self.search_text,
-                    self.sort_newest,
-                );
+                self.library_view
+                    .prepare(result, &self.filter, &self.search_text, self.sort);
                 let entries = &self.library_view.indices;
                 if entries.is_empty() && self.search_text.trim().is_empty() {
                     let (headline, help) = self.filter.empty_message();
@@ -1507,22 +1547,16 @@ impl ClipCraftApp {
     }
 
     fn sort_menu(&mut self, ui: &mut egui::Ui) {
-        let label = if self.sort_newest {
-            "Newest first"
-        } else {
-            "Name A–Z"
-        };
+        let label = self.sort.label();
         kit::pill_menu(ui, label, "Sort clips", |ui| {
-            if ui.selectable_label(!self.sort_newest, "Name A–Z").clicked() {
-                self.sort_newest = false;
-                ui.close();
-            }
-            if ui
-                .selectable_label(self.sort_newest, "Newest first")
-                .clicked()
-            {
-                self.sort_newest = true;
-                ui.close();
+            for sort in library_view::Sort::ALL {
+                if ui
+                    .selectable_label(self.sort == sort, sort.label())
+                    .clicked()
+                {
+                    self.sort = sort;
+                    ui.close();
+                }
             }
         });
     }
@@ -2104,6 +2138,58 @@ impl ClipCraftApp {
         self.apply_recording(before, working);
     }
 
+    /// Settings apply as you change them; this bar lets you take back everything changed since
+    /// the Settings page was opened.
+    fn unsaved_changes_bar(&mut self, ui: &mut egui::Ui) {
+        let snapshot = self
+            .settings_snapshot
+            .get_or_insert_with(|| self.recording.clone())
+            .clone();
+        if snapshot == self.recording {
+            return;
+        }
+        let (mut cancel, mut keep) = (false, false);
+        egui::Frame::new()
+            .fill(CARD)
+            .stroke(Stroke::new(1.0_f32, BORDER))
+            .corner_radius(egui::CornerRadius::same(12))
+            .inner_margin(egui::Margin::symmetric(16, 12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("You changed some settings")
+                            .color(TEXT)
+                            .size(14.0)
+                            .family(kit::semibold()),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        cancel = kit::labelled_button(
+                            ui,
+                            Icon::Restart,
+                            "Cancel changes",
+                            false,
+                            true,
+                        )
+                        .on_hover_text(
+                            "Put every setting back the way it was when you opened Settings",
+                        )
+                        .clicked();
+                        keep = kit::labelled_button(ui, Icon::Play, "Keep changes", true, true)
+                            .clicked();
+                    });
+                });
+            });
+        ui.add_space(12.0);
+        if cancel {
+            let before = self.recording.clone();
+            self.apply_recording(before, snapshot);
+            self.settings_snapshot = None;
+        } else if keep {
+            self.settings_snapshot = Some(self.recording.clone());
+        }
+    }
+
     fn settings_content(&mut self, ui: &mut egui::Ui) {
         let query = self.settings_search.trim().to_owned();
         ui.add_space(22.0);
@@ -2128,6 +2214,7 @@ impl ClipCraftApp {
             .size(14.0),
         );
         ui.add_space(24.0);
+        self.unsaved_changes_bar(ui);
         if self.capture.is_stale(&self.recording) {
             let mut restart = false;
             egui::Frame::new()
@@ -2249,7 +2336,10 @@ impl ClipCraftApp {
             SettingsTab::Video => settings::video_tab(ui, &mut working, &self.capture.gpu),
             SettingsTab::Audio => settings::audio_tab(ui, &mut working, &mut self.settings_state),
             SettingsTab::Replay => settings::replay_tab(ui, &mut working),
-            SettingsTab::About => settings::about_tab(ui),
+            SettingsTab::About => {
+                settings::about_tab(ui);
+                self.updates_card(ui);
+            }
         }
         self.apply_recording(before, working);
         ui.add_space(8.0);
@@ -2341,15 +2431,6 @@ impl ClipCraftApp {
                         self.diagnostics_copied = Some(std::time::Instant::now());
                     }
                 },
-            );
-        });
-        card(ui, "Advanced", |ui| {
-            toggle_row(
-                ui,
-                "Show advanced settings",
-                "Show extra controls at the bottom of General, Games, Capture, Quality and Audio.",
-                &mut working.show_advanced,
-                true,
             );
         });
     }
@@ -3893,7 +3974,7 @@ mod tests {
             app.search_text = "no clip has this title".to_owned();
             draw(&mut app, &context, size, 2);
             app.search_text.clear();
-            app.sort_newest = true;
+            app.sort = crate::library_view::Sort::Newest;
             draw(&mut app, &context, size, 2);
 
             // An empty folder.
@@ -3946,7 +4027,6 @@ mod tests {
             app.page = Page::Settings;
 
             // Every settings tab, with its advanced controls on and custom quality shown.
-            app.recording.show_advanced = true;
             app.recording.game_rules = vec![clipcraft_engine::GameMatchRule::new(
                 "A custom game",
                 ["custom-game.exe"],
@@ -4048,7 +4128,6 @@ mod tests {
         check("clip", controls(&mut app, &context));
         app.selected = None;
         app.page = Page::Settings;
-        app.recording.show_advanced = true;
         app.recording.game_rules = vec![clipcraft_engine::GameMatchRule::new(
             "A custom game",
             ["custom-game.exe"],

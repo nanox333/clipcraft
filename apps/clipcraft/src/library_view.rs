@@ -3,6 +3,50 @@ use crate::organize::LibraryFilter;
 use clipcraft_engine::{GameGroup, LibraryScanResult, game_of};
 use std::collections::HashMap;
 
+/// How the clips grid is ordered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) enum Sort {
+    #[default]
+    Name,
+    NameReverse,
+    Newest,
+    Oldest,
+    Largest,
+    Smallest,
+    Game,
+}
+
+impl Sort {
+    pub(crate) const ALL: [Sort; 7] = [
+        Sort::Newest,
+        Sort::Oldest,
+        Sort::Name,
+        Sort::NameReverse,
+        Sort::Largest,
+        Sort::Smallest,
+        Sort::Game,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Sort::Name => "Name A–Z",
+            Sort::NameReverse => "Name Z–A",
+            Sort::Newest => "Newest first",
+            Sort::Oldest => "Oldest first",
+            Sort::Largest => "Largest first",
+            Sort::Smallest => "Smallest first",
+            Sort::Game => "Game A–Z",
+        }
+    }
+}
+
+impl From<bool> for Sort {
+    /// The old two-way choice: `true` is newest first.
+    fn from(newest: bool) -> Self {
+        if newest { Sort::Newest } else { Sort::Name }
+    }
+}
+
 #[derive(Default)]
 struct Row {
     name: String,
@@ -15,8 +59,8 @@ pub(crate) struct ViewCache {
     directory: String,
     rows: Vec<Row>,
     names: Vec<usize>,
-    newest: Vec<usize>,
-    key: Option<(LibraryFilter, String, bool)>,
+    orders: HashMap<Sort, Vec<usize>>,
+    key: Option<(LibraryFilter, String, Sort)>,
     pub indices: Vec<usize>,
     pub total: usize,
     pub favorites: usize,
@@ -38,15 +82,16 @@ impl ViewCache {
         result: &LibraryScanResult,
         filter: &LibraryFilter,
         query: &str,
-        newest: bool,
+        sort: impl Into<Sort>,
     ) {
+        let sort = sort.into();
         if !self.ready
             || self.directory != result.directory
             || self.rows.len() != result.entries.len()
         {
             self.rebuild(result);
         }
-        let key = (filter.clone(), query.trim().to_lowercase(), newest);
+        let key = (filter.clone(), query.trim().to_lowercase(), sort);
         if self.key.as_ref() == Some(&key) {
             return;
         }
@@ -56,7 +101,8 @@ impl ViewCache {
         };
         self.indices.clear();
         self.total = 0;
-        for &index in if newest { &self.newest } else { &self.names } {
+        let order = self.orders.get(&sort).unwrap_or(&self.names);
+        for &index in order {
             let (Some(entry), Some(row)) = (result.entries.get(index), self.rows.get(index)) else {
                 continue;
             };
@@ -115,10 +161,36 @@ impl ViewCache {
                 .cmp(&self.rows[b].name)
                 .then_with(|| result.entries[a].path.cmp(&result.entries[b].path))
         });
-        self.newest = self.names.clone();
-        // Stable sort retains name/path tie order without normalizing names per comparison.
-        self.newest
-            .sort_by_key(|&i| std::cmp::Reverse(result.entries[i].modified_unix_seconds));
+        // Stable sorts keep the name/path order for ties without normalizing names per comparison.
+        let entries = &result.entries;
+        let rows = &self.rows;
+        let by = |sort: Sort, compare: &dyn Fn(usize, usize) -> std::cmp::Ordering| {
+            let mut order = self.names.clone();
+            order.sort_by(|&a, &b| compare(a, b));
+            (sort, order)
+        };
+        let game = |i: usize| (rows[i].game_key.is_none(), rows[i].game_key.clone());
+        let orders = [
+            by(Sort::Newest, &|a, b| {
+                entries[b]
+                    .modified_unix_seconds
+                    .cmp(&entries[a].modified_unix_seconds)
+            }),
+            by(Sort::Oldest, &|a, b| {
+                entries[a]
+                    .modified_unix_seconds
+                    .cmp(&entries[b].modified_unix_seconds)
+            }),
+            by(Sort::NameReverse, &|a, b| rows[b].name.cmp(&rows[a].name)),
+            by(Sort::Largest, &|a, b| {
+                entries[b].size_bytes.cmp(&entries[a].size_bytes)
+            }),
+            by(Sort::Smallest, &|a, b| {
+                entries[a].size_bytes.cmp(&entries[b].size_bytes)
+            }),
+            by(Sort::Game, &|a, b| game(a).cmp(&game(b))),
+        ];
+        self.orders = orders.into_iter().collect();
         self.ready = true;
         self.key = None;
         #[cfg(test)]
@@ -131,6 +203,44 @@ impl ViewCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn every_sort_order_puts_the_right_clip_first() {
+        let mut result = LibraryScanResult {
+            directory: "/clips".into(),
+            entries: Vec::new(),
+            persisted: false,
+            collections: Vec::new(),
+        };
+        for (name, size, modified, game) in [
+            ("b.mp4", 20, 200, Some("Zelda")),
+            ("a.mp4", 30, 300, Some("Doom")),
+            ("c.mp4", 10, 100, None),
+        ] {
+            let mut entry = crate::tests::media_entry(name, Some(modified));
+            entry.size_bytes = size;
+            entry.game = game.map(str::to_owned);
+            result.entries.push(entry);
+        }
+        let mut cache = ViewCache::default();
+        let first = |cache: &mut ViewCache, sort: Sort| {
+            cache.prepare(&result, &LibraryFilter::All, "", sort);
+            result.entries[cache.indices[0]].title.clone()
+        };
+        assert_eq!(first(&mut cache, Sort::Name), "a.mp4");
+        assert_eq!(first(&mut cache, Sort::NameReverse), "c.mp4");
+        assert_eq!(first(&mut cache, Sort::Newest), "a.mp4");
+        assert_eq!(first(&mut cache, Sort::Oldest), "c.mp4");
+        assert_eq!(first(&mut cache, Sort::Largest), "a.mp4");
+        assert_eq!(first(&mut cache, Sort::Smallest), "c.mp4");
+        // Clips with no game sort last.
+        assert_eq!(first(&mut cache, Sort::Game), "a.mp4");
+        cache.prepare(&result, &LibraryFilter::All, "", Sort::Game);
+        assert_eq!(
+            result.entries[*cache.indices.last().unwrap()].title,
+            "c.mp4"
+        );
+    }
+
     #[test]
     fn cached_views_counts_and_groups_match_reference_and_invalidate() {
         let mut result = LibraryScanResult {

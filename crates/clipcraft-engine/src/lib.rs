@@ -39,6 +39,7 @@ pub mod installation;
 mod session;
 mod startup;
 mod steam_games;
+pub mod update;
 pub use steam_games::{MAX_STEAM_GAMES, SteamGame, SteamGames};
 mod storage;
 
@@ -81,7 +82,7 @@ pub use relink::{SearchResult, find_moved_file};
 pub use screenshot::{ScreenshotJob, screenshot_name};
 pub use session::{
     CLIP_PREFIX, CaptureSession, MicrophoneTestPlan, SaveJob, SavedClipReport, clip_format,
-    clip_stem, record_config,
+    clip_stem, folder_name_for, game_clip_stem, is_clip_file_name, record_config,
 };
 pub use storage::{
     StorageUsage, StoredClip, cleanup_plan, default_capture_folder, list_clips, storage_usage,
@@ -242,6 +243,14 @@ pub enum Command {
     TrashClip {
         path: PathBuf,
     },
+    /// Asks whether a version newer than `current_version` has been published.
+    CheckForUpdate {
+        current_version: String,
+    },
+    /// Downloads a published setup program and checks it against its checksum.
+    DownloadUpdate {
+        update: update::UpdateInfo,
+    },
     /// Looks for a moved clip by name and size in a folder and the folders inside it.
     FindMovedFile {
         name: String,
@@ -305,6 +314,8 @@ impl Command {
             Self::LocalMediaPath { .. } => "library.path",
             Self::RevealInFileManager { .. } => "library.reveal",
             Self::TrashClip { .. } => "library.trash",
+            Self::CheckForUpdate { .. } => "app.check_for_update",
+            Self::DownloadUpdate { .. } => "app.download_update",
             Self::RefreshLibrary { .. } => "library.refresh",
             Self::LoadLibrary { .. } => "library.load",
             Self::StoreLibraryScan { .. } => "library.store_scan",
@@ -782,6 +793,12 @@ pub enum CommandOutput {
     Trashed {
         path: String,
     },
+    /// Whether a newer version exists.
+    Update(update::UpdateStatus),
+    /// A setup program was downloaded and matched its checksum.
+    UpdateDownloaded {
+        path: String,
+    },
     /// Container facts read from one clip.
     ClipProbe(MediaProbe),
     /// A clip's thumbnail in the cache.
@@ -848,6 +865,12 @@ pub enum EngineError {
     NotAClip,
     /// There is no Recycle Bin to put the clip in, or the system refused. Nothing was deleted.
     TrashUnavailable,
+    /// The update service could not be reached, or this system cannot check for updates.
+    UpdateUnavailable,
+    /// The update service answered with something that is not a release.
+    UpdateInvalid,
+    /// The downloaded setup program does not match its published checksum, so it was discarded.
+    UpdateChecksum,
     /// No saved library index exists yet.
     IndexMissing,
     /// The saved library index could not be read.
@@ -925,6 +948,15 @@ impl fmt::Display for EngineError {
             }
             Self::TrashUnavailable => formatter.write_str(
                 "The clip could not be moved to the Recycle Bin, so it was left where it is.",
+            ),
+            Self::UpdateUnavailable => formatter.write_str(
+                "ClipCraft could not check for updates. You may be offline; nothing has changed.",
+            ),
+            Self::UpdateInvalid => formatter.write_str(
+                "The update information could not be understood, so nothing was downloaded.",
+            ),
+            Self::UpdateChecksum => formatter.write_str(
+                "The downloaded update did not match its checksum, so it was discarded and not run.",
             ),
             Self::FileStillExists => formatter.write_str(
                 "This file is still on your computer. Delete or move it first, then remove it from the library.",
@@ -1234,6 +1266,14 @@ pub fn execute_cancellable(
         Command::RevealInFileManager { path } => {
             reveal_in_file_manager(&path).map(|path| CommandOutput::Revealed { path })
         }
+        Command::CheckForUpdate { current_version } => {
+            update::check(&current_version).map(CommandOutput::Update)
+        }
+        Command::DownloadUpdate { update } => {
+            update::download(&update).map(|path| CommandOutput::UpdateDownloaded {
+                path: path.to_string_lossy().into_owned(),
+            })
+        }
         Command::TrashClip { path } => {
             trash_clip(&path).map(|path| CommandOutput::Trashed { path })
         }
@@ -1407,6 +1447,8 @@ pub const fn command_ids() -> &'static [&'static str] {
         "library.path",
         "library.reveal",
         "library.trash",
+        "app.check_for_update",
+        "app.download_update",
         "library.refresh",
         "library.load",
         "library.store_scan",

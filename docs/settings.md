@@ -1,5 +1,11 @@
 # Settings and advanced controls
 
+> **Changed 2026-10-28:** the **Show advanced settings** switch is gone. Custom game rules are always
+> shown at the bottom of Settings → Games, and the `show_advanced` field is kept only so older settings
+> files still load. Settings still apply as you change them; a bar offers **Cancel changes** (back to how
+> they were when Settings was opened) or **Keep changes**. The sections below describe the earlier
+> layout where they mention the switch.
+
 ## First launch and shortcut alternatives
 
 Fresh profiles open setup for local storage, replay length, capture/audio and hotkeys. Use Back

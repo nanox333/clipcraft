@@ -345,10 +345,9 @@ fn package() -> TaskResult<()> {
     let windows = cfg!(windows);
     fs::create_dir_all(folder.join("bin")).map_err(fail)?;
     let release = workspace.join("target").join("release");
-    for binary in ["clipcraft", "clipcraft-cli"] {
-        let file = format!("{binary}{}", env::consts::EXE_SUFFIX);
-        fs::copy(release.join(&file), folder.join("bin").join(&file)).map_err(fail)?;
-    }
+    // The command line tool is a separate download: most people only want the app.
+    let app = format!("clipcraft{}", env::consts::EXE_SUFFIX);
+    fs::copy(release.join(&app), folder.join("bin").join(&app)).map_err(fail)?;
     if !windows {
         fs::create_dir_all(folder.join("share").join("applications")).map_err(fail)?;
         fs::write(
@@ -369,17 +368,14 @@ fn package() -> TaskResult<()> {
     )
     .map_err(fail)?;
     let install = if windows {
-        "ClipCraft runs from any folder: start bin\\clipcraft.exe.\n\
-Everything ClipCraft saves stays on this computer.\n\
+        "Run the ClipCraft setup program to install it. Everything ClipCraft saves stays on this computer.\n\
 This download is not signed, so Windows SmartScreen may say the publisher is unknown: choose\n\
-More info, then Run anyway. Check the zip against SHA256SUMS.txt from the release page first.\n\
-Run `bin\\clipcraft-cli.exe diagnose` if recording does not work.\n"
+More info, then Run anyway. Check the file against SHA256SUMS.txt from the release page first.\n"
     } else {
         "ClipCraft runs from any folder: start bin/clipcraft.\n\
-To install for your user, copy bin/* to ~/.local/bin and share/applications/clipcraft.desktop to\n\
+To install for your user, copy bin/clipcraft to ~/.local/bin and share/applications/clipcraft.desktop to\n\
 ~/.local/share/applications. Everything ClipCraft saves stays on this computer.\n\
-This package is not signed. Check it against SHA256SUMS before running it.\n\
-Run `clipcraft-cli diagnose` if recording does not work.\n"
+This package is not signed. Check it against SHA256SUMS before running it.\n"
     };
     fs::write(folder.join("INSTALL.txt"), install).map_err(fail)?;
     // Every dependency's licence, as the audit sees it.
@@ -391,7 +387,7 @@ Run `clipcraft-cli diagnose` if recording does not work.\n"
     fs::write(folder.join("THIRD-PARTY-LICENSES.txt"), licenses.stdout).map_err(fail)?;
     if windows {
         run_cargo(&["build", "--release", "-p", "clipcraft-installer"])?;
-        let setup = dist.join(format!("{name}-setup.exe"));
+        let setup = dist.join(format!("ClipCraft-Setup-{}.exe", env!("CARGO_PKG_VERSION")));
         if setup.exists() {
             fs::remove_file(&setup).map_err(fail)?;
         }
@@ -403,32 +399,74 @@ Run `clipcraft-cli diagnose` if recording does not work.\n"
         .map_err(|_| TaskError::PackageFailed)?;
         println!("built offline Windows setup executable");
     }
+    // The command line tool, on its own.
+    let cli_name = format!(
+        "clipcraft-cli-{}-{}-{}",
+        env!("CARGO_PKG_VERSION"),
+        env::consts::OS,
+        env::consts::ARCH
+    );
+    let cli_folder = dist.join(&cli_name);
+    let _ = fs::remove_dir_all(&cli_folder);
+    fs::create_dir_all(cli_folder.join("docs").join("licenses")).map_err(fail)?;
+    let cli = format!("clipcraft-cli{}", env::consts::EXE_SUFFIX);
+    fs::copy(release.join(&cli), cli_folder.join(&cli)).map_err(fail)?;
+    for document in ["ATTRIBUTION.md", "LICENSE-MIT", "THIRD-PARTY-LICENSES.txt"] {
+        let from = if document == "THIRD-PARTY-LICENSES.txt" {
+            folder.join(document)
+        } else {
+            workspace.join(document)
+        };
+        fs::copy(from, cli_folder.join(document)).map_err(fail)?;
+    }
+    fs::copy(
+        workspace.join("docs/licenses/nnnoiseless-BSD-3-Clause.txt"),
+        cli_folder.join("docs/licenses/nnnoiseless-BSD-3-Clause.txt"),
+    )
+    .map_err(fail)?;
+    fs::write(
+        cli_folder.join("README.txt"),
+        "clipcraft-cli is the command line version of ClipCraft: list capture targets, record, trim, export\n\
+and inspect your library from a terminal. Run it with `help` for the commands, and `diagnose` if\n\
+recording does not work. It is separate from the app, which has its own download.\n",
+    )
+    .map_err(fail)?;
     // Windows 10 and later ship a `tar` that writes zip files.
-    let archive = if windows {
-        format!("{name}.zip")
-    } else {
-        format!("{name}.tar.gz")
+    let pack = |folder_name: &str| -> TaskResult<String> {
+        let archive = if windows {
+            format!("{folder_name}.zip")
+        } else {
+            format!("{folder_name}.tar.gz")
+        };
+        let flags: &[&str] = if windows { &["-a", "-cf"] } else { &["-czf"] };
+        let status = Command::new("tar")
+            .current_dir(&dist)
+            .args(flags)
+            .args([&archive, folder_name])
+            .status()
+            .map_err(|_| TaskError::CommandUnavailable)?;
+        if !status.success() {
+            return Err(TaskError::PackageFailed);
+        }
+        Ok(archive)
     };
-    let flags: &[&str] = if windows { &["-a", "-cf"] } else { &["-czf"] };
-    let status = Command::new("tar")
-        .current_dir(&dist)
-        .args(flags)
-        .args([&archive, &name])
-        .status()
-        .map_err(|_| TaskError::CommandUnavailable)?;
-    if !status.success() {
-        return Err(TaskError::PackageFailed);
+    // On Windows the app is downloaded as the setup program; Linux gets a tarball.
+    let mut archives = vec![pack(&cli_name)?];
+    if !windows {
+        archives.push(pack(&name)?);
     }
     // On Windows the release workflow writes the checksums for every file together.
     if !windows {
         let sums = Command::new("sha256sum")
             .current_dir(&dist)
-            .arg(&archive)
+            .args(&archives)
             .output()
             .map_err(|_| TaskError::CommandUnavailable)?;
         fs::write(dist.join("SHA256SUMS"), sums.stdout).map_err(fail)?;
     }
-    println!("packed {}", dist.join(archive).display());
+    for archive in archives {
+        println!("packed {}", dist.join(archive).display());
+    }
     Ok(())
 }
 

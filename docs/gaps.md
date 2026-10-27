@@ -11,7 +11,8 @@ Fresh profiles see four setup steps for local storage/replay, capture/audio and 
 uses a draft; no capture/audio/presence worker starts during it. Finish or Skip saves completion
 with the choices through the shared settings command. Existing preference files skip setup.
 
-`cargo xtask package` also produces an offline Windows `-setup.exe`, written entirely in Rust.
+`cargo xtask package` also produces an offline Windows `ClipCraft-Setup-<version>.exe`, written entirely in Rust, and ships the CLI as a separate archive.
+Optional update check and one-click update (ADR 0032) are built and checked against GitHub's real release API and redirects; a full update against a release that carries a `ClipCraft-Setup` asset has not run because none is published yet.
 It installs per-user, makes Start menu/optional desktop links and registers an uninstaller.
 Upgrades retain previous program versions (maximum eight); uninstall removes owned program files
 and retains unknown files, preferences and recordings. A temporary uninstaller executable can

@@ -7,6 +7,7 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     clipcraft_engine::set_trash_handler(clipcraft_platform::move_to_trash);
+    clipcraft_engine::update::set_http_fetcher(clipcraft_platform::https_get);
     match run(std::env::args_os().skip(1).collect()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -40,6 +41,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), CliError> {
         "game-data" => run_game_data(&arguments[1..]),
         "presence" => run_presence(&arguments[1..]),
         "diagnose" => run_diagnose(&arguments[1..]),
+        "update" => run_update(&arguments[1..]),
         _ => Err(CliError::Usage),
     }
 }
@@ -488,6 +490,22 @@ fn run_clip(arguments: &[OsString]) -> Result<(), CliError> {
     match execute(command).map_err(CliError::Engine)? {
         CommandOutput::Trimmed(clip) => write_json(&clip),
         CommandOutput::Exported(clip) => write_json(&clip),
+        _ => Err(CliError::UnexpectedOutput),
+    }
+}
+
+/// `update check` asks whether a newer ClipCraft has been published, and prints the answer as JSON.
+/// It downloads nothing: the app's Update button does that.
+fn run_update(arguments: &[OsString]) -> Result<(), CliError> {
+    if arguments.len() != 1 || arguments[0].to_str() != Some("check") {
+        return Err(CliError::Usage);
+    }
+    let output = execute(Command::CheckForUpdate {
+        current_version: env!("CARGO_PKG_VERSION").to_owned(),
+    })
+    .map_err(CliError::Engine)?;
+    match output {
+        CommandOutput::Update(status) => write_json(&status),
         _ => Err(CliError::UnexpectedOutput),
     }
 }

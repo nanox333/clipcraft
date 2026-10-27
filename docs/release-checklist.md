@@ -41,8 +41,8 @@ alone.
 
 ### Offline Windows installer (M5.1a)
 
-`cargo xtask package` builds `target/dist/clipcraft-<version>-windows-<arch>-setup.exe` in addition
-to the portable zip. The setup executable contains all application files and notices, installs
+`cargo xtask package` builds `target/dist/ClipCraft-Setup-<version>.exe` and a separate
+`clipcraft-cli-<version>-windows-<arch>.zip` (the CLI is not part of the app download or installer). The setup executable contains all application files and notices, installs
 to `%LOCALAPPDATA%/Programs/ClipCraft` by default, and needs no administrator/account/network.
 It adds Start menu links, an optional desktop link and a current-user Windows uninstall entry.
 The installed `uninstall.exe` (or Windows Settings → Apps) removes owned application versions,
@@ -61,7 +61,7 @@ install/upgrade/remove check remain release gates. See ADR 0031.
 RNNoise model's required notice, alongside `ATTRIBUTION.md` and the dependency license list.
 Keep this notice with binary redistributions, including manually assembled Windows builds.
 
-`.github/workflows/release.yml` builds the Linux (x86_64) tarball and the Windows (x86_64) zip plus offline setup executable with
+`.github/workflows/release.yml` builds the Linux (x86_64) tarball and CLI archive and the Windows (x86_64) setup executable and CLI zip with
 `cargo xtask package`, writes `SHA256SUMS.txt`, and creates a **draft** GitHub Release for review.
 
 1. Set the version in `Cargo.toml` (`[workspace.package]`) and merge it.
