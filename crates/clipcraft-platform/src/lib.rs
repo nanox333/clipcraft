@@ -13,6 +13,8 @@ use clipcraft_capture::{Capabilities, CaptureError, CaptureSource, CaptureTarget
 
 #[cfg(windows)]
 mod d3d11;
+#[cfg(target_os = "linux")]
+mod evdev;
 pub mod game_state;
 #[cfg(any(target_os = "linux", test))]
 mod h264_headers;
@@ -42,6 +44,8 @@ mod windows;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod x11;
 
+#[cfg(target_os = "linux")]
+pub use evdev::access as keyboard_access;
 pub use hardware::{hardware_provider, probe_hardware_encoder, register_hardware_decoding};
 pub use hotkey::{HotkeyBinding, HotkeyEvent, HotkeyListener, parse_shortcut};
 pub use priority::set_background_priority;
@@ -192,6 +196,23 @@ pub fn open_on(display: &str, target_id: &str) -> Result<Box<dyn CaptureSource>,
     x11::open(Some(display), target_id)
 }
 
+/// Makes the Wayland desktop ask again which screen or window to share (it remembers the choice
+/// between runs). Does nothing on other sessions.
+pub fn forget_remembered_screen_choice() {
+    #[cfg(target_os = "linux")]
+    wayland::forget_remembered_choice();
+}
+
+/// Like [`open`] for a Wayland screen share, remembering the choice in `remember`. For tests.
+#[cfg(target_os = "linux")]
+pub fn open_wayland_remembering_on(
+    address: &str,
+    options: &CaptureOptions,
+    remember: &std::path::Path,
+) -> Result<Box<dyn CaptureSource>, CaptureError> {
+    wayland::open_at(address, options.show_cursor, Some(remember))
+}
+
 /// Like [`open`] for a Wayland screen share, with the portal on the session bus at `address`.
 /// For tests, which stand in a fake desktop.
 #[cfg(target_os = "linux")]
@@ -199,7 +220,7 @@ pub fn open_wayland_on(
     address: &str,
     options: &CaptureOptions,
 ) -> Result<Box<dyn CaptureSource>, CaptureError> {
-    wayland::open_at(address, options.show_cursor)
+    wayland::open_at(address, options.show_cursor, None)
 }
 
 /// The window that has the focus right now, or `None` when there is none or it cannot be
@@ -281,6 +302,41 @@ pub fn diagnose_capture() -> Vec<Finding> {
             capabilities.hdr
         ),
     ));
+    #[cfg(target_os = "linux")]
+    {
+        let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+        let kind = if evdev::wanted() { "Wayland" } else { "X11" };
+        findings.push((
+            "Display session".to_owned(),
+            true,
+            if desktop.is_empty() {
+                format!("{kind} session")
+            } else {
+                format!("{kind} session ({desktop})")
+            },
+        ));
+        findings.push(if evdev::wanted() {
+            let (readable, why) = evdev::access();
+            (
+                "Global hotkeys".to_owned(),
+                readable,
+                if readable {
+                    format!("read from the keyboards ({why}); works under any desktop")
+                } else {
+                    format!(
+                        "{why}. Without it, only keys pressed while an X window (an XWayland \
+                         game) has the focus are seen"
+                    )
+                },
+            )
+        } else {
+            (
+                "Global hotkeys".to_owned(),
+                true,
+                "X11 key grabs".to_owned(),
+            )
+        });
+    }
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_some_and(|name| !name.is_empty()) {
         findings.push(wayland::diagnose());

@@ -37,6 +37,9 @@ struct Seen {
     methods: Vec<String>,
     cursor_mode: Option<u32>,
     closed: bool,
+    /// The `persist_mode` and `restore_token` of the latest `SelectSources`.
+    persist_mode: Option<u32>,
+    restore_token: Option<String>,
 }
 
 struct FakeScreenCast {
@@ -88,7 +91,8 @@ impl FakeScreenCast {
         3
     }
 
-    #[zbus(property)]
+    // The real portal names this property in lower case.
+    #[zbus(property, name = "version")]
     fn version(&self) -> u32 {
         4
     }
@@ -125,6 +129,12 @@ impl FakeScreenCast {
         seen.cursor_mode = options
             .get("cursor_mode")
             .and_then(|value| u32::try_from(value.try_clone().ok()?).ok());
+        seen.persist_mode = options
+            .get("persist_mode")
+            .and_then(|value| u32::try_from(value.try_clone().ok()?).ok());
+        seen.restore_token = options
+            .get("restore_token")
+            .and_then(|value| String::try_from(value.try_clone().ok()?).ok());
         drop(seen);
         let request = self.real_request_path(&header, &token(&options));
         self.respond(&request, HashMap::new(), 0);
@@ -153,6 +163,11 @@ impl FakeScreenCast {
                 results.insert(
                     "streams".to_owned(),
                     OwnedValue::try_from(Value::from(streams)).expect("value"),
+                );
+                // A real desktop hands back a token that skips the chooser next time.
+                results.insert(
+                    "restore_token".to_owned(),
+                    OwnedValue::try_from(Value::from("fake-choice-1".to_owned())).expect("value"),
                 );
                 self.respond(&request, results, 0);
             }
@@ -367,6 +382,68 @@ fn a_person_picks_a_screen_and_its_pictures_arrive() {
         Some(2),
         "the cursor is drawn into the picture"
     );
+}
+
+#[test]
+fn the_choice_is_remembered_so_the_chooser_is_skipped_next_time() {
+    let Some(socket) = pipewire_socket() else {
+        eprintln!("skipped: no PipeWire server");
+        return;
+    };
+    let Some((_producer, node)) = producer("cc-portal-remember") else {
+        eprintln!("skipped: no GStreamer test source");
+        return;
+    };
+    let Some(desktop) = desktop(Answer::Share, node, socket) else {
+        eprintln!("skipped: no dbus-daemon");
+        return;
+    };
+    let folder = std::env::temp_dir().join(format!("clipcraft-remember-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).expect("scratch folder");
+    let file = folder.join("screencast-restore-token");
+    let options = CaptureOptions {
+        show_cursor: true,
+        hdr_to_sdr: false,
+        requested_fps: 60,
+    };
+    // First time: the portal is asked to remember, there is nothing to restore, and the token it
+    // returns is saved.
+    drop(
+        clipcraft_platform::open_wayland_remembering_on(&desktop.address, &options, &file)
+            .unwrap_or_else(|error| panic!("the share starts: {error:?}")),
+    );
+    {
+        let seen = desktop.seen.lock().expect("lock");
+        assert_eq!(seen.persist_mode, Some(2), "asked to keep the choice");
+        assert_eq!(seen.restore_token, None);
+    }
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("saved").trim(),
+        "fake-choice-1"
+    );
+    // Second time: the saved token is offered back.
+    drop(
+        clipcraft_platform::open_wayland_remembering_on(&desktop.address, &options, &file)
+            .unwrap_or_else(|error| panic!("the share starts: {error:?}")),
+    );
+    assert_eq!(
+        desktop.seen.lock().expect("lock").restore_token.as_deref(),
+        Some("fake-choice-1")
+    );
+    // Not remembering (the default for tests) sends neither option.
+    drop(
+        clipcraft_platform::open_wayland_on(&desktop.address, &options)
+            .unwrap_or_else(|error| panic!("the share starts: {error:?}")),
+    );
+    {
+        let seen = desktop.seen.lock().expect("lock");
+        assert_eq!(
+            (seen.persist_mode, seen.restore_token.clone()),
+            (None, None)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&folder);
 }
 
 #[test]

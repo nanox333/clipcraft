@@ -12,6 +12,8 @@ members = [
     "crates/clipcraft-record",
     "crates/clipcraft-audio-out",
     "crates/clipcraft-time",
+    "crates/filmcraft-bitstream",
+    "crates/filmcraft-h264enc",
     "tools/xtask",
 ]
 resolver = "3"
@@ -47,7 +49,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 filmcraft-codecs = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-media = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-h264 = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
-filmcraft-h264enc = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
+filmcraft-h264enc = { path = "crates/filmcraft-h264enc" }
 filmcraft-audio-dsp = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-frame = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-color = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
@@ -64,6 +66,12 @@ libloading = "0.8"
 tray-icon = { version = "0.26", default-features = false }
 rfd = { version = "0.17.2", default-features = true }
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
+
+# The H.264 encoder lives in this repository (crates/filmcraft-h264enc, copied from FilmCraft). The
+# patch makes FilmCraft's own crates (export, media...) use it too, so the build has one encoder.
+[patch."https://github.com/storytold/filmcraft"]
+filmcraft-h264enc = { path = "crates/filmcraft-h264enc" }
+filmcraft-bitstream = { path = "crates/filmcraft-bitstream" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

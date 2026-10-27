@@ -69,3 +69,14 @@ titles and third-party store metadata, but no executable mapping. It declares GP
 code from it is imported and no runtime request is made. The permission for Vice/ClipRecorder is
 not treated as permission for this repository. Local installed-Steam-manifest recognition is a
 separate implemented Rust path described in [game-catalog.md](game-catalog.md).
+
+## The H.264 encoder (vendored from FilmCraft)
+
+`crates/filmcraft-h264enc` and `crates/filmcraft-bitstream` are copies of FilmCraft's
+`crates/h264enc` and `crates/bitstream` at commit `6c3948a36c80e4996d924766ba7157eec4fca85e`
+(<https://github.com/storytold/filmcraft>, MIT OR Apache-2.0, same maintainer organization). They
+were a git dependency before; they are now ClipCraft's own source so the encoder can be tuned for
+screen recording. The licence texts and the copyright notice are kept in each crate; changes from
+upstream are listed in `crates/filmcraft-h264enc/UPSTREAM.md`. A Cargo `[patch]` makes FilmCraft's
+other crates (export, media) use the same copy, so there is one encoder in the build. Decision:
+[ADR 0029](adr/0029-vendored-h264-encoder.md).

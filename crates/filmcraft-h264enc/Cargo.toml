@@ -1,0 +1,33 @@
+[package]
+name = "filmcraft-h264enc"
+description = "Pure-Rust H.264/AVC encoder, vendored from FilmCraft and maintained here (see UPSTREAM.md)"
+version = "0.9.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[package.metadata.clipcraft]
+layer = 0
+
+[features]
+default = ["threads"]
+threads = ["dep:rayon"]
+
+[dependencies]
+filmcraft-bitstream = { path = "../filmcraft-bitstream" }
+thiserror = "2"
+rayon = { version = "1", optional = true }
+
+# FilmCraft's own lint settings, so the copied code builds as it did upstream. `unsafe` stays
+# forbidden. Tighten these as the code is improved here.
+[lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+too_many_arguments = "allow"
+needless_range_loop = "allow"
+type_complexity = "allow"

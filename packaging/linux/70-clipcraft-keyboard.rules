@@ -1,0 +1,12 @@
+# OPTIONAL. Lets the person signed in at this computer read the keyboards, so ClipCraft's global
+# hotkeys (save clip, start/stop) work on Wayland, where no program may grab a key for the whole
+# desktop. Reading is passive: nothing is grabbed or swallowed.
+#
+# Privacy: with this rule, every program you run can also see what you type, as on X11. If you do
+# not want that, leave it out, or use your desktop's own shortcut for a command instead (see
+# docs/linux.md).
+#
+# Install:  sudo cp 70-clipcraft-keyboard.rules /etc/udev/rules.d/
+#           sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=input
+# Remove:   sudo rm /etc/udev/rules.d/70-clipcraft-keyboard.rules
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="uaccess"

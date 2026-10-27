@@ -235,11 +235,38 @@ fn a_changing_picture_size_restarts_the_stream_with_matching_clips() {
     let path = scratch.file("resized.mkv");
     recorder.save_clip(60, ClipFormat::Mkv, &path).unwrap();
     if tool("ffprobe") && tool("ffmpeg") {
-        // Output height stays 180, so the new 240x120 picture is 360x180 and nothing mixes sizes.
+        // The requested height is 180, but a 120-high picture is never enlarged: the new 240x120
+        // picture is recorded as it is, and nothing mixes sizes.
         let probe = probe(&path);
-        assert_eq!((probe.width, probe.height), (360, 180), "{probe:?}");
+        assert_eq!((probe.width, probe.height), (240, 120), "{probe:?}");
         decodes_cleanly(&path);
     }
+}
+
+#[test]
+fn a_clip_is_never_enlarged_beyond_its_source_but_is_scaled_down_to_the_setting() {
+    let mut wanted = config();
+    wanted.output_height = 180;
+    // A 160x90 source stays 160x90; the setting only ever shrinks a larger one.
+    assert_eq!(
+        clipcraft_record::output_size(&wanted, 160, 90),
+        Some((160, 90))
+    );
+    assert_eq!(
+        clipcraft_record::output_size(&wanted, 1440, 900),
+        Some((288, 180))
+    );
+    assert_eq!(
+        clipcraft_record::output_size(&wanted, 320, 180),
+        Some((320, 180))
+    );
+    // Other shapes keep the requested height: black bars and crops are not enlargements.
+    wanted.shape = OutputShape::Wide16x9;
+    wanted.framing = Framing::Letterbox;
+    assert_eq!(
+        clipcraft_record::output_size(&wanted, 160, 120),
+        Some((320, 180))
+    );
 }
 
 #[test]

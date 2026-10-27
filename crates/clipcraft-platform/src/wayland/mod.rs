@@ -74,22 +74,41 @@ pub fn list_targets() -> Vec<CaptureTarget> {
     }]
 }
 
-pub fn open(show_cursor: bool) -> Result<Box<dyn CaptureSource>, CaptureError> {
-    let connection = portal::session_bus().ok_or(CaptureError::NoProvider)?;
-    open_on(connection, show_cursor)
+/// Where the choice of screen or window is remembered between runs: next to the library index, on
+/// this computer only.
+pub fn remembered_choice_file() -> Option<std::path::PathBuf> {
+    Some(clipcraft_engine::default_index_path()?.with_file_name("screencast-restore-token"))
 }
 
-/// Like [`open`], on the session bus at `address`. For tests.
-pub fn open_at(address: &str, show_cursor: bool) -> Result<Box<dyn CaptureSource>, CaptureError> {
+/// Makes the desktop ask again which screen or window to share, by forgetting the saved choice.
+pub fn forget_remembered_choice() {
+    if let Some(path) = remembered_choice_file() {
+        portal::forget_token(&path);
+    }
+}
+
+pub fn open(show_cursor: bool) -> Result<Box<dyn CaptureSource>, CaptureError> {
+    let connection = portal::session_bus().ok_or(CaptureError::NoProvider)?;
+    open_on(connection, show_cursor, remembered_choice_file().as_deref())
+}
+
+/// Like [`open`], on the session bus at `address`. For tests; the choice is not remembered unless
+/// `remember` names a file.
+pub fn open_at(
+    address: &str,
+    show_cursor: bool,
+    remember: Option<&std::path::Path>,
+) -> Result<Box<dyn CaptureSource>, CaptureError> {
     let connection = portal::bus_at(address).ok_or(CaptureError::NoProvider)?;
-    open_on(connection, show_cursor)
+    open_on(connection, show_cursor, remember)
 }
 
 fn open_on(
     connection: zbus::blocking::Connection,
     show_cursor: bool,
+    remember: Option<&std::path::Path>,
 ) -> Result<Box<dyn CaptureSource>, CaptureError> {
-    let share = portal::start(connection, show_cursor)?;
+    let share = portal::start(connection, show_cursor, remember)?;
     let stream = pipewire::Stream::open(
         share.remote.try_clone().map_err(|_| CaptureError::Failed)?,
         share.node,

@@ -137,6 +137,14 @@ Long-run and release evidence is described in [`release-checklist.md`](release-c
 memory, processor time, dropped pictures, and clip validity over time, and can freeze the recorder
 to simulate sleep.
 
+## Linux speed measurements
+
+`cargo run --release -p clipcraft-platform --example capture_time` times screen capture on this computer
+(run it under a virtual display with a full-screen test video). `cargo run --release -p
+clipcraft-record --example encoder_profile W H raw.yuv` times the software encoder on raw I420
+pictures (`ffmpeg -i clip.mp4 -pix_fmt yuv420p -f rawvideo raw.yuv`). Both report this machine only;
+they are not game-FPS evidence.
+
 ## Documentation gate
 
 Documentation ships in the same pull request as implementation. For any changes under `apps/`,
