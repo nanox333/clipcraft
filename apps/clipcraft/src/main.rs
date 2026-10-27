@@ -8,6 +8,7 @@ use clipcraft_engine::{
     default_thumbnail_dir, execute, game_of,
 };
 mod capture;
+mod clip_delete;
 mod editor;
 mod editor_media;
 mod editor_recovery;
@@ -22,6 +23,7 @@ mod organize;
 mod playback;
 mod presence;
 mod rows;
+mod saved_toast;
 mod settings;
 mod svg;
 mod thumbs;
@@ -42,6 +44,7 @@ use organize::{CollectionEdit, LibraryFilter, RailAction};
 use settings::{card, setting_row, toggle_row};
 
 fn main() -> eframe::Result<()> {
+    clipcraft_engine::set_trash_handler(clipcraft_platform::move_to_trash);
     let minimized = std::env::args().any(|argument| argument == "--minimized")
         || clipcraft_engine::default_settings_path()
             .and_then(
@@ -144,6 +147,14 @@ struct ClipCraftApp {
     tray: Option<tray::Tray>,
     /// The tray menu, while it is open.
     tray_menu: Option<tray_menu::TrayMenu>,
+    /// The pop-up for the clip just saved.
+    saved_toast: Option<saved_toast::SavedToast>,
+    /// A clip to open as soon as the library lists it.
+    pending_open: Option<PathBuf>,
+    /// The clip the person is being asked about deleting.
+    confirm_delete: Option<MediaEntry>,
+    /// A clip being moved to the Recycle Bin.
+    trashing: Option<clip_delete::Trashing>,
     settings_state: settings::SettingsState,
     game_data: game_data::State,
     presence: presence::State,
@@ -374,6 +385,7 @@ impl eframe::App for ClipCraftApp {
         self.draw_focus_ring(context);
         self.hide_to_tray(context);
         self.poll_tray(context);
+        self.saved_toast_frame(context);
         self.index_save_status(context);
         resize_from_the_edges(context);
     }
@@ -574,6 +586,7 @@ impl ClipCraftApp {
         self.top_bar(context);
         self.navigation(context);
         self.notice_toast(context);
+        self.poll_trash(context);
 
         egui::CentralPanel::default()
             .frame(
@@ -594,6 +607,12 @@ impl ClipCraftApp {
                         self.selected = None;
                     }
                 } else if let Some(selected) = self.selected.clone() {
+                    // Delete asks first, unless the person is typing somewhere.
+                    if ui.input(|input| input.key_pressed(egui::Key::Delete))
+                        && !ui.ctx().wants_keyboard_input()
+                    {
+                        self.ask_to_delete(selected.clone());
+                    }
                     self.clip_details(ui, &selected);
                 } else if self.page == Page::Settings {
                     self.settings(ui);
@@ -601,6 +620,7 @@ impl ClipCraftApp {
                     self.library_view(ui);
                 }
             });
+        self.delete_dialog(context);
         self.thumbs.end_frame();
         self.settings_state.end_frame(&self.recording);
     }
@@ -1461,6 +1481,7 @@ impl ClipCraftApp {
                 ClipCardAction::RemoveFromLibrary(path) => {
                     self.edit_library(MetaEdit::RemoveFromLibrary { path });
                 }
+                ClipCardAction::Delete(entry) => self.ask_to_delete(*entry),
                 ClipCardAction::SetCollection { path, name, add } => {
                     self.edit_library(if add {
                         MetaEdit::AddToCollection { path, name }
@@ -1857,6 +1878,11 @@ impl ClipCraftApp {
                 .clicked()
                 {
                     self.reveal_media(PathBuf::from(&entry.path));
+                }
+                if kit::labelled_button_sized(ui, Icon::Trash, "Delete clip", false, true, full)
+                    .clicked()
+                {
+                    self.ask_to_delete(entry.clone());
                 }
                 ui.add_space(4.0);
                 ui.label(
@@ -2454,6 +2480,8 @@ enum ClipCardAction {
     },
     /// Forget a clip whose file is gone.
     RemoveFromLibrary(String),
+    /// Ask about moving the clip's file to the Recycle Bin.
+    Delete(Box<MediaEntry>),
     /// Look for a clip whose file moved: its path, name and size.
     FindFile(String, String, u64),
 }
@@ -3022,8 +3050,16 @@ fn clip_card(
 
     let mut menu_action = None;
     response.context_menu(|ui| {
+        if !entry.offline && ui.button("Open").clicked() {
+            menu_action = Some(ClipCardAction::Open(Box::new(entry.clone())));
+            ui.close();
+        }
         if !entry.offline && ui.button("Send to editor").clicked() {
             menu_action = Some(ClipCardAction::SendToEditor(Box::new(entry.clone())));
+            ui.close();
+        }
+        if !entry.offline && ui.button(open_in_file_manager_label()).clicked() {
+            menu_action = Some(ClipCardAction::Reveal(entry.path.clone()));
             ui.close();
         }
         if ui.button("Copy path").clicked() {
@@ -3053,6 +3089,16 @@ fn clip_card(
         if entry.offline && ui.button("Remove from library").clicked() {
             menu_action = Some(ClipCardAction::RemoveFromLibrary(entry.path.clone()));
             ui.close();
+        }
+        if !entry.offline {
+            ui.separator();
+            if ui
+                .button(RichText::new("Delete clip…").color(DANGER))
+                .clicked()
+            {
+                menu_action = Some(ClipCardAction::Delete(Box::new(entry.clone())));
+                ui.close();
+            }
         }
         ui.menu_button("Add to collection", |ui| {
             if collections.is_empty() {

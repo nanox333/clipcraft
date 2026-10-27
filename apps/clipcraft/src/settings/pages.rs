@@ -751,6 +751,17 @@ pub(crate) fn replay_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut RecordingS
         1,
         seconds_label,
     );
+    rows.section(ui, "When a clip is saved");
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
+            "Show a notification",
+            "A card appears in the corner of the screen, even over a game, with the clip's picture and buttons to play it, find it or delete it.",
+            "popup toast notice saved clip corner overlay",
+        ),
+        |s| &mut s.show_save_notification,
+    );
     rows.finish(ui);
 }
 
