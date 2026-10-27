@@ -196,7 +196,7 @@ settings files keep suppression off. Game/system sound and existing clips are un
 **Scope/decision:** reuse pinned BSD-3-Clause `nnnoiseless` 0.5.2 with embedded RNNoise weights,
 without its CLI/C API/training features. Pure Rust, offline inference on the existing audio worker;
 one microphone at 48 kHz before normal mixing/AAC, with independent stereo state and optional
-mono folding. See [ADR 0028](adr/0028-microphone-noise-suppression.md).
+mono folding. See [ADR 0030](adr/0030-microphone-noise-suppression.md).
 
 **Limitations:** speech-oriented reduction, not an echo canceller or a promise of Discord/Krisp
 quality. No custom models, strength controls, virtual microphone or per-app routing. Linear rate

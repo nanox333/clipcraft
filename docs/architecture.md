@@ -200,7 +200,7 @@ not a formal clean-room implementation. The small editor additionally consumes p
   bounded across reads. The existing 40 ms arrival slack absorbs framing/algorithm delay before
   ordinary rate conversion, mute/gain, mixing and AAC. Device recovery clears model/resampler
   history. The OS callback remains a bounded queue; no network, GPU or extra worker is required.
-  See [ADR 0028](adr/0028-microphone-noise-suppression.md).
+  See [ADR 0030](adr/0030-microphone-noise-suppression.md).
 - **Processed microphone test (M3.1b):** `recording.test_microphone` returns an engine-validated
   plan consumed by desktop/CLI and the native audio adapter (L5 → L4). Its `AudioInput::microphone`
   factory and `PcmMonitor` reuse the recorder's denoiser, channel conversion and gain. One optional

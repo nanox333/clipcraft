@@ -48,8 +48,16 @@ pub(super) struct Gpu {
     uniform: Buffer,
     failed: Arc<AtomicBool>,
 }
+/// Held while a device is being opened.
+static OPEN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 impl Gpu {
     pub fn open(software: bool) -> Result<Self, ExportError> {
+        // Graphics drivers are not safe to start up from several threads at once: opening two
+        // devices together crashes the process now and then. Opening is rare, so one at a time.
+        let _one_at_a_time = OPEN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::METAL | wgpu::Backends::DX12,
             ..Default::default()

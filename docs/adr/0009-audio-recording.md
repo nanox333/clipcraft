@@ -2,7 +2,7 @@
 
 - **Status:** Accepted. End-to-end evidence uses generated sources. M3.1a adds a short Windows
   default-microphone adapter/denoiser check; real spoken clips, listening and physical-device
-  recovery remain open. See [ADR 0028](0028-microphone-noise-suppression.md).
+  recovery remain open. See [ADR 0030](0030-microphone-noise-suppression.md).
 - **Date:** 2026-10-20
 
 ## Context

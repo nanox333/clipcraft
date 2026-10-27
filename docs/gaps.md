@@ -33,7 +33,7 @@ A Windows 11 default-input integration run delivered 237,120 finite mono output 
 physical-device unplug/recovery, echo cancellation and game FPS impact remain unverified. Native
 1440×900 screenshot/search review, automated Tab/Enter enable/reset, full `cargo xtask ci` and
 desktop/CLI release builds pass. This is not a claim of Discord/Krisp parity.
-See [ADR 0028](adr/0028-microphone-noise-suppression.md).
+See [ADR 0030](adr/0030-microphone-noise-suppression.md).
 
 The selected **A / CUT** branding has shared Rust geometry, scalable monochrome masters,
 small icon exports, light/dark wordmark lockups and a Discord product badge. The native icon

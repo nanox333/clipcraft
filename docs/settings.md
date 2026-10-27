@@ -33,7 +33,7 @@ Loud background noise may remain; reduction depends on the sound and microphone 
 Input devices must deliver 8–192 kHz and 1–8 channels. An unsupported format leaves the microphone
 out with a warning and keeps video/system capture running. No model downloads or account needed.
 
-Implementation/timing limits and verification are recorded in [ADR 0028](adr/0028-microphone-noise-suppression.md)
+Implementation/timing limits and verification are recorded in [ADR 0030](adr/0030-microphone-noise-suppression.md)
 and [gaps](gaps.md).
 
 General has an optional **Discord Rich Presence** section before Help and the final advanced

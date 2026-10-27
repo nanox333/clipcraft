@@ -1,4 +1,4 @@
-# ADR 0028: Offline microphone noise suppression
+# ADR 0030: Offline microphone noise suppression
 
 - **Status:** Accepted and implemented. Generated DSP/MP4/MKV tests, a Windows default-input
   adapter check, native settings review and `cargo xtask ci` pass (2026-10-27). Real speech
