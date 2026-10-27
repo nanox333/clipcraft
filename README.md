@@ -7,7 +7,7 @@ Discord product badge. [Brand guide and reproducible asset kit](docs/brand.md).
 quick trims and small clip sequences.** The current build captures and manages clips offline; it has no account, hosted
 backend, backup, upload, sync, or share-link service.
 
-> **Status: active prototype.** The screen-capture/replay/save pipeline, playback, local library,
+> **Status: first release (0.1.0).** The screen-capture/replay/save pipeline, playback, local library,
 > and basic trim-to-MP4 workflow are implemented. Their verification varies by platform: the
 > end-to-end capture pipeline is tested on Linux/X11 and with a generated window on Windows/AMD.
 > Windows/AMD has a two-hour generated-window 1080p30 soak and one-minute native SDR 1080p60
@@ -19,7 +19,21 @@ ClipCraft takes inspiration from Medal's capture-first workflow and compact dark
 keeps the focus on recording, finding, playing, trimming, and exporting local clips. It leaves out
 feeds, social features, accounts, cloud sharing, and a general-purpose video editor.
 
+## Download
+
+Get the Windows zip or Linux tarball from the
+[latest release](https://github.com/nanox333/clipcraft/releases), check it against `SHA256SUMS.txt`,
+unpack it anywhere, and run `bin\clipcraft.exe` (Windows) or `bin/clipcraft` (Linux). Downloads are
+not code-signed, so Windows SmartScreen may warn: choose *More info*, then *Run anyway*. If recording
+does not work, run `clipcraft-cli diagnose`. See [`CHANGELOG.md`](CHANGELOG.md) for what is in each release.
+
 ## What works now
+
+- **Settings:** a categorized, searchable Settings window with sliders, per-row reset and an Overview
+  page of suggested profiles.
+- **Clip deletion and saved pop-up:** right-click a clip (or use the delete button) to send it to the
+  Recycle Bin on Windows; a small "clip saved" pop-up appears without taking focus from your game
+  (Settings → Replay → Show a notification turns it off).
 
 - **System tray (Windows):** a custom-styled tray menu (status, start/stop recording, save clip, screenshot, clips folder, library, settings, quit) and, by default, closing the window
   minimizes it so capture keeps running (Settings → General → Keep running in the tray). The taskbar
