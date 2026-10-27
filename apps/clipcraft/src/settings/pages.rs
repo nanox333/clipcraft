@@ -952,20 +952,6 @@ pub(crate) fn audio_rows(
             refresh_devices(state);
         }
     }
-    {
-        let snapshot = s.clone();
-        rows.custom(
-            ui,
-            Meta::new(
-                "Test your microphone",
-                "Speak and watch the bars move.",
-                "mic level meter check input",
-            ),
-            false,
-            330.0,
-            |ui| mic_test(ui, &snapshot, state),
-        );
-    }
     rows.range(
         ui,
         s,
@@ -983,8 +969,18 @@ pub(crate) fn audio_rows(
         ui,
         s,
         Meta::new(
+            "Noise suppression",
+            "Reduce background noise in your recorded voice, offline. Preserves stereo unless mono is selected. Applies when clipping restarts; Mic Test updates live.",
+            "microphone mic voice noise reduction denoise rnnoise fan keyboard hiss",
+        ),
+        |s| &mut s.microphone_noise_suppression,
+    );
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
             "Microphone is mono",
-            "Copy a one-channel microphone to both sides so you are not heard from one ear.",
+            "Mix the microphone's left and right channels into the same sound on both sides, including with noise suppression.",
             "mic mono one ear left right",
         ),
         |s| &mut s.microphone_mono,
@@ -999,6 +995,31 @@ pub(crate) fn audio_rows(
         ),
         |s| &mut s.push_to_talk,
     );
+    {
+        let snapshot = s.clone();
+        // Rows reserve 34 px for the control. Status belongs in the wrapping left-hand help,
+        // rather than adding vertical content to the right-to-left button/meter layout.
+        let help = if let Some(error) = &state.mic_error {
+            error.clone()
+        } else if state.mic.as_ref().is_some_and(MicTest::ready) {
+            "Listening after noise suppression, volume and mono. Changes apply live. Stops after 60 seconds. Use headphones to prevent feedback.".to_owned()
+        } else if state.mic.is_some() {
+            "Opening microphone and playback device… Use headphones to prevent feedback.".to_owned()
+        } else {
+            "Hear yourself after noise suppression, volume and mono settings. Use headphones to prevent feedback.".to_owned()
+        };
+        rows.custom(
+            ui,
+            Meta::new(
+                "Test your microphone",
+                &help,
+                "mic level meter check input listen playback monitor test",
+            ),
+            false,
+            330.0,
+            |ui| mic_test(ui, &snapshot, state),
+        );
+    }
     rows.section(ui, "Sound effects");
     rows.toggle(
         ui,

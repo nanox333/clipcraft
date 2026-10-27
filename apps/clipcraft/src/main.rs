@@ -552,12 +552,14 @@ impl ClipCraftApp {
 
     /// Draws the current screen: the library, the player, or settings, with their chrome.
     fn draw_screen(&mut self, context: &egui::Context) {
+        self.settings_state.begin_frame();
         // Fullscreen playback hides all chrome: the picture owns the whole window.
         let fullscreen = self
             .playback
             .as_ref()
             .is_some_and(playback::Playback::fullscreen);
         if fullscreen {
+            self.settings_state.end_frame(&self.recording);
             egui::CentralPanel::default()
                 .frame(egui::Frame::new().fill(Color32::BLACK))
                 .show(context, |ui| {
@@ -600,6 +602,7 @@ impl ClipCraftApp {
                 }
             });
         self.thumbs.end_frame();
+        self.settings_state.end_frame(&self.recording);
     }
 
     /// Starts with the last scanned folder restored from the local index, if there is one.

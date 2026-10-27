@@ -1,5 +1,10 @@
 # Asset attribution
 
+The bundled microphone noise-reduction model (`src/weights.rnn`, 87,521 bytes) is distributed
+inside the unmodified `nnnoiseless` 0.5.2 dependency under BSD-3-Clause. Copyright holders include
+Joe Neeman, Mozilla, Jean-Marc Valin, Xiph.Org and Mark Borgerding. The required notice is retained
+in [nnnoiseless license](docs/licenses/nnnoiseless-BSD-3-Clause.txt); see [ADR 0028](docs/adr/0028-microphone-noise-suppression.md).
+
 `crates/clipcraft-platform/src/riotgames.pem` is the unmodified public Riot Games Game Client API
 root certificate from <https://static.developer.riotgames.com/docs/lol/riotgames.pem>, retrieved
 2026-10-23. SHA-256: `da884275737f024b33c93ae5d28bdb002768a3cb73752ab40254a32218193521`.

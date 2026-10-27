@@ -35,6 +35,8 @@ clipcraft-record = { path = "crates/clipcraft-record" }
 clipcraft-player = { path = "crates/clipcraft-player" }
 clipcraft-audio-out = { path = "crates/clipcraft-audio-out" }
 cpal = "0.16"
+# Offline microphone RNNoise; no CLI, C API, resampling or training dependencies (ADR 0028).
+nnnoiseless = { version = "=0.5.2", default-features = false }
 # FilmCraft crates are consumed as git dependencies pinned to one commit (docs/adr/0004).
 filmcraft-text = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }

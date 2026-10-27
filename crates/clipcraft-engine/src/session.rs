@@ -84,6 +84,37 @@ struct SoundControls {
     microphone: Option<AudioControl>,
 }
 
+/// Validated microphone settings shared by recording, native test monitoring and the CLI.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct MicrophoneTestPlan {
+    pub device: String,
+    pub noise_suppression: bool,
+    pub mono: bool,
+    pub gain_percent: u32,
+    pub channels: u16,
+}
+
+impl MicrophoneTestPlan {
+    pub fn from_settings(settings: &RecordingSettings) -> Self {
+        let settings = settings.clone().sanitized();
+        Self {
+            device: settings.microphone_device,
+            noise_suppression: settings.microphone_noise_suppression,
+            mono: settings.microphone_mono,
+            gain_percent: settings.microphone_percent,
+            channels: settings.audio_channels as u16,
+        }
+    }
+
+    /// Uses the same pre-mix microphone processor and controls as saved recordings.
+    pub fn input(
+        &self,
+        source: Box<dyn clipcraft_record::AudioSource>,
+    ) -> Result<AudioInput, String> {
+        AudioInput::microphone(source, self.noise_suppression, self.mono, self.gain_percent)
+    }
+}
+
 /// The sound sources the settings ask for, opened through `provider`, and what went wrong with
 /// the ones that could not be.
 fn audio_setup(
@@ -105,12 +136,17 @@ fn audio_setup(
         }
     }
     if settings.capture_microphone {
-        match provider.open(AudioKind::Microphone, &settings.microphone_device) {
-            Ok(source) => {
-                let control = AudioControl::default();
-                control.set_gain_percent(settings.microphone_percent);
+        let plan = MicrophoneTestPlan::from_settings(settings);
+        let microphone = provider
+            .open(AudioKind::Microphone, &settings.microphone_device)
+            .and_then(|source| {
+                plan.input(source).map_err(|why| format!("Microphone processing is unavailable: {why}. Choose another microphone or turn noise suppression off."))
+            });
+        match microphone {
+            Ok(input) => {
+                let control = input.control;
                 controls.microphone = Some(control.clone());
-                sources.push((AudioKind::Microphone, source, control));
+                sources.push((AudioKind::Microphone, input.source, control));
             }
             Err(why) => warnings.push(format!("The microphone could not be recorded: {why}")),
         }
@@ -873,6 +909,103 @@ mod tests {
     }
 
     #[test]
+    fn microphone_test_command_validates_levels_without_forcing_mono_or_recording() {
+        let settings = RecordingSettings {
+            microphone_percent: u32::MAX,
+            microphone_device: "x".repeat(20_000),
+            microphone_noise_suppression: true,
+            microphone_mono: false,
+            capture_microphone: false,
+            ..Default::default()
+        };
+        let command = crate::Command::PrepareMicrophoneTest {
+            settings: Box::new(settings),
+        };
+        assert_eq!(command.id(), "recording.test_microphone");
+        let crate::CommandOutput::MicrophoneTest(plan) = crate::execute(command).unwrap() else {
+            panic!("expected plan")
+        };
+        assert_eq!(plan.gain_percent, 100);
+        assert!(plan.device.len() < 1024);
+        assert!(plan.noise_suppression && !plan.mono);
+        assert_eq!(plan.channels, 2);
+    }
+
+    #[test]
+    fn noise_suppression_wraps_only_the_microphone_for_either_track_layout() {
+        for separate in [false, true] {
+            for enabled in [false, true] {
+                let settings = RecordingSettings {
+                    microphone_noise_suppression: enabled,
+                    microphone_percent: 73,
+                    ..sound_settings(separate)
+                };
+                let provider = AudioProvider::new(|_, _| {
+                    Ok(Box::new(clipcraft_record::ToneSource::new(
+                        clipcraft_record::AudioFormat {
+                            sample_rate: 44_100,
+                            channels: 2,
+                        },
+                        220.0,
+                        0.1,
+                    )))
+                });
+                let (setup, controls, warnings) = audio_setup(&settings, &provider);
+                assert!(warnings.is_empty());
+                let setup = setup.unwrap();
+                assert_eq!(setup.inputs.len(), 2);
+                assert_eq!(
+                    setup.inputs[0].source.format(),
+                    clipcraft_record::AudioFormat {
+                        sample_rate: 44_100,
+                        channels: 2,
+                    },
+                    "system sound must bypass suppression"
+                );
+                assert_eq!(
+                    setup.inputs[1].source.format(),
+                    clipcraft_record::AudioFormat {
+                        sample_rate: if enabled { 48_000 } else { 44_100 },
+                        channels: 2,
+                    }
+                );
+                assert_eq!(setup.inputs[1].track, usize::from(separate));
+                let control = controls.microphone.unwrap();
+                assert_eq!(control.gain_percent(), 73);
+                control.set_muted(true);
+                assert!(setup.inputs[1].control.muted());
+            }
+        }
+    }
+
+    #[test]
+    fn unsupported_denoising_format_reports_a_warning_and_keeps_system_sound() {
+        let provider = AudioProvider::new(|kind, _| {
+            Ok(Box::new(clipcraft_record::ToneSource::new(
+                clipcraft_record::AudioFormat {
+                    sample_rate: if kind == AudioKind::Microphone {
+                        0
+                    } else {
+                        48_000
+                    },
+                    channels: 1,
+                },
+                220.0,
+                0.1,
+            )))
+        });
+        let settings = RecordingSettings {
+            microphone_noise_suppression: true,
+            ..sound_settings(true)
+        };
+        let (setup, controls, warnings) = audio_setup(&settings, &provider);
+        assert_eq!(setup.unwrap().inputs.len(), 1);
+        assert!(controls.microphone.is_none());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("turn noise suppression off"));
+    }
+
+    #[test]
     fn the_settings_choose_one_mixed_track_or_separate_ones() {
         for (separate, tracks) in [(false, 1), (true, 2)] {
             let dir = std::env::temp_dir()
@@ -950,46 +1083,49 @@ mod tests {
 
     #[test]
     fn mute_toggle_and_push_to_talk_decide_whether_the_microphone_is_heard() {
-        let mut settings = sound_settings(false);
-        let mut session = CaptureSession::new();
-        session
-            .start_with_audio(
-                &settings,
-                Box::new(SyntheticSource::new(160, 90, 30)),
-                None,
-                Some(tone_provider(true)),
-            )
-            .unwrap();
-        assert!(session.has_microphone() && !session.microphone_muted());
-        assert!(session.toggle_microphone());
-        assert!(session.microphone_muted());
-        assert!(!session.toggle_microphone());
-        session.stop();
+        for suppression in [false, true] {
+            let mut settings = sound_settings(false);
+            settings.microphone_noise_suppression = suppression;
+            let mut session = CaptureSession::new();
+            session
+                .start_with_audio(
+                    &settings,
+                    Box::new(SyntheticSource::new(160, 90, 30)),
+                    None,
+                    Some(tone_provider(true)),
+                )
+                .unwrap();
+            assert!(session.has_microphone() && !session.microphone_muted());
+            assert!(session.toggle_microphone());
+            assert!(session.microphone_muted());
+            assert!(!session.toggle_microphone());
+            session.stop();
 
-        settings.push_to_talk = true;
-        session
-            .start_with_audio(
-                &settings,
-                Box::new(SyntheticSource::new(160, 90, 30)),
-                None,
-                Some(tone_provider(true)),
-            )
-            .unwrap();
-        // Silent until the key is held.
-        assert!(session.microphone_muted());
-        session.set_talking(true);
-        assert!(!session.microphone_muted());
-        // A muted microphone stays muted while the key is held.
-        session.set_microphone_off(true);
-        assert!(session.microphone_muted());
-        session.set_microphone_off(false);
-        session.set_talking(false);
-        assert!(session.microphone_muted());
-        // Levels change live.
-        settings.microphone_percent = 30;
-        session.set_levels(&settings);
-        session.stop();
-        assert!(!session.has_microphone());
+            settings.push_to_talk = true;
+            session
+                .start_with_audio(
+                    &settings,
+                    Box::new(SyntheticSource::new(160, 90, 30)),
+                    None,
+                    Some(tone_provider(true)),
+                )
+                .unwrap();
+            // Silent until the key is held.
+            assert!(session.microphone_muted());
+            session.set_talking(true);
+            assert!(!session.microphone_muted());
+            // A muted microphone stays muted while the key is held.
+            session.set_microphone_off(true);
+            assert!(session.microphone_muted());
+            session.set_microphone_off(false);
+            session.set_talking(false);
+            assert!(session.microphone_muted());
+            // Levels change live.
+            settings.microphone_percent = 30;
+            session.set_levels(&settings);
+            session.stop();
+            assert!(!session.has_microphone());
+        }
     }
 
     #[test]

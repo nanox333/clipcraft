@@ -35,8 +35,13 @@ feeds, social features, accounts, cloud sharing, and a general-purpose video edi
   Automatic source changes in the desktop modes save the final replay; buffers remain bounded.
   Manual capture is also available.
 - **Audio:** synchronized system audio and microphone recording, mixed or on separate AAC tracks,
-  with levels, mute, push-to-talk, and device-loss handling. The recorder path is tested with
-  generated sources; real microphone and speaker hardware has not been tested here.
+  with levels, mute, push-to-talk, device-loss handling and optional offline microphone noise
+  suppression (Settings › Audio). Suppression defaults off and preserves stereo; **Microphone is
+  mono** explicitly mixes both sides. Restart clipping after changing capture processing. **Mic Test**
+  plays your processed voice locally and meters it after suppression/volume/mono, with live setting
+  changes and no saved audio (use headphones). The recorder path is tested with
+  generated sources. A Windows default-microphone adapter/suppression check passes; real speech
+  listening quality, speaker capture and physical-device disconnect tests remain open.
 - **Playback:** open local clips in the app with sound, seek and step frames, adjust volume and
   playback speed, loop, select an audio track, and use fullscreen. Clip thumbnails are decoded and
   cached locally. Playback retains only its newest pending picture when the UI stalls; new seeks

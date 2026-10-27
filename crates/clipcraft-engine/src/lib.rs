@@ -79,7 +79,8 @@ pub use recovery::{Recovery, recover_interrupted};
 pub use relink::{SearchResult, find_moved_file};
 pub use screenshot::{ScreenshotJob, screenshot_name};
 pub use session::{
-    CLIP_PREFIX, CaptureSession, SaveJob, SavedClipReport, clip_format, clip_stem, record_config,
+    CLIP_PREFIX, CaptureSession, MicrophoneTestPlan, SaveJob, SavedClipReport, clip_format,
+    clip_stem, record_config,
 };
 pub use storage::{
     StorageUsage, StoredClip, cleanup_plan, default_capture_folder, list_clips, storage_usage,
@@ -208,6 +209,10 @@ pub enum Command {
         path: PathBuf,
         settings: Box<RecordingSettings>,
     },
+    /// Validates the processing settings for a local, unsaved microphone listening test.
+    PrepareMicrophoneTest {
+        settings: Box<RecordingSettings>,
+    },
     /// Changes a favorite, game, or collection and saves it in the local index.
     EditLibraryMeta {
         index_path: PathBuf,
@@ -295,6 +300,7 @@ impl Command {
             Self::StorageUsage { .. } => "storage.usage",
             Self::SetLaunchAtStartup { .. } => "app.launch_at_startup",
             Self::SaveRecordingSettings { .. } => "recording.save_settings",
+            Self::PrepareMicrophoneTest { .. } => "recording.test_microphone",
             Self::TrimClip { .. } => "clip.trim",
             Self::ExportClip { .. } => "clip.export",
             Self::ExportGif { .. } => "clip.export_gif",
@@ -759,6 +765,7 @@ pub enum CommandOutput {
     Thumbnail(ThumbnailFile),
     /// Recording settings as stored.
     RecordingSettings(Box<RecordingSettings>),
+    MicrophoneTest(MicrophoneTestPlan),
     /// Folder and disk usage.
     StorageUsage(StorageUsage),
     /// A clip that was cut and saved.
@@ -957,6 +964,9 @@ pub fn execute_cancellable(
     cancel: &AtomicBool,
 ) -> Result<CommandOutput, EngineError> {
     match command {
+        Command::PrepareMicrophoneTest { settings } => Ok(CommandOutput::MicrophoneTest(
+            MicrophoneTestPlan::from_settings(&settings),
+        )),
         Command::PreviewDiscordCard { settings, context } => Ok(CommandOutput::DiscordCard(
             presence::preview_activity(&settings, &context),
         )),
@@ -1327,6 +1337,7 @@ pub const fn command_ids() -> &'static [&'static str] {
         "capture.toggle_microphone",
         "capture.push_to_talk",
         "recording.save_settings",
+        "recording.test_microphone",
         "recording.set_builtin_games",
     ]
 }

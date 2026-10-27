@@ -379,6 +379,8 @@ pub struct RecordingSettings {
     pub push_to_talk: bool,
     /// The microphone is mono: copy it to both channels.
     pub microphone_mono: bool,
+    /// Reduce microphone background noise locally with RNNoise, preserving stereo unless mono is selected.
+    pub microphone_noise_suppression: bool,
     /// The screen or window to capture, as the capture provider names it; empty for the first
     /// screen.
     pub capture_target: String,
@@ -468,6 +470,7 @@ impl Default for RecordingSettings {
             separate_audio_tracks: false,
             push_to_talk: false,
             microphone_mono: false,
+            microphone_noise_suppression: false,
             capture_target: String::new(),
             capture_target_name: String::new(),
             record_on_launch: false,
@@ -942,6 +945,8 @@ mod tests {
         let old: SettingsFile =
             serde_json::from_str(r#"{"version":1,"settings":{"height":720}}"#).unwrap();
         assert!(old.settings.capture_cursor && !old.settings.show_advanced);
+        assert!(!old.settings.microphone_noise_suppression);
+        assert!(!RecordingSettings::default().microphone_noise_suppression);
     }
 
     #[test]
@@ -1017,6 +1022,7 @@ mod tests {
         assert!(RecordingSettings::default().game_only_capture);
         let chosen = RecordingSettings {
             container: Container::Mkv,
+            microphone_noise_suppression: true,
             source: CaptureSource::Desktop,
             shape: OutputShape::Wide16x9,
             framing: Framing::Letterbox,

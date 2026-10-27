@@ -1,5 +1,41 @@
 # Settings and advanced controls
 
+## Microphone noise suppression
+
+In **Settings › Audio › Microphone**, turn on **Noise suppression** to reduce background noise
+in recorded speech. It defaults off. Restart clipping to apply it; save any replay you need before
+stopping. The switch can also be found by searching settings for “noise” and operated with Tab/Enter.
+Its Reset action restores off, through the same engine settings command used by the CLI.
+
+Processing stays on your computer using the bundled RNNoise model. Only the microphone is
+processed; game/system sound keeps its normal route. Stereo microphone channels remain separate,
+using independent suppression state. **Microphone is mono** explicitly mixes left/right before
+suppression and copies that voice to both sides in stereo clips. A mono input is naturally heard
+on both sides. Recording still follows microphone volume, mute and push-to-talk controls.
+
+**Mic Test**, below the microphone controls, plays your voice through the default playback device.
+Its meter measures processed sound after suppression, volume and mono conversion. Changes apply
+live in the test, while an existing replay keeps its original capture settings until restarted.
+Use headphones to prevent acoustic feedback. The test is independent of Record microphone and
+push-to-talk, so you can audition settings without starting a recording or holding a key.
+It stops with **Stop test**, when its row/page is left or hidden, on device failure, or after
+60 seconds. Opening/error state appears inline; a blocked device open times out after 15 seconds
+without blocking the UI. No test sound is saved or transmitted. The
+global mono/stereo clip setting also applies. Playback uses the output device's sample rate and
+pre-AAC PCM; it is not an audition of codec compression or the computer's master volume.
+
+CLI: `clipcraft-cli recording mic-test 5` listens for 1–60 seconds using saved preferences and
+the same `recording.test_microphone` plan. Its result reports output frames, never audio content.
+
+This is speech noise reduction, not echo cancellation or automatic volume leveling. Music,
+whispers and unusual voices can sound different; turn it off if it damages the sound you want.
+Loud background noise may remain; reduction depends on the sound and microphone level.
+Input devices must deliver 8–192 kHz and 1–8 channels. An unsupported format leaves the microphone
+out with a warning and keeps video/system capture running. No model downloads or account needed.
+
+Implementation/timing limits and verification are recorded in [ADR 0028](adr/0028-microphone-noise-suppression.md)
+and [gaps](gaps.md).
+
 General has an optional **Discord Rich Presence** section before Help and the final advanced
 toggle. Basic activity, captured game name and selected match context each need explicit consent.
 The section explains exactly which fields Discord can publish, shows connection/setup state and

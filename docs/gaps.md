@@ -1,5 +1,40 @@
 # Known gaps
 
+## Microphone noise suppression (M3.1a, 2026-10-26)
+
+Optional offline RNNoise suppression is implemented. The native Audio setting defaults off,
+persists through the shared settings command and takes effect after clipping restarts. Only the
+microphone is processed; game/system sound bypasses it. Stereo is preserved using separate
+models per channel; selecting **Microphone is mono** explicitly folds it. The pinned pure-Rust
+model needs no downloads or network access.
+
+M3.1b replaces the raw meter with **Mic Test** listening through the default output, after
+suppression, volume and mono/channel settings. It uses the recorder's input factory and PCM
+conversion, updates live, and stops on Stop/leave/hidden row/error or after 60 seconds. The
+test is independent of recording/PTT switches, has one bounded worker and 200 ms output queue,
+and saves no sound. Generated PCM, queue/error/lifecycle and keyboard tests cover the new path;
+the Windows native duplex check delivered 108,000 processed frames to the output callback and
+passed live zero-gain/mono updates and worker cleanup without saving sound. Full `cargo xtask ci`
+passes, along with final native UI and desktop/CLI release builds. One playback-device error
+occurred in manual testing; clean 15-second CLI/desktop retries pass, with the cause unproven.
+Physical-device reliability and subjective speech quality remain open. Optimized synthetic processing costs about 75 µs per 10 ms
+mono block or 142 µs for stereo on this Ryzen 7 5700X3D; game impact remains unmeasured.
+
+Twelve deterministic DSP tests pass, including split/partial frames, 8–192 kHz conversion,
+sample alignment, hostile samples, downstream gain/mute and recovery from a two-second backlog.
+Generated mixed/separate microphone/system tracks save and decode in MP4/MKV with timing and
+noise-energy checks. At roughly −33 dBFS RMS, generated steady background noise is reduced;
+loud full-band noise around −21 dBFS was much less reduced in a direct model probe. Release-mode
+initial mono-only synthetic throughput was 127.298 ms for 20 seconds on a Ryzen 7 5700X3D. These are not speech-quality
+or game-FPS measurements.
+
+A Windows 11 default-input integration run delivered 237,120 finite mono output samples in
+5.062 seconds from a 48 kHz stereo device in the initial mono prototype; no audio was saved. Real speech listening quality,
+physical-device unplug/recovery, echo cancellation and game FPS impact remain unverified. Native
+1440×900 screenshot/search review, automated Tab/Enter enable/reset, full `cargo xtask ci` and
+desktop/CLI release builds pass. This is not a claim of Discord/Krisp parity.
+See [ADR 0028](adr/0028-microphone-noise-suppression.md).
+
 The selected **A / CUT** branding has shared Rust geometry, scalable monochrome masters,
 small icon exports, light/dark wordmark lockups and a Discord product badge. The native icon
 and header use the same mark. CS2, Dota 2 and League now reference fixed Discord CDN icons;
@@ -444,9 +479,10 @@ touches ClipCraft's own clips.
   here with generated tones through the whole recorder, with ffprobe and ffmpeg as judges: tones
   at the right pitch and level on the right track in MP4 and MKV, mixing, mute and gain, sound
   length equal to picture length, a click lining up with its picture within 40 ms, a device clock
-  1.5 % fast or slow staying in step, a device lost and recovered, bad layouts refused. **Never run
-  with a real microphone or speaker** (this container has no sound card), so the device layer
-  (`DeviceCapture`, cpal) is untested beyond its queue. Known limits: game/system sound is
+  1.5 % fast or slow staying in step, a device lost and recovered, bad layouts refused. The original
+  end-to-end runs used generated sources. A Windows default-microphone adapter/denoiser smoke
+  check now delivers finite samples, but real spoken clips, speaker listening and physical-device
+  recovery remain open. Known limits: game/system sound is
   recorded by loopback on Windows and, on Linux, through the PulseAudio client library (also
   answered by PipeWire) from the monitor of the default output, verified here against a real
   PulseAudio server with a null sink (a tone played into it ends up in a saved clip); the output chosen in

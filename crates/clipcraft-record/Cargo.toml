@@ -17,6 +17,7 @@ filmcraft-aac.workspace = true
 filmcraft-h264enc.workspace = true
 filmcraft-isobmff.workspace = true
 filmcraft-matroska.workspace = true
+nnnoiseless.workspace = true
 
 [lints]
 workspace = true

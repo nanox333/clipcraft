@@ -332,4 +332,46 @@ mod tests {
             }
         }
     }
+
+    /// Explicit hardware check: consumes five seconds of the default microphone locally.
+    /// Retains no sound, paths or device identifiers and never runs in the ordinary CI gate.
+    #[test]
+    #[ignore = "explicit default-microphone integration check; no sound is saved"]
+    fn real_microphone_noise_suppression_delivers_bounded_finite_samples() {
+        let source = DeviceCapture::open(CaptureKind::Microphone, "").unwrap();
+        let format = source.format();
+        let mut filtered = clipcraft_record::NoiseSuppressedSource::new(Box::new(source)).unwrap();
+        let output_channels = usize::from(filtered.format().channels);
+        let started = std::time::Instant::now();
+        let mut output = Vec::new();
+        let mut frames = 0_usize;
+        let mut largest = 0_usize;
+        while started.elapsed() < Duration::from_secs(5) {
+            filtered.read(&mut output).unwrap();
+            assert!(
+                output
+                    .iter()
+                    .all(|sample| sample.is_finite() && sample.abs() <= 1.0)
+            );
+            assert!(output.len() / output_channels <= 12_000);
+            frames += output.len() / output_channels;
+            largest = largest.max(output.len() / output_channels);
+            output.clear();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            frames >= 48_000 * 3,
+            "microphone did not deliver three seconds of sound"
+        );
+        assert!(
+            frames <= 48_000 * 6,
+            "microphone delivered an implausible clock rate"
+        );
+        println!(
+            "Default microphone: {} Hz/{} channels -> 48000 Hz/{output_channels} channels; {frames} finite frames in {:.3} seconds; largest read {largest}. No sound saved.",
+            format.sample_rate,
+            format.channels,
+            started.elapsed().as_secs_f64(),
+        );
+    }
 }

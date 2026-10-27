@@ -10,12 +10,14 @@
 mod capture;
 mod cue;
 mod input;
+mod monitor;
 
 pub use capture::{CaptureError, CaptureKind, DeviceCapture};
 pub use clipcraft_record::SampleQueue;
 pub use cue::{Cue, play_cue};
 
-pub use input::{DeviceNames, MAX_DEVICES, MicMeter, MicTestError, list_devices, peak};
+pub use input::{DeviceNames, MAX_DEVICES, list_devices, peak};
+pub use monitor::MicTest;
 
 /// The sound system, ready to use from any thread.
 ///

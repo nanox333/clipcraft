@@ -26,7 +26,7 @@ alone.
 | Installer | Partly | `cargo xtask package` builds a Linux tarball (18 MB; binaries, desktop entry, licences, and `SHA256SUMS`). Run to completion on Linux x86_64: the checksum verifies, the archive unpacks into an empty folder, every shared library the binaries need is present, and `clipcraft-cli diagnose` runs from it. It was not installed on a clean second machine. Open: Windows installer, macOS bundle, code signing and notarisation (need the maintainers' certificates), an update story (there is none by design). |
 | Windows capture | Partial | Windows/AMD generated-window WGC-to-MP4 runs, one-minute native SDR 1080p60 throughput and real D3D11 lease/color/resize tests pass. Hotkeys, games, device loss, default HDR performance and a two-hour 1080p60 soak remain open; see [measurements](windows-performance.md). |
 | Hardware encoders | Partial | AMD Media Foundation has generated-window CPU/native-surface evidence. NVENC, VideoToolbox and VA-API real-device claims remain open. |
-| Real sound devices | Open | Microphone and speaker capture never run with real hardware. |
+| Real sound devices | Partial | The Windows input/denoiser check delivered finite samples; M3.1b's real duplex test delivered 108,000 processed frames to the playback callback, applied live zero gain/mono and cleaned up after Stop, without saving audio. Real speech listening quality and physical unplug/recovery remain open; see [testing](testing.md). |
 
 ## How to repeat the evidence
 
@@ -38,6 +38,10 @@ alone.
 - Diagnostics: `clipcraft-cli diagnose`.
 
 ## Publishing a release on GitHub
+
+`cargo xtask package` includes `docs/licenses/nnnoiseless-BSD-3-Clause.txt` with the embedded
+RNNoise model's required notice, alongside `ATTRIBUTION.md` and the dependency license list.
+Keep this notice with binary redistributions, including manually assembled Windows builds.
 
 `.github/workflows/release.yml` builds the Linux (x86_64) tarball and the Windows (x86_64) zip with
 `cargo xtask package`, writes `SHA256SUMS.txt`, and creates a **draft** GitHub Release for review.

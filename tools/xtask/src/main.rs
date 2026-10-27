@@ -360,6 +360,14 @@ fn package() -> TaskResult<()> {
     for document in ["README.md", "ATTRIBUTION.md", "LICENSE-MIT"] {
         fs::copy(workspace.join(document), folder.join(document)).map_err(fail)?;
     }
+    // The embedded RNNoise model's BSD notice must accompany binary distributions (ADR 0028).
+    let notices = folder.join("docs").join("licenses");
+    fs::create_dir_all(&notices).map_err(fail)?;
+    fs::copy(
+        workspace.join("docs/licenses/nnnoiseless-BSD-3-Clause.txt"),
+        notices.join("nnnoiseless-BSD-3-Clause.txt"),
+    )
+    .map_err(fail)?;
     let install = if windows {
         "ClipCraft runs from any folder: start bin\\clipcraft.exe.\n\
 Everything ClipCraft saves stays on this computer.\n\

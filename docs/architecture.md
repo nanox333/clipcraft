@@ -192,6 +192,23 @@ not a formal clean-room implementation. The small editor additionally consumes p
 - **Audio mixing:** the current `AudioSource` mixer is clock-driven. The never-integrated
   timestamped audio policy was removed in M11.1j; it can be reviewed from Git history if a future
   timestamped provider needs it.
+- **Microphone noise suppression (M3.1a):** the engine wraps only an opted-in microphone with
+  `clipcraft-record::NoiseSuppressedSource`. It preserves the first two channels independently
+  unless mono is selected, converts
+  bounded device input to 48 kHz and feeds fixed 480-sample RNNoise frames on the existing audio
+  worker. The initial delayed output is discarded to align source sound; partial frames remain
+  bounded across reads. The existing 40 ms arrival slack absorbs framing/algorithm delay before
+  ordinary rate conversion, mute/gain, mixing and AAC. Device recovery clears model/resampler
+  history. The OS callback remains a bounded queue; no network, GPU or extra worker is required.
+  See [ADR 0028](adr/0028-microphone-noise-suppression.md).
+- **Processed microphone test (M3.1b):** `recording.test_microphone` returns an engine-validated
+  plan consumed by desktop/CLI and the native audio adapter (L5 → L4). Its `AudioInput::microphone`
+  factory and `PcmMonitor` reuse the recorder's denoiser, channel conversion and gain. One optional
+  monitor worker drives the existing input adapter and owns output; callbacks only enqueue input or try-drain up to 200 ms of
+  processed output. One replaceable settings update permits live gain/noise/mono/device changes.
+  Stop mutes the callback immediately; an OS open already in progress can finish asynchronously,
+  holding the sole worker permit until cleanup. Device/worker errors become UI errors; no sound
+  is saved. See [settings](settings.md) for the 60-second limit and explicit listening flow.
 - **Local match data:** engine commands `game_state.parse`/`game_state.install` normalize snapshots
   and install Valve configs. One opt-in platform worker owns authenticated loopback CS2/Dota
   listeners and Windows/macOS League HTTPS, with bounded IO and one current snapshot per game.

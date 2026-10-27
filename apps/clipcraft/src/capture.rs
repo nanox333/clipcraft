@@ -162,6 +162,7 @@ impl CaptureState {
                 || started.separate_audio_tracks != current.separate_audio_tracks
                 || started.push_to_talk != current.push_to_talk
                 || started.microphone_mono != current.microphone_mono
+                || started.microphone_noise_suppression != current.microphone_noise_suppression
                 || started.audio_sample_rate != current.audio_sample_rate
                 || started.audio_channels != current.audio_channels
                 || started.audio_kbps != current.audio_kbps
@@ -193,7 +194,11 @@ fn automatic_desktop_target(target: &CaptureTarget) -> bool {
     target.kind == TargetKind::Display
 }
 
-fn notice(text: impl Into<String>, error: bool, path: Option<PathBuf>) -> Option<Notice> {
+pub(crate) fn notice(
+    text: impl Into<String>,
+    error: bool,
+    path: Option<PathBuf>,
+) -> Option<Notice> {
     Some(Notice {
         text: text.into(),
         error,
@@ -1470,7 +1475,20 @@ impl ClipCraftApp {
                         .color(DANGER)
                         .size(12.5),
                 )
-                .on_hover_text("ClipCraft keeps trying to bring the device back.");
+                .on_hover_text({
+                    let mut message = status
+                        .audio
+                        .iter()
+                        .filter_map(|input| input.error.as_deref())
+                        .take(8)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if !message.is_empty() {
+                        message.push('\n');
+                    }
+                    message.push_str("ClipCraft keeps trying to bring the device back.");
+                    message
+                });
             } else if self.capture.session.has_microphone() {
                 let muted = self.capture.session.microphone_muted();
                 ui.label(
@@ -1600,6 +1618,20 @@ fn is_own_window(window: &CaptureTarget) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changing_noise_suppression_requires_a_recording_restart() {
+        let started = RecordingSettings::default();
+        let capture = CaptureState {
+            started_with: Some(started.clone()),
+            ..Default::default()
+        };
+        assert!(!capture.is_stale(&started));
+        assert!(capture.is_stale(&RecordingSettings {
+            microphone_noise_suppression: true,
+            ..started
+        }));
+    }
 
     fn observation(game: Option<u32>) -> crate::game_scan::ResultSet {
         crate::game_scan::ResultSet {

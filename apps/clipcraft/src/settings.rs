@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use clipcraft_audio_out::{DeviceNames, MicMeter, list_devices};
+use clipcraft_audio_out::{DeviceNames, MicTest, list_devices};
 use clipcraft_engine::{
     AUDIO_KBPS, CaptureSource, Command, CommandOutput, Container, DesktopCaptureMode,
     EncoderPreset, Framing, GameMatchRule, HEIGHTS, HotkeyAction, OutputShape, QualityMode,
@@ -40,7 +40,9 @@ pub struct SettingsState {
     /// Outputs that can be recorded, as (saved name, name shown): PulseAudio's outputs on Linux
     /// (its monitors are what is recorded), the sound system's own list elsewhere.
     outputs: Vec<(String, String)>,
-    mic: Option<MicMeter>,
+    mic: Option<MicTest>,
+    mic_plan: Option<clipcraft_engine::MicrophoneTestPlan>,
+    mic_visible: bool,
     mic_error: Option<String>,
     mic_shown: f32,
     pub(crate) capturing: Option<HotkeyAction>,
@@ -62,6 +64,50 @@ pub struct SettingsState {
 }
 
 impl SettingsState {
+    pub(crate) fn begin_frame(&mut self) {
+        self.mic_visible = false;
+    }
+    pub(crate) fn end_frame(&mut self, settings: &RecordingSettings) {
+        if !self.mic_visible {
+            self.mic = None;
+            self.mic_plan = None;
+            self.mic_shown = 0.0;
+            return;
+        }
+        if self.mic.is_none() {
+            return;
+        }
+        if self.mic_plan.as_ref().is_some_and(|plan| {
+            plan.device == settings.microphone_device
+                && plan.noise_suppression == settings.microphone_noise_suppression
+                && plan.mono == settings.microphone_mono
+                && plan.gain_percent == settings.microphone_percent.min(100)
+                && u32::from(plan.channels) == settings.audio_channels
+        }) {
+            return;
+        }
+        let result = execute(Command::PrepareMicrophoneTest {
+            settings: Box::new(settings.clone()),
+        });
+        match result {
+            Ok(CommandOutput::MicrophoneTest(plan)) => {
+                if self.mic_plan.as_ref() != Some(&plan) {
+                    if let Some(test) = &self.mic
+                        && let Err(error) = test.update(plan.clone())
+                    {
+                        self.mic_error = Some(error);
+                        self.mic = None;
+                    }
+                    self.mic_plan = Some(plan);
+                }
+            }
+            _ => {
+                self.mic_error = Some("The microphone test settings could not be applied.".into());
+                self.mic = None;
+            }
+        }
+    }
+
     fn select_game_process(&mut self, process: &clipcraft_platform::RunningProcess) {
         self.selected_game_process = Some(process.clone());
         self.game_process_draft = process.executable.clone();
@@ -1222,6 +1268,7 @@ fn refresh_devices(state: &mut SettingsState) {
 
 /// The microphone test: a button and a live level meter.
 fn mic_test(ui: &mut egui::Ui, settings: &RecordingSettings, state: &mut SettingsState) {
+    state.mic_visible = true;
     ui.horizontal(|ui| {
         let running = state.mic.is_some();
         let label = if running { "Stop test" } else { "Mic Test" };
@@ -1230,20 +1277,32 @@ fn mic_test(ui: &mut egui::Ui, settings: &RecordingSettings, state: &mut Setting
                 state.mic = None;
                 state.mic_shown = 0.0;
             } else {
-                match MicMeter::start(&settings.microphone_device) {
-                    Ok(meter) => {
-                        state.mic = Some(meter);
+                let plan = execute(Command::PrepareMicrophoneTest {
+                    settings: Box::new(settings.clone()),
+                });
+                let started = match plan {
+                    Ok(CommandOutput::MicrophoneTest(plan)) => {
+                        state.mic_plan = Some(plan.clone());
+                        MicTest::start(plan)
+                    }
+                    _ => Err("The microphone test settings could not be prepared.".into()),
+                };
+                match started {
+                    Ok(test) => {
+                        state.mic = Some(test);
                         state.mic_error = None;
                     }
-                    Err(error) => state.mic_error = Some(error.to_string()),
+                    Err(error) => state.mic_error = Some(error),
                 }
             }
         }
-        if state.mic.as_ref().is_some_and(MicMeter::failed) {
+        if state.mic.as_ref().is_some_and(MicTest::finished) {
+            state.mic_error = state.mic.as_ref().and_then(MicTest::error);
             state.mic = None;
-            state.mic_error = Some("The microphone stopped.".to_owned());
+            state.mic_shown = 0.0;
+            ui.ctx().request_repaint();
         }
-        let level = state.mic.as_ref().map_or(0.0, MicMeter::level);
+        let level = state.mic.as_ref().map_or(0.0, MicTest::level);
         state.mic_shown = level.max(state.mic_shown * 0.85);
         let width = (ui.available_width()).max(0.0);
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 28.0), egui::Sense::hover());
@@ -1268,17 +1327,6 @@ fn mic_test(ui: &mut egui::Ui, settings: &RecordingSettings, state: &mut Setting
     });
     if state.mic.is_some() {
         ui.ctx().request_repaint_after(Duration::from_millis(40));
-    }
-    if let Some(error) = &state.mic_error {
-        ui.add_space(4.0);
-        ui.label(RichText::new(error).color(DANGER).size(12.5));
-    } else if state.mic.is_some() {
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new("Speak: the bars should move.")
-                .color(MUTED)
-                .size(12.5),
-        );
     }
 }
 
@@ -1737,6 +1785,10 @@ mod preset_tests {
     }
 
     fn keyboard_activate(app: &mut crate::ClipCraftApp, target: &str) {
+        keyboard_action(app, target, true);
+    }
+
+    fn keyboard_action(app: &mut crate::ClipCraftApp, target: &str, activate: bool) {
         let context = crate::kit::test_context();
         context.enable_accesskit();
         let mut names = std::collections::HashMap::new();
@@ -1776,9 +1828,57 @@ mod preset_tests {
                     );
                 }
                 reached = names.get(&update.focus).is_some_and(|name| name == target);
+                if reached && !activate {
+                    return;
+                }
             }
         }
         panic!("{target} was not reachable with Tab");
+    }
+
+    #[test]
+    fn microphone_test_and_optional_mono_are_keyboard_accessible() {
+        let mut app = crate::ClipCraftApp {
+            page: crate::Page::Settings,
+            settings_tab: crate::SettingsTab::Audio,
+            settings_state: SettingsState {
+                devices: Some(DeviceNames::default()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        app.recording.microphone_noise_suppression = true;
+        keyboard_activate(&mut app, "Microphone is mono");
+        assert!(app.recording.microphone_mono && app.recording.microphone_noise_suppression);
+        keyboard_action(&mut app, "Mic Test", false);
+        assert!(
+            app.settings_state.mic.is_none(),
+            "focusing the test must not start a microphone"
+        );
+    }
+
+    #[test]
+    fn microphone_noise_suppression_is_searchable_and_keyboard_accessible() {
+        let mut app = crate::ClipCraftApp {
+            page: crate::Page::Settings,
+            settings_tab: crate::SettingsTab::Audio,
+            settings_search: "noise suppression".into(),
+            settings_state: SettingsState {
+                devices: Some(DeviceNames::default()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(!app.recording.microphone_noise_suppression);
+        keyboard_activate(&mut app, "Noise suppression");
+        assert!(app.recording.microphone_noise_suppression);
+        assert!(
+            category_controls(&mut app)
+                .iter()
+                .any(|name| name == "Reset Noise suppression")
+        );
+        keyboard_activate(&mut app, "Reset Noise suppression");
+        assert!(!app.recording.microphone_noise_suppression);
     }
 
     #[test]

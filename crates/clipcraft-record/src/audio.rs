@@ -149,6 +149,25 @@ pub struct AudioInput {
 }
 
 impl AudioInput {
+    /// Builds the same microphone processing chain for recording and local monitoring.
+    pub fn microphone(
+        source: Box<dyn AudioSource>,
+        suppression: bool,
+        mono: bool,
+        gain: u32,
+    ) -> Result<Self, String> {
+        let source = if suppression {
+            Box::new(crate::NoiseSuppressedSource::with_mono(source, mono)?) as Box<dyn AudioSource>
+        } else {
+            source
+        };
+        let control = AudioControl::default();
+        control.set_gain_percent(gain.min(100));
+        let mut input = Self::new(source, control, 0);
+        input.mono = mono;
+        Ok(input)
+    }
+
     /// A source mixed into `track` with its own controls.
     pub fn new(source: Box<dyn AudioSource>, control: AudioControl, track: usize) -> Self {
         Self {
@@ -267,6 +286,8 @@ pub struct AudioInputStatus {
     pub muted: bool,
     /// The device is gone and not back yet.
     pub lost: bool,
+    /// Bounded actionable reason for a source failure; cleared after recovery.
+    pub error: Option<String>,
     /// Milliseconds of silence inserted because the source was late.
     pub silence_ms: u64,
     /// Milliseconds of sound dropped because the source ran ahead.
@@ -370,6 +391,66 @@ impl Lane {
     }
 }
 
+/// Renders one input as bounded PCM using the recorder's channel conversion and live controls.
+/// Used by microphone monitoring; it does not encode, save or retain a recording.
+pub struct PcmMonitor {
+    input: AudioInput,
+    lane: Lane,
+    scratch: Vec<f32>,
+    format: AudioFormat,
+}
+
+impl PcmMonitor {
+    /// Creates a mono/stereo monitor at a validated device rate.
+    pub fn new(input: AudioInput, format: AudioFormat) -> Result<Self, String> {
+        let from = input.source.format();
+        if !(8_000..=192_000).contains(&from.sample_rate)
+            || !(1..=8).contains(&from.channels)
+            || !(8_000..=192_000).contains(&format.sample_rate)
+            || !(1..=2).contains(&format.channels)
+        {
+            return Err(
+                "Microphone monitoring needs 8–192 kHz audio and a mono or stereo output.".into(),
+            );
+        }
+        let mut lane = Lane::new(from, format.sample_rate, format.channels);
+        lane.mono_mix = input.mono;
+        Ok(Self {
+            input,
+            lane,
+            scratch: Vec::new(),
+            format,
+        })
+    }
+
+    /// Appends processed PCM, including microphone level, mute and mono conversion.
+    pub fn read(&mut self, out: &mut Vec<f32>) -> Result<(), AudioError> {
+        self.input.source.read(&mut self.scratch)?;
+        let channels = usize::from(self.lane.from.channels);
+        let bound = self.lane.from.sample_rate as usize / 4 * channels + channels - 1;
+        if self.scratch.len() > bound {
+            self.scratch = Vec::new();
+            return Err(AudioError::Failed("The microphone test fell behind. Stop the test and reduce CPU load before trying again.".into()));
+        }
+        let complete = self.scratch.len() / channels * channels;
+        self.lane.push(&self.scratch[..complete]);
+        self.scratch.drain(..complete);
+        let factor = self.input.control.factor();
+        out.extend(
+            self.lane
+                .fifo
+                .drain(..)
+                .map(|sample| (sample * factor).clamp(-1.0, 1.0)),
+        );
+        Ok(())
+    }
+
+    /// PCM format delivered by `read`.
+    pub fn format(&self) -> AudioFormat {
+        self.format
+    }
+}
+
 struct LaneState {
     name: String,
     source: Box<dyn AudioSource>,
@@ -377,6 +458,7 @@ struct LaneState {
     track: usize,
     lane: Lane,
     lost: bool,
+    error: Option<String>,
     last_recover: Duration,
     silence_frames: u64,
     dropped_frames: u64,
@@ -451,6 +533,7 @@ impl AudioEngine {
                     control: input.control,
                     track: input.track,
                     lost: false,
+                    error: None,
                     last_recover: Duration::ZERO,
                     silence_frames: 0,
                     dropped_frames: 0,
@@ -492,6 +575,7 @@ impl AudioEngine {
                 level: lane.control.level(),
                 muted: lane.control.muted(),
                 lost: lane.lost,
+                error: lane.error.clone(),
                 silence_ms: (lane.silence_frames as f64 / per_ms) as u64,
                 dropped_ms: (lane.dropped_frames as f64 / per_ms) as u64,
             })
@@ -524,6 +608,7 @@ impl AudioEngine {
                 lane.last_recover = elapsed;
                 if lane.source.recover() {
                     lane.lost = false;
+                    lane.error = None;
                 }
             }
             return;
@@ -538,8 +623,9 @@ impl AudioEngine {
                 lane.control.set_level(peak.min(1.0));
                 lane.lane.push(scratch);
             }
-            Err(_) => {
+            Err(error) => {
                 lane.lost = true;
+                lane.error = Some(error.to_string().chars().take(512).collect());
                 lane.last_recover = elapsed;
                 lane.control.set_level(0.0);
             }
@@ -886,6 +972,107 @@ mod tests {
         out
     }
 
+    #[test]
+    fn monitor_pcm_matches_recording_for_suppression_stereo_mono_and_gain() {
+        for suppression in [false, true] {
+            for mono in [false, true] {
+                for gain in [0, 50, 100] {
+                    let samples: Vec<_> = (0..9600)
+                        .flat_map(|n| {
+                            let left = (n as f32 * 0.071).sin() * 0.2;
+                            [left, -left * 0.3]
+                        })
+                        .collect();
+                    let source = || {
+                        Box::new(Queue {
+                            format: STEREO_48K,
+                            pending: samples.clone(),
+                            lost: false,
+                        }) as Box<dyn AudioSource>
+                    };
+                    let input =
+                        || AudioInput::microphone(source(), suppression, mono, gain).unwrap();
+                    let mut monitor = PcmMonitor::new(input(), STEREO_48K).unwrap();
+                    let mut processed = Vec::new();
+                    monitor.read(&mut processed).unwrap();
+                    assert!(processed.iter().all(|sample| sample.is_finite()));
+                    if mono {
+                        assert!(processed.chunks_exact(2).all(|frame| frame[0] == frame[1]));
+                    }
+                    if gain == 0 {
+                        assert!(processed.iter().all(|sample| *sample == 0.0));
+                    }
+                    let mut recording = AudioEngine::new(AudioSetup {
+                        config: config(1),
+                        inputs: vec![input()],
+                    })
+                    .unwrap();
+                    let mut reference = AudioEngine::new(AudioSetup {
+                        config: config(1),
+                        inputs: vec![AudioInput::new(
+                            Box::new(Queue {
+                                format: STEREO_48K,
+                                pending: processed,
+                                lost: false,
+                            }),
+                            AudioControl::default(),
+                            0,
+                        )],
+                    })
+                    .unwrap();
+                    assert_eq!(
+                        recording.tick(Duration::from_millis(200)),
+                        reference.tick(Duration::from_millis(200)),
+                        "suppression={suppression} mono={mono} gain={gain}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn monitor_rejects_hostile_formats_and_bounds_read_work() {
+        for format in [
+            AudioFormat {
+                sample_rate: 0,
+                channels: 2,
+            },
+            AudioFormat {
+                sample_rate: 48_000,
+                channels: 0,
+            },
+            AudioFormat {
+                sample_rate: 192_001,
+                channels: 2,
+            },
+        ] {
+            let input = AudioInput::new(
+                Box::new(Queue {
+                    format,
+                    pending: vec![],
+                    lost: false,
+                }),
+                AudioControl::default(),
+                0,
+            );
+            assert!(PcmMonitor::new(input, STEREO_48K).is_err());
+        }
+        let input = AudioInput::new(
+            Box::new(Queue {
+                format: STEREO_48K,
+                pending: vec![0.1; 48_000],
+                lost: false,
+            }),
+            AudioControl::default(),
+            0,
+        );
+        let mut monitor = PcmMonitor::new(input, STEREO_48K).unwrap();
+        let mut out = vec![0.7];
+        assert!(monitor.read(&mut out).is_err());
+        assert_eq!(out, [0.7]);
+        assert_eq!(monitor.scratch.capacity(), 0);
+    }
+
     fn zero_crossings(samples: &[f32]) -> usize {
         samples
             .windows(2)
@@ -1115,6 +1302,12 @@ mod tests {
         .unwrap();
         engine.tick(Duration::from_millis(10));
         assert!(engine.status()[0].lost);
+        assert!(
+            engine.status()[0]
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("unplugged"))
+        );
         engine.tick(Duration::from_millis(500));
         assert!(
             engine.status()[0].lost,
@@ -1122,6 +1315,7 @@ mod tests {
         );
         engine.tick(Duration::from_millis(2_100));
         assert!(!engine.status()[0].lost);
+        assert!(engine.status()[0].error.is_none());
     }
 
     #[test]
