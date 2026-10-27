@@ -222,7 +222,8 @@ fn changed_count(settings: &RecordingSettings) -> usize {
     let (Some(now), Some(base)) = (now.as_object(), base.as_object()) else {
         return 0;
     };
-    const SKIP: [&str; 9] = [
+    const SKIP: [&str; 10] = [
+        "setup_completed",
         "game_rules",
         "disabled_steam_app_ids",
         "disabled_builtin_games",

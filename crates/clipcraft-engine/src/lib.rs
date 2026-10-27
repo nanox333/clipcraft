@@ -35,6 +35,7 @@ mod relink;
 mod scan;
 mod screenshot;
 pub use scan::MAX_SCAN_DEPTH;
+pub mod installation;
 mod session;
 mod startup;
 mod steam_games;
@@ -102,6 +103,15 @@ const VIDEO_EXTENSIONS: [&str; 7] = ["avi", "m4v", "mkv", "mov", "mp4", "webm", 
 /// A typed operation exposed by the shared command registry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
+    /// Installs a bounded offline Windows bundle, preserving earlier versions and user data.
+    InstallApplication {
+        bundle: PathBuf,
+        destination: PathBuf,
+    },
+    /// Removes only files owned by a ClipCraft installation; keeps clips and settings.
+    UninstallApplication {
+        destination: PathBuf,
+    },
     PreviewDiscordCard {
         settings: presence::PresenceSettings,
         context: Box<presence::PresenceContext>,
@@ -276,6 +286,8 @@ impl Command {
     /// Returns this operation's stable command ID.
     pub const fn id(&self) -> &'static str {
         match self {
+            Self::InstallApplication { .. } => "app.install",
+            Self::UninstallApplication { .. } => "app.uninstall",
             Self::PreviewDiscordCard { .. } => "presence.card",
             Self::BuildDiscordPresence { .. } => "presence.preview",
             Self::ParseGameState { .. } => "game_state.parse",
@@ -742,6 +754,8 @@ fn copy_path(input: &std::path::Path, suffix: &str, extension: &str) -> Option<P
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum CommandOutput {
+    /// Executable installed, or installation root removed.
+    Installation(PathBuf),
     DiscordCard(Option<presence::PresenceActivity>),
     DiscordPresence(Option<presence::PresenceTarget>),
     GameState(Box<game_state::GameSnapshot>),
@@ -795,8 +809,10 @@ pub enum CommandOutput {
 }
 
 /// Actionable errors returned by engine commands.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineError {
+    /// An offline installation failed without deleting user media.
+    Installation(String),
     GameState(game_state::GameStateError),
     EditorTimeline(clipcraft_player::timeline::TimelineError),
     EditorDraft(EditorDraftError),
@@ -879,6 +895,7 @@ pub enum EngineError {
 impl fmt::Display for EngineError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Installation(message) => formatter.write_str(message),
             Self::GameState(error) => error.fmt(formatter),
             Self::EditorTimeline(error) => error.fmt(formatter),
             Self::EditorDraft(error) => error.fmt(formatter),
@@ -983,6 +1000,15 @@ pub fn execute_cancellable(
     cancel: &AtomicBool,
 ) -> Result<CommandOutput, EngineError> {
     match command {
+        Command::InstallApplication {
+            bundle,
+            destination,
+        } => installation::install(&bundle, &destination)
+            .map(CommandOutput::Installation)
+            .map_err(EngineError::Installation),
+        Command::UninstallApplication { destination } => installation::uninstall(&destination)
+            .map(|()| CommandOutput::Installation(destination))
+            .map_err(EngineError::Installation),
         Command::PrepareMicrophoneTest { settings } => Ok(CommandOutput::MicrophoneTest(
             MicrophoneTestPlan::from_settings(&settings),
         )),
@@ -1392,6 +1418,8 @@ pub const fn command_ids() -> &'static [&'static str] {
         "recording.load_settings",
         "storage.usage",
         "app.launch_at_startup",
+        "app.install",
+        "app.uninstall",
         "capture.start",
         "capture.stop",
         "capture.status",

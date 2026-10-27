@@ -10,6 +10,10 @@ computer.
 
 ## Download
 
+`cargo xtask package` also builds an offline Windows `-setup.exe` with Start menu shortcuts and an uninstaller.
+New profiles get a short setup for storage, capture, audio and shortcuts; existing preferences
+carry over. Each hotkey action supports up to five shortcuts: use **+** in Settings → Hotkeys.
+
 Get the Windows zip or Linux tarball from the
 [latest release](https://github.com/nanox333/clipcraft/releases), check it against `SHA256SUMS.txt`,
 unpack it anywhere, and run `bin\clipcraft.exe` (Windows) or `bin/clipcraft` (Linux). Downloads are

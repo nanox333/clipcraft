@@ -23,6 +23,7 @@ mod h264_stream;
 mod hardware;
 mod hevc_stream;
 mod hotkey;
+mod installation;
 #[cfg(windows)]
 mod mf_encoder;
 #[cfg(windows)]
@@ -48,6 +49,7 @@ mod x11;
 pub use evdev::access as keyboard_access;
 pub use hardware::{hardware_provider, probe_hardware_encoder, register_hardware_decoding};
 pub use hotkey::{HotkeyBinding, HotkeyEvent, HotkeyListener, parse_shortcut};
+pub use installation::{register_installation, unregister_installation};
 pub use priority::set_background_priority;
 pub use process::{ProcessObserver, RunningProcess, running_processes, steam_installation_roots};
 pub use screen::{make_window_passive, work_area};

@@ -389,6 +389,20 @@ Run `clipcraft-cli diagnose` if recording does not work.\n"
         .output()
         .map_err(|_| TaskError::CommandUnavailable)?;
     fs::write(folder.join("THIRD-PARTY-LICENSES.txt"), licenses.stdout).map_err(fail)?;
+    if windows {
+        run_cargo(&["build", "--release", "-p", "clipcraft-installer"])?;
+        let setup = dist.join(format!("{name}-setup.exe"));
+        if setup.exists() {
+            fs::remove_file(&setup).map_err(fail)?;
+        }
+        clipcraft_engine::installation::bundle(
+            &release.join("clipcraft-installer.exe"),
+            &folder,
+            &setup,
+        )
+        .map_err(|_| TaskError::PackageFailed)?;
+        println!("built offline Windows setup executable");
+    }
     // Windows 10 and later ship a `tar` that writes zip files.
     let archive = if windows {
         format!("{name}.zip")

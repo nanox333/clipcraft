@@ -21,14 +21,25 @@ use crate::ClipCraftApp;
 use crate::kit::{self, DANGER, FAINT, Icon, LIME, MUTED, TEXT};
 use crate::settings::GpuProbe;
 
-/// Hotkey ids handed to the platform listener.
-const SAVE_ID: u32 = 1;
-const TOGGLE_ID: u32 = 2;
-const MICROPHONE_ID: u32 = 3;
-const TALK_ID: u32 = 4;
-const SCREENSHOT_ID: u32 = 5;
-
 /// Opens microphones and the computer's own sound for the recorder.
+fn receive_hotkey(
+    held: &mut std::collections::HashSet<u32>,
+    event: clipcraft_platform::HotkeyEvent,
+    assigning: bool,
+) -> Option<HotkeyAction> {
+    let action = clipcraft_engine::Hotkeys::action_for_id(event.id)?;
+    if action == HotkeyAction::PushToTalk {
+        if event.pressed {
+            held.insert(event.id);
+        } else {
+            held.remove(&event.id);
+        }
+        None
+    } else {
+        (event.pressed && !assigning).then_some(action)
+    }
+}
+
 fn audio_provider() -> clipcraft_record::AudioProvider {
     use clipcraft_audio_out::{CaptureKind, DeviceCapture};
     use clipcraft_record::AudioKind;
@@ -87,7 +98,8 @@ pub struct CaptureState {
     /// When the clip being saved will be written, if it is waiting for the post-roll.
     saving_at: Option<Instant>,
     listener: Option<HotkeyListener>,
-    listened_for: Vec<(u32, String)>,
+    hotkey_settings: Option<clipcraft_engine::Hotkeys>,
+    talk_keys: std::collections::HashSet<u32>,
     pub targets: Vec<CaptureTarget>,
     targets_loaded: bool,
     /// Whether the graphics card can encode video, found by trying it once.
@@ -233,25 +245,20 @@ impl ClipCraftApp {
         self.yield_to_the_game();
         self.sync_hotkeys();
         let mut actions = Vec::new();
-        let mut talking = None;
         if let Some(listener) = self.capture.listener.as_ref() {
             while let Some(event) = listener.try_next() {
-                if event.id == TALK_ID {
-                    talking = Some(event.pressed);
-                } else if event.pressed {
-                    match event.id {
-                        SAVE_ID => actions.push(HotkeyAction::SaveClip),
-                        TOGGLE_ID => actions.push(HotkeyAction::ToggleRecording),
-                        MICROPHONE_ID => actions.push(HotkeyAction::ToggleMicrophone),
-                        SCREENSHOT_ID => actions.push(HotkeyAction::Screenshot),
-                        _ => {}
-                    }
+                if let Some(action) = receive_hotkey(
+                    &mut self.capture.talk_keys,
+                    event,
+                    self.settings_state.capturing.is_some(),
+                ) {
+                    actions.push(action);
                 }
             }
         }
-        if let Some(held) = talking {
-            self.capture.session.set_talking(held);
-        }
+        self.capture.session.set_talking(
+            !self.capture.talk_keys.is_empty() && self.settings_state.capturing.is_none(),
+        );
         if self.capture.is_active() {
             self.capture.session.set_levels(&self.recording);
         }
@@ -267,7 +274,12 @@ impl ClipCraftApp {
                 HotkeyAction::ToggleMicrophone,
                 HotkeyAction::Screenshot,
             ] {
-                if self.recording.hotkeys.get(action) == pressed {
+                if self
+                    .recording
+                    .hotkeys
+                    .bindings(action)
+                    .any(|key| key == pressed)
+                {
                     actions.push(action);
                 }
             }
@@ -396,24 +408,19 @@ impl ClipCraftApp {
 
     /// Keeps the global hotkeys in step with the settings.
     fn sync_hotkeys(&mut self) {
-        let wanted: Vec<(u32, String)> = [
-            (SAVE_ID, HotkeyAction::SaveClip),
-            (TOGGLE_ID, HotkeyAction::ToggleRecording),
-            (MICROPHONE_ID, HotkeyAction::ToggleMicrophone),
-            (TALK_ID, HotkeyAction::PushToTalk),
-            (SCREENSHOT_ID, HotkeyAction::Screenshot),
-        ]
-        .into_iter()
-        .filter_map(|(id, action)| {
-            let key = self.recording.hotkeys.get(action);
-            (!key.is_empty()).then(|| (id, key.to_owned()))
-        })
-        .collect();
-        if wanted == self.capture.listened_for {
+        if self.capture.hotkey_settings.as_ref() == Some(&self.recording.hotkeys) {
             return;
         }
-        self.capture.listened_for = wanted.clone();
+        self.capture.hotkey_settings = Some(self.recording.hotkeys.clone());
+        let wanted: Vec<(u32, String)> = self
+            .recording
+            .hotkeys
+            .registrations()
+            .map(|(id, _, key)| (id, key.to_owned()))
+            .collect();
         self.capture.listener = None;
+        self.capture.talk_keys.clear();
+        self.capture.session.set_talking(false);
         if wanted.is_empty() {
             return;
         }
@@ -1704,6 +1711,57 @@ fn saved_clip_facts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn talking_stays_open_until_every_alternative_is_released() {
+        let mut keys = clipcraft_engine::Hotkeys::default();
+        keys.set_binding(HotkeyAction::PushToTalk, 0, "F1").unwrap();
+        keys.set_binding(HotkeyAction::PushToTalk, 1, "F2").unwrap();
+        let ids: Vec<_> = keys
+            .registrations()
+            .filter(|(_, action, _)| *action == HotkeyAction::PushToTalk)
+            .map(|(id, _, _)| id)
+            .collect();
+        let mut held = std::collections::HashSet::new();
+        for (id, pressed, count) in [
+            (ids[0], true, 1),
+            (ids[1], true, 2),
+            (ids[0], false, 1),
+            (ids[1], false, 0),
+        ] {
+            assert_eq!(
+                receive_hotkey(
+                    &mut held,
+                    clipcraft_platform::HotkeyEvent { id, pressed },
+                    false
+                ),
+                None
+            );
+            assert_eq!(held.len(), count);
+        }
+        assert_eq!(
+            receive_hotkey(
+                &mut held,
+                clipcraft_platform::HotkeyEvent {
+                    id: 1,
+                    pressed: true
+                },
+                true
+            ),
+            None
+        );
+        assert_eq!(
+            receive_hotkey(
+                &mut held,
+                clipcraft_platform::HotkeyEvent {
+                    id: 1,
+                    pressed: true
+                },
+                false
+            ),
+            Some(HotkeyAction::SaveClip)
+        );
+    }
 
     #[test]
     fn changing_noise_suppression_requires_a_recording_restart() {

@@ -1,5 +1,24 @@
 # Known gaps
 
+## Multiple shortcuts, first-run setup and Windows installer (M5.1a)
+
+Each action accepts five keyboard bindings with a + button, individual removal, collision feedback
+and legacy-settings migration. PTT holds are combined across alternatives. Native registration
+uses unique binding IDs; registration is rebuilt only when shortcuts change. Global availability
+still depends on OS permissions and other applications owning the shortcut.
+
+Fresh profiles see four setup steps for local storage/replay, capture/audio and shortcuts. Setup
+uses a draft; no capture/audio/presence worker starts during it. Finish or Skip saves completion
+with the choices through the shared settings command. Existing preference files skip setup.
+
+`cargo xtask package` also produces an offline Windows `-setup.exe`, written entirely in Rust.
+It installs per-user, makes Start menu/optional desktop links and registers an uninstaller.
+Upgrades retain previous program versions (maximum eight); uninstall removes owned program files
+and retains unknown files, preferences and recordings. A temporary uninstaller executable can
+remain in the Windows temporary directory for OS cleanup. No automatic updates, code signing,
+macOS installer or clean second-machine/SmartScreen verification is claimed. The portable zip
+and Linux archive remain available. See ADR 0031 and the release checklist for scope/evidence.
+
 ## Microphone noise suppression (M3.1a, 2026-10-26)
 
 Optional offline RNNoise suppression is implemented. The native Audio setting defaults off,

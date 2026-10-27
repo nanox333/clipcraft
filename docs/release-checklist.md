@@ -23,7 +23,7 @@ alone.
 | Keyboard access | Verified here | Tab reaches every control; the focused control gets a visible ring; Enter activates it (checked in the running app). |
 | Screen reader names | Verified here | A test walks the accessibility tree of the library, clip view, and every settings tab and fails on any unnamed control. Open: an actual screen reader (NVDA, Orca, VoiceOver). |
 | Diagnostics | Verified here | `clipcraft-cli diagnose [--json]` and Settings › General › Copy report. |
-| Installer | Partly | `cargo xtask package` builds a Linux tarball (18 MB; binaries, desktop entry, licences, and `SHA256SUMS`). Run to completion on Linux x86_64: the checksum verifies, the archive unpacks into an empty folder, every shared library the binaries need is present, and `clipcraft-cli diagnose` runs from it. It was not installed on a clean second machine. The Windows zip (`cargo xtask package`, 23 MB) was also built and checked on Windows 11: it unpacks into an empty folder, `clipcraft-cli diagnose` runs from it, and `clipcraft.exe` starts. Open: Windows installer, macOS bundle, code signing and notarisation (need the maintainers' certificates), an update story (there is none by design). |
+| Installer | Partly | `cargo xtask package` builds a Linux tarball (18 MB; binaries, desktop entry, licences, and `SHA256SUMS`). Run to completion on Linux x86_64: the checksum verifies, the archive unpacks into an empty folder, every shared library the binaries need is present, and `clipcraft-cli diagnose` runs from it. It was not installed on a clean second machine. The Windows zip (`cargo xtask package`, 23 MB) was also built and checked on Windows 11: it unpacks into an empty folder, `clipcraft-cli diagnose` runs from it, and `clipcraft.exe` starts. The offline Rust Windows setup is implemented (M5.1a; evidence below). Open: macOS bundle, code signing and notarisation (need the maintainers' certificates), an update story (there is none by design). |
 | Windows capture | Partial | Windows/AMD generated-window WGC-to-MP4 runs, one-minute native SDR 1080p60 throughput and real D3D11 lease/color/resize tests pass. Hotkeys, games, device loss, default HDR performance and a two-hour 1080p60 soak remain open; see [measurements](windows-performance.md). |
 | Hardware encoders | Partial | AMD Media Foundation has generated-window CPU/native-surface evidence. NVENC, VideoToolbox and VA-API real-device claims remain open. |
 | Real sound devices | Partial | The Windows input/denoiser check delivered finite samples; M3.1b's real duplex test delivered 108,000 processed frames to the playback callback, applied live zero gain/mono and cleaned up after Stop, without saving audio. Real speech listening quality and physical unplug/recovery remain open; see [testing](testing.md). |
@@ -39,11 +39,29 @@ alone.
 
 ## Publishing a release on GitHub
 
+### Offline Windows installer (M5.1a)
+
+`cargo xtask package` builds `target/dist/clipcraft-<version>-windows-<arch>-setup.exe` in addition
+to the portable zip. The setup executable contains all application files and notices, installs
+to `%LOCALAPPDATA%/Programs/ClipCraft` by default, and needs no administrator/account/network.
+It adds Start menu links, an optional desktop link and a current-user Windows uninstall entry.
+The installed `uninstall.exe` (or Windows Settings → Apps) removes owned application versions,
+retaining clips and preferences. Close ClipCraft before removal. Unknown files are preserved.
+Upgrades keep earlier program versions so active replays can finish; after eight versions,
+uninstall/reinstall is required. The uninstaller's temporary executable is left for OS cleanup.
+
+For isolated deployment checks, the setup accepts
+`--install-to <absolute-folder> --accept-license --no-integration`; remove that installation with
+the same setup's `--remove-from <absolute-folder> --no-integration`. These explicit modes do not
+change the real user's Start menu or registry. Native GUI installation always asks for the license;
+native uninstallation asks for removal confirmation. Code signing and a clean second-machine
+install/upgrade/remove check remain release gates. See ADR 0031.
+
 `cargo xtask package` includes `docs/licenses/nnnoiseless-BSD-3-Clause.txt` with the embedded
 RNNoise model's required notice, alongside `ATTRIBUTION.md` and the dependency license list.
 Keep this notice with binary redistributions, including manually assembled Windows builds.
 
-`.github/workflows/release.yml` builds the Linux (x86_64) tarball and the Windows (x86_64) zip with
+`.github/workflows/release.yml` builds the Linux (x86_64) tarball and the Windows (x86_64) zip plus offline setup executable with
 `cargo xtask package`, writes `SHA256SUMS.txt`, and creates a **draft** GitHub Release for review.
 
 1. Set the version in `Cargo.toml` (`[workspace.package]`) and merge it.

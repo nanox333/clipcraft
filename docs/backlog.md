@@ -471,7 +471,30 @@ mandatory update service or network telemetry.
 **Acceptance:** release checklist includes reproducible capture-to-export evidence with network
 disabled, full disk, device loss, suspend/resume, and measured CPU/GPU/memory/power behavior.
 
+### M5.1a — Multiple shortcuts, first-run setup and offline Windows installer
+
+**Status:** implemented; verification is recorded in `testing.md` and `release-checklist.md`.
+**Problem / evidence:** the maintainer requested a + beside each shortcut (up to five), initial
+setup and a Windows installer; the previous release had single bindings and a portable zip.
+**Scope:** engine shortcut/settings/installation commands, native desktop setup, safe Windows
+shell integration, Rust installer and packaging. **Limitations:** keyboard shortcuts only;
+Windows installer unsigned, no updater/admin installation/macOS bundle; maximum eight retained
+program versions. Captures and settings remain local and survive removal. No new network use.
+**Acceptance:** legacy settings migrate; +/remove/edit/reset support five collision-free bindings
+per action; all bindings register and overlapping PTT keys work. Fresh profiles show cancellable,
+keyboard-accessible setup, save completion atomically and do not capture during setup; existing
+profiles retain choices. A single offline executable installs, upgrades and uninstalls per-user,
+offers launch and optional desktop shortcut, rejects damaged/oversized bundles and unrelated
+destinations, and preserves source clips/preferences/unknown files on failure or removal.
+**Verification:** portable hostile-input/settings/hold/installation tests; native shortcut test;
+representative before/after/screens and keyboard checks; isolated real-binary install/upgrade/
+uninstall smoke test; `cargo xtask ci`. Signing and clean second-machine checks stay open.
+**Documentation:** README, roadmap, gaps, settings, architecture, testing, release guide and ADR
+0031 ship together. **Dependencies / estimate:** existing native UI/platform APIs, no blocker;
+one implementation slice.
+
 ### M5.2 — Low-copy GPU capture-to-encode path
+
 
 **Status:** Windows SDR WGC-to-D3D11-to-Media-Foundation is implemented with bounded owned surface
 leases and CPU fallback. Generated-window AMD runs confirm zero CPU readbacks at matching dimensions,

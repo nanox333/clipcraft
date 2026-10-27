@@ -1,5 +1,19 @@
 # Settings and advanced controls
 
+## First launch and shortcut alternatives
+
+Fresh profiles open setup for local storage, replay length, capture/audio and hotkeys. Use Back
+and Continue, then Finish setup, or keep the current draft with Skip. Closing before finishing
+leaves setup pending. Nothing records during setup. Existing preference files bypass it. All
+choices remain available in Settings; no account or internet is needed.
+
+In **Settings → Hotkeys**, press **+** next to an action, then press a shortcut. Each action can
+have five bindings. Click a binding to replace it, × to remove it, or Reset to defaults to restore
+the original shortcuts. Escape cancels assignment. Duplicate keys are rejected with an explanation;
+the previous bindings are kept. Hold any push-to-talk binding to talk; releasing one keeps the
+microphone open while another remains held. Another program can prevent global registration;
+the app reports that limitation and keeps focused-window shortcuts working.
+
 ## Microphone noise suppression
 
 In **Settings › Audio › Microphone**, turn on **Noise suppression** to reduce background noise

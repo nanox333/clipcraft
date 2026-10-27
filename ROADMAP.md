@@ -25,6 +25,9 @@ ClipCraft-hosted storage or account. The complete direction and constraints are 
 
 ## Milestones
 
+M5.1a adds up to five bindings per shortcut action, first-run setup and an offline per-user Rust
+Windows installer alongside the portable zip. Signing and clean-machine release checks remain open.
+
 M10.2b establishes the maintainer-selected A / CUT identity, with shared native/Discord product
 artwork and a reproducible brand kit. M10.2c replaces three typographic game placeholders with
 Discord-hosted icon references; no publisher image files or runtime lookup service are bundled.

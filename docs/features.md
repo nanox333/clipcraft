@@ -5,7 +5,12 @@ The full, detailed feature list and known limits. The [README](../README.md) has
 ## What works now
 
 - **Settings:** a categorized, searchable Settings window with sliders, per-row reset and an Overview
-  page of suggested profiles.
+  page of suggested profiles. New profiles have a four-step setup. Each shortcut action supports
+  up to five bindings with +/remove controls; overlapping push-to-talk keys stay active until all
+  are released.
+- **Windows installation:** Rust packaging builds an offline per-user setup executable alongside
+  the portable zip, with Start menu links, an optional desktop shortcut and an uninstaller that
+  keeps clips and preferences. Downloads remain unsigned.
 - **Clip deletion and saved pop-up:** right-click a clip (or use the delete button) to send it to the
   Recycle Bin on Windows; a small "clip saved" pop-up appears without taking focus from your game
   (Settings → Replay → Show a notification turns it off).

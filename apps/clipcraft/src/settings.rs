@@ -45,7 +45,8 @@ pub struct SettingsState {
     mic_visible: bool,
     mic_error: Option<String>,
     mic_shown: f32,
-    pub(crate) capturing: Option<HotkeyAction>,
+    pub(crate) capturing: Option<(HotkeyAction, usize)>,
+    hotkey_error: Option<String>,
     usage: Option<StorageUsage>,
     usage_for: Option<PathBuf>,
     usage_receiver: Option<mpsc::Receiver<StorageUsage>>,
@@ -1395,8 +1396,10 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
     if state.capturing.is_some() {
         if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
             state.capturing = None;
-        } else if let (Some(action), Some(shortcut)) = (state.capturing, pressed_shortcut(ui)) {
-            settings.hotkeys.set(action, &shortcut);
+        } else if let (Some((action, index)), Some(shortcut)) =
+            (state.capturing, pressed_shortcut(ui))
+        {
+            state.hotkey_error = settings.hotkeys.set_binding(action, index, &shortcut).err();
             state.capturing = None;
         }
     }
@@ -1404,11 +1407,9 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
         let count = HotkeyAction::ALL.len();
         for (index, action) in HotkeyAction::ALL.into_iter().enumerate() {
             ui.add_space(14.0);
-            ui.horizontal(|ui| {
+            ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
-                let text_width = (ui.available_width() - 200.0).max(0.0);
                 ui.vertical(|ui| {
-                    ui.set_width(text_width);
                     ui.label(
                         RichText::new(action.label())
                             .color(TEXT)
@@ -1424,51 +1425,104 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
                         );
                     }
                 });
-                ui.add_space(8.0);
-                let waiting = state.capturing == Some(action);
-                let current = settings.hotkeys.get(action).to_owned();
-                let text = if waiting {
-                    "Press a key…".to_owned()
-                } else if current.is_empty() {
-                    "Not set".to_owned()
-                } else {
-                    current.replace('+', " + ")
-                };
-                let (rect, response) =
-                    ui.allocate_exact_size(Vec2::new(130.0, 34.0), egui::Sense::click());
-                ui.painter()
-                    .rect_filled(rect, 8.0, Color32::from_rgb(13, 13, 15));
-                ui.painter().rect_stroke(
-                    rect,
-                    8.0,
-                    Stroke::new(1.0_f32, if waiting { LIME } else { BORDER }),
-                    egui::StrokeKind::Inside,
-                );
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    text,
-                    egui::FontId::new(13.5, kit::medium()),
-                    if waiting {
-                        LIME
-                    } else if current.is_empty() {
-                        FAINT
-                    } else {
-                        TEXT
-                    },
-                );
-                if response
-                    .on_hover_text("Click, then press the keys")
-                    .clicked()
-                {
-                    state.capturing = if waiting { None } else { Some(action) };
-                }
-                let clear = ui.add_enabled(
-                    !current.is_empty(),
-                    egui::Button::new(RichText::new("Clear").color(MUTED)).frame(false),
-                );
-                if clear.clicked() {
-                    settings.hotkeys.set(action, "");
+                ui.add_space(6.0);
+                let bindings: Vec<String> = settings
+                    .hotkeys
+                    .bindings(action)
+                    .map(str::to_owned)
+                    .collect();
+                let count = bindings.len();
+                let mut remove = None;
+                ui.horizontal_wrapped(|ui| {
+                    for (binding_index, current) in bindings.iter().enumerate() {
+                        let waiting = state.capturing == Some((action, binding_index));
+                        let text = if waiting {
+                            "Press a key…".to_owned()
+                        } else if current.is_empty() {
+                            "Not set".to_owned()
+                        } else {
+                            current.replace('+', " + ")
+                        };
+                        let response = ui.add(
+                            egui::Button::new(RichText::new(&text).color(if waiting {
+                                LIME
+                            } else {
+                                TEXT
+                            }))
+                            .fill(Color32::from_rgb(13, 13, 15))
+                            .stroke(Stroke::new(1.0_f32, if waiting { LIME } else { BORDER }))
+                            .min_size(Vec2::new(150.0, 34.0)),
+                        );
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Button,
+                                true,
+                                format!(
+                                    "{} shortcut {}: {}",
+                                    action.label(),
+                                    binding_index + 1,
+                                    text
+                                ),
+                            )
+                        });
+                        if response
+                            .on_hover_text("Click, then press the keys")
+                            .clicked()
+                        {
+                            state.capturing = if waiting {
+                                None
+                            } else {
+                                Some((action, binding_index))
+                            };
+                            state.hotkey_error = None;
+                        }
+                        let clear = ui.add_enabled(
+                            !current.is_empty(),
+                            egui::Button::new(RichText::new("×").color(MUTED)).frame(false),
+                        );
+                        clear.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Button,
+                                true,
+                                format!("Remove {} shortcut {}", action.label(), binding_index + 1),
+                            )
+                        });
+                        if clear
+                            .on_hover_text(format!(
+                                "Remove {} shortcut {}",
+                                action.label(),
+                                binding_index + 1
+                            ))
+                            .clicked()
+                        {
+                            remove = Some(binding_index);
+                        }
+                    }
+                    let adding = state.capturing == Some((action, count));
+                    let add = ui.add_enabled(
+                        count < clipcraft_engine::Hotkeys::MAX_BINDINGS,
+                        egui::Button::new(if adding { "Press a key…" } else { "+" })
+                            .min_size(Vec2::new(34.0, 34.0)),
+                    );
+                    add.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::WidgetType::Button,
+                            count < 5,
+                            format!("Add shortcut for {}", action.label()),
+                        )
+                    });
+                    if add
+                        .on_hover_text(format!("Add shortcut for {} ({count}/5)", action.label()))
+                        .clicked()
+                    {
+                        state.capturing = if adding { None } else { Some((action, count)) };
+                        state.hotkey_error = None;
+                    }
+                    ui.label(RichText::new(format!("{count}/5")).color(FAINT).size(12.0));
+                });
+                if let Some(index) = remove {
+                    settings.hotkeys.remove_binding(action, index);
+                    state.capturing = None;
                 }
             });
             ui.add_space(14.0);
@@ -1477,6 +1531,9 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
             }
         }
     });
+    if let Some(error) = state.hotkey_error.as_ref() {
+        ui.colored_label(DANGER, error);
+    }
     ui.label(
         RichText::new("Click a shortcut, then press the keys you want. Press Esc to cancel.")
             .color(FAINT)
@@ -1486,11 +1543,9 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
     if kit::labelled_button(ui, kit::Icon::Loop, "Reset to defaults", false, true).clicked() {
         settings.hotkeys = clipcraft_engine::Hotkeys::default();
         state.capturing = None;
+        state.hotkey_error = None;
     }
     ui.add_space(8.0);
-    if state.capturing.is_some() {
-        ui.ctx().request_repaint();
-    }
 }
 
 fn request_usage(state: &mut SettingsState, context: &egui::Context, folder: PathBuf, force: bool) {
@@ -1854,6 +1909,47 @@ mod preset_tests {
         assert!(
             app.settings_state.mic.is_none(),
             "focusing the test must not start a microphone"
+        );
+    }
+
+    #[test]
+    fn extra_shortcuts_are_keyboard_assignable_and_removable() {
+        let mut app = crate::ClipCraftApp {
+            page: crate::Page::Settings,
+            settings_tab: crate::SettingsTab::Hotkeys,
+            ..Default::default()
+        };
+        keyboard_activate(&mut app, "Add shortcut for Save clip");
+        assert_eq!(
+            app.settings_state.capturing,
+            Some((HotkeyAction::SaveClip, 1))
+        );
+        let context = crate::kit::test_context();
+        settings_frame(
+            &mut app,
+            &context,
+            vec![egui::Event::Key {
+                key: egui::Key::F1,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert_eq!(
+            app.recording
+                .hotkeys
+                .bindings(HotkeyAction::SaveClip)
+                .collect::<Vec<_>>(),
+            ["F8", "F1"]
+        );
+        keyboard_activate(&mut app, "Remove Save clip shortcut 2");
+        assert_eq!(
+            app.recording
+                .hotkeys
+                .bindings(HotkeyAction::SaveClip)
+                .collect::<Vec<_>>(),
+            ["F8"]
         );
     }
 

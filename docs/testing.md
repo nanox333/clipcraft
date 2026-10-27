@@ -1,5 +1,37 @@
 # Testing
 
+## Shortcuts, first launch and installation (M5.1a)
+
+Engine hotkey tests cover old string-only JSON, five bindings, round-trip persistence, canonical
+duplicates, invalid/oversized lists and native ID resolution. A desktop fake-event regression
+holds both PTT alternatives, releases each in turn and checks assignment suppresses actions.
+Keyboard tests add, assign and remove a shortcut. Onboarding tests check legacy preferences skip
+setup, fresh defaults request it, invalid destinations fail, and Finish persists completion and
+choices through the same settings command.
+
+Installation tests package generated files, install/upgrade/remove them, retain an unknown clip,
+reject an unrelated nonempty folder and malformed ownership records, and roll back oversized or
+truncated gzip payloads without changing the previous install. A Windows shell-link test uses a
+temporary path with spaces/Unicode and validates its native link header without touching Start
+menu or registry. Native screenshots, packaged-binary smoke evidence and final CI results are
+recorded after verification below. Clean second-machine/signing checks remain open.
+
+Windows 11 local verification on 2026-10-27: full `cargo xtask ci` passes, including the keyboard
+add/assign/remove test, PTT overlap regression, corrupt/oversized installation rollback and the
+native Unicode shell-link test. Logs: ignored `target/setup-ci-final.log` and
+`target/setup-keyboard.log`. The first sandbox-only broad run had four existing recovery/game
+configuration failures; none recur with native access in either full gate run.
+
+`cargo xtask package` produces the portable zip and offline setup. A real setup executable installed
+into an isolated workspace folder with spaces/Japanese characters, matched the application hash,
+ran its installed CLI, upgraded while retaining the first executable, then removed both program
+versions while preserving an unknown generated clip and an external preferences sentinel. This
+uses the explicit no-integration mode; it does not claim a real Windows Apps & Features round trip.
+Evidence is in ignored `target/setup-installer-evidence/install-smoke-*/result.json`.
+Native installer review at 700×560 confirms license gating, Tab/Shift-Tab focus, Enter toggling
+the license and Tab reaching the enabled Install action. It was closed before installation.
+Screenshot: `target/setup-installer-evidence/installer.png`.
+
 ## Processed microphone listening and stereo (M3.1b, 2026-10-27)
 
 The initial mono suppression prototype is superseded by independent stereo state and optional

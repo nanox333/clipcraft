@@ -12,6 +12,7 @@ layer = 6
 
 [dependencies]
 serde_json.workspace = true
+clipcraft-engine.workspace = true
 
 [lints]
 workspace = true

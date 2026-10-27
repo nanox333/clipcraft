@@ -69,6 +69,7 @@ jobs:
           path: |
             target/dist/*.tar.gz
             target/dist/*.zip
+            target/dist/*-setup.exe
           if-no-files-found: error
 
   release:

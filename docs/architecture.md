@@ -17,6 +17,13 @@ separate from the offline core.
 
 ## Dependency layers
 
+The L6 `clipcraft-installer` native entry point and its explicit unattended commands use L4 engine
+`app.install` / `app.uninstall`; the same fixed, bounded payload format is written by Rust xtask.
+L5 platform adapters create Windows shell shortcuts and HKCU app registration. See ADR 0031.
+Desktop first-run setup holds a draft and persists through `recording.save_settings`; it gates
+capture, audio and presence work until completion. Legacy settings skip onboarding. Shortcut
+alternatives keep backward-compatible primary strings and at most five bindings per action.
+
 Dependencies flow upward only:
 
 ```text

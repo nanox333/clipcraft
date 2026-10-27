@@ -323,6 +323,9 @@ pub const MAX_VIDEO_KBPS: u32 = 200_000;
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
 pub struct RecordingSettings {
+    /// First-run choices have been saved. Older settings already count as configured.
+    #[serde(default = "already_configured")]
+    pub setup_completed: bool,
     /// Optional Discord disclosure; never part of capture configuration.
     pub discord_presence: crate::presence::PresenceSettings,
     /// Optional local match-data integrations. Separate from capture/game recognition.
@@ -444,6 +447,7 @@ pub struct RecordingSettings {
 impl Default for RecordingSettings {
     fn default() -> Self {
         Self {
+            setup_completed: false,
             game_integrations: crate::game_state::GameIntegrationSettings::default(),
             discord_presence: crate::presence::PresenceSettings::default(),
             container: Container::Mp4,
@@ -502,6 +506,10 @@ impl Default for RecordingSettings {
             post_roll_seconds: 0,
         }
     }
+}
+
+fn already_configured() -> bool {
+    true
 }
 
 /// Container overhead on top of the encoded streams (sample tables, headers).

@@ -19,6 +19,7 @@ mod library_grid;
 mod library_scan;
 mod library_store;
 mod library_view;
+mod onboarding;
 mod organize;
 mod playback;
 mod presence;
@@ -45,17 +46,17 @@ use settings::{card, setting_row, toggle_row};
 
 fn main() -> eframe::Result<()> {
     clipcraft_engine::set_trash_handler(clipcraft_platform::move_to_trash);
-    let minimized = std::env::args().any(|argument| argument == "--minimized")
-        || clipcraft_engine::default_settings_path()
-            .and_then(
-                |path| match execute(Command::LoadRecordingSettings { path }) {
-                    Ok(CommandOutput::RecordingSettings(settings)) => {
-                        Some(settings.start_minimized)
-                    }
-                    _ => None,
-                },
-            )
-            .unwrap_or(false);
+    let launch_settings = clipcraft_engine::default_settings_path()
+        .and_then(
+            |path| match execute(Command::LoadRecordingSettings { path }) {
+                Ok(CommandOutput::RecordingSettings(settings)) => Some(settings),
+                _ => None,
+            },
+        )
+        .unwrap_or_default();
+    let minimized = launch_settings.setup_completed
+        && (launch_settings.start_minimized
+            || std::env::args().any(|argument| argument == "--minimized"));
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("ClipCraft")
@@ -138,6 +139,7 @@ struct ClipCraftApp {
     probe_attempted: HashSet<String>,
     /// How clips are recorded: container, source, and framing.
     recording: RecordingSettings,
+    setup: Option<onboarding::Setup>,
     /// Where the recording settings are saved; `None` keeps them in memory only.
     settings_path: Option<PathBuf>,
     settings_tab: SettingsTab,
@@ -343,6 +345,11 @@ impl eframe::App for ClipCraftApp {
     }
 
     fn update(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.setup.is_some() {
+            self.show_setup(context);
+            resize_from_the_edges(context);
+            return;
+        }
         self.index_store.wake = context.clone();
         self.poll_index_store(context);
         if self.needs_probe {
@@ -648,6 +655,9 @@ impl ClipCraftApp {
             }
         }
         let Some(index_path) = app.index_path.clone() else {
+            if !app.recording.setup_completed {
+                app.setup = Some(onboarding::Setup::new(app.recording.clone()));
+            }
             return app;
         };
         match execute(Command::LoadLibrary { index_path }) {
@@ -663,6 +673,9 @@ impl ClipCraftApp {
         app.reconcile_clips_folder();
         if app.error.is_none() {
             app.error = restore_error;
+        }
+        if !app.recording.setup_completed {
+            app.setup = Some(onboarding::Setup::new(app.recording.clone()));
         }
         app
     }
