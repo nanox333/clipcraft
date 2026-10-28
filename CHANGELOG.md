@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-10-28
 
 - **Installer and downloads:** Windows is a single `ClipCraft-Setup` download with an uninstaller;
   the command line tool is a separate download.

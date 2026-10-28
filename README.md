@@ -5,7 +5,7 @@ with a hotkey, then play, search, trim and export your clips.** It works fully o
 account, server, telemetry, upload or share-link service, and everything you record stays on your
 computer.
 
-> **Status: first release (0.1.0).** Windows (tested on AMD) and Linux/X11 are supported; macOS is
+> **Status: early release (0.2.0).** Windows (tested on AMD) and Linux/X11 are supported; macOS is
 > not. See [`docs/gaps.md`](docs/gaps.md) for current evidence and limits.
 
 ## Download
