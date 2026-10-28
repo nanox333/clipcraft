@@ -762,7 +762,7 @@ pub fn games_tab(
             }
             if settings.desktop_capture_mode != DesktopCaptureMode::Never {
                 ui.add_space(8.0);
-                ui.label(RichText::new("Desktop capture can include other apps. These modes keep a bounded replay buffer; the final replay is saved when switching sources or when the desktop timer ends. Stop pauses automatic recording until you press Start again.").color(MUTED).size(12.5));
+                ui.label(RichText::new("Desktop capture can include other apps. These modes keep a bounded replay buffer. Nothing is saved when a game closes or the desktop timer ends; clips are saved only when you press the save shortcut. Stop pauses automatic recording until you press Start again.").color(MUTED).size(12.5));
             }
         }
     });

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Removed:** the automatic clip when a game closes or crashes. ClipCraft no longer saves a clip
+  by itself when an app closes; clips are saved only when you press the save shortcut.
+
 - **Yellow border:** ClipCraft now asks Windows for borderless capture access, so the yellow frame Windows
   draws around captured windows no longer appears around what ClipCraft records.
 - **Fixed:** the "found <game> running, but this desktop did not expose its game window" message now

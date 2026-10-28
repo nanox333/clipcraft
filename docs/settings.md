@@ -138,9 +138,8 @@ top bar shows desktop capture and time remaining. Stop pauses either desktop mod
 Turning automatic switching off returns to manual source selection; it stops any managed session.
 
 These are bounded replay buffers, not unlimited recordings of an entire session. Automatic source
-changes and timer expiry save the final replay using the configured replay length and storage
-policy. Game clips retain their game name; desktop clips do not inherit it. One transition save
-may wait behind one running save; if both are occupied, capture pauses until space is available.
+changes and timer expiry do not save anything: a clip is saved only by the save shortcut or button.
+Game clips retain their game name; desktop clips do not inherit it.
 Existing media is never overwritten. Desktop capture may include other apps, so both desktop
 modes require an explicit choice. No monitor/permission or a failed game open leaves capture idle
 with an error; a Wayland chooser is not opened automatically to work around this.

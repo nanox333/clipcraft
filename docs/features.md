@@ -26,7 +26,7 @@ The full, detailed feature list and known limits. The [README](../README.md) has
   are found, then stops when that process exits. Games settings also offer a timed desktop replay
   after a game closes (15 seconds–1 hour), or continuous desktop replay that automatically switches
   to game windows and back. Reopening a game cancels the timer; its next exit starts a fresh timer.
-  Automatic source changes in the desktop modes save the final replay; buffers remain bounded.
+  Automatic source changes in the desktop modes never save a clip by themselves (a game closing or crashing does not make one); buffers remain bounded.
   Manual capture is also available.
 - **Audio:** synchronized system audio and microphone recording, mixed or on separate AAC tracks,
   with levels, mute, push-to-talk, device-loss handling and optional offline microphone noise

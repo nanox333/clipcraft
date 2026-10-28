@@ -190,8 +190,8 @@ not a formal clean-room implementation. The small editor additionally consumes p
   after actual game exit, or maintain desktop replay between games including startup. Games always
   select their verified window; desktop policy selects an exposed monitor and skips portal chooser
   targets. A new game cancels the desktop timer; its next exit starts another. Stop pauses desktop
-  policies until Start. Desktop-policy source changes/timeout preserve the final replay through one active save
-  and one queued job; a full queue halts frame production while retaining the bounded buffer.
+  policies until Start. Desktop-policy source changes and timeouts do not save a clip (a game closing or
+  crashing never makes one); the old replay is simply replaced.
   Output names avoid in-flight collisions and remain exclusively written. Desktop clips do not
   inherit the previous game's recorded label. See [ADR 0016](adr/0016-background-steam-and-exit-fallback.md),
   [settings.md](settings.md) and [game-catalog.md](game-catalog.md).

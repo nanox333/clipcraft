@@ -705,95 +705,13 @@ impl ClipCraftApp {
             }
             other => other,
         };
-        if self.capture.desktop_fallback
-            || (self.capture.game_session.is_some()
-                && self.recording.desktop_capture_mode != DesktopCaptureMode::Never)
-        {
-            // The SaveJob owns the old bounded recorder, so stopping/changing source cannot
-            // overwrite its game replay. Skip post-roll because the source has disappeared.
-            if self.capture.saving.is_some() && self.capture.queued_save.is_some() {
-                self.capture.session.halt_for_transition();
-                self.capture.pending_transition = Some(transition);
-                self.capture.notice = notice(
-                    "Recording paused while the previous clips finish saving.",
-                    false,
-                    None,
-                );
-                return;
-            }
-            if !self.save_game_before_transition() {
-                return;
-            }
-        }
+        // A game closing never saves a clip by itself: clips are saved only when you ask.
         self.stop_capture();
         match transition {
             GameArmingDecision::Start(game) => self.start_capture_for_game(Some(game)),
             GameArmingDecision::StartDesktop => self.start_desktop_fallback(),
             GameArmingDecision::Stop => {}
         }
-    }
-
-    fn save_game_before_transition(&mut self) -> bool {
-        if self
-            .capture
-            .session
-            .status()
-            .is_none_or(|status| status.frames_encoded == 0)
-        {
-            return true;
-        }
-        let Some(folder) = self.clips_folder() else {
-            self.capture.notice = notice(
-                "Choose a capture folder before continuing on the desktop; the game replay is still retained.",
-                true,
-                None,
-            );
-            return false;
-        };
-        let mut settings = self.recording.clone();
-        settings.post_roll_seconds = 0;
-        let game = self
-            .capture
-            .game_session
-            .as_ref()
-            .map(|game| game.game_name.as_str());
-        let reserved: Vec<_> = self
-            .capture
-            .saving_path
-            .iter()
-            .cloned()
-            .chain(
-                self.capture
-                    .queued_save
-                    .iter()
-                    .map(|(job, _)| job.path().to_path_buf()),
-            )
-            .collect();
-        let job = match self
-            .capture
-            .session
-            .prepare_save(&settings, &folder)
-            .map(|job| job.with_game(game))
-            .and_then(|job| job.avoid_paths(&reserved))
-        {
-            Ok(job) => job,
-            Err(error) => {
-                self.capture.notice = notice(
-                    format!(
-                        "Desktop continuation did not start: {error}. The game replay is still retained."
-                    ),
-                    true,
-                    None,
-                );
-                return false;
-            }
-        };
-        if self.capture.saving.is_some() {
-            self.capture.queued_save = Some((job, folder));
-        } else {
-            self.launch_save(job, folder);
-        }
-        true
     }
 
     fn start_desktop_fallback(&mut self) {
@@ -1950,7 +1868,7 @@ mod tests {
     }
 
     #[test]
-    fn generated_game_desktop_reopen_exit_and_timer_save_keep_media_and_game_labels() {
+    fn game_exits_and_the_desktop_timer_never_save_a_clip_by_themselves() {
         let (mut app, root) = automatic_app(DesktopCaptureMode::AfterGame);
         let original = root.join("original.mp4");
         std::fs::write(&original, b"original untouched").unwrap();
@@ -1981,15 +1899,8 @@ mod tests {
         assert!(!app.capture.is_active());
         assert!(!app.capture.desktop_fallback);
         assert_eq!(std::fs::read(&original).unwrap(), b"original untouched");
-        let clips = saved_mp4s(&root);
-        assert_eq!(clips.len(), 4);
-        assert_eq!(app.saved_games.len(), 2); // game replays tagged; desktop replays untagged
-        for path in clips {
-            assert!(matches!(
-                clipcraft_engine::execute(clipcraft_engine::Command::ProbeClip { path }),
-                Ok(clipcraft_engine::CommandOutput::ClipProbe(_))
-            ));
-        }
+        assert!(saved_mp4s(&root).is_empty());
+        assert!(app.saved_games.is_empty());
         drop(app);
         remove_scratch(root);
     }
@@ -2027,47 +1938,6 @@ mod tests {
         assert!(app.capture.notice.is_some());
     }
 
-    #[test]
-    fn a_game_exiting_while_saves_are_busy_cannot_discard_the_retained_desktop_replay() {
-        let (mut app, root) = automatic_app(DesktopCaptureMode::AfterGame);
-        app.apply_game_observation(observation(Some(42)));
-        wait_for_frames(&app);
-        // Hold a save open deterministically so the first transition fills the queued slot.
-        let (sender, receiver) = mpsc::channel();
-        app.capture.saving = Some(receiver);
-        app.capture.saving_path = Some(root.join("in-flight.mp4"));
-        app.apply_game_observation(observation(None));
-        assert!(app.capture.desktop_fallback);
-        assert!(app.capture.queued_save.is_some());
-        wait_for_frames(&app);
-        app.apply_game_observation(observation(Some(43)));
-        assert!(matches!(
-            app.capture.pending_transition,
-            Some(GameArmingDecision::Start(_))
-        ));
-        app.apply_game_observation(observation(None)); // new game exits before it can open
-        app.advance_game_transition();
-        assert!(app.capture.pending_transition.is_some());
-        assert!(app.capture.session.status().unwrap().frames_encoded > 0);
-        sender
-            .send(Err("generated slow-save failure".into()))
-            .unwrap();
-        app.poll_save();
-        app.advance_game_transition();
-        finish_saves(&mut app);
-        assert!(!app.capture.is_active());
-        assert_eq!(app.saved_games.len(), 1);
-        let clips = saved_mp4s(&root);
-        assert_eq!(clips.len(), 2); // both the game replay and the retained desktop replay survive
-        for path in clips {
-            assert!(matches!(
-                clipcraft_engine::execute(clipcraft_engine::Command::ProbeClip { path }),
-                Ok(clipcraft_engine::CommandOutput::ClipProbe(_))
-            ));
-        }
-        drop(app);
-        remove_scratch(root);
-    }
     #[test]
     fn failed_game_open_and_rule_removal_cannot_start_temporary_desktop() {
         let (mut app, root) = automatic_app(DesktopCaptureMode::AfterGame);
