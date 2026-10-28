@@ -12,6 +12,7 @@
 use clipcraft_capture::{Capabilities, CaptureError, CaptureSource, CaptureTarget};
 
 #[cfg(windows)]
+mod borderless;
 mod d3d11;
 #[cfg(target_os = "linux")]
 mod evdev;
@@ -46,6 +47,7 @@ mod windows;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod x11;
 
+pub use borderless::request_borderless_once;
 #[cfg(target_os = "linux")]
 pub use evdev::access as keyboard_access;
 pub use hardware::{hardware_provider, probe_hardware_encoder, register_hardware_decoding};

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Yellow border:** ClipCraft now asks Windows for borderless capture access, so the yellow frame Windows
+  draws around captured windows no longer appears around what ClipCraft records.
+- **Fixed:** the "found <game> running, but this desktop did not expose its game window" message now
+  goes away when the game closes.
+
 ## 0.2.0 — 2026-10-28
 
 - **Installer and downloads:** Windows is a single `ClipCraft-Setup` download with an uninstaller;

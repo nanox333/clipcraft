@@ -329,6 +329,7 @@ fn start_capture<T: TryInto<GraphicsCaptureItemType> + Copy + Send + 'static>(
     interval: MinimumUpdateIntervalSettings,
     shared: &Arc<Shared>,
 ) -> Result<CaptureControl<Handler, &'static str>, CaptureError> {
+    crate::borderless::request_borderless_once();
     // The dependency initializes WinRT inside start_free_threaded before checking the custom
     // interval. No capability probe runs on a potentially uninitialized calling thread.
     interval_fallback(

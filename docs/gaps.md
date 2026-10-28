@@ -11,6 +11,7 @@ Fresh profiles see four setup steps for local storage/replay, capture/audio and 
 uses a draft; no capture/audio/presence worker starts during it. Finish or Skip saves completion
 with the choices through the shared settings command. Existing preference files skip setup.
 
+ClipCraft asks Windows for borderless capture access once per run (ADR 0033); Windows answered Allowed on the development machine, but the yellow frame was not checked on screen against a captured game.
 The first-run setup and the installer/uninstaller use the app's own look (Inter, charcoal and lime); development builds of the installer accept `--preview-working` and `--preview-done` to show those pages without installing.
 `cargo xtask package` also produces an offline Windows `ClipCraft-Setup-<version>.exe`, written entirely in Rust, and ships the CLI as a separate archive.
 Optional update check and one-click update (ADR 0032) are built and checked against GitHub's real release API and redirects; a full update against a release that carries a `ClipCraft-Setup` asset has not run because none is published yet.
