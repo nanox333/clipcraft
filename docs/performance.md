@@ -540,3 +540,10 @@ Sizes stay within 0.3% of the original at equal QP. For reference, x264 `veryfas
 frames in 7-9 ms on one thread. Not yet done: faster Balanced/Quality presets, keyframe stalls, lazy
 half-pel planes, rate-control undershoot (a 12 Mbit/s target produced 9 Mbit/s), and measuring real
 high-motion gameplay.
+
+Compression, 2026-10-28 (IDE desktop clip, 1080p, QP 28, 1 thread; harness `encoder_hash` with
+`ENCODER_HASH_STREAM=<dir>` keeps the streams for an ffmpeg PSNR check). Speed made 2.00 MB at
+42.5 dB, Balanced 1.29 MB, x264 `veryfast` about 0.7 MB at 43.1 dB: the Speed preset was missing
+inter partitions. Adding them plus a finer motion search gives 1.32 MB at 42.4 dB (-34%) for
+20 -> 31 ms per picture; the game UI clip is unchanged in size (+10% time). 8x8 intra and the
+adaptive 8x8 transform did not help in Speed. The gap to x264 on desktop content is now about 1.9x.

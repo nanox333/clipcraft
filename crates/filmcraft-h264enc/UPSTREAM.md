@@ -23,6 +23,7 @@ FilmCraft stays possible:
 | Date | Change | Why | Measured |
 | --- | --- | --- | --- |
 | 2026-10-26 | Static-content skip: Speed preset marks macroblocks identical to the previous source picture and codes them as P_Skip without searching | Desktop recordings are mostly unchanged | desktop clip 23.1 -> 10.9 ms/picture (QP26, 2 threads); output size and PSNR unchanged |
+| 2026-10-28 | Speed preset turns on inter partitions and a finer motion search (range 16, one sub-pel round); 8x8 intra and adaptive 8x8 transform stay off | Desktop clips spent 1.5x the bits of Balanced for no reason: partitions were the missing piece | IDE desktop clip, QP 28, 1 thread: 2.00 -> 1.32 MB (-34%), PSNR 42.51 -> 42.44 dB, 20 -> 31 ms/picture; game UI clip: same size, 7.3 -> 8.1 ms; 8x8 intra and adaptive transform added no saving |
 | 2026-10-26 | Zero-residual shortcut: skip transform+quantise for blocks that provably quantise to zero (Cauchy-Schwarz bound on SSD) | Most inter blocks on screen content are all-zero | bit-identical output on all test clips; unit tests incl. adversarial blocks |
 | 2026-10-26 | Deblocking skips edges between same-vector P_Skip neighbours | Filter is a no-op there | bit-identical |
 | 2026-10-26 | Intra candidate gate in P/B pictures (non-RD): skip intra when its cost is >= 1.25x the best inter cost | Intra rarely wins there | measured, no PSNR change on test clips |

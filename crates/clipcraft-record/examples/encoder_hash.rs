@@ -46,6 +46,8 @@ fn run(
     config.threads = case.threads;
     config.aq_strength = case.aq;
     let mut encoder = Encoder::new(config)?;
+    let mut stream: Vec<u8> = Vec::new();
+    let keep = std::env::var_os("ENCODER_HASH_STREAM").is_some();
     let (mut hash, mut bytes) = (0xcbf2_9ce4_8422_2325_u64, 0);
     let started = Instant::now();
     for index in 0..count {
@@ -60,11 +62,24 @@ fn run(
         for packet in encoder.encode(&picture, index as i64)? {
             bytes += packet.data.len();
             fnv(&mut hash, &packet.data);
+            if keep {
+                stream.extend_from_slice(&packet.data);
+            }
         }
     }
     for packet in encoder.flush() {
         bytes += packet.data.len();
         fnv(&mut hash, &packet.data);
+        if keep {
+            stream.extend_from_slice(&packet.data);
+        }
+    }
+    if let Some(dir) = std::env::var_os("ENCODER_HASH_STREAM") {
+        let name = case.name.split_whitespace().collect::<Vec<_>>().join("_");
+        std::fs::write(
+            std::path::Path::new(&dir).join(format!("{name}.h264")),
+            &stream,
+        )?;
     }
     Ok((
         hash,
@@ -145,7 +160,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         height,
         data.len() / (width as usize * height as usize * 3 / 2)
     );
-    for case in &cases {
+    let only: Option<usize> = std::env::var("ENCODER_HASH_CASE")
+        .ok()
+        .and_then(|v| v.parse().ok());
+    for (index, case) in cases.iter().enumerate() {
+        if only.is_some_and(|only| only != index) {
+            continue;
+        }
         // The fastest of three runs, so other programs on the machine disturb the numbers less.
         let (hash, bytes, mut ms) = run(width, height, &data, case)?;
         for _ in 0..2 {

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Smaller software-encoded desktop clips:** the built-in H.264 encoder now uses split-block motion
+  prediction, making screen recordings about a third smaller at the same quality for roughly 1.5x
+  the encoding time on desktop content (game footage is unchanged).
 - **Faster software encoding:** the built-in H.264 encoder is 1.3-3x faster on screen content, so computers
   without a hardware encoder drop fewer frames.
 - **Removed:** the automatic clip when a game closes or crashes. ClipCraft no longer saves a clip
