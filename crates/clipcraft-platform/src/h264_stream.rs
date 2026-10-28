@@ -139,8 +139,8 @@ pub fn build_avcc(sps: &[u8], pps: &[u8]) -> Result<Vec<u8>, String> {
 
 /// How many threads to convert a picture on: up to four, but never more than the computer has, so
 /// the conversion does not compete with the game for cores it does not have.
-// Only the VA-API encoder (Linux) asks; other platforms compile it too, so it is tested everywhere.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+// The VA-API (Linux) and Media Foundation (Windows) encoders ask; nothing else does.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 pub fn conversion_threads() -> usize {
     std::thread::available_parallelism().map_or(2, |n| n.get().clamp(1, 4))
 }
