@@ -517,3 +517,26 @@ and the same with effort Fast, a 720p picture, or H.265. It is mostly a fixed co
 screen, not of ClipCraft's own copy and conversion work. Under a saturating game the recorder dropped
 3-6 % of its frames at 2 ms passes (none with 1 ms passes); the cause is the game's long passes
 delaying the recorder's, not something the priority fixes (+7 made it worse).
+
+## Software H.264 encoder: a second measurement on 1080p (2026-10-28)
+
+The speed work listed in `crates/filmcraft-h264enc/UPSTREAM.md` (static-content skip, zero-residual
+shortcut, deblock and intra fast paths) was re-measured on 1080p recordings with
+`cargo run --release -p clipcraft-record --example encoder_hash W H FILE`, which prints a hash of every
+output byte, the size and the best-of-three milliseconds per picture for 8 settings. Profiling the
+original FilmCraft copy had shown that motion search was not the cost: deciding that an unchanged
+macroblock needs no residual took 45-65% of the time.
+
+| 1080p, Speed preset (game UI clip unless noted) | Original FilmCraft | Now |
+| --- | --- | --- |
+| QP 28, 1 thread | 32.1 ms/picture | 7.3 ms |
+| QP 20, 1 thread | 30.6 ms | 9.7 ms |
+| Recorder setting (VBR 12 Mbit/s, adaptive quantisation, 2 threads) | 40.9 ms | 13.9 ms, size -1.6% |
+| Balanced preset QP 28 | 51.8 ms | 39.7 ms |
+| IDE desktop clip, QP 28, 1 thread | 35.7 ms | 20.1 ms |
+| IDE desktop clip, recorder setting | 37.9 ms | 25.4 ms, size -4.2% (measured while another job ran) |
+
+Sizes stay within 0.3% of the original at equal QP. For reference, x264 `veryfast` encodes the same
+frames in 7-9 ms on one thread. Not yet done: faster Balanced/Quality presets, keyframe stalls, lazy
+half-pel planes, rate-control undershoot (a 12 Mbit/s target produced 9 Mbit/s), and measuring real
+high-motion gameplay.

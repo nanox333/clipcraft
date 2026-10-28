@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Faster software encoding:** the built-in H.264 encoder is 1.3-3x faster on screen content, so computers
+  without a hardware encoder drop fewer frames.
 - **Removed:** the automatic clip when a game closes or crashes. ClipCraft no longer saves a clip
   by itself when an app closes; clips are saved only when you press the save shortcut.
 
