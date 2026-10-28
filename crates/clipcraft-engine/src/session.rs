@@ -1259,9 +1259,13 @@ mod tests {
             post_roll_seconds: 0,
             ..settings.clone()
         };
+        let quick_job = session.prepare_save(&now, &dir).unwrap();
+        assert_eq!(quick_job.post_roll(), Duration::ZERO);
         let pressed = Instant::now();
-        let quick = session.prepare_save(&now, &dir).unwrap().run().unwrap();
-        assert!(pressed.elapsed() < Duration::from_secs(2));
+        let quick = quick_job.run().unwrap();
+        // Saving at once means not waiting out the 3 s post-roll; a loaded machine may still take
+        // a couple of seconds to write the file, so the bound is the post-roll itself.
+        assert!(pressed.elapsed() < Duration::from_secs(3));
         assert!(quick.clip.duration_frames > 0);
         session.stop();
         let _ = fs::remove_dir_all(&dir);
