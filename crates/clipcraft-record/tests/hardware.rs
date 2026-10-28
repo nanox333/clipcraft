@@ -451,6 +451,69 @@ fn a_missing_gpu_means_software_with_the_reason_shown() {
 }
 
 #[test]
+fn a_gpu_that_comes_back_takes_the_encoding_over_again() {
+    let scratch = Scratch::new("return");
+    // The first card fails after 20 pictures; the second try finds a healthy one.
+    let opened = Arc::new(AtomicUsize::new(0));
+    let counter = opened.clone();
+    let healthy = provider(Behaviour::default());
+    let flaky = provider(Behaviour {
+        fail_after: Some(20),
+        ..Behaviour::default()
+    });
+    let recorder_provider = HardwareProvider::new(move |request: &HardwareRequest| {
+        if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+            flaky.open(request)
+        } else {
+            healthy.open(request)
+        }
+    })
+    .with_retry_after(Duration::from_millis(300));
+    let recorder = Recorder::start(
+        Box::new(SyntheticSource::new(320, 180, 30)),
+        config(Some(recorder_provider)),
+    )
+    .unwrap();
+    wait_for(&recorder, "the card to be used again", |s| {
+        s.restarts >= 2 && s.encoder == "GPU (Fake GPU)" && s.buffered_seconds >= 1.5
+    });
+    assert!(opened.load(Ordering::SeqCst) >= 2);
+    let path = scratch.0.join("back.mp4");
+    recorder.save_clip(5, ClipFormat::Mp4, &path).unwrap();
+    judged(&path, 320, 180);
+}
+
+#[test]
+fn a_gpu_that_keeps_failing_is_asked_less_and_less_often() {
+    let opened = Arc::new(AtomicUsize::new(0));
+    let counter = opened.clone();
+    let flaky = provider(Behaviour {
+        fail_after: Some(5),
+        ..Behaviour::default()
+    });
+    let hardware = HardwareProvider::new(move |request: &HardwareRequest| {
+        counter.fetch_add(1, Ordering::SeqCst);
+        flaky.open(request)
+    })
+    .with_retry_after(Duration::from_millis(100));
+    let recorder = Recorder::start(
+        Box::new(SyntheticSource::new(320, 180, 30)),
+        config(Some(hardware)),
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_secs(4));
+    let status = recorder.status();
+    // Waits of 200, 400, 800... ms after the failures: far fewer tries than one per 100 ms.
+    assert!(
+        opened.load(Ordering::SeqCst) <= 8,
+        "{}",
+        opened.load(Ordering::SeqCst)
+    );
+    assert!(matches!(status.state, RecordState::Running), "{status:?}");
+    assert!(status.encoder.starts_with("CPU"), "{status:?}");
+}
+
+#[test]
 fn a_gpu_that_fails_midway_hands_over_to_software() {
     let scratch = Scratch::new("fail");
     let flaky = provider(Behaviour {

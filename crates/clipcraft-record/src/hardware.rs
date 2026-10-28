@@ -5,6 +5,7 @@
 use clipcraft_capture::NativeCaptureFrame;
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// The video format a stream is encoded in.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -104,7 +105,12 @@ type Open = dyn Fn(&HardwareRequest) -> Result<Box<dyn HardwareEncoder>, String>
 #[derive(Clone)]
 pub struct HardwareProvider {
     open: Arc<Open>,
+    retry_after: Duration,
 }
+
+/// How long the recorder waits, after the graphics card's encoder is unavailable or has stopped,
+/// before it tries the card again (the wait doubles after each failed try, up to eight times).
+pub const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(20);
 
 impl HardwareProvider {
     /// Wraps a function that opens an encoder, or says why it cannot.
@@ -116,7 +122,21 @@ impl HardwareProvider {
     ) -> Self {
         Self {
             open: Arc::new(open),
+            retry_after: DEFAULT_RETRY_AFTER,
         }
+    }
+
+    /// Changes how long the recorder waits before trying the graphics card again while it is
+    /// encoding in software.
+    #[must_use]
+    pub fn with_retry_after(mut self, wait: Duration) -> Self {
+        self.retry_after = wait;
+        self
+    }
+
+    /// The wait before the first new try.
+    pub fn retry_after(&self) -> Duration {
+        self.retry_after
     }
 
     /// Opens an encoder for `request`.
