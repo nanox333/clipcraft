@@ -384,7 +384,7 @@ impl ClipCraftApp {
     }
 
     /// Finds out once, off the interface thread, whether the graphics card can encode video.
-    fn poll_gpu_probe(&mut self) {
+    pub(crate) fn poll_gpu_probe(&mut self) {
         if self.capture.gpu == GpuProbe::Unknown {
             self.capture.gpu = GpuProbe::Checking;
             let (sender, receiver) = mpsc::channel();

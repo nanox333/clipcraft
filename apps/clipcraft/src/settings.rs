@@ -46,7 +46,7 @@ pub struct SettingsState {
     mic_error: Option<String>,
     mic_shown: f32,
     pub(crate) capturing: Option<(HotkeyAction, usize)>,
-    hotkey_error: Option<String>,
+    pub(crate) hotkey_error: Option<String>,
     usage: Option<StorageUsage>,
     usage_for: Option<PathBuf>,
     usage_receiver: Option<mpsc::Receiver<StorageUsage>>,

@@ -5,7 +5,7 @@
 - **Installer and downloads:** Windows is a single `ClipCraft-Setup` download with an uninstaller;
   the command line tool is a separate download.
 - **Look:** the first-run setup and the Windows installer/uninstaller were redesigned to match the
-  app: a glowing welcome page with a stepper, and a branded installer with a progress page and a
+  app: a seven-step setup (welcome, quality, capture, sound, storage, shortcuts, summary) with big visual choices, keycap shortcuts, a smooth fade between pages and a check of your graphics card, and a branded installer with a progress page and a
   clear done screen.
 - **Updates:** ClipCraft can tell you when a newer version is published and install it after you
   press Update now (checksum-verified). Turn the check off in Settings → General.

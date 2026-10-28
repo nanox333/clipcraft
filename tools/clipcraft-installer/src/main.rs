@@ -374,16 +374,35 @@ struct Installer {
 
 /// A soft lime glow: stacked, fading circles, the nearest thing to a blur that needs no shader.
 fn glow(painter: &egui::Painter, centre: egui::Pos2, radius: f32, strength: f32) {
-    const RINGS: usize = 64;
-    let alpha = (strength * 255.0 / RINGS as f32 * 2.2).clamp(1.0, 255.0) as u8;
-    for ring in 0..RINGS {
-        let t = ring as f32 / RINGS as f32;
-        painter.circle_filled(
-            centre,
-            radius * (1.0 - t),
-            Color32::from_rgba_unmultiplied(190, 255, 43, alpha),
-        );
+    // A radial gradient mesh, so there is no banding: bright in the middle, fading to nothing.
+    const SEGMENTS: usize = 48;
+    const RINGS: [(f32, f32); 4] = [(0.0, 1.0), (0.35, 0.45), (0.7, 0.12), (1.0, 0.0)];
+    let peak = strength * 255.0 * 0.55;
+    let colour = |fade: f32| Color32::from_rgba_unmultiplied(190, 255, 43, (peak * fade) as u8);
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(centre, colour(RINGS[0].1));
+    for &(distance, fade) in &RINGS[1..] {
+        for step in 0..SEGMENTS {
+            let angle = step as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+            mesh.colored_vertex(
+                centre + egui::vec2(angle.cos(), angle.sin()) * radius * distance,
+                colour(fade),
+            );
+        }
     }
+    let ring = |index: usize, step: usize| (1 + index * SEGMENTS + step % SEGMENTS) as u32;
+    for step in 0..SEGMENTS {
+        mesh.add_triangle(0, ring(0, step), ring(0, step + 1));
+    }
+    for index in 0..RINGS.len() - 2 {
+        for step in 0..SEGMENTS {
+            let (a, b) = (ring(index, step), ring(index, step + 1));
+            let (c, d) = (ring(index + 1, step), ring(index + 1, step + 1));
+            mesh.add_triangle(a, c, b);
+            mesh.add_triangle(b, c, d);
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 /// `C:\Users\you\AppData\Local\Programs\ClipCraft` shortened in the middle so it fits.
@@ -527,7 +546,7 @@ impl Installer {
                 wash.add_triangle(0, 2, 3);
                 ui.painter().add(egui::Shape::mesh(wash));
                 let centre = egui::pos2(panel.left() + 66.0, panel.top() + 92.0);
-                glow(ui.painter(), centre, 90.0, 0.22);
+                glow(ui.painter(), centre, 110.0, 0.4);
                 ui.painter().image(
                     mark,
                     egui::Rect::from_center_size(centre, egui::vec2(72.0, 72.0)),
@@ -808,7 +827,7 @@ impl Installer {
     fn done_page(&mut self, ui: &mut egui::Ui, context: &egui::Context) {
         ui.add_space(26.0);
         let (rect, _) = ui.allocate_exact_size(egui::vec2(76.0, 76.0), egui::Sense::hover());
-        glow(ui.painter(), rect.center(), 80.0, 0.18);
+        glow(ui.painter(), rect.center(), 90.0, 0.35);
         ui.painter().circle_filled(rect.center(), 34.0, LIME);
         ui.painter().text(
             rect.center(),

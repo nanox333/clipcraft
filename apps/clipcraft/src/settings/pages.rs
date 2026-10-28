@@ -143,12 +143,12 @@ fn insights(settings: &RecordingSettings, gpu: &GpuProbe, live: &Live) -> Vec<In
 }
 
 /// A ready-made set of video settings.
-struct Profile {
-    name: &'static str,
-    tagline: &'static str,
-    detail: &'static str,
-    apply: fn(&mut RecordingSettings),
-    is_active: fn(&RecordingSettings) -> bool,
+pub(crate) struct Profile {
+    pub(crate) name: &'static str,
+    pub(crate) tagline: &'static str,
+    pub(crate) detail: &'static str,
+    pub(crate) apply: fn(&mut RecordingSettings),
+    pub(crate) is_active: fn(&RecordingSettings) -> bool,
 }
 
 fn performance(s: &mut RecordingSettings) {
@@ -172,7 +172,7 @@ fn best_quality(s: &mut RecordingSettings) {
     s.encoder_preset = EncoderPreset::Quality;
 }
 
-const PROFILES: [Profile; 3] = [
+pub(crate) const PROFILES: [Profile; 3] = [
     Profile {
         name: "Performance",
         tagline: "720p \u{b7} 60 FPS",
