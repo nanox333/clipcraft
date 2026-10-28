@@ -34,7 +34,9 @@ use windows::Win32::System::Variant::{VARIANT, VT_BOOL, VT_UI4};
 use windows::core::{GUID, HRESULT, Interface, PCSTR, PWSTR, w};
 
 use crate::d3d11::{Converter, Surface};
-use crate::h264_stream::{annexb_to_length_prefixed, build_avcc, rgba_to_nv12, split_nal_units};
+use crate::h264_stream::{
+    annexb_to_length_prefixed, build_avcc, conversion_threads, rgba_to_nv12, split_nal_units,
+};
 use crate::hevc_stream;
 
 /// How long to wait for an encoder to accept a picture before calling it stuck.
@@ -1307,7 +1309,13 @@ fn copy_sample(sample: &IMFSample) -> Result<Vec<u8>, String> {
 impl HardwareEncoder for MfEncoder {
     fn encode(&mut self, rgba: &[u8], index: u64) -> Result<Vec<HardwarePacket>, String> {
         self.begin()?;
-        rgba_to_nv12(rgba, self.width, self.height, &mut self.nv12, 2)?;
+        rgba_to_nv12(
+            rgba,
+            self.width,
+            self.height,
+            &mut self.nv12,
+            conversion_threads(),
+        )?;
         let sample = self.make_sample(index)?;
         let mut out = Vec::new();
         self.feed(sample, &mut out)?;
