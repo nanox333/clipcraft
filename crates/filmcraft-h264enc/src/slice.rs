@@ -13,8 +13,8 @@ use crate::picture::{CHROMA_PAD, Frame, LUMA_PAD, RefPic, avg_into};
 use crate::syntax::{MbCode, NbCtx};
 use crate::tables::{BLK4_XY, NUM_CTX, RASTER_TO_BLK4, ZIGZAG4, ZIGZAG8, chroma_qp};
 use crate::transform::{
-    Deadzone, QuantTables, dequant_chroma_dc, dequant_luma_dc, dequant4, dequant8, fdct4, fdct8,
-    idct4, idct8, quant_chroma_dc, quant_luma_dc, quant4, quant8,
+    Deadzone, QuantTables, ZeroBounds, dequant_chroma_dc, dequant_luma_dc, dequant4, dequant8,
+    fdct4, fdct8, idct4, idct8, quant_chroma_dc, quant_luma_dc, quant4, quant8,
 };
 use crate::{cabac_mb, cavlc};
 
@@ -48,6 +48,7 @@ pub struct EncParams {
 pub struct FrameEnc<'a> {
     pub p: &'a EncParams,
     pub qt: &'a QuantTables,
+    pub zero: &'a ZeroBounds,
     pub cost_tab: &'a CostTable,
     pub st: SliceType,
     pub src: &'a Frame,
@@ -693,11 +694,20 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
             for b in 0..4 {
                 let (bx, by) = ((b & 1) * 4, (b >> 1) * 4);
                 let mut d = [0i32; 16];
+                let (mut energy, mut sum) = (0u32, 0i32);
                 for y in 0..4 {
                     for x in 0..4 {
-                        d[y * 4 + x] =
-                            s[(by + y) * 8 + bx + x] as i32 - p[(by + y) * 8 + bx + x] as i32;
+                        let v = s[(by + y) * 8 + bx + x] as i32 - p[(by + y) * 8 + bx + x] as i32;
+                        d[y * 4 + x] = v;
+                        energy += (v * v) as u32;
+                        sum += v;
                     }
+                }
+                // No AC coefficient can survive: only the block's DC (the sum) is needed.
+                if !intra && energy <= self.f.zero.chroma_ac[qp as usize] {
+                    dc[b] = sum;
+                    c.code.cac[comp * 4 + b] = [0; 16];
+                    continue;
                 }
                 let mut t = fdct4(&d);
                 dc[b] = t[0];
@@ -812,11 +822,18 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
         for blk in 0..16 {
             let (bx, by) = BLK4_XY[blk];
             let mut d = [0i32; 16];
+            let mut energy = 0u32;
             for y in 0..4 {
                 for x in 0..4 {
                     let i = (by * 4 + y) * 16 + bx * 4 + x;
-                    d[y * 4 + x] = src[i] as i32 - pred[i] as i32;
+                    let v = src[i] as i32 - pred[i] as i32;
+                    d[y * 4 + x] = v;
+                    energy += (v * v) as u32;
                 }
+            }
+            if dz.f256 == Deadzone::INTER.f256 && energy <= self.f.zero.luma4[qp as usize] {
+                c.code.luma4[blk] = [0; 16];
+                continue;
             }
             let mut t = fdct4(&d);
             quant4(&mut t, qt, qp, dz, false);
@@ -889,11 +906,19 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
         for b8 in 0..4 {
             let (ox, oy) = ((b8 & 1) * 8, (b8 >> 1) * 8);
             let mut d = [0i32; 64];
+            let mut energy = 0u32;
             for y in 0..8 {
                 for x in 0..8 {
                     let i = (oy + y) * 16 + ox + x;
-                    d[y * 8 + x] = src[i] as i32 - pred[i] as i32;
+                    let v = src[i] as i32 - pred[i] as i32;
+                    d[y * 8 + x] = v;
+                    energy += (v * v) as u32;
                 }
+            }
+            // A block too quiet to leave any coefficient is not transformed (see `ZeroBounds`).
+            if dz.f256 == Deadzone::INTER.f256 && energy <= self.f.zero.luma8[qp as usize] {
+                c.code.luma8[b8] = [0; 64];
+                continue;
             }
             let mut t = fdct8(&d);
             quant8(&mut t, qt, qp, dz);
@@ -937,6 +962,66 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
             }
         }
         cbp
+    }
+
+    /// True only when coding this inter prediction's residual is certain to give no coefficients at
+    /// all, judged from the residual's energy against [`ZeroBounds`]; the transforms are not run.
+    /// "False" means "not sure", and the caller codes the residual in full.
+    fn residual_is_zero(
+        &self,
+        src: &Src,
+        py: &[u8; 256],
+        pu: &[u8; 64],
+        pv: &[u8; 64],
+        qp: u8,
+    ) -> bool {
+        fn block(a: &[u8], b: &[u8], stride: usize, x0: usize, y0: usize, size: usize) -> u32 {
+            let mut sum = 0u32;
+            for y in y0..y0 + size {
+                let (ra, rb) = (
+                    &a[y * stride + x0..y * stride + x0 + size],
+                    &b[y * stride + x0..y * stride + x0 + size],
+                );
+                for (&p, &q) in ra.iter().zip(rb) {
+                    let d = i32::from(p) - i32::from(q);
+                    sum += (d * d) as u32;
+                }
+            }
+            sum
+        }
+        let zb = self.f.zero;
+        let q = qp as usize;
+        // Which luma transforms the residual could be coded with.
+        let t8 = self.f.p.t8x8;
+        if t8 {
+            for b in 0..4 {
+                if block(&src.y, py, 16, (b & 1) * 8, (b >> 1) * 8, 8) > zb.luma8[q] {
+                    return false;
+                }
+            }
+        }
+        if !t8 || self.f.p.adaptive_t8 {
+            for b in 0..16 {
+                let (bx, by) = BLK4_XY[b];
+                if block(&src.y, py, 16, bx * 4, by * 4, 4) > zb.luma4[q] {
+                    return false;
+                }
+            }
+        }
+        for (s, p) in [(&src.u, pu), (&src.v, pv)] {
+            let mut total = 0u32;
+            for b in 0..4 {
+                let ssd4 = block(s, p, 8, (b & 1) * 4, (b >> 1) * 4, 4);
+                if ssd4 > zb.chroma_ac[q] {
+                    return false;
+                }
+                total += ssd4;
+            }
+            if total > zb.chroma_dc[q] {
+                return false;
+            }
+        }
+        true
     }
 
     /// Code an inter candidate's residual given its luma/chroma prediction.
@@ -1935,8 +2020,12 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
                 let mut c = Cand::new();
                 c.code.kind = MbKind::PInter;
                 c.code.part = Part::P16x16;
-                self.code_inter(src, &y, &u, &v, qp, &mut c);
-                if c.code.cbp == 0 {
+                // A residual that provably quantises to nothing needs no transform to find out.
+                let nothing = self.residual_is_zero(src, &y, &u, &v, qp);
+                if !nothing {
+                    self.code_inter(src, &y, &u, &v, qp, &mut c);
+                }
+                if nothing || c.code.cbp == 0 {
                     c.code.kind = MbKind::PSkip;
                     Self::cand_inter_info(
                         &mut c,

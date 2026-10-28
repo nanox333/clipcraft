@@ -282,6 +282,7 @@ pub struct Encoder {
     sps_nal: Vec<u8>,
     pps_nal: Vec<u8>,
     qt: QuantTables,
+    zero: transform::ZeroBounds,
     cost_tab: CostTable,
     lam: Lambdas,
     cabac_i: Box<[(i8, i8); NUM_CTX]>,
@@ -603,12 +604,16 @@ impl Encoder {
         let pool = Pool {};
         let record_pass1 = cfg.pass == Pass::First;
         let rc = ratecontrol::RateControl::new(rc_kind, fps, vbv.0, vbv.1);
+        let qt = QuantTables::new();
+        let zero =
+            transform::ZeroBounds::new(&qt, params.chroma_qp_offset, transform::Deadzone::INTER);
         Ok(Encoder {
             params,
             sps,
             sps_nal,
             pps_nal,
-            qt: QuantTables::new(),
+            zero,
+            qt,
             cost_tab: CostTable::new(),
             lam: Lambdas::new(),
             cabac_i: Box::new(tables::cabac_init_i()),
@@ -979,6 +984,7 @@ impl Encoder {
                 .map(|j| FrameEnc {
                     p: &this.params,
                     qt: &this.qt,
+                    zero: &this.zero,
                     cost_tab: &this.cost_tab,
                     st: j.hdr.slice_type,
                     src: &j.input.frame,

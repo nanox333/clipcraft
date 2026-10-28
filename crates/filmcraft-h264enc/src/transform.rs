@@ -385,6 +385,79 @@ pub fn dequant_chroma_dc(c: &[i32; 4], qt: &QuantTables, qpc: u8) -> [i32; 4] {
     o
 }
 
+/// How large a residual may be before it can possibly produce a non-zero quantised coefficient.
+///
+/// Every transform coefficient is a dot product of the residual with one fixed basis vector, so by
+/// Cauchy-Schwarz its size is at most the basis vector's length times the root of the residual's sum
+/// of squares. The quantiser turns a coefficient into zero whenever it is below a known limit. A
+/// residual whose sum of squares is under `limit^2 / length^2` for every coefficient therefore
+/// quantises to nothing, and the transform need not be run to find that out. All figures are exact
+/// integers, so the test never claims zero for a block that would not be.
+pub struct ZeroBounds {
+    /// Per 8x8 luma block, indexed by QP.
+    pub luma8: [u32; 52],
+    /// Per 4x4 luma block (DC included), indexed by QP.
+    pub luma4: [u32; 52],
+    /// Per 4x4 chroma block (AC only), indexed by the macroblock's luma QP.
+    pub chroma_ac: [u32; 52],
+    /// Per 8x8 chroma component block (the 2x2 DC transform), indexed by the luma QP.
+    pub chroma_dc: [u32; 52],
+}
+
+/// The largest |coefficient| that still quantises to zero.
+fn largest_zero_coefficient(qbits: u32, mf: i64, dz: Deadzone) -> u128 {
+    let one = 1i128 << qbits;
+    let f = (one * i128::from(dz.f256)) >> 8;
+    (((one - f - 1) / i128::from(mf)).max(0)) as u128
+}
+
+/// `limit^2 / length_squared`, the biggest sum of squares that keeps a coefficient under `limit`.
+fn square_limit(limit: u128, length_squared: u128) -> u128 {
+    limit * limit / length_squared
+}
+
+impl ZeroBounds {
+    pub fn new(qt: &QuantTables, chroma_qp_offset: i32, dz: Deadzone) -> Self {
+        // Squared lengths of the basis rows of the 4x4 and 8x8 forward transforms.
+        const LEN4: [u128; 4] = [4, 10, 4, 10];
+        const LEN8: [u128; 8] = [512, 578, 320, 578, 512, 578, 320, 578];
+        let cap = |v: u128| v.min(u128::from(u32::MAX)) as u32;
+        let mut zb = ZeroBounds {
+            luma8: [0; 52],
+            luma4: [0; 52],
+            chroma_ac: [0; 52],
+            chroma_dc: [0; 52],
+        };
+        for qp in 0..52usize {
+            let (q6, q1) = (qp as u32 / 6, qp % 6);
+            let mut best8 = u128::MAX;
+            for i in 0..64 {
+                let t = largest_zero_coefficient(22 + q6, qt.mf8[q1][i], dz);
+                best8 = best8.min(square_limit(t, LEN8[i & 7] * LEN8[i >> 3]));
+            }
+            zb.luma8[qp] = cap(best8);
+            let mut best4 = u128::MAX;
+            for i in 0..16 {
+                let t = largest_zero_coefficient(15 + q6, i64::from(qt.mf4[q1][i]), dz);
+                best4 = best4.min(square_limit(t, LEN4[i & 3] * LEN4[i >> 2]));
+            }
+            zb.luma4[qp] = cap(best4);
+            let qpc = crate::tables::chroma_qp(qp as i32 + chroma_qp_offset) as usize;
+            let (c6, c1) = (qpc as u32 / 6, qpc % 6);
+            let mut ac = u128::MAX;
+            for i in 1..16 {
+                let t = largest_zero_coefficient(15 + c6, i64::from(qt.mf4[c1][i]), dz);
+                ac = ac.min(square_limit(t, LEN4[i & 3] * LEN4[i >> 2]));
+            }
+            zb.chroma_ac[qp] = cap(ac);
+            // The 2x2 DC transform adds the 64 residuals of the block with plus and minus signs.
+            let t = largest_zero_coefficient(16 + c6, i64::from(qt.mf4[c1][0]), dz);
+            zb.chroma_dc[qp] = cap(square_limit(t, 64));
+        }
+        zb
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,5 +537,52 @@ mod tests {
         blk[0] = o[0];
         let r = idct4(&blk);
         assert!(r.iter().all(|&v| (v - 7).abs() <= 1), "{r:?}");
+    }
+
+    #[test]
+    fn a_residual_under_the_zero_bound_never_quantises_to_anything() {
+        let qt = QuantTables::new();
+        let zb = ZeroBounds::new(&qt, 0, Deadzone::INTER);
+        let mut seed = 12345u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 16) as i32
+        };
+        for qp in [0u8, 12, 20, 28, 33, 40, 51] {
+            for _ in 0..400 {
+                // 8x8: random residuals, shrunk until their sum of squares is within the bound.
+                let mut d = [0i32; 64];
+                for v in d.iter_mut() {
+                    *v = next() % 9 - 4;
+                }
+                let mut ssd: u64 = d.iter().map(|&v| (v * v) as u64).sum();
+                let limit = u64::from(zb.luma8[qp as usize]);
+                while ssd > limit {
+                    let (k, _) = d.iter().enumerate().max_by_key(|(_, v)| v.abs()).unwrap();
+                    d[k] -= d[k].signum();
+                    ssd = d.iter().map(|&v| (v * v) as u64).sum();
+                }
+                let mut t = fdct8(&d);
+                assert_eq!(quant8(&mut t, &qt, qp, Deadzone::INTER), 0, "qp {qp} {d:?}");
+                // 4x4.
+                let mut d4 = [0i32; 16];
+                for v in d4.iter_mut() {
+                    *v = next() % 9 - 4;
+                }
+                let mut ssd4: u64 = d4.iter().map(|&v| (v * v) as u64).sum();
+                let limit4 = u64::from(zb.luma4[qp as usize]);
+                while ssd4 > limit4 {
+                    let (k, _) = d4.iter().enumerate().max_by_key(|(_, v)| v.abs()).unwrap();
+                    d4[k] -= d4[k].signum();
+                    ssd4 = d4.iter().map(|&v| (v * v) as u64).sum();
+                }
+                let mut t4 = fdct4(&d4);
+                assert_eq!(
+                    quant4(&mut t4, &qt, qp, Deadzone::INTER, false),
+                    0,
+                    "qp {qp}"
+                );
+            }
+        }
     }
 }

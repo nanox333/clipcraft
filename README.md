@@ -29,7 +29,7 @@ supports up to five shortcuts: use **+** in Settings → Hotkeys.
 - **Record and replay:** capture a screen or game window into a bounded replay buffer and save the
   last moments with a global hotkey. Game-only mode waits until a recognized game is running.
 - **Encoding:** hardware H.264 and H.265 on supported GPUs (Windows), or a built-in software H.264
-  encoder.
+  encoder (recently made 15-45% faster on screen content).
 - **Audio:** system sound and microphone, mixed or on separate tracks, with optional offline
   microphone noise suppression and a mic test.
 - **Library:** a searchable local clip library with favorites, collections and game labels. Delete

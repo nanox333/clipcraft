@@ -517,3 +517,28 @@ and the same with effort Fast, a 720p picture, or H.265. It is mostly a fixed co
 screen, not of ClipCraft's own copy and conversion work. Under a saturating game the recorder dropped
 3-6 % of its frames at 2 ms passes (none with 1 ms passes); the cause is the game's long passes
 delaying the recorder's, not something the priority fixes (+7 made it worse).
+
+## Software H.264 encoder: speed-only changes (2026-10-28)
+
+Profiling the FilmCraft encoder copy (`crates/filmcraft-h264enc`) on 1080p screen recordings showed
+that motion search was not the cost: deciding that an unchanged macroblock needs no residual took
+45-65% of the time (transform and quantise every block just to find all zeros). Three changes that
+leave the output byte-identical (`encoder_hash` hashes of 8 settings on 3 clips, before and after):
+
+* an exact energy bound (`transform::ZeroBounds`, Cauchy-Schwarz against each coefficient's
+  quantiser limit) lets a block, or a whole macroblock, be declared "all zero" without transforming;
+* the same bound skips individual quiet blocks inside macroblocks that are only partly quiet;
+* deblocking treats a P_Skip macroblock as one motion vector instead of 16 blocks.
+
+| 1080p, 1 thread, Speed preset, QP 28 | Before | After |
+| --- | --- | --- |
+| Scrolling game UI (120 frames) | 28.0 ms/frame | 18.1 ms (-35%) |
+| IDE desktop (120 frames) | 34.9 ms | 26.4 ms (-24%) |
+| One still picture repeated | 20.9 ms | 11.9 ms (-43%) |
+| Recorder setting: VBR 12 Mbit/s, AQ, 2 threads, game UI | 43.1 ms | 36.6 ms (-15%) |
+| Recorder setting, IDE desktop | 38.7 ms | 32.2 ms (-17%) |
+
+Gains are smaller at lower QPs and bitrates that leave fewer quiet blocks, and there was no
+high-motion gameplay clip to measure. For reference, x264 `veryfast` encodes the same frames in 7-9 ms
+on one thread. Not done: lazy half-pel planes (about 1 ms per frame, needs shared interior
+mutability across slice threads), faster intra frames, motion-search tuning and rate-control fixes.

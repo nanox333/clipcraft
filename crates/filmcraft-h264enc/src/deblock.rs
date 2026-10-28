@@ -4,7 +4,7 @@
 //! never filtered (slices are MB-row aligned and either there is one slice, or
 //! `disable_deblocking_filter_idc = 2` is used).
 
-use crate::mbinfo::{MbInfo, Mv};
+use crate::mbinfo::{MbInfo, MbKind, Mv};
 use crate::tables::{ALPHA, BETA, TC0, chroma_qp};
 
 pub struct DeblockParams {
@@ -203,6 +203,9 @@ pub fn deblock_band<'a>(
     for my in 0..rows {
         for mx in 0..mbw {
             let q = &mbs[my * mbw + mx];
+            // A P_Skip macroblock has one motion vector and no coefficients, so every edge inside it
+            // has strength 0 and its outer edges depend only on that one vector.
+            let q_flat = q.kind == MbKind::PSkip;
             let cqp = |m: &MbInfo| chroma_qp(m.qp as i32 + dp.chroma_qp_offset) as i32;
             // ---- vertical edges (dir 0) then horizontal (dir 1)
             for dir in 0..2 {
@@ -212,6 +215,9 @@ pub fn deblock_band<'a>(
                         continue;
                     }
                     if e & 1 == 1 && q.t8x8 {
+                        continue;
+                    }
+                    if e > 0 && q_flat {
                         continue;
                     }
                     let p_mb = if e == 0 {
@@ -224,15 +230,20 @@ pub fn deblock_band<'a>(
                         q
                     };
                     let mut bs = [0u8; 4];
-                    for s in 0..4 {
-                        let (iq, ip) = if dir == 0 {
-                            let iq = s * 4 + e;
-                            (iq, if e == 0 { s * 4 + 3 } else { iq - 1 })
-                        } else {
-                            let iq = e * 4 + s;
-                            (iq, if e == 0 { 12 + s } else { iq - 4 })
-                        };
-                        bs[s] = bs_of(p_mb, ip, q, iq, e == 0, ids);
+                    if q_flat && p_mb.kind == MbKind::PSkip {
+                        // Both sides are skipped: same picture, one vector each.
+                        bs = [mvdiff(p_mb.mv[0][0], q.mv[0][0]) as u8; 4];
+                    } else {
+                        for s in 0..4 {
+                            let (iq, ip) = if dir == 0 {
+                                let iq = s * 4 + e;
+                                (iq, if e == 0 { s * 4 + 3 } else { iq - 1 })
+                            } else {
+                                let iq = e * 4 + s;
+                                (iq, if e == 0 { 12 + s } else { iq - 4 })
+                            };
+                            bs[s] = bs_of(p_mb, ip, q, iq, e == 0, ids);
+                        }
                     }
                     bs_all[e] = bs;
                     if bs == [0; 4] {
