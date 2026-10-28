@@ -13,8 +13,8 @@ use crate::picture::{CHROMA_PAD, Frame, LUMA_PAD, RefPic, avg_into};
 use crate::syntax::{MbCode, NbCtx};
 use crate::tables::{BLK4_XY, NUM_CTX, RASTER_TO_BLK4, ZIGZAG4, ZIGZAG8, chroma_qp};
 use crate::transform::{
-    Deadzone, QuantTables, ZeroBounds, dequant_chroma_dc, dequant_luma_dc, dequant4, dequant8,
-    fdct4, fdct8, idct4, idct8, quant_chroma_dc, quant_luma_dc, quant4, quant8,
+    Deadzone, QuantTables, dequant_chroma_dc, dequant_luma_dc, dequant4, dequant8, fdct4, fdct8,
+    idct4, idct8, quant_chroma_dc, quant_luma_dc, quant4, quant8,
 };
 use crate::{cabac_mb, cavlc};
 
@@ -42,13 +42,18 @@ pub struct EncParams {
     pub always_intra: bool,
     /// Maximum CAVLC level magnitude (Baseline).
     pub cavlc_clamp: bool,
+    /// Try the six diagonal 4x4 intra modes only when plain, horizontal and vertical prediction
+    /// leave a block poorly predicted.
+    pub fast_intra: bool,
+    /// Code macroblocks that did not change since the previous picture as P_Skip without analysis.
+    /// Only valid when every P picture references the one just before it (no B-frames).
+    pub static_skip: bool,
 }
 
 /// Per-frame shared encoding state.
 pub struct FrameEnc<'a> {
     pub p: &'a EncParams,
     pub qt: &'a QuantTables,
-    pub zero: &'a ZeroBounds,
     pub cost_tab: &'a CostTable,
     pub st: SliceType,
     pub src: &'a Frame,
@@ -56,6 +61,8 @@ pub struct FrameEnc<'a> {
     pub l1: Option<&'a RefPic>,
     pub qp: u8,
     pub aq: &'a [i8],
+    /// Per macroblock: identical to the previous input picture (empty when not tracked).
+    pub unchanged: &'a [bool],
     pub hdr: SliceHeader,
     pub nal_ref_idc: u8,
     pub nal_type: u8,
@@ -488,6 +495,18 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
         let qp = (f.qp as i32 + aq).clamp(0, 51) as u8;
         let av = self.avail(mx, my);
         let (px, py) = (mx * 16, my * 16);
+        // Nothing changed here since the previous picture and the skip vector is zero: P_Skip,
+        // without looking at anything else.
+        if f.st == SliceType::P
+            && f.p.static_skip
+            && f.unchanged.get(my * mbw + mx) == Some(&true)
+            && let Some(r) = f.l0
+            && self.pskip_mv(mx, my) == Mv::ZERO
+            && self.mv_ok(px, py, 16, 16, Mv::ZERO)
+        {
+            self.commit_unchanged(mx, my, r);
+            return;
+        }
         let mut src_y = [0u8; 256];
         let mut src_u = [0u8; 64];
         let mut src_v = [0u8; 64];
@@ -602,6 +621,64 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
         }
     }
 
+    /// A macroblock that did not change since the previous picture, coded as P_Skip with a zero
+    /// vector. The same result as analysing it and finding that out, without building a candidate:
+    /// the reconstruction is the reference at the same place, and only the skip flag is coded.
+    fn commit_unchanged(&mut self, mx: usize, my: usize, r: &RefPic) {
+        let (px, py) = (mx * 16, my * 16);
+        let mut y = [0u8; 256];
+        let mut u = [0u8; 64];
+        let mut v = [0u8; 64];
+        self.pred_block(r, px, py, (0, 0, 16, 16), Mv::ZERO, &mut y, &mut u, &mut v);
+        for row in 0..16 {
+            let i = self.ry(px, py + row);
+            self.band.y[i..i + 16].copy_from_slice(&y[row * 16..row * 16 + 16]);
+        }
+        for row in 0..8 {
+            let i = self.rc(px / 2, py / 2 + row);
+            self.band.u[i..i + 8].copy_from_slice(&u[row * 8..row * 8 + 8]);
+            self.band.v[i..i + 8].copy_from_slice(&v[row * 8..row * 8 + 8]);
+        }
+        let prev_dqp_nz = self.prev_dqp_nz;
+        self.prev_dqp_nz = false;
+        let info = MbInfo {
+            ref_idx: [[0; 4], [-1; 4]],
+            kind: MbKind::PSkip,
+            qp: self.last_qp,
+            slice: self.slice_no + 1,
+            ..MbInfo::default()
+        };
+        self.stats.mbs += 1;
+        self.stats.qp_sum += info.qp as u64;
+        self.stats.skip += 1;
+        let idx = (my - self.y0) * self.f.p.mbw + mx;
+        self.mbs[idx] = info;
+        let av = self.avail(mx, my);
+        let left = if av.left {
+            Some(&self.mbs[idx - 1])
+        } else {
+            None
+        };
+        let top = if av.top {
+            Some(&self.mbs[idx - self.f.p.mbw])
+        } else {
+            None
+        };
+        let nb = NbCtx {
+            left,
+            top,
+            cur: &self.mbs[idx],
+            slice_type: self.f.st,
+            prev_dqp_nz,
+            t8x8_mode: self.f.p.t8x8,
+        };
+        if let Some(cab) = self.cabac.as_mut() {
+            cabac_mb::write_skip_flag(cab, &nb, true);
+        } else if self.cavlc.is_some() {
+            self.skip_run += 1;
+        }
+    }
+
     /// Estimated bits (1/256 units) of coding candidate `c` at the current entropy state.
     fn est_bits(&self, mx: usize, my: usize, c: &Cand, qp: u8) -> u64 {
         let av = self.avail(mx, my);
@@ -691,24 +768,39 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
             };
             let mut dc = [0i32; 4];
             let mut ac_score = 0;
+            // The residual of the whole component first: when every 4x4 block is within the limits
+            // that guarantee all-zero levels (see `QuantTables::zero4_ac` and `zero_dc`), none of
+            // the transforms or quantisers need to run.
+            let mut diffs = [[0i32; 16]; 4];
+            let mut energies = [0u64; 4];
             for b in 0..4 {
                 let (bx, by) = ((b & 1) * 4, (b >> 1) * 4);
-                let mut d = [0i32; 16];
-                let (mut energy, mut sum) = (0u32, 0i32);
                 for y in 0..4 {
                     for x in 0..4 {
-                        let v = s[(by + y) * 8 + bx + x] as i32 - p[(by + y) * 8 + bx + x] as i32;
-                        d[y * 4 + x] = v;
-                        energy += (v * v) as u32;
-                        sum += v;
+                        let diff =
+                            s[(by + y) * 8 + bx + x] as i32 - p[(by + y) * 8 + bx + x] as i32;
+                        diffs[b][y * 4 + x] = diff;
+                        energies[b] += (diff * diff) as u64;
                     }
                 }
-                // No AC coefficient can survive: only the block's DC (the sum) is needed.
-                if !intra && energy <= self.f.zero.chroma_ac[qp as usize] {
-                    dc[b] = sum;
+            }
+            let zi = QuantTables::dz_index(dz);
+            let limit =
+                |table: &[u32; 52]| u64::from(table.get(qpc as usize).copied().unwrap_or(0));
+            if energies.iter().all(|&e| e <= limit(&qt.zero4_ac[zi]))
+                && energies.iter().sum::<u64>() <= limit(&qt.zero_dc[zi])
+            {
+                for b in 0..4 {
                     c.code.cac[comp * 4 + b] = [0; 16];
-                    continue;
+                    coefs[comp][b] = [0; 16];
+                    c.code.cdc[comp][b] = 0;
                 }
+                continue;
+            }
+            for b in 0..4 {
+                let (bx, by) = ((b & 1) * 4, (b >> 1) * 4);
+                let d = diffs[b];
+                let _ = (bx, by);
                 let mut t = fdct4(&d);
                 dc[b] = t[0];
                 quant4(&mut t, qt, qpc, dz, true);
@@ -822,18 +914,11 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
         for blk in 0..16 {
             let (bx, by) = BLK4_XY[blk];
             let mut d = [0i32; 16];
-            let mut energy = 0u32;
             for y in 0..4 {
                 for x in 0..4 {
                     let i = (by * 4 + y) * 16 + bx * 4 + x;
-                    let v = src[i] as i32 - pred[i] as i32;
-                    d[y * 4 + x] = v;
-                    energy += (v * v) as u32;
+                    d[y * 4 + x] = src[i] as i32 - pred[i] as i32;
                 }
-            }
-            if dz.f256 == Deadzone::INTER.f256 && energy <= self.f.zero.luma4[qp as usize] {
-                c.code.luma4[blk] = [0; 16];
-                continue;
             }
             let mut t = fdct4(&d);
             quant4(&mut t, qt, qp, dz, false);
@@ -906,18 +991,24 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
         for b8 in 0..4 {
             let (ox, oy) = ((b8 & 1) * 8, (b8 >> 1) * 8);
             let mut d = [0i32; 64];
-            let mut energy = 0u32;
+            let mut energy = 0u64;
             for y in 0..8 {
                 for x in 0..8 {
                     let i = (oy + y) * 16 + ox + x;
-                    let v = src[i] as i32 - pred[i] as i32;
-                    d[y * 8 + x] = v;
-                    energy += (v * v) as u32;
+                    let diff = src[i] as i32 - pred[i] as i32;
+                    d[y * 8 + x] = diff;
+                    energy += (diff * diff) as u64;
                 }
             }
-            // A block too quiet to leave any coefficient is not transformed (see `ZeroBounds`).
-            if dz.f256 == Deadzone::INTER.f256 && energy <= self.f.zero.luma8[qp as usize] {
+            // A block this close to its prediction is certain to quantise to nothing (see
+            // `QuantTables::zero8`): skip the transform.
+            let zero_limit = qt.zero8[QuantTables::dz_index(dz)]
+                .get(qp as usize)
+                .copied()
+                .unwrap_or(0);
+            if energy <= u64::from(zero_limit) {
                 c.code.luma8[b8] = [0; 64];
+                coefs[b8] = [0; 64];
                 continue;
             }
             let mut t = fdct8(&d);
@@ -962,66 +1053,6 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
             }
         }
         cbp
-    }
-
-    /// True only when coding this inter prediction's residual is certain to give no coefficients at
-    /// all, judged from the residual's energy against [`ZeroBounds`]; the transforms are not run.
-    /// "False" means "not sure", and the caller codes the residual in full.
-    fn residual_is_zero(
-        &self,
-        src: &Src,
-        py: &[u8; 256],
-        pu: &[u8; 64],
-        pv: &[u8; 64],
-        qp: u8,
-    ) -> bool {
-        fn block(a: &[u8], b: &[u8], stride: usize, x0: usize, y0: usize, size: usize) -> u32 {
-            let mut sum = 0u32;
-            for y in y0..y0 + size {
-                let (ra, rb) = (
-                    &a[y * stride + x0..y * stride + x0 + size],
-                    &b[y * stride + x0..y * stride + x0 + size],
-                );
-                for (&p, &q) in ra.iter().zip(rb) {
-                    let d = i32::from(p) - i32::from(q);
-                    sum += (d * d) as u32;
-                }
-            }
-            sum
-        }
-        let zb = self.f.zero;
-        let q = qp as usize;
-        // Which luma transforms the residual could be coded with.
-        let t8 = self.f.p.t8x8;
-        if t8 {
-            for b in 0..4 {
-                if block(&src.y, py, 16, (b & 1) * 8, (b >> 1) * 8, 8) > zb.luma8[q] {
-                    return false;
-                }
-            }
-        }
-        if !t8 || self.f.p.adaptive_t8 {
-            for b in 0..16 {
-                let (bx, by) = BLK4_XY[b];
-                if block(&src.y, py, 16, bx * 4, by * 4, 4) > zb.luma4[q] {
-                    return false;
-                }
-            }
-        }
-        for (s, p) in [(&src.u, pu), (&src.v, pv)] {
-            let mut total = 0u32;
-            for b in 0..4 {
-                let ssd4 = block(s, p, 8, (b & 1) * 4, (b >> 1) * 4, 4);
-                if ssd4 > zb.chroma_ac[q] {
-                    return false;
-                }
-                total += ssd4;
-            }
-            if total > zb.chroma_dc[q] {
-                return false;
-            }
-        }
-        true
     }
 
     /// Code an inter candidate's residual given its luma/chroma prediction.
@@ -1421,16 +1452,32 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
                 );
             }
             let mut best = (u32::MAX, 2u8, [0u8; 16]);
-            for mode in 0..9u8 {
-                if !mode_available(mode, ed.has_top, ed.has_left, ed.has_tl) {
-                    continue;
+            // Plain, horizontal and vertical prediction first: flat areas and axis-aligned edges
+            // (screen content) are nearly always served by one of them, and the six diagonal modes
+            // are then not worth their cost.
+            let early = self
+                .f
+                .p
+                .fast_intra
+                .then_some(((lam * 24) >> 8).saturating_add(32));
+            for (round, modes) in [[2u8, 0, 1].as_slice(), &[3, 4, 5, 6, 7, 8]]
+                .iter()
+                .enumerate()
+            {
+                if round == 1 && early.is_some_and(|limit| best.0 <= limit) {
+                    break;
                 }
-                let mut p = [0u8; 16];
-                pred4x4(mode, &ed, &mut p);
-                let bits = if mode == pm { 1 } else { 4 };
-                let cost = satd(&srcb, 4, &p, 4, 4, 4) + ((lam * bits) >> 8);
-                if cost < best.0 {
-                    best = (cost, mode, p);
+                for &mode in *modes {
+                    if !mode_available(mode, ed.has_top, ed.has_left, ed.has_tl) {
+                        continue;
+                    }
+                    let mut p = [0u8; 16];
+                    pred4x4(mode, &ed, &mut p);
+                    let bits = if mode == pm { 1 } else { 4 };
+                    let cost = satd(&srcb, 4, &p, 4, 4, 4) + ((lam * bits) >> 8);
+                    if cost < best.0 {
+                        best = (cost, mode, p);
+                    }
                 }
             }
             total += best.0 as u64;
@@ -1594,7 +1641,8 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
     }
 
     /// Full intra analysis; returns the best coded intra candidate. `inter_cost` lets P/B skip expensive modes.
-    fn analyse_intra(
+    /// The best intra candidate. With an `inter_cost` to beat, `None` means it provably cannot win.
+    fn analyse_intra_against(
         &self,
         mx: usize,
         my: usize,
@@ -1603,7 +1651,7 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
         e: &MbEdges,
         src: &Src,
         inter_cost: u64,
-    ) -> Box<Cand> {
+    ) -> Option<Box<Cand>> {
         let lam = self.f.lam.sad[qp as usize];
         let p = self.f.p;
         // I16x16 mode
@@ -1628,6 +1676,15 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
             }
         }
         let cost16 = b16.0 as u64 + ((lam * 6) >> 8) as u64;
+        // Against an inter candidate, an intra macroblock whose cheap estimate is already clearly
+        // worse can never be chosen, so do not code it at all.
+        if !p.rd
+            && !p.always_intra
+            && inter_cost != u64::MAX
+            && cost16 >= inter_cost.saturating_add(inter_cost / 4)
+        {
+            return None;
+        }
         let (cmode, pu, pv) = self.best_chroma_mode(e, av, src, lam);
         let mk16 = || {
             let mut c = Cand::new();
@@ -1646,7 +1703,7 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
         let try_nxn = p.i4x4
             && (inter_cost == u64::MAX || cost16 < inter_cost + inter_cost / 4 || p.always_intra);
         if !try_nxn {
-            return mk16();
+            return Some(mk16());
         }
         let limit = cost16.min(inter_cost.saturating_add(inter_cost / 8));
         let mut limit = if p.rd { cost16 + cost16 / 4 } else { limit };
@@ -1674,7 +1731,7 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
             c.code.cbp = (c.code.cbp & 15) | (cbpc << 4);
             c
         };
-        match best {
+        Some(match best {
             None => mk16(),
             Some(c) => {
                 let c = finish(c);
@@ -1693,7 +1750,22 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
                     mk16()
                 }
             }
-        }
+        })
+    }
+
+    /// The best intra candidate (an I macroblock, or when nothing is known about inter).
+    fn analyse_intra(
+        &self,
+        mx: usize,
+        my: usize,
+        qp: u8,
+        av: Avail,
+        e: &MbEdges,
+        src: &Src,
+        inter_cost: u64,
+    ) -> Box<Cand> {
+        self.analyse_intra_against(mx, my, qp, av, e, src, inter_cost)
+            .unwrap_or_else(Cand::new)
     }
 
     // ------------------------------------------------------------------ motion estimation
@@ -1806,6 +1878,7 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
                 if step == 1 && p.subpel < 2 {
                     break;
                 }
+
                 let rounds = if step == 1 {
                     1 + p.subpel_rounds as usize
                 } else {
@@ -2007,6 +2080,13 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
         let (px, py) = (mx * 16, my * 16);
         let skip_mv = self.pskip_mv(mx, my);
         let skip_ok = self.mv_ok(px, py, 16, 16, skip_mv);
+        // A macroblock that did not change from the previous picture keeps its (already coded)
+        // reconstruction: when the skip vector is zero that is exactly P_Skip, and nothing else
+        // needs to be looked at. Screen content is mostly this.
+        let unchanged = f.p.static_skip
+            && skip_ok
+            && skip_mv == Mv::ZERO
+            && f.unchanged.get(my * f.p.mbw + mx) == Some(&true);
         // --- try P_Skip early
         let mut skip_pred = None;
         if skip_ok {
@@ -2016,16 +2096,20 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
             self.pred_block(r, px, py, (0, 0, 16, 16), skip_mv, &mut y, &mut u, &mut v);
             let s = sad16(&src.y, 16, &y, 16, 16);
             let qstep_thresh = (f.qt.v4[(qp % 6) as usize][0] << (qp / 6)) as u32 * 16;
-            if s < qstep_thresh * 2 {
+            if unchanged || s < qstep_thresh * 2 {
                 let mut c = Cand::new();
                 c.code.kind = MbKind::PInter;
                 c.code.part = Part::P16x16;
-                // A residual that provably quantises to nothing needs no transform to find out.
-                let nothing = self.residual_is_zero(src, &y, &u, &v, qp);
-                if !nothing {
+                // A block identical to its prediction has no residual to transform: coding it would
+                // give an all-zero result, so skip the work. So does a block that did not change.
+                let identical = unchanged
+                    || (s == 0
+                        && sad(&src.u, 8, &u, 8, 8, 8) == 0
+                        && sad(&src.v, 8, &v, 8, 8, 8) == 0);
+                if !identical {
                     self.code_inter(src, &y, &u, &v, qp, &mut c);
                 }
-                if nothing || c.code.cbp == 0 {
+                if c.code.cbp == 0 {
                     c.code.kind = MbKind::PSkip;
                     Self::cand_inter_info(
                         &mut c,
@@ -2132,8 +2216,9 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
         }
         // --- intra
         let need_intra = f.p.always_intra || best_cost > (256 * 3 + 16 * lam as u64 / 256) * 2;
-        if need_intra {
-            let ic = self.analyse_intra(mx, my, qp, av, e, src, best_cost);
+        if need_intra
+            && let Some(ic) = self.analyse_intra_against(mx, my, qp, av, e, src, best_cost)
+        {
             if f.p.rd {
                 if self.rd_cost(mx, my, &ic, src, qp) < self.rd_cost(mx, my, &ci, src, qp) {
                     return ic;
@@ -2514,8 +2599,9 @@ impl<'a, 'b> SliceEnc<'a, 'b> {
             }
         }
         let need_intra = f.p.always_intra || best.cost > (256 * 3 + 16 * lam as u64 / 256) * 3;
-        if need_intra {
-            let ic = self.analyse_intra(mx, my, qp, av, e, src, best.cost);
+        if need_intra
+            && let Some(ic) = self.analyse_intra_against(mx, my, qp, av, e, src, best.cost)
+        {
             if f.p.rd {
                 if self.rd_cost(mx, my, &ic, src, qp) < self.rd_cost(mx, my, &best, src, qp) {
                     return ic;

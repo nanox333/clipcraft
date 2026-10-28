@@ -15,7 +15,7 @@ use clipcraft_record::{HardwareEncoder, HardwarePacket, HardwareRequest};
 
 use super::ffi::*;
 use crate::h264_headers::{self, LOG2_MAX_FRAME_NUM, LOG2_MAX_POC_LSB, PIC_INIT_QP, StreamShape};
-use crate::h264_stream::{annexb_to_length_prefixed, build_avcc, rgba_to_nv12};
+use crate::h264_stream::{annexb_to_length_prefixed, build_avcc, conversion_threads, rgba_to_nv12};
 
 /// Largest picture side accepted, in pixels.
 const MAX_SIDE: u32 = 8_192;
@@ -446,7 +446,13 @@ impl VaEncoder {
     fn upload(&mut self, rgba: &[u8]) -> Result<(), String> {
         let (width, height) = (self.request.width as usize, self.request.height as usize);
         let mut nv12 = std::mem::take(&mut self.nv12);
-        let converted = rgba_to_nv12(rgba, self.request.width, self.request.height, &mut nv12, 2);
+        let converted = rgba_to_nv12(
+            rgba,
+            self.request.width,
+            self.request.height,
+            &mut nv12,
+            conversion_threads(),
+        );
         let result = converted.and_then(|()| self.write_surface(&nv12, width, height));
         self.nv12 = nv12;
         result

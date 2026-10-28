@@ -518,27 +518,25 @@ screen, not of ClipCraft's own copy and conversion work. Under a saturating game
 3-6 % of its frames at 2 ms passes (none with 1 ms passes); the cause is the game's long passes
 delaying the recorder's, not something the priority fixes (+7 made it worse).
 
-## Software H.264 encoder: speed-only changes (2026-10-28)
+## Software H.264 encoder: a second measurement on 1080p (2026-10-28)
 
-Profiling the FilmCraft encoder copy (`crates/filmcraft-h264enc`) on 1080p screen recordings showed
-that motion search was not the cost: deciding that an unchanged macroblock needs no residual took
-45-65% of the time (transform and quantise every block just to find all zeros). Three changes that
-leave the output byte-identical (`encoder_hash` hashes of 8 settings on 3 clips, before and after):
+The speed work listed in `crates/filmcraft-h264enc/UPSTREAM.md` (static-content skip, zero-residual
+shortcut, deblock and intra fast paths) was re-measured on 1080p recordings with
+`cargo run --release -p clipcraft-record --example encoder_hash W H FILE`, which prints a hash of every
+output byte, the size and the best-of-three milliseconds per picture for 8 settings. Profiling the
+original FilmCraft copy had shown that motion search was not the cost: deciding that an unchanged
+macroblock needs no residual took 45-65% of the time.
 
-* an exact energy bound (`transform::ZeroBounds`, Cauchy-Schwarz against each coefficient's
-  quantiser limit) lets a block, or a whole macroblock, be declared "all zero" without transforming;
-* the same bound skips individual quiet blocks inside macroblocks that are only partly quiet;
-* deblocking treats a P_Skip macroblock as one motion vector instead of 16 blocks.
-
-| 1080p, 1 thread, Speed preset, QP 28 | Before | After |
+| 1080p, Speed preset (game UI clip unless noted) | Original FilmCraft | Now |
 | --- | --- | --- |
-| Scrolling game UI (120 frames) | 28.0 ms/frame | 18.1 ms (-35%) |
-| IDE desktop (120 frames) | 34.9 ms | 26.4 ms (-24%) |
-| One still picture repeated | 20.9 ms | 11.9 ms (-43%) |
-| Recorder setting: VBR 12 Mbit/s, AQ, 2 threads, game UI | 43.1 ms | 36.6 ms (-15%) |
-| Recorder setting, IDE desktop | 38.7 ms | 32.2 ms (-17%) |
+| QP 28, 1 thread | 32.1 ms/picture | 7.3 ms |
+| QP 20, 1 thread | 30.6 ms | 9.7 ms |
+| Recorder setting (VBR 12 Mbit/s, adaptive quantisation, 2 threads) | 40.9 ms | 13.9 ms, size -1.6% |
+| Balanced preset QP 28 | 51.8 ms | 39.7 ms |
+| IDE desktop clip, QP 28, 1 thread | 35.7 ms | 20.1 ms |
+| IDE desktop clip, recorder setting | 37.9 ms | 25.4 ms, size -4.2% (measured while another job ran) |
 
-Gains are smaller at lower QPs and bitrates that leave fewer quiet blocks, and there was no
-high-motion gameplay clip to measure. For reference, x264 `veryfast` encodes the same frames in 7-9 ms
-on one thread. Not done: lazy half-pel planes (about 1 ms per frame, needs shared interior
-mutability across slice threads), faster intra frames, motion-search tuning and rate-control fixes.
+Sizes stay within 0.3% of the original at equal QP. For reference, x264 `veryfast` encodes the same
+frames in 7-9 ms on one thread. Not yet done: faster Balanced/Quality presets, keyframe stalls, lazy
+half-pel planes, rate-control undershoot (a 12 Mbit/s target produced 9 Mbit/s), and measuring real
+high-motion gameplay.

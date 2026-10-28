@@ -29,7 +29,8 @@ supports up to five shortcuts: use **+** in Settings → Hotkeys.
 - **Record and replay:** capture a screen or game window into a bounded replay buffer and save the
   last moments with a global hotkey. Game-only mode waits until a recognized game is running.
 - **Encoding:** hardware H.264 and H.265 on supported GPUs (Windows), or a built-in software H.264
-  encoder (recently made 15-45% faster on screen content).
+  encoder tuned for screen recording. If the graphics-card encoder fails or is busy, recording
+  continues on the processor and the card is tried again every 20 s or longer.
 - **Audio:** system sound and microphone, mixed or on separate tracks, with optional offline
   microphone noise suppression and a mic test.
 - **Library:** a searchable local clip library with favorites, collections and game labels. Delete
@@ -67,7 +68,9 @@ cargo run --package clipcraft
 ```
 
 `cargo xtask ci` runs the same checks as GitHub Actions on Linux and Windows; tests clean their scratch
-folders with a retry so a finishing capture worker cannot make them flaky.
+folders with a retry so a finishing capture worker cannot make them flaky, and timing checks are tied
+to the behaviour they test (for example the post-roll length) instead of a tight wall clock, so a busy
+CI machine does not fail them.
 
 Useful local CLI commands:
 

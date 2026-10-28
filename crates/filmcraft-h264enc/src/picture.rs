@@ -287,17 +287,44 @@ impl RefPic {
         for (p, out) in [(&self.frame.u, out_u), (&self.frame.v, out_v)] {
             let s = p.stride;
             let i0 = p.idx(xi, yi);
-            for r in 0..h {
-                let a = &p.data[i0 + r * s..i0 + r * s + w + 1];
-                let b = &p.data[i0 + (r + 1) * s..i0 + (r + 1) * s + w + 1];
-                let o = &mut out[r * ostride..r * ostride + w];
-                for i in 0..w {
-                    o[i] = ((w00 * a[i] as u32
-                        + w01 * a[i + 1] as u32
-                        + w10 * b[i] as u32
-                        + w11 * b[i + 1] as u32
-                        + 32)
-                        >> 6) as u8;
+            if fx == 0 && fy == 0 {
+                // Whole-sample position: the blend is the sample itself ((64 * a + 32) >> 6).
+                for r in 0..h {
+                    out[r * ostride..r * ostride + w]
+                        .copy_from_slice(&p.data[i0 + r * s..i0 + r * s + w]);
+                }
+            } else if fy == 0 {
+                // Horizontal only: the rows below carry weight 0.
+                for r in 0..h {
+                    let a = &p.data[i0 + r * s..i0 + r * s + w + 1];
+                    let o = &mut out[r * ostride..r * ostride + w];
+                    for i in 0..w {
+                        o[i] = ((w00 * a[i] as u32 + w01 * a[i + 1] as u32 + 32) >> 6) as u8;
+                    }
+                }
+            } else if fx == 0 {
+                // Vertical only: the column to the right carries weight 0.
+                for r in 0..h {
+                    let a = &p.data[i0 + r * s..i0 + r * s + w];
+                    let b = &p.data[i0 + (r + 1) * s..i0 + (r + 1) * s + w];
+                    let o = &mut out[r * ostride..r * ostride + w];
+                    for i in 0..w {
+                        o[i] = ((w00 * a[i] as u32 + w10 * b[i] as u32 + 32) >> 6) as u8;
+                    }
+                }
+            } else {
+                for r in 0..h {
+                    let a = &p.data[i0 + r * s..i0 + r * s + w + 1];
+                    let b = &p.data[i0 + (r + 1) * s..i0 + (r + 1) * s + w + 1];
+                    let o = &mut out[r * ostride..r * ostride + w];
+                    for i in 0..w {
+                        o[i] = ((w00 * a[i] as u32
+                            + w01 * a[i + 1] as u32
+                            + w10 * b[i] as u32
+                            + w11 * b[i + 1] as u32
+                            + 32)
+                            >> 6) as u8;
+                    }
                 }
             }
         }

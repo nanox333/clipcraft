@@ -635,6 +635,38 @@ struct Active {
     pending: VecDeque<i64>,
     avcc_sent: bool,
     last_pts: i64,
+    /// While encoding in software although a graphics-card encoder was offered: when to try it
+    /// again.
+    retry: Option<Retry>,
+    /// Times the graphics card's encoder has stopped in this stream, so a card that keeps failing
+    /// is asked less and less often and finally left alone.
+    failures: u32,
+}
+
+/// The schedule for going back to the graphics card after it was unavailable or stopped.
+struct Retry {
+    at: Instant,
+    wait: Duration,
+    tries: u32,
+}
+
+/// Failed tries after which the recorder stops asking the graphics card.
+const MAX_HARDWARE_TRIES: u32 = 8;
+
+impl Retry {
+    fn first(provider: &HardwareProvider) -> Self {
+        Self::after_failures(provider, 0)
+    }
+
+    /// The schedule once the card's encoder has stopped `failures` times.
+    fn after_failures(provider: &HardwareProvider, failures: u32) -> Self {
+        let wait = provider.retry_after().saturating_mul(1 << failures.min(6));
+        Self {
+            at: Instant::now() + wait,
+            wait,
+            tries: 0,
+        }
+    }
 }
 
 fn encoder_config(config: &RecordConfig, plan: &Reframe, threads: usize) -> EncoderConfig {
@@ -756,6 +788,19 @@ fn software_stage(
     Ok(Stage::Software(encoder))
 }
 
+fn hardware_request(config: &RecordConfig, plan: &Reframe) -> HardwareRequest {
+    HardwareRequest {
+        codec: config.codec,
+        width: plan.output_width,
+        height: plan.output_height,
+        fps: config.fps,
+        video_kbps: config.video_kbps,
+        constant_bitrate: config.constant_bitrate,
+        keyframe_frames: config.keyframe_seconds.saturating_mul(config.fps).max(1),
+        effort: config.speed,
+    }
+}
+
 /// Opens the hardware encoder if one was offered and works; otherwise the software encoder, with
 /// the reason in the status.
 fn open_stage(
@@ -772,17 +817,7 @@ fn open_stage(
         };
         return software_stage(shared, config, plan, threads, label.to_owned());
     };
-    let request = HardwareRequest {
-        codec: config.codec,
-        width: plan.output_width,
-        height: plan.output_height,
-        fps: config.fps,
-        video_kbps: config.video_kbps,
-        constant_bitrate: config.constant_bitrate,
-        keyframe_frames: config.keyframe_seconds.saturating_mul(config.fps).max(1),
-        effort: config.speed,
-    };
-    match provider.open(&request) {
+    match provider.open(&hardware_request(config, plan)) {
         Ok(encoder) => {
             *lock(&shared.encoder) = format!("GPU ({})", encoder.name());
             // The decoder configuration is complete only after the first picture.
@@ -822,6 +857,11 @@ fn new_active(
     lock(&shared.buffer).clear();
     let stage = open_stage(shared, config, &plan, threads)?;
     let software = matches!(stage, Stage::Software(_));
+    let retry = config
+        .hardware
+        .as_ref()
+        .filter(|_| software)
+        .map(Retry::first);
     Ok(Active {
         stage,
         source_size: (source_width, source_height),
@@ -830,6 +870,8 @@ fn new_active(
         avcc_sent: software,
         plan,
         last_pts: -1,
+        retry,
+        failures: 0,
     })
 }
 
@@ -853,7 +895,53 @@ fn fail_over(
     active.pending.clear();
     active.avcc_sent = true;
     active.last_pts = -1;
+    active.failures += 1;
+    active.retry = config
+        .hardware
+        .as_ref()
+        .filter(|_| active.failures < MAX_HARDWARE_TRIES)
+        .map(|provider| Retry::after_failures(provider, active.failures));
     lock(&shared.stats).restarts += 1;
+    Ok(())
+}
+
+/// While encoding in software although a graphics-card encoder was offered, asks the card again
+/// now and then (waiting twice as long after each failure). When it answers, the stream restarts
+/// on the card: the replay buffer starts over, because its pictures belong to the old stream, but
+/// the processor stops encoding for the rest of the session instead of until the next restart.
+fn try_return_to_hardware(
+    shared: &Shared,
+    config: &RecordConfig,
+    active: &mut Active,
+) -> Result<(), RecordError> {
+    let (Some(provider), Some(retry)) = (config.hardware.as_ref(), active.retry.as_mut()) else {
+        return Ok(());
+    };
+    if !matches!(active.stage, Stage::Software(_)) || Instant::now() < retry.at {
+        return Ok(());
+    }
+    match provider.open(&hardware_request(config, &active.plan)) {
+        Ok(encoder) => {
+            let _ = flush(shared, active);
+            lock(&shared.buffer).clear();
+            active.stage = Stage::Hardware(encoder);
+            active.pending.clear();
+            active.avcc_sent = false;
+            active.last_pts = -1;
+            active.retry = None;
+            *lock(&shared.video) = None;
+            lock(&shared.stats).restarts += 1;
+        }
+        Err(_) => {
+            retry.tries += 1;
+            if retry.tries >= MAX_HARDWARE_TRIES {
+                active.retry = None;
+            } else {
+                retry.wait = retry.wait.saturating_mul(2);
+                retry.at = Instant::now() + retry.wait;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -889,6 +977,9 @@ fn encode_one(
     if pts <= current.last_pts {
         lock(&shared.stats).dropped += 1;
         return Ok(());
+    }
+    if matches!(current.stage, Stage::Software(_)) {
+        try_return_to_hardware(shared, config, current)?;
     }
     if let Stage::Hardware(_) = current.stage {
         match encode_hardware(shared, current, frame, pts, threads) {

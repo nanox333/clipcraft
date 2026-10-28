@@ -17,13 +17,19 @@ unit tests inside `src/`) cover the encoder through the recorder and exporter, a
 
 ## Changes from upstream
 
-Every change so far is speed-only: the bitstream is byte-identical to upstream's, checked with
-`cargo run --release -p clipcraft-record --example encoder_hash W H FILE` (a hash of all output for 8
-settings, before and after). List each change here with the reason and its measurement, so a later
-merge from FilmCraft stays possible:
+All changes are for the Speed preset (what recording uses) unless noted; none changes the stream format. List each change here with the reason and its measurement, so a later merge from
+FilmCraft stays possible:
 
 | Date | Change | Why | Measured |
 | --- | --- | --- | --- |
-| 2026-10-28 | P_Skip is decided without running the transforms when the residual provably quantises to nothing (`transform::ZeroBounds`, `slice::residual_is_zero`) | Profiling showed 45-65% of encode time was spent proving that unchanged macroblocks have no residual | 1080p, 1 thread, Speed, QP 28: 28.0 -> 21 ms on a scrolling game UI clip, 20.9 -> about 14 ms on a still picture. Output identical. |
-| 2026-10-28 | Blocks too quiet to leave a coefficient skip their transform and quantiser inside `code_luma8`, `code_luma4` and `code_chroma` | Same bound applied per block, for macroblocks that are only partly quiet | With the row above: game 28.0 -> 18.1 ms (-35%), IDE desktop 34.9 -> 26.4 ms (-24%), still 20.9 -> 11.9 ms (-43%). In the recorder's own setting (VBR 12 Mbit/s, adaptive quantisation, 2 threads): game 43.1 -> 36.6 ms, desktop 38.7 -> 32.2 ms (-15% to -17%), because lower QPs leave fewer quiet blocks. Output identical. |
-| 2026-10-28 | Deblocking skips the inside of a P_Skip macroblock and decides its outer edges from one motion vector | Every such edge has strength 0 or depends on that single vector, but strength was worked out per 4-sample segment | About 1 ms per 1080p frame on mostly static pictures. Output identical. |
+| 2026-10-26 | Static-content skip: Speed preset marks macroblocks identical to the previous source picture and codes them as P_Skip without searching | Desktop recordings are mostly unchanged | desktop clip 23.1 -> 10.9 ms/picture (QP26, 2 threads); output size and PSNR unchanged |
+| 2026-10-26 | Zero-residual shortcut: skip transform+quantise for blocks that provably quantise to zero (Cauchy-Schwarz bound on SSD) | Most inter blocks on screen content are all-zero | bit-identical output on all test clips; unit tests incl. adversarial blocks |
+| 2026-10-26 | Deblocking skips edges between same-vector P_Skip neighbours | Filter is a no-op there | bit-identical |
+| 2026-10-26 | Intra candidate gate in P/B pictures (non-RD): skip intra when its cost is >= 1.25x the best inter cost | Intra rarely wins there | measured, no PSNR change on test clips |
+| 2026-10-26 | `fast_intra`: skip diagonal intra 4x4 modes when DC/H/V already fit well | Cuts mode search | keyframes ~30% fewer instructions |
+| 2026-10-26 | Straight-line 4x4 SATD, chroma motion-compensation fast paths for whole/half-pel vectors | Hot inner loops | exhaustive/random tests against the reference |
+
+Measured with `encoder_profile` on 1440x900 clips (desktop, scroll, pan, rotate, game-like), ms per
+picture, before -> after at 2 threads, QP26: desktop 23.1 -> 10.9, scroll 48.9 -> 37.9, pan 51.5 -> 37.4,
+rotate 42.0 -> 27.8, game 55.2 -> 39.6. Rejected (no gain or quality loss): step-1 ME early exit,
+quarter-pel off, adaptive sub-pel, vectorised deblock filter.
