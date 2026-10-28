@@ -11,8 +11,8 @@
 
 use clipcraft_capture::{Capabilities, CaptureError, CaptureSource, CaptureTarget};
 
-#[cfg(windows)]
 mod borderless;
+#[cfg(windows)]
 mod d3d11;
 #[cfg(target_os = "linux")]
 mod evdev;
