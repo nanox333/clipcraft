@@ -603,6 +603,17 @@ impl ClipCraftApp {
                 .iter()
                 .any(|process| process.process_id == game.process_id)
         });
+        // "Found <game> running, but it has no window" is about a game that is no longer there, so
+        // it must not stay on screen after the game closes.
+        if found.matches.is_empty()
+            && self
+                .capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.error && notice.text.starts_with("ClipCraft found "))
+        {
+            self.capture.notice = None;
+        }
         self.settings_state.steam_games = found.steam;
         self.settings_state.steam_warning = found.steam_warning;
         self.settings_state.set_game_processes(Ok(found.processes));
@@ -2000,6 +2011,22 @@ mod tests {
         drop(app);
         remove_scratch(root);
     }
+    #[test]
+    fn the_game_without_a_window_message_goes_away_when_the_game_closes() {
+        let (mut app, _root) = automatic_app(DesktopCaptureMode::Never);
+        app.capture.notice = notice(
+            "ClipCraft found Roblox running, but this desktop did not expose its game window. Capture is still idle.",
+            true,
+            None,
+        );
+        app.apply_game_observation(observation(None));
+        assert!(app.capture.notice.is_none());
+        // Other messages are left alone.
+        app.capture.notice = notice("Something else went wrong", true, None);
+        app.apply_game_observation(observation(None));
+        assert!(app.capture.notice.is_some());
+    }
+
     #[test]
     fn a_game_exiting_while_saves_are_busy_cannot_discard_the_retained_desktop_replay() {
         let (mut app, root) = automatic_app(DesktopCaptureMode::AfterGame);
