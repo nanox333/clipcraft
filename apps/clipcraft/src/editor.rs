@@ -105,6 +105,8 @@ pub struct EditorState {
     search: String,
     browser_search: crate::library_view::BrowserSearch,
     title: String,
+    /// The "add clips" box, while it is open.
+    picker: Option<ClipPicker>,
     zoom: f32,
     fit: bool,
     message: Option<(String, bool)>,
@@ -152,7 +154,8 @@ impl Default for EditorState {
             clock: None,
             search: String::new(),
             browser_search: crate::library_view::BrowserSearch::default(),
-            title: "Untitled edit".into(),
+            title: String::new(),
+            picker: None,
             zoom: 32.0,
             fit: true,
             message: None,
@@ -759,7 +762,7 @@ impl EditorState {
                 }
             })
             .collect();
-        let base = if name.is_empty() || name == "Untitled edit" {
+        let base = if name.is_empty() {
             first.input.clone()
         } else {
             first.input.with_file_name(format!("{name}.mp4"))
@@ -1032,14 +1035,24 @@ impl EditorState {
                         .show(ui, |ui| {
                             ui.set_width((preview_width - 24.0).max(1.0));
                             ui.set_min_height((top - 16.0).max(0.0));
-                            let title = ui.add(
-                                egui::TextEdit::singleline(&mut self.title)
-                                    .char_limit(100)
-                                    .font(FontId::new(13.0, kit::semibold()))
-                                    .horizontal_align(Align::Center)
-                                    .frame(false)
-                                    .desired_width(ui.available_width()),
-                            );
+                            // A boxed field with a hint, so it reads as something to type in.
+                            let title = egui::Frame::new()
+                                .fill(CARD)
+                                .stroke(Stroke::new(1.0_f32, BORDER))
+                                .corner_radius(8)
+                                .inner_margin(egui::Margin::symmetric(10, 4))
+                                .show(ui, |ui| {
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut self.title)
+                                            .char_limit(100)
+                                            .hint_text("Unnamed edit \u{2014} click to name it")
+                                            .font(FontId::new(13.0, kit::semibold()))
+                                            .horizontal_align(Align::Center)
+                                            .frame(false)
+                                            .desired_width(ui.available_width()),
+                                    )
+                                })
+                                .inner;
                             title.widget_info(|| {
                                 egui::WidgetInfo::labeled(
                                     egui::WidgetType::TextEdit,
@@ -1822,7 +1835,7 @@ impl EditorState {
                             )
                             .clicked()
                             {
-                                self.import(None, ui.ctx());
+                                self.picker = Some(ClipPicker::default());
                             }
                         });
                     }
@@ -3164,6 +3177,134 @@ fn button(ui: &mut egui::Ui, label: &str, primary: bool, enabled: bool) -> egui:
 }
 
 /// A button with an icon, in the same pill shape as the rest of the app.
+/// The "add clips to the edit" box: the clips in the library, with a way to pick other files.
+#[derive(Default)]
+struct ClipPicker {
+    search: String,
+    chosen: std::collections::BTreeSet<String>,
+}
+
+impl EditorState {
+    /// Shows the box for adding clips while it is open. `library` is what the Clips page shows.
+    pub fn clip_picker(
+        &mut self,
+        context: &egui::Context,
+        library: Option<&clipcraft_engine::LibraryScanResult>,
+    ) {
+        let Some(mut picker) = self.picker.take() else {
+            return;
+        };
+        let mut close = false;
+        let mut browse = false;
+        let mut add = false;
+        let modal = egui::Modal::new(egui::Id::new("editor-clip-picker"))
+            .frame(
+                egui::Frame::new()
+                    .fill(PANEL)
+                    .stroke(Stroke::new(1.0_f32, BORDER))
+                    .corner_radius(14)
+                    .inner_margin(egui::Margin::same(20)),
+            )
+            .show(context, |ui| {
+                ui.set_width(520.0);
+                ui.label(
+                    RichText::new("Add clips to your edit")
+                        .color(TEXT)
+                        .size(18.0)
+                        .family(kit::semibold()),
+                );
+                ui.label(
+                    RichText::new(
+                        "Tick the clips from your library, or browse for files elsewhere.",
+                    )
+                    .color(MUTED)
+                    .size(13.0),
+                );
+                ui.add_space(10.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut picker.search)
+                        .hint_text("Search clips")
+                        .desired_width(f32::INFINITY),
+                );
+                ui.add_space(8.0);
+                let query = picker.search.trim().to_lowercase();
+                egui::ScrollArea::vertical()
+                    .max_height(320.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        let mut shown = 0;
+                        for entry in library.map(|l| l.entries.as_slice()).unwrap_or_default() {
+                            if entry.offline
+                                || (!query.is_empty()
+                                    && !entry.title.to_lowercase().contains(&query))
+                            {
+                                continue;
+                            }
+                            shown += 1;
+                            let mut ticked = picker.chosen.contains(&entry.path);
+                            let label = format!(
+                                "{}   {}",
+                                entry.title,
+                                clipcraft_engine::format_bytes(entry.size_bytes)
+                            );
+                            if ui.checkbox(&mut ticked, label).changed() {
+                                if ticked {
+                                    picker.chosen.insert(entry.path.clone());
+                                } else {
+                                    picker.chosen.remove(&entry.path);
+                                }
+                            }
+                        }
+                        if shown == 0 {
+                            ui.label(
+                                RichText::new("No clips in your library match.")
+                                    .color(MUTED)
+                                    .size(13.0),
+                            );
+                        }
+                    });
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    let count = picker.chosen.len();
+                    let label = if count == 0 {
+                        "Add clips".to_owned()
+                    } else {
+                        format!("Add {count} clip{}", if count == 1 { "" } else { "s" })
+                    };
+                    if tool(ui, kit::Icon::Plus, &label, true, count > 0).clicked() {
+                        add = true;
+                    }
+                    if tool(
+                        ui,
+                        kit::Icon::Folder,
+                        "Browse other files\u{2026}",
+                        false,
+                        true,
+                    )
+                    .clicked()
+                    {
+                        browse = true;
+                    }
+                    if tool(ui, kit::Icon::Restart, "Cancel", false, true).clicked() {
+                        close = true;
+                    }
+                });
+            });
+        if modal.should_close() {
+            close = true;
+        }
+        if add {
+            let paths: Vec<PathBuf> = picker.chosen.iter().map(PathBuf::from).collect();
+            self.import(Some(paths), context);
+        } else if browse {
+            self.import(None, context);
+        } else if !close {
+            self.picker = Some(picker);
+        }
+    }
+}
+
 fn tool(
     ui: &mut egui::Ui,
     icon: kit::Icon,

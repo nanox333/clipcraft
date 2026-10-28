@@ -1,5 +1,62 @@
 # Known gaps
 
+## Multiple shortcuts, first-run setup and Windows installer (M5.1a)
+
+Each action accepts five keyboard bindings with a + button, individual removal, collision feedback
+and legacy-settings migration. PTT holds are combined across alternatives. Native registration
+uses unique binding IDs; registration is rebuilt only when shortcuts change. Global availability
+still depends on OS permissions and other applications owning the shortcut.
+
+Fresh profiles see four setup steps for local storage/replay, capture/audio and shortcuts. Setup
+uses a draft; no capture/audio/presence worker starts during it. Finish or Skip saves completion
+with the choices through the shared settings command. Existing preference files skip setup.
+
+ClipCraft asks Windows for borderless capture access once per run (ADR 0033); Windows answered Allowed on the development machine, but the yellow frame was not checked on screen against a captured game.
+The first-run setup and the installer/uninstaller use the app's own look (Inter, charcoal and lime); development builds of the installer accept `--preview-working` and `--preview-done` to show those pages without installing.
+`cargo xtask package` also produces an offline Windows `ClipCraft-Setup-<version>.exe`, written entirely in Rust, and ships the CLI as a separate archive.
+Optional update check and one-click update (ADR 0032) are built and checked against GitHub's real release API and redirects; a full update against a release that carries a `ClipCraft-Setup` asset has not run because none is published yet.
+It installs per-user, makes Start menu/optional desktop links and registers an uninstaller.
+Upgrades retain previous program versions (maximum eight); uninstall removes owned program files
+and retains unknown files, preferences and recordings. A temporary uninstaller executable can
+remain in the Windows temporary directory for OS cleanup. No automatic updates, code signing,
+macOS installer or clean second-machine/SmartScreen verification is claimed. The portable zip
+and Linux archive remain available. See ADR 0031 and the release checklist for scope/evidence.
+
+## Microphone noise suppression (M3.1a, 2026-10-26)
+
+Optional offline RNNoise suppression is implemented. The native Audio setting defaults off,
+persists through the shared settings command and takes effect after clipping restarts. Only the
+microphone is processed; game/system sound bypasses it. Stereo is preserved using separate
+models per channel; selecting **Microphone is mono** explicitly folds it. The pinned pure-Rust
+model needs no downloads or network access.
+
+M3.1b replaces the raw meter with **Mic Test** listening through the default output, after
+suppression, volume and mono/channel settings. It uses the recorder's input factory and PCM
+conversion, updates live, and stops on Stop/leave/hidden row/error or after 60 seconds. The
+test is independent of recording/PTT switches, has one bounded worker and 200 ms output queue,
+and saves no sound. Generated PCM, queue/error/lifecycle and keyboard tests cover the new path;
+the Windows native duplex check delivered 108,000 processed frames to the output callback and
+passed live zero-gain/mono updates and worker cleanup without saving sound. Full `cargo xtask ci`
+passes, along with final native UI and desktop/CLI release builds. One playback-device error
+occurred in manual testing; clean 15-second CLI/desktop retries pass, with the cause unproven.
+Physical-device reliability and subjective speech quality remain open. Optimized synthetic processing costs about 75 µs per 10 ms
+mono block or 142 µs for stereo on this Ryzen 7 5700X3D; game impact remains unmeasured.
+
+Twelve deterministic DSP tests pass, including split/partial frames, 8–192 kHz conversion,
+sample alignment, hostile samples, downstream gain/mute and recovery from a two-second backlog.
+Generated mixed/separate microphone/system tracks save and decode in MP4/MKV with timing and
+noise-energy checks. At roughly −33 dBFS RMS, generated steady background noise is reduced;
+loud full-band noise around −21 dBFS was much less reduced in a direct model probe. Release-mode
+initial mono-only synthetic throughput was 127.298 ms for 20 seconds on a Ryzen 7 5700X3D. These are not speech-quality
+or game-FPS measurements.
+
+A Windows 11 default-input integration run delivered 237,120 finite mono output samples in
+5.062 seconds from a 48 kHz stereo device in the initial mono prototype; no audio was saved. Real speech listening quality,
+physical-device unplug/recovery, echo cancellation and game FPS impact remain unverified. Native
+1440×900 screenshot/search review, automated Tab/Enter enable/reset, full `cargo xtask ci` and
+desktop/CLI release builds pass. This is not a claim of Discord/Krisp parity.
+See [ADR 0030](adr/0030-microphone-noise-suppression.md).
+
 The selected **A / CUT** branding has shared Rust geometry, scalable monochrome masters,
 small icon exports, light/dark wordmark lockups and a Discord product badge. The native icon
 and header use the same mark. CS2, Dota 2 and League now reference fixed Discord CDN icons;
@@ -15,6 +72,8 @@ CI note: the Linux job once failed on a scratch-folder cleanup race in a capture
 the Windows draft-recovery test uses canonical paths. Both jobs passed their test gates on the merged `main`.
 
 Linux re-check (2026-10-26, virtual X display, 4 cores, no GPU): the desktop app started, Start clipping armed capture, F8 saved a 14 s MP4 that decodes with ffmpeg and appears in the library; `clipcraft-cli capture record` also produced a valid clip. The H.265 and tray changes had left `main` failing the Linux lint (code only used on Windows); that is fixed. With the software encoder only, 1080p60 from a 1440x900 desktop dropped about 55% of frames (about 17 encoded pictures per second on 4 cores); the app shows this as a red warning. A graphics-card encoder on Linux was not available to test.
+
+CI fix (2026-10-28): the borderless-capture change left the Windows-only graphics module without its Windows gate, so `main` stopped compiling on Linux; the gate is restored and `cargo xtask ci` passes on Linux. Six Windows app tests (editor preview readiness, game-exit capture) failed in the same run and have not yet been reproduced or explained; they are watched on the next Windows run.
 
 Hardware encoder fallback (2026-10-28): when the graphics card's encoder was unavailable at the start or stopped mid-session (for example while a game took the card), the recorder switched to the processor encoder and stayed there until the picture size changed or the screen went silent, which keeps fans spinning and drops frames. It now asks the card again after 20 s (doubling after each failure, a card that keeps stopping is asked less often and given up on after eight failures); when it answers, the stream restarts on the card. Limit: the replay buffer starts over at that switch, because its pictures belong to the old stream. Covered by recorder tests with a stand-in encoder that fails, then recovers, and one that keeps failing; not observed on a real Windows machine under game load.
 
@@ -44,7 +103,7 @@ feature's status, workaround, or evidence changes.
 
 | Rank | Gap | Evidence / current limitation | Impact | Work |
 | ---: | --- | --- | --- | --- |
-| G0 | Windows release and broader real-device evidence remain open | Windows/AMD generated-window WGC and native/CPU MF encode have run. Windows hotkeys, game-only arming, real microphone/speaker, device loss and other GPU encoders remain unverified. Linux/X11 capture-to-export is proven against synthetic sources | Limits platform and release claims | M0 evidence close-out; M2/M3/M5 |
+| G0 | Windows release and broader real-device evidence remain open | The Windows 0.2.0 setup program and separate CLI zip (thin-LTO release profile) build with `cargo xtask package`; the tag-triggered release workflow ran for v0.1.0. Windows/AMD generated-window WGC and native/CPU MF encode have run. Windows hotkeys, game-only arming, real microphone/speaker, device loss and other GPU encoders remain unverified. Linux/X11 capture-to-export is proven against synthetic sources | Limits platform and release claims | M0 evidence close-out; M2/M3/M5 |
 | G1 | Low-copy GPU path is implemented for Windows SDR; broader performance gates remain open | WGC D3D11 leases and Media Foundation GPU NV12 conversion have one-minute AMD generated-window 1080p60 evidence with zero CPU readbacks and separate fresh/repeated-frame counters. SDR capture is now the default, and a different output size, crop or letterbox is scaled by the graphics card (D3D11 video processor, black bars) instead of forcing CPU readback; the scaled path has a Windows test but no real-hardware measurement. The optional HDR compatibility setting retains CPU readback. The earlier 32 fps wait stall did not reproduce before these changes and remains unexplained. A two-hour 1080p60 soak, other GPUs, HDR/scaling, GPU-use/power and real-game comparisons remain open; see [measurements](windows-performance.md). | Short generated-workload throughput is measured; game impact and broader reliability are not established | M5.1/M5.2/M5.2a |
 | G2 | Game-only capture still needs real platform evidence | Recursive library scans and captured-game tagging are implemented and tested on Linux. Desktop scans are cancellable; manual labels, favorites and collections survive rescans. Game-managed saves snapshot the game at Save time. Real-game/Windows arming and Wayland process-to-window matching remain unverified or unavailable | The library workflow is usable, but automatic arming still needs desktop evidence | M4.1b/M7 |
 | G3 | Compressed export needs reference-machine measurements; broader output controls remain open | Original-quality trim and software H.264 size presets (10 MB, 25 MB, custom 1–500 MB) are built. Generated MP4/MKV fixtures verify decoding, audio sync, cancellation, actual-size reporting, and collision safety. Quick-trim compression is at most 720p/30 fps, copies AAC audio, and estimates rather than guarantees size; 30/60-second throughput measurements on representative PCs remain open | Local small-file export is available; editor 720p/1080p/source (up to 4K) and 30/60 FPS are now built; broader codecs and speed claims remain limited | M4.2/M4.3/M11.1d |
@@ -401,6 +460,8 @@ See [the performance review](performance.md) for workloads, limitations and rank
 - Storage: capture folder, usage and free space, a storage limit, and a delete-oldest or stop policy. The limit applies only to ClipCraft's own clips; full-disk and cleanup paths have deterministic Linux tests.
 - Capture: cursor, force window capture, HDR compatibility; aspect ratio (game, stretch, black bars, crop to 16:9) appears in its bottom **Advanced settings** section.
 - Settings are rebuilt around rows (`apps/clipcraft/src/rows.rs`, pages in `settings/pages.rs`). An **Overview** page shows the current setup, live recording health (dropped frames, encode time), actionable suggestions (for example "use the graphics card") and three one-click profiles. Pages are grouped as Recording (Capture, Video, Audio, Replay, Games) and Settings (General, Storage, Hotkeys, About). Every row can show it differs from the default and be reset on its own; resolution, frame rate, bitrate, keyframe interval, replay length, post-roll, volumes, audio bitrate and the storage limit are sliders. The search box filters the actual rows in place, so a setting can be changed from the results, and links to the pages whose settings are lists or forms. Encoder, codec, effort, bitrate mode, file format, aspect ratio, sample rate and channels are always shown; the advanced toggle now only reveals custom-game forms.
+- **Deleting clips:** a clip's right-click menu has Open, Send to editor, Show in the file manager, Copy path, Favorite, **Delete clip…** (red) and Add to collection; the clip page has a Delete clip button and the Delete key asks too. Every route asks first and then moves the file to the Recycle Bin (Windows shell delete with undo; `gio trash` on Linux; Finder on macOS), so it can be put back; nothing is deleted for good. The engine command `library.trash` (also `clipcraft-cli library trash <file>`) only accepts an existing regular video file, and the move is retried for two seconds in case the player still holds the file. Not done: restoring from inside ClipCraft, multi-select delete.
+- **Saved-clip notification:** when a clip is saved a card slides in at the bottom right of the free part of the screen (its own always-on-top window that never takes the keyboard focus, so it shows over a borderless game and while ClipCraft is in the tray) with the clip's picture, its game, length, size and picture size, and buttons to Play (opens it in ClipCraft), Show in the folder and Delete (asks again on the card). It stays seven seconds, pauses while the pointer is on it, and can be switched off in Settings › Replay. Not done: exclusive-fullscreen games, which hide every other window; other monitors.
 - General: launch at sign-in (Linux autostart entry, macOS launch agent, Windows Run key) and start minimized. On Windows a system-tray icon (left click opens; menu drawn by ClipCraft itself on right click, in the app's dark style: a status header, Open ClipCraft, Start/Stop recording, Save clip, Take screenshot, Open clips folder, Library, Settings, Quit ClipCraft; save and screenshot are enabled only while recording; folders open directly instead of being selected in their parent) and **Keep running in the tray** (default on) make the close button minimize instead of quit, so capture keeps running; the taskbar button stays because a hidden egui window stops receiving frames, which would stall capture. Hiding the taskbar button, and the tray on Linux/macOS, are not done. **Show advanced settings** is last, after Help; it appends labeled advanced controls to Games, Capture, Quality and Audio instead of adding a category. Custom-game add/edit controls use the same uniform card layout as every settings tab (verified on Linux/Xvfb only) with padded, responsive fields and appear only when advanced settings are on; hidden rules/encoder/audio values remain active. The local preference and 64-rule budget are unchanged. Keyboard disclosure/creation, category visibility, process-picker stale-ID recovery and layout/accessibility checks cover this behavior; see [settings.md](settings.md) and [testing.md](testing.md). Only the Linux startup path and native UI can be exercised in this container.
 
 ### Library organisation
@@ -456,9 +517,10 @@ touches ClipCraft's own clips.
   here with generated tones through the whole recorder, with ffprobe and ffmpeg as judges: tones
   at the right pitch and level on the right track in MP4 and MKV, mixing, mute and gain, sound
   length equal to picture length, a click lining up with its picture within 40 ms, a device clock
-  1.5 % fast or slow staying in step, a device lost and recovered, bad layouts refused. **Never run
-  with a real microphone or speaker** (this container has no sound card), so the device layer
-  (`DeviceCapture`, cpal) is untested beyond its queue. Known limits: game/system sound is
+  1.5 % fast or slow staying in step, a device lost and recovered, bad layouts refused. The original
+  end-to-end runs used generated sources. A Windows default-microphone adapter/denoiser smoke
+  check now delivers finite samples, but real spoken clips, speaker listening and physical-device
+  recovery remain open. Known limits: game/system sound is
   recorded by loopback on Windows and, on Linux, through the PulseAudio client library (also
   answered by PipeWire) from the monitor of the default output, verified here against a real
   PulseAudio server with a null sink (a tone played into it ends up in a saved clip); the output chosen in

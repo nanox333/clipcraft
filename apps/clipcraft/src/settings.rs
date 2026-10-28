@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use clipcraft_audio_out::{DeviceNames, MicMeter, list_devices};
+use clipcraft_audio_out::{DeviceNames, MicTest, list_devices};
 use clipcraft_engine::{
     AUDIO_KBPS, CaptureSource, Command, CommandOutput, Container, DesktopCaptureMode,
     EncoderPreset, Framing, GameMatchRule, HEIGHTS, HotkeyAction, OutputShape, QualityMode,
@@ -40,10 +40,13 @@ pub struct SettingsState {
     /// Outputs that can be recorded, as (saved name, name shown): PulseAudio's outputs on Linux
     /// (its monitors are what is recorded), the sound system's own list elsewhere.
     outputs: Vec<(String, String)>,
-    mic: Option<MicMeter>,
+    mic: Option<MicTest>,
+    mic_plan: Option<clipcraft_engine::MicrophoneTestPlan>,
+    mic_visible: bool,
     mic_error: Option<String>,
     mic_shown: f32,
-    pub(crate) capturing: Option<HotkeyAction>,
+    pub(crate) capturing: Option<(HotkeyAction, usize)>,
+    pub(crate) hotkey_error: Option<String>,
     usage: Option<StorageUsage>,
     usage_for: Option<PathBuf>,
     usage_receiver: Option<mpsc::Receiver<StorageUsage>>,
@@ -62,6 +65,50 @@ pub struct SettingsState {
 }
 
 impl SettingsState {
+    pub(crate) fn begin_frame(&mut self) {
+        self.mic_visible = false;
+    }
+    pub(crate) fn end_frame(&mut self, settings: &RecordingSettings) {
+        if !self.mic_visible {
+            self.mic = None;
+            self.mic_plan = None;
+            self.mic_shown = 0.0;
+            return;
+        }
+        if self.mic.is_none() {
+            return;
+        }
+        if self.mic_plan.as_ref().is_some_and(|plan| {
+            plan.device == settings.microphone_device
+                && plan.noise_suppression == settings.microphone_noise_suppression
+                && plan.mono == settings.microphone_mono
+                && plan.gain_percent == settings.microphone_percent.min(100)
+                && u32::from(plan.channels) == settings.audio_channels
+        }) {
+            return;
+        }
+        let result = execute(Command::PrepareMicrophoneTest {
+            settings: Box::new(settings.clone()),
+        });
+        match result {
+            Ok(CommandOutput::MicrophoneTest(plan)) => {
+                if self.mic_plan.as_ref() != Some(&plan) {
+                    if let Some(test) = &self.mic
+                        && let Err(error) = test.update(plan.clone())
+                    {
+                        self.mic_error = Some(error);
+                        self.mic = None;
+                    }
+                    self.mic_plan = Some(plan);
+                }
+            }
+            _ => {
+                self.mic_error = Some("The microphone test settings could not be applied.".into());
+                self.mic = None;
+            }
+        }
+    }
+
     fn select_game_process(&mut self, process: &clipcraft_platform::RunningProcess) {
         self.selected_game_process = Some(process.clone());
         self.game_process_draft = process.executable.clone();
@@ -715,7 +762,7 @@ pub fn games_tab(
             }
             if settings.desktop_capture_mode != DesktopCaptureMode::Never {
                 ui.add_space(8.0);
-                ui.label(RichText::new("Desktop capture can include other apps. These modes keep a bounded replay buffer; the final replay is saved when switching sources or when the desktop timer ends. Stop pauses automatic recording until you press Start again.").color(MUTED).size(12.5));
+                ui.label(RichText::new("Desktop capture can include other apps. These modes keep a bounded replay buffer. Nothing is saved when a game closes or the desktop timer ends; clips are saved only when you press the save shortcut. Stop pauses automatic recording until you press Start again.").color(MUTED).size(12.5));
             }
         }
     });
@@ -766,7 +813,7 @@ pub fn games_tab(
         ui.add_space(10.0);
         if found == 0 {
             ui.label(
-                RichText::new(if settings.show_advanced { "No known games match. You can add a custom rule below." } else { "No known games match. Enable advanced settings in General to add a custom game." })
+                RichText::new("No known games match. You can add a custom game below.")
                     .color(FAINT)
                     .size(12.5),
             );
@@ -856,20 +903,8 @@ pub fn games_tab(
     });
 
     game_data.show(ui, &mut settings.game_integrations);
-    if !settings.show_advanced && !settings.game_rules.is_empty() {
-        ui.label(
-            RichText::new(format!(
-                "Custom game rules active: {}. Enable advanced settings in General to edit them.",
-                settings.game_rules.len()
-            ))
-            .color(MUTED)
-            .size(12.5),
-        );
-    }
-    if settings.show_advanced {
-        advanced_heading(ui);
-        refresh_processes |= custom_games(ui, settings, state);
-    }
+    custom_games_heading(ui);
+    refresh_processes |= custom_games(ui, settings, state);
     refresh_processes
 }
 
@@ -1222,6 +1257,7 @@ fn refresh_devices(state: &mut SettingsState) {
 
 /// The microphone test: a button and a live level meter.
 fn mic_test(ui: &mut egui::Ui, settings: &RecordingSettings, state: &mut SettingsState) {
+    state.mic_visible = true;
     ui.horizontal(|ui| {
         let running = state.mic.is_some();
         let label = if running { "Stop test" } else { "Mic Test" };
@@ -1230,20 +1266,32 @@ fn mic_test(ui: &mut egui::Ui, settings: &RecordingSettings, state: &mut Setting
                 state.mic = None;
                 state.mic_shown = 0.0;
             } else {
-                match MicMeter::start(&settings.microphone_device) {
-                    Ok(meter) => {
-                        state.mic = Some(meter);
+                let plan = execute(Command::PrepareMicrophoneTest {
+                    settings: Box::new(settings.clone()),
+                });
+                let started = match plan {
+                    Ok(CommandOutput::MicrophoneTest(plan)) => {
+                        state.mic_plan = Some(plan.clone());
+                        MicTest::start(plan)
+                    }
+                    _ => Err("The microphone test settings could not be prepared.".into()),
+                };
+                match started {
+                    Ok(test) => {
+                        state.mic = Some(test);
                         state.mic_error = None;
                     }
-                    Err(error) => state.mic_error = Some(error.to_string()),
+                    Err(error) => state.mic_error = Some(error),
                 }
             }
         }
-        if state.mic.as_ref().is_some_and(MicMeter::failed) {
+        if state.mic.as_ref().is_some_and(MicTest::finished) {
+            state.mic_error = state.mic.as_ref().and_then(MicTest::error);
             state.mic = None;
-            state.mic_error = Some("The microphone stopped.".to_owned());
+            state.mic_shown = 0.0;
+            ui.ctx().request_repaint();
         }
-        let level = state.mic.as_ref().map_or(0.0, MicMeter::level);
+        let level = state.mic.as_ref().map_or(0.0, MicTest::level);
         state.mic_shown = level.max(state.mic_shown * 0.85);
         let width = (ui.available_width()).max(0.0);
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 28.0), egui::Sense::hover());
@@ -1268,17 +1316,6 @@ fn mic_test(ui: &mut egui::Ui, settings: &RecordingSettings, state: &mut Setting
     });
     if state.mic.is_some() {
         ui.ctx().request_repaint_after(Duration::from_millis(40));
-    }
-    if let Some(error) = &state.mic_error {
-        ui.add_space(4.0);
-        ui.label(RichText::new(error).color(DANGER).size(12.5));
-    } else if state.mic.is_some() {
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new("Speak: the bars should move.")
-                .color(MUTED)
-                .size(12.5),
-        );
     }
 }
 
@@ -1347,8 +1384,10 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
     if state.capturing.is_some() {
         if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
             state.capturing = None;
-        } else if let (Some(action), Some(shortcut)) = (state.capturing, pressed_shortcut(ui)) {
-            settings.hotkeys.set(action, &shortcut);
+        } else if let (Some((action, index)), Some(shortcut)) =
+            (state.capturing, pressed_shortcut(ui))
+        {
+            state.hotkey_error = settings.hotkeys.set_binding(action, index, &shortcut).err();
             state.capturing = None;
         }
     }
@@ -1356,11 +1395,9 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
         let count = HotkeyAction::ALL.len();
         for (index, action) in HotkeyAction::ALL.into_iter().enumerate() {
             ui.add_space(14.0);
-            ui.horizontal(|ui| {
+            ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
-                let text_width = (ui.available_width() - 200.0).max(0.0);
                 ui.vertical(|ui| {
-                    ui.set_width(text_width);
                     ui.label(
                         RichText::new(action.label())
                             .color(TEXT)
@@ -1376,51 +1413,104 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
                         );
                     }
                 });
-                ui.add_space(8.0);
-                let waiting = state.capturing == Some(action);
-                let current = settings.hotkeys.get(action).to_owned();
-                let text = if waiting {
-                    "Press a key…".to_owned()
-                } else if current.is_empty() {
-                    "Not set".to_owned()
-                } else {
-                    current.replace('+', " + ")
-                };
-                let (rect, response) =
-                    ui.allocate_exact_size(Vec2::new(130.0, 34.0), egui::Sense::click());
-                ui.painter()
-                    .rect_filled(rect, 8.0, Color32::from_rgb(13, 13, 15));
-                ui.painter().rect_stroke(
-                    rect,
-                    8.0,
-                    Stroke::new(1.0_f32, if waiting { LIME } else { BORDER }),
-                    egui::StrokeKind::Inside,
-                );
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    text,
-                    egui::FontId::new(13.5, kit::medium()),
-                    if waiting {
-                        LIME
-                    } else if current.is_empty() {
-                        FAINT
-                    } else {
-                        TEXT
-                    },
-                );
-                if response
-                    .on_hover_text("Click, then press the keys")
-                    .clicked()
-                {
-                    state.capturing = if waiting { None } else { Some(action) };
-                }
-                let clear = ui.add_enabled(
-                    !current.is_empty(),
-                    egui::Button::new(RichText::new("Clear").color(MUTED)).frame(false),
-                );
-                if clear.clicked() {
-                    settings.hotkeys.set(action, "");
+                ui.add_space(6.0);
+                let bindings: Vec<String> = settings
+                    .hotkeys
+                    .bindings(action)
+                    .map(str::to_owned)
+                    .collect();
+                let count = bindings.len();
+                let mut remove = None;
+                ui.horizontal_wrapped(|ui| {
+                    for (binding_index, current) in bindings.iter().enumerate() {
+                        let waiting = state.capturing == Some((action, binding_index));
+                        let text = if waiting {
+                            "Press a key…".to_owned()
+                        } else if current.is_empty() {
+                            "Not set".to_owned()
+                        } else {
+                            current.replace('+', " + ")
+                        };
+                        let response = ui.add(
+                            egui::Button::new(RichText::new(&text).color(if waiting {
+                                LIME
+                            } else {
+                                TEXT
+                            }))
+                            .fill(Color32::from_rgb(13, 13, 15))
+                            .stroke(Stroke::new(1.0_f32, if waiting { LIME } else { BORDER }))
+                            .min_size(Vec2::new(150.0, 34.0)),
+                        );
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Button,
+                                true,
+                                format!(
+                                    "{} shortcut {}: {}",
+                                    action.label(),
+                                    binding_index + 1,
+                                    text
+                                ),
+                            )
+                        });
+                        if response
+                            .on_hover_text("Click, then press the keys")
+                            .clicked()
+                        {
+                            state.capturing = if waiting {
+                                None
+                            } else {
+                                Some((action, binding_index))
+                            };
+                            state.hotkey_error = None;
+                        }
+                        let clear = ui.add_enabled(
+                            !current.is_empty(),
+                            egui::Button::new(RichText::new("×").color(MUTED)).frame(false),
+                        );
+                        clear.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Button,
+                                true,
+                                format!("Remove {} shortcut {}", action.label(), binding_index + 1),
+                            )
+                        });
+                        if clear
+                            .on_hover_text(format!(
+                                "Remove {} shortcut {}",
+                                action.label(),
+                                binding_index + 1
+                            ))
+                            .clicked()
+                        {
+                            remove = Some(binding_index);
+                        }
+                    }
+                    let adding = state.capturing == Some((action, count));
+                    let add = ui.add_enabled(
+                        count < clipcraft_engine::Hotkeys::MAX_BINDINGS,
+                        egui::Button::new(if adding { "Press a key…" } else { "+" })
+                            .min_size(Vec2::new(34.0, 34.0)),
+                    );
+                    add.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::WidgetType::Button,
+                            count < 5,
+                            format!("Add shortcut for {}", action.label()),
+                        )
+                    });
+                    if add
+                        .on_hover_text(format!("Add shortcut for {} ({count}/5)", action.label()))
+                        .clicked()
+                    {
+                        state.capturing = if adding { None } else { Some((action, count)) };
+                        state.hotkey_error = None;
+                    }
+                    ui.label(RichText::new(format!("{count}/5")).color(FAINT).size(12.0));
+                });
+                if let Some(index) = remove {
+                    settings.hotkeys.remove_binding(action, index);
+                    state.capturing = None;
                 }
             });
             ui.add_space(14.0);
@@ -1429,6 +1519,9 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
             }
         }
     });
+    if let Some(error) = state.hotkey_error.as_ref() {
+        ui.colored_label(DANGER, error);
+    }
     ui.label(
         RichText::new("Click a shortcut, then press the keys you want. Press Esc to cancel.")
             .color(FAINT)
@@ -1438,11 +1531,9 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
     if kit::labelled_button(ui, kit::Icon::Loop, "Reset to defaults", false, true).clicked() {
         settings.hotkeys = clipcraft_engine::Hotkeys::default();
         state.capturing = None;
+        state.hotkey_error = None;
     }
     ui.add_space(8.0);
-    if state.capturing.is_some() {
-        ui.ctx().request_repaint();
-    }
 }
 
 fn request_usage(state: &mut SettingsState, context: &egui::Context, folder: PathBuf, force: bool) {
@@ -1663,19 +1754,19 @@ pub fn about_tab(ui: &mut egui::Ui) {
 }
 
 /// The advanced controls stay within their normal category, below its basic settings.
-pub(crate) fn advanced_heading(ui: &mut egui::Ui) {
+pub(crate) fn custom_games_heading(ui: &mut egui::Ui) {
     ui.add_space(4.0);
     divider(ui);
     ui.add_space(26.0);
     ui.label(
-        RichText::new("Advanced settings")
+        RichText::new("Custom games")
             .color(TEXT)
             .size(20.0)
             .family(kit::semibold()),
     );
     ui.add_space(2.0);
     ui.label(
-        RichText::new("Extra controls for fine-tuning. The defaults suit most people.")
+        RichText::new("Add a game ClipCraft does not know yet, by its program name.")
             .color(MUTED)
             .size(13.5),
     );
@@ -1737,6 +1828,10 @@ mod preset_tests {
     }
 
     fn keyboard_activate(app: &mut crate::ClipCraftApp, target: &str) {
+        keyboard_action(app, target, true);
+    }
+
+    fn keyboard_action(app: &mut crate::ClipCraftApp, target: &str, activate: bool) {
         let context = crate::kit::test_context();
         context.enable_accesskit();
         let mut names = std::collections::HashMap::new();
@@ -1776,9 +1871,98 @@ mod preset_tests {
                     );
                 }
                 reached = names.get(&update.focus).is_some_and(|name| name == target);
+                if reached && !activate {
+                    return;
+                }
             }
         }
         panic!("{target} was not reachable with Tab");
+    }
+
+    #[test]
+    fn microphone_test_and_optional_mono_are_keyboard_accessible() {
+        let mut app = crate::ClipCraftApp {
+            page: crate::Page::Settings,
+            settings_tab: crate::SettingsTab::Audio,
+            settings_state: SettingsState {
+                devices: Some(DeviceNames::default()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        app.recording.microphone_noise_suppression = true;
+        keyboard_activate(&mut app, "Microphone is mono");
+        assert!(app.recording.microphone_mono && app.recording.microphone_noise_suppression);
+        keyboard_action(&mut app, "Mic Test", false);
+        assert!(
+            app.settings_state.mic.is_none(),
+            "focusing the test must not start a microphone"
+        );
+    }
+
+    #[test]
+    fn extra_shortcuts_are_keyboard_assignable_and_removable() {
+        let mut app = crate::ClipCraftApp {
+            page: crate::Page::Settings,
+            settings_tab: crate::SettingsTab::Hotkeys,
+            ..Default::default()
+        };
+        keyboard_activate(&mut app, "Add shortcut for Save clip");
+        assert_eq!(
+            app.settings_state.capturing,
+            Some((HotkeyAction::SaveClip, 1))
+        );
+        let context = crate::kit::test_context();
+        settings_frame(
+            &mut app,
+            &context,
+            vec![egui::Event::Key {
+                key: egui::Key::F1,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert_eq!(
+            app.recording
+                .hotkeys
+                .bindings(HotkeyAction::SaveClip)
+                .collect::<Vec<_>>(),
+            ["F8", "F1"]
+        );
+        keyboard_activate(&mut app, "Remove Save clip shortcut 2");
+        assert_eq!(
+            app.recording
+                .hotkeys
+                .bindings(HotkeyAction::SaveClip)
+                .collect::<Vec<_>>(),
+            ["F8"]
+        );
+    }
+
+    #[test]
+    fn microphone_noise_suppression_is_searchable_and_keyboard_accessible() {
+        let mut app = crate::ClipCraftApp {
+            page: crate::Page::Settings,
+            settings_tab: crate::SettingsTab::Audio,
+            settings_search: "noise suppression".into(),
+            settings_state: SettingsState {
+                devices: Some(DeviceNames::default()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(!app.recording.microphone_noise_suppression);
+        keyboard_activate(&mut app, "Noise suppression");
+        assert!(app.recording.microphone_noise_suppression);
+        assert!(
+            category_controls(&mut app)
+                .iter()
+                .any(|name| name == "Reset Noise suppression")
+        );
+        keyboard_activate(&mut app, "Reset Noise suppression");
+        assert!(!app.recording.microphone_noise_suppression);
     }
 
     #[test]
@@ -1818,42 +2002,17 @@ mod preset_tests {
     }
 
     #[test]
-    fn advanced_controls_are_disclosed_in_their_own_categories_without_a_new_nav_item() {
+    fn custom_game_creation_works_with_the_keyboard_without_any_advanced_switch() {
         let mut app = crate::ClipCraftApp {
             page: crate::Page::Settings,
+            settings_tab: crate::SettingsTab::Games,
             ..Default::default()
         };
-        for show_advanced in [false, true] {
-            app.recording.show_advanced = show_advanced;
-            #[allow(clippy::single_element_loop)]
-            for (tab, control) in [(crate::SettingsTab::Games, "Game name")] {
-                app.settings_tab = tab;
-                let names = category_controls(&mut app);
-                assert_eq!(
-                    names.iter().any(|name| name == control),
-                    show_advanced,
-                    "{tab:?}: {names:?}"
-                );
-                assert_eq!(
-                    names.iter().any(|name| name == "Advanced settings"),
-                    show_advanced,
-                    "{tab:?}: advanced heading missing"
-                );
-                assert!(!names.iter().any(|name| name == "Advanced"));
-            }
-        }
-    }
-
-    #[test]
-    fn general_toggle_and_custom_game_creation_work_with_the_keyboard_and_hiding_preserves_rules() {
-        let mut app = crate::ClipCraftApp {
-            page: crate::Page::Settings,
-            settings_tab: crate::SettingsTab::General,
-            ..Default::default()
-        };
-        keyboard_activate(&mut app, "Show advanced settings");
-        assert!(app.recording.show_advanced);
-        app.settings_tab = crate::SettingsTab::Games;
+        assert!(
+            category_controls(&mut app)
+                .iter()
+                .any(|name| name == "Game name")
+        );
         app.settings_state.builtin_game_search = "no-known-game-matches-this".to_owned();
         app.settings_state.game_name_draft = "My local game".to_owned();
         app.settings_state.game_process_draft = "local-game.exe".to_owned();
@@ -1867,21 +2026,6 @@ mod preset_tests {
         assert_eq!(app.recording.match_game("not-local-game.exe", None), None);
         assert!(app.settings_state.game_name_draft.is_empty());
         assert!(app.settings_state.game_process_draft.is_empty());
-        let rule = app.recording.game_rules[0].clone();
-        app.settings_tab = crate::SettingsTab::General;
-        keyboard_activate(&mut app, "Show advanced settings");
-        assert!(!app.recording.show_advanced);
-        app.settings_tab = crate::SettingsTab::Games;
-        assert!(
-            !category_controls(&mut app)
-                .iter()
-                .any(|name| name == "Game name")
-        );
-        assert_eq!(app.recording.game_rules, [rule]);
-        assert_eq!(
-            app.recording.match_game("local-game.exe", None),
-            Some("My local game")
-        );
     }
 
     #[test]

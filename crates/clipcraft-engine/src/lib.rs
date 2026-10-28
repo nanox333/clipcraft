@@ -35,9 +35,11 @@ mod relink;
 mod scan;
 mod screenshot;
 pub use scan::MAX_SCAN_DEPTH;
+pub mod installation;
 mod session;
 mod startup;
 mod steam_games;
+pub mod update;
 pub use steam_games::{MAX_STEAM_GAMES, SteamGame, SteamGames};
 mod storage;
 
@@ -79,7 +81,8 @@ pub use recovery::{Recovery, recover_interrupted};
 pub use relink::{SearchResult, find_moved_file};
 pub use screenshot::{ScreenshotJob, screenshot_name};
 pub use session::{
-    CLIP_PREFIX, CaptureSession, SaveJob, SavedClipReport, clip_format, clip_stem, record_config,
+    CLIP_PREFIX, CaptureSession, MicrophoneTestPlan, SaveJob, SavedClipReport, clip_format,
+    clip_stem, folder_name_for, game_clip_stem, is_clip_file_name, record_config,
 };
 pub use storage::{
     StorageUsage, StoredClip, cleanup_plan, default_capture_folder, list_clips, storage_usage,
@@ -101,6 +104,15 @@ const VIDEO_EXTENSIONS: [&str; 7] = ["avi", "m4v", "mkv", "mov", "mp4", "webm", 
 /// A typed operation exposed by the shared command registry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
+    /// Installs a bounded offline Windows bundle, preserving earlier versions and user data.
+    InstallApplication {
+        bundle: PathBuf,
+        destination: PathBuf,
+    },
+    /// Removes only files owned by a ClipCraft installation; keeps clips and settings.
+    UninstallApplication {
+        destination: PathBuf,
+    },
     PreviewDiscordCard {
         settings: presence::PresenceSettings,
         context: Box<presence::PresenceContext>,
@@ -208,6 +220,10 @@ pub enum Command {
         path: PathBuf,
         settings: Box<RecordingSettings>,
     },
+    /// Validates the processing settings for a local, unsaved microphone listening test.
+    PrepareMicrophoneTest {
+        settings: Box<RecordingSettings>,
+    },
     /// Changes a favorite, game, or collection and saves it in the local index.
     EditLibraryMeta {
         index_path: PathBuf,
@@ -222,6 +238,18 @@ pub enum Command {
     /// Shows a local media file in the operating system's file manager.
     RevealInFileManager {
         path: PathBuf,
+    },
+    /// Moves a clip to the Recycle Bin (Trash), so the deletion can be undone there.
+    TrashClip {
+        path: PathBuf,
+    },
+    /// Asks whether a version newer than `current_version` has been published.
+    CheckForUpdate {
+        current_version: String,
+    },
+    /// Downloads a published setup program and checks it against its checksum.
+    DownloadUpdate {
+        update: update::UpdateInfo,
     },
     /// Looks for a moved clip by name and size in a folder and the folders inside it.
     FindMovedFile {
@@ -267,6 +295,8 @@ impl Command {
     /// Returns this operation's stable command ID.
     pub const fn id(&self) -> &'static str {
         match self {
+            Self::InstallApplication { .. } => "app.install",
+            Self::UninstallApplication { .. } => "app.uninstall",
             Self::PreviewDiscordCard { .. } => "presence.card",
             Self::BuildDiscordPresence { .. } => "presence.preview",
             Self::ParseGameState { .. } => "game_state.parse",
@@ -283,6 +313,9 @@ impl Command {
             Self::ScanLibrary { .. } => "library.scan",
             Self::LocalMediaPath { .. } => "library.path",
             Self::RevealInFileManager { .. } => "library.reveal",
+            Self::TrashClip { .. } => "library.trash",
+            Self::CheckForUpdate { .. } => "app.check_for_update",
+            Self::DownloadUpdate { .. } => "app.download_update",
             Self::RefreshLibrary { .. } => "library.refresh",
             Self::LoadLibrary { .. } => "library.load",
             Self::StoreLibraryScan { .. } => "library.store_scan",
@@ -295,6 +328,7 @@ impl Command {
             Self::StorageUsage { .. } => "storage.usage",
             Self::SetLaunchAtStartup { .. } => "app.launch_at_startup",
             Self::SaveRecordingSettings { .. } => "recording.save_settings",
+            Self::PrepareMicrophoneTest { .. } => "recording.test_microphone",
             Self::TrimClip { .. } => "clip.trim",
             Self::ExportClip { .. } => "clip.export",
             Self::ExportGif { .. } => "clip.export_gif",
@@ -731,6 +765,8 @@ fn copy_path(input: &std::path::Path, suffix: &str, extension: &str) -> Option<P
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum CommandOutput {
+    /// Executable installed, or installation root removed.
+    Installation(PathBuf),
     DiscordCard(Option<presence::PresenceActivity>),
     DiscordPresence(Option<presence::PresenceTarget>),
     GameState(Box<game_state::GameSnapshot>),
@@ -753,12 +789,23 @@ pub enum CommandOutput {
     Revealed {
         path: String,
     },
+    /// A clip was moved to the Recycle Bin.
+    Trashed {
+        path: String,
+    },
+    /// Whether a newer version exists.
+    Update(update::UpdateStatus),
+    /// A setup program was downloaded and matched its checksum.
+    UpdateDownloaded {
+        path: String,
+    },
     /// Container facts read from one clip.
     ClipProbe(MediaProbe),
     /// A clip's thumbnail in the cache.
     Thumbnail(ThumbnailFile),
     /// Recording settings as stored.
     RecordingSettings(Box<RecordingSettings>),
+    MicrophoneTest(MicrophoneTestPlan),
     /// Folder and disk usage.
     StorageUsage(StorageUsage),
     /// A clip that was cut and saved.
@@ -779,8 +826,10 @@ pub enum CommandOutput {
 }
 
 /// Actionable errors returned by engine commands.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineError {
+    /// An offline installation failed without deleting user media.
+    Installation(String),
     GameState(game_state::GameStateError),
     EditorTimeline(clipcraft_player::timeline::TimelineError),
     EditorDraft(EditorDraftError),
@@ -812,6 +861,16 @@ pub enum EngineError {
     FileStillExists,
     /// The system file manager could not be started.
     FileManagerUnavailable,
+    /// Only video clips are moved to the Recycle Bin, and only files, never folders.
+    NotAClip,
+    /// There is no Recycle Bin to put the clip in, or the system refused. Nothing was deleted.
+    TrashUnavailable,
+    /// The update service could not be reached, or this system cannot check for updates.
+    UpdateUnavailable,
+    /// The update service answered with something that is not a release.
+    UpdateInvalid,
+    /// The downloaded setup program does not match its published checksum, so it was discarded.
+    UpdateChecksum,
     /// No saved library index exists yet.
     IndexMissing,
     /// The saved library index could not be read.
@@ -859,6 +918,7 @@ pub enum EngineError {
 impl fmt::Display for EngineError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Installation(message) => formatter.write_str(message),
             Self::GameState(error) => error.fmt(formatter),
             Self::EditorTimeline(error) => error.fmt(formatter),
             Self::EditorDraft(error) => error.fmt(formatter),
@@ -882,6 +942,21 @@ impl fmt::Display for EngineError {
             Self::EmptyMediaPath => formatter.write_str("Choose a local media file first."),
             Self::FileUnavailable => formatter.write_str(
                 "This file could not be found. It may have been moved or deleted.",
+            ),
+            Self::NotAClip => {
+                formatter.write_str("Only video clips can be moved to the Recycle Bin from here.")
+            }
+            Self::TrashUnavailable => formatter.write_str(
+                "The clip could not be moved to the Recycle Bin, so it was left where it is.",
+            ),
+            Self::UpdateUnavailable => formatter.write_str(
+                "ClipCraft could not check for updates. You may be offline; nothing has changed.",
+            ),
+            Self::UpdateInvalid => formatter.write_str(
+                "The update information could not be understood, so nothing was downloaded.",
+            ),
+            Self::UpdateChecksum => formatter.write_str(
+                "The downloaded update did not match its checksum, so it was discarded and not run.",
             ),
             Self::FileStillExists => formatter.write_str(
                 "This file is still on your computer. Delete or move it first, then remove it from the library.",
@@ -957,6 +1032,18 @@ pub fn execute_cancellable(
     cancel: &AtomicBool,
 ) -> Result<CommandOutput, EngineError> {
     match command {
+        Command::InstallApplication {
+            bundle,
+            destination,
+        } => installation::install(&bundle, &destination)
+            .map(CommandOutput::Installation)
+            .map_err(EngineError::Installation),
+        Command::UninstallApplication { destination } => installation::uninstall(&destination)
+            .map(|()| CommandOutput::Installation(destination))
+            .map_err(EngineError::Installation),
+        Command::PrepareMicrophoneTest { settings } => Ok(CommandOutput::MicrophoneTest(
+            MicrophoneTestPlan::from_settings(&settings),
+        )),
         Command::PreviewDiscordCard { settings, context } => Ok(CommandOutput::DiscordCard(
             presence::preview_activity(&settings, &context),
         )),
@@ -1179,6 +1266,17 @@ pub fn execute_cancellable(
         Command::RevealInFileManager { path } => {
             reveal_in_file_manager(&path).map(|path| CommandOutput::Revealed { path })
         }
+        Command::CheckForUpdate { current_version } => {
+            update::check(&current_version).map(CommandOutput::Update)
+        }
+        Command::DownloadUpdate { update } => {
+            update::download(&update).map(|path| CommandOutput::UpdateDownloaded {
+                path: path.to_string_lossy().into_owned(),
+            })
+        }
+        Command::TrashClip { path } => {
+            trash_clip(&path).map(|path| CommandOutput::Trashed { path })
+        }
         Command::LocalMediaPath { path } => {
             if path.as_os_str().is_empty() {
                 return Err(EngineError::EmptyMediaPath);
@@ -1235,6 +1333,50 @@ fn reveal_invocation(manager: FileManager, path: &Path) -> (&'static str, Vec<Os
             vec![path.parent().unwrap_or(path).as_os_str().to_owned()],
         ),
     }
+}
+
+/// Puts a file in the Recycle Bin. The engine cannot reach the operating system itself (that code
+/// lives a layer up), so the program registers it once at start-up.
+type TrashHandler = fn(&Path) -> Result<(), String>;
+
+static TRASH_HANDLER: std::sync::Mutex<Option<TrashHandler>> = std::sync::Mutex::new(None);
+
+/// Registers how this program moves a file to the Recycle Bin. Without it deleting a clip fails
+/// and leaves the file alone.
+pub fn set_trash_handler(handler: TrashHandler) {
+    if let Ok(mut slot) = TRASH_HANDLER.lock() {
+        *slot = Some(handler);
+    }
+}
+
+/// Moves one clip to the Recycle Bin. Only an existing regular file with a video extension is
+/// accepted, so the command cannot be pointed at anything else.
+fn trash_clip(path: &Path) -> Result<String, EngineError> {
+    if path.as_os_str().is_empty() {
+        return Err(EngineError::EmptyMediaPath);
+    }
+    let absolute = std::path::absolute(path).map_err(|_| EngineError::FileUnavailable)?;
+    let metadata = fs::symlink_metadata(&absolute).map_err(|_| EngineError::FileUnavailable)?;
+    let is_video = absolute
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            VIDEO_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
+        });
+    if !metadata.is_file() || !is_video {
+        return Err(EngineError::NotAClip);
+    }
+    let handler = TRASH_HANDLER
+        .lock()
+        .ok()
+        .and_then(|slot| *slot)
+        .ok_or(EngineError::TrashUnavailable)?;
+    handler(&absolute).map_err(|_| EngineError::TrashUnavailable)?;
+    // A handler that reported success but left the file behind is not a deletion.
+    if absolute.exists() {
+        return Err(EngineError::TrashUnavailable);
+    }
+    Ok(absolute.to_string_lossy().into_owned())
 }
 
 fn reveal_in_file_manager(path: &Path) -> Result<String, EngineError> {
@@ -1304,6 +1446,9 @@ pub const fn command_ids() -> &'static [&'static str] {
         "library.scan",
         "library.path",
         "library.reveal",
+        "library.trash",
+        "app.check_for_update",
+        "app.download_update",
         "library.refresh",
         "library.load",
         "library.store_scan",
@@ -1315,6 +1460,8 @@ pub const fn command_ids() -> &'static [&'static str] {
         "recording.load_settings",
         "storage.usage",
         "app.launch_at_startup",
+        "app.install",
+        "app.uninstall",
         "capture.start",
         "capture.stop",
         "capture.status",
@@ -1327,6 +1474,7 @@ pub const fn command_ids() -> &'static [&'static str] {
         "capture.toggle_microphone",
         "capture.push_to_talk",
         "recording.save_settings",
+        "recording.test_microphone",
         "recording.set_builtin_games",
     ]
 }
@@ -1346,6 +1494,62 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    fn bin_that_works(path: &std::path::Path) -> Result<(), String> {
+        fs::remove_file(path).map_err(|error| error.to_string())
+    }
+
+    fn bin_that_refuses(_: &std::path::Path) -> Result<(), String> {
+        Err("no bin".to_owned())
+    }
+
+    fn bin_that_lies(_: &std::path::Path) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// One test, because the handler is process-wide and tests run side by side.
+    #[test]
+    fn trashing_a_clip_only_touches_video_files_and_only_when_the_bin_took_it() {
+        let directory = std::env::temp_dir().join(format!(
+            "clipcraft-trash-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::SeqCst)
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let clip = directory.join("ClipCraft test.mp4");
+        let notes = directory.join("notes.txt");
+        let folder = directory.join("folder.mp4");
+        fs::write(&clip, b"clip").unwrap();
+        fs::write(&notes, b"notes").unwrap();
+        fs::create_dir_all(&folder).unwrap();
+        let trash = |path: &PathBuf| super::execute(Command::TrashClip { path: path.clone() });
+
+        super::set_trash_handler(bin_that_refuses);
+        assert_eq!(trash(&clip).unwrap_err(), EngineError::TrashUnavailable);
+        assert!(clip.exists(), "a refused move leaves the clip alone");
+
+        super::set_trash_handler(bin_that_lies);
+        assert_eq!(trash(&clip).unwrap_err(), EngineError::TrashUnavailable);
+
+        super::set_trash_handler(bin_that_works);
+        assert_eq!(trash(&notes).unwrap_err(), EngineError::NotAClip);
+        assert_eq!(trash(&folder).unwrap_err(), EngineError::NotAClip);
+        assert_eq!(
+            trash(&directory.join("missing.mp4")).unwrap_err(),
+            EngineError::FileUnavailable
+        );
+        assert_eq!(
+            trash(&PathBuf::new()).unwrap_err(),
+            EngineError::EmptyMediaPath
+        );
+        assert!(notes.exists() && folder.exists());
+        assert!(matches!(
+            trash(&clip).unwrap(),
+            CommandOutput::Trashed { .. }
+        ));
+        assert!(!clip.exists());
+        let _ = fs::remove_dir_all(&directory);
+    }
 
     #[test]
     fn editor_export_json_keeps_existing_fields_and_accepts_optional_size_presets() {

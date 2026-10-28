@@ -1,5 +1,112 @@
 # Testing
 
+## Shortcuts, first launch and installation (M5.1a)
+
+Engine hotkey tests cover old string-only JSON, five bindings, round-trip persistence, canonical
+duplicates, invalid/oversized lists and native ID resolution. A desktop fake-event regression
+holds both PTT alternatives, releases each in turn and checks assignment suppresses actions.
+Keyboard tests add, assign and remove a shortcut. Onboarding tests check legacy preferences skip
+setup, fresh defaults request it, invalid destinations fail, and Finish persists completion and
+choices through the same settings command.
+
+Installation tests package generated files, install/upgrade/remove them, retain an unknown clip,
+reject an unrelated nonempty folder and malformed ownership records, and roll back oversized or
+truncated gzip payloads without changing the previous install. A Windows shell-link test uses a
+temporary path with spaces/Unicode and validates its native link header without touching Start
+menu or registry. Native screenshots, packaged-binary smoke evidence and final CI results are
+recorded after verification below. Clean second-machine/signing checks remain open.
+
+Windows 11 local verification on 2026-10-27: full `cargo xtask ci` passes, including the keyboard
+add/assign/remove test, PTT overlap regression, corrupt/oversized installation rollback and the
+native Unicode shell-link test. Logs: ignored `target/setup-ci-final.log` and
+`target/setup-keyboard.log`. The first sandbox-only broad run had four existing recovery/game
+configuration failures; none recur with native access in either full gate run.
+
+`cargo xtask package` produces the portable zip and offline setup. A real setup executable installed
+into an isolated workspace folder with spaces/Japanese characters, matched the application hash,
+ran its installed CLI, upgraded while retaining the first executable, then removed both program
+versions while preserving an unknown generated clip and an external preferences sentinel. This
+uses the explicit no-integration mode; it does not claim a real Windows Apps & Features round trip.
+Evidence is in ignored `target/setup-installer-evidence/install-smoke-*/result.json`.
+Native installer review at 700×560 confirms license gating, Tab/Shift-Tab focus, Enter toggling
+the license and Tab reaching the enabled Install action. It was closed before installation.
+Screenshot: `target/setup-installer-evidence/installer.png`.
+
+## Processed microphone listening and stereo (M3.1b, 2026-10-27)
+
+The initial mono suppression prototype is superseded by independent stereo state and optional
+mono folding. A regression compares opposite left/right inputs against independent mono models
+to detect downmix/crosstalk; explicit mono instead cancels that opposite signal. Chunk/rate and
+device-loss tests now account for interleaved stereo samples. The shared `PcmMonitor` test compares
+AAC bytes against the ordinary recording path for stereo/mono, suppression on/off and 0/50/100%
+volume. Invalid formats and oversized input must fail without publishing samples.
+
+Native monitor tests use a fake worker for bounded replacement settings and actionable device
+failure completion. Queue tests prove 200 ms eviction, stereo/surround placement, underrun and
+immediate stop silence; a held worker lock cannot block the callback. Keyboard tests reach Mic
+Test without opening a device and exercise mono alongside suppression. CLI rejects invalid test
+durations before opening devices. The ignored
+`real_processed_microphone_test_plays_and_applies_live_controls` test opens default input/output,
+counts real callback frames, checks live zero gain and mono, and stops without saving sound.
+
+Mic Test meters processed PCM and bypasses recording/PTT gates. User listening is needed to
+assess speech quality, acoustic feedback and physical-device reliability; sample counters prove
+delivery to the OS, not audible fidelity. The Windows 11 / Ryzen 7 5700X3D native duplex test
+passed: 108,000 processed frames reached the output callback, live zero gain produced a zero
+meter, a live mono update resumed output, and the worker released its permit after Stop. No
+audio was saved. Release DSP measurements for 20 seconds at 48 kHz are 149.194 ms mono
+(74.597 µs per 10 ms block) and 284.813 ms stereo (142.406 µs per block). These are synthetic
+elapsed throughput figures, not game FPS or whole-app CPU usage. Logs are in ignored
+`target/mic-monitor-{focused,focused-ui,native,ci}.log` and `target/mic-stereo-benchmark.log`.
+Full `cargo xtask ci`, documentation checks and desktop/CLI release builds pass for the final
+revision. Native 1440×900 review confirms the test row follows suppression/mono controls and
+its listening/error help wraps without overlapping the button/meter. The first UI run reported
+one playback-device error; its cause is not established. A clean 15-second CLI retry delivered
+716,160 output frames, and a further 15-second desktop retry stayed active and stopped cleanly.
+This is short-run evidence, not a claim that device failures cannot occur. Before/after/listening/
+stopped screenshots are ignored in `target/mic-monitor-evidence/`. Final logs are
+`target/mic-monitor-ci-final.log`, `target/mic-monitor-build-final.log` and
+`target/mic-monitor-native-long.log`.
+
+## Microphone noise suppression (M3.1a, Windows, 2026-10-27)
+
+`cargo test -p clipcraft-record noise -- --nocapture` exercises chunk/rate invariance, partial
+interleaved frames, finite normalized samples, a sample-aligned click, the initial model delay,
+gain/mute through AAC, format validation, device recovery and a two-second backlog after overload.
+The initial overload design could repeatedly fail after the retry wait; recovery now drains stale
+input without DSP, releases its allocation and resumes fresh samples. That case has a regression.
+Engine tests check default-off migration/persistence, mic-only wrapping in both track layouts,
+unsupported-format warnings that preserve system sound and the existing push-to-talk controls.
+UI tests check search, Tab/Enter enable/reset and the active-recording restart notice.
+
+The generated recording test saves both mixed/separate layouts as MP4 and MKV, decodes through
+external FFmpeg/ffprobe and checks noise energy, an unaffected system tone, track duration and
+mute/zero gain. Its stationary background is about −33 dBFS RMS. A direct model probe found much
+weaker reduction for loud, full-band noise around −21 dBFS; these tests do not establish voice
+quality, universal noise removal or parity with Discord/Krisp.
+
+The ignored `generated_noise_suppression_throughput` test processes 20 seconds of generated
+48 kHz mono in release mode. On this Windows 11 Pro 26300 / Ryzen 7 5700X3D run it took
+127.298 ms total, averaging 63.649 µs per 10 ms block (0.00636× real-time elapsed). It includes
+test-source chunk/output allocations, after FFT warmup. This is elapsed synthetic DSP throughput,
+not game FPS impact, a whole-app CPU percentage or a sustained-load guarantee.
+
+The explicitly ignored `real_microphone_noise_suppression_delivers_bounded_finite_samples` test
+opens the default input for five seconds, counts finite 48 kHz mono output and saves no sound or
+device identifier. Run it explicitly only for a local microphone integration check. Neither this
+check establishes listening quality or physical-unplug behavior. The raw settings meter in that
+initial prototype is replaced by M3.1b's processed listening test above.
+
+On Windows 11 Pro 26300 it passed with a 48 kHz stereo default input: 237,120 finite 48 kHz mono
+output frames in 5.062 seconds; the largest read was 5,280 frames, below the 12,000-frame limit.
+Logs remain in ignored `target/mic-denoise-{device,record,record-focused,focused}.log`.
+
+`cargo xtask ci`, the documentation check and desktop/CLI release builds pass. An isolated,
+non-recording native profile at 1440×900 verified the new switch, enabled mono guidance, raw-meter
+help and `rnnoise` search. Native Tab focus is visible; the automated settings test reaches and
+activates both the switch and its Reset action with Tab/Enter. Before/off/on screenshots are
+kept out of Git in `target/mic-denoise-evidence/`. The user's active replay was not restarted.
+
 ## Discord CDN artwork verification (M10.2c, Windows, 2026-10-24)
 
 `cargo test -p clipcraft-engine presence --lib` covers fixed CDN image selection, game-name

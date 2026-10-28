@@ -1,7 +1,8 @@
 # ADR 0009: Recording sound
 
-- **Status:** Accepted. Tested end to end with generated sources; **never run with a real
-  microphone or speaker** (no sound card in the build container).
+- **Status:** Accepted. End-to-end evidence uses generated sources. M3.1a adds a short Windows
+  default-microphone adapter/denoiser check; real spoken clips, listening and physical-device
+  recovery remain open. See [ADR 0030](0030-microphone-noise-suppression.md).
 - **Date:** 2026-10-20
 
 ## Context

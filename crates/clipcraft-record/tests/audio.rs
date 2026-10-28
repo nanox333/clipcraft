@@ -9,8 +9,9 @@ use std::time::{Duration, Instant};
 use clipcraft_capture::SyntheticSource;
 use clipcraft_capture::reframe::{Framing, OutputShape};
 use clipcraft_record::{
-    AudioConfig, AudioControl, AudioFormat, AudioInput, AudioSetup, ClipFormat, EncoderSpeed,
-    RecordConfig, RecordError, Recorder, ToneSource,
+    AudioConfig, AudioControl, AudioError, AudioFormat, AudioInput, AudioSetup, AudioSource,
+    ClipFormat, EncoderSpeed, NoiseSuppressedSource, RecordConfig, RecordError, Recorder,
+    ToneSource,
 };
 
 fn config() -> RecordConfig {
@@ -207,6 +208,176 @@ fn amplitude_at(stereo: &[f32], hz: f32) -> f32 {
 
 fn rms(stereo: &[f32]) -> f32 {
     (stereo.iter().map(|s| s * s).sum::<f32>() / stereo.len().max(1) as f32).sqrt()
+}
+
+/// Repeatable stationary background noise (about -33 dBFS RMS), paced by the same generated
+/// device clock as the other recording tests. This is background hiss, not full-volume noise
+/// or a substitute for speech-quality listening tests.
+struct NoiseSource {
+    clock: ToneSource,
+    state: u32,
+}
+
+impl NoiseSource {
+    fn new() -> Self {
+        Self {
+            clock: tone(48_000, 1, 0.0, 0.0),
+            state: 0x5eed_1234,
+        }
+    }
+}
+
+impl AudioSource for NoiseSource {
+    fn name(&self) -> String {
+        "Generated microphone noise".to_owned()
+    }
+
+    fn format(&self) -> AudioFormat {
+        self.clock.format()
+    }
+
+    fn read(&mut self, out: &mut Vec<f32>) -> Result<(), AudioError> {
+        let start = out.len();
+        self.clock.read(out)?;
+        for sample in &mut out[start..] {
+            self.state = self
+                .state
+                .wrapping_mul(1_664_525)
+                .wrapping_add(1_013_904_223);
+            *sample = ((self.state >> 8) as f32 / 16_777_215.0 * 2.0 - 1.0) * 0.04;
+        }
+        Ok(())
+    }
+}
+
+fn noise_input(suppress: bool, track: usize) -> (AudioInput, AudioControl) {
+    let raw: Box<dyn AudioSource> = Box::new(NoiseSource::new());
+    let source: Box<dyn AudioSource> = if suppress {
+        Box::new(NoiseSuppressedSource::new(raw).unwrap())
+    } else {
+        raw
+    };
+    let control = AudioControl::default();
+    (AudioInput::new(source, control.clone(), track), control)
+}
+
+/// Remove the system tone from a mixed track before measuring the remaining microphone noise.
+/// A whole second makes the 440 Hz sine and cosine bases orthogonal.
+fn rms_without_system_tone(stereo: &[f32]) -> f32 {
+    let count = stereo.len() / 2;
+    assert_eq!(count, 48_000);
+    let mut sine = 0.0;
+    let mut cosine = 0.0;
+    for (index, sample) in stereo.iter().step_by(2).enumerate() {
+        let phase = std::f64::consts::TAU * 440.0 * index as f64 / 48_000.0;
+        sine += f64::from(*sample) * phase.sin();
+        cosine += f64::from(*sample) * phase.cos();
+    }
+    sine *= 2.0 / count as f64;
+    cosine *= 2.0 / count as f64;
+    let power = stereo
+        .iter()
+        .step_by(2)
+        .enumerate()
+        .map(|(index, sample)| {
+            let phase = std::f64::consts::TAU * 440.0 * index as f64 / 48_000.0;
+            let residual = f64::from(*sample) - sine * phase.sin() - cosine * phase.cos();
+            residual * residual
+        })
+        .sum::<f64>();
+    (power / count as f64).sqrt() as f32
+}
+
+#[test]
+fn microphone_noise_suppression_survives_mixing_controls_and_both_file_formats() {
+    if !tools() {
+        return;
+    }
+    let scratch = Scratch::new("noise-suppression");
+    for separate in [false, true] {
+        let names: &[&str] = if separate {
+            &["Game", "Microphone", "Raw noise reference"]
+        } else {
+            &["Mix", "Raw noise reference"]
+        };
+        let mic_track = usize::from(separate);
+        let raw_track = names.len() - 1;
+        let (game, _) = input(tone(48_000, 2, 440.0, 0.3), 0);
+        let (mic, control) = noise_input(true, mic_track);
+        let (raw, _) = noise_input(false, raw_track);
+        let recorder = record_for(
+            AudioSetup {
+                config: layout(names),
+                inputs: vec![game, mic, raw],
+            },
+            3.0,
+        );
+        for format in [ClipFormat::Mp4, ClipFormat::Mkv] {
+            let path = scratch.file(&format!("separate-{separate}.{}", format.extension()));
+            let saved = recorder.save_clip(2, format, &path).unwrap();
+            assert_eq!(saved.audio_tracks, names.len());
+            assert_eq!(audio_streams(&path).len(), names.len());
+            let video = video_duration(&path);
+            let mut decoded = Vec::new();
+            for track in 0..names.len() {
+                let samples = decode(&path, track);
+                assert!(samples.iter().all(|sample| sample.is_finite()));
+                assert!(samples.len() >= 48_000 * 2);
+                let seconds = samples.len() as f64 / 2.0 / 48_000.0;
+                assert!(
+                    (seconds - video).abs() < 0.08,
+                    "separate={separate} {format:?} track {track}: audio {seconds} video {video}"
+                );
+                decoded.push(samples);
+            }
+            assert!(
+                decoded
+                    .windows(2)
+                    .all(|pair| pair[0].len() == pair[1].len())
+            );
+            // Judge the final second, after the recurrent filter and AAC have settled.
+            let tail = |samples: &[f32]| samples[samples.len() - 48_000 * 2..].to_vec();
+            let game = tail(&decoded[0]);
+            let mic = tail(&decoded[mic_track]);
+            let raw = tail(&decoded[raw_track]);
+            assert!((amplitude_at(&game, 440.0) - 0.3).abs() < 0.05);
+            let raw_noise = rms(&raw);
+            let filtered_noise = if separate {
+                assert!(amplitude_at(&mic, 440.0) < 0.01);
+                rms(&mic)
+            } else {
+                rms_without_system_tone(&mic)
+            };
+            assert!(
+                raw_noise > 0.015,
+                "the reference must contain audible noise"
+            );
+            assert!(
+                filtered_noise < raw_noise * 0.65,
+                "separate={separate} {format:?}: filtered {filtered_noise}, raw {raw_noise}"
+            );
+        }
+        assert!(recorder.status().audio.iter().all(|source| !source.lost));
+
+        if separate {
+            // Push-to-talk uses this same mute control. Neither it nor zero gain may leak the
+            // filter's pending samples, while the game and raw reference remain audible.
+            for (name, muted, gain) in [("muted", true, 100), ("zero-gain", false, 0)] {
+                control.set_gain_percent(gain);
+                control.set_muted(muted);
+                std::thread::sleep(Duration::from_millis(650));
+                let path = scratch.file(&format!("filtered-{name}.mkv"));
+                recorder.save_clip(1, ClipFormat::Mkv, &path).unwrap();
+                let mic = decode(&path, mic_track);
+                let game = decode(&path, 0);
+                let raw = decode(&path, raw_track);
+                let tail = &mic[mic.len() - 24_000..];
+                assert!(rms(tail) < 0.001, "filtered microphone leaked with {name}");
+                assert!(amplitude_at(&game[game.len() - 24_000..], 440.0) > 0.24);
+                assert!(rms(&raw[raw.len() - 24_000..]) > 0.015);
+            }
+        }
+    }
 }
 
 #[test]

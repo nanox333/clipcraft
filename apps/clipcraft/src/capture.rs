@@ -21,14 +21,25 @@ use crate::ClipCraftApp;
 use crate::kit::{self, DANGER, FAINT, Icon, LIME, MUTED, TEXT};
 use crate::settings::GpuProbe;
 
-/// Hotkey ids handed to the platform listener.
-const SAVE_ID: u32 = 1;
-const TOGGLE_ID: u32 = 2;
-const MICROPHONE_ID: u32 = 3;
-const TALK_ID: u32 = 4;
-const SCREENSHOT_ID: u32 = 5;
-
 /// Opens microphones and the computer's own sound for the recorder.
+fn receive_hotkey(
+    held: &mut std::collections::HashSet<u32>,
+    event: clipcraft_platform::HotkeyEvent,
+    assigning: bool,
+) -> Option<HotkeyAction> {
+    let action = clipcraft_engine::Hotkeys::action_for_id(event.id)?;
+    if action == HotkeyAction::PushToTalk {
+        if event.pressed {
+            held.insert(event.id);
+        } else {
+            held.remove(&event.id);
+        }
+        None
+    } else {
+        (event.pressed && !assigning).then_some(action)
+    }
+}
+
 fn audio_provider() -> clipcraft_record::AudioProvider {
     use clipcraft_audio_out::{CaptureKind, DeviceCapture};
     use clipcraft_record::AudioKind;
@@ -87,7 +98,8 @@ pub struct CaptureState {
     /// When the clip being saved will be written, if it is waiting for the post-roll.
     saving_at: Option<Instant>,
     listener: Option<HotkeyListener>,
-    listened_for: Vec<(u32, String)>,
+    hotkey_settings: Option<clipcraft_engine::Hotkeys>,
+    talk_keys: std::collections::HashSet<u32>,
     pub targets: Vec<CaptureTarget>,
     targets_loaded: bool,
     /// Whether the graphics card can encode video, found by trying it once.
@@ -162,6 +174,7 @@ impl CaptureState {
                 || started.separate_audio_tracks != current.separate_audio_tracks
                 || started.push_to_talk != current.push_to_talk
                 || started.microphone_mono != current.microphone_mono
+                || started.microphone_noise_suppression != current.microphone_noise_suppression
                 || started.audio_sample_rate != current.audio_sample_rate
                 || started.audio_channels != current.audio_channels
                 || started.audio_kbps != current.audio_kbps
@@ -193,7 +206,11 @@ fn automatic_desktop_target(target: &CaptureTarget) -> bool {
     target.kind == TargetKind::Display
 }
 
-fn notice(text: impl Into<String>, error: bool, path: Option<PathBuf>) -> Option<Notice> {
+pub(crate) fn notice(
+    text: impl Into<String>,
+    error: bool,
+    path: Option<PathBuf>,
+) -> Option<Notice> {
     Some(Notice {
         text: text.into(),
         error,
@@ -227,26 +244,26 @@ impl ClipCraftApp {
         }
         self.yield_to_the_game();
         self.sync_hotkeys();
+        // Hotkeys are read here, once per frame. Without the focus no input wakes the window (it
+        // may be in the tray or behind a game), so look again often enough to feel instant.
+        if self.capture.listener.is_some() && !context.input(|input| input.focused) {
+            context.request_repaint_after(Duration::from_millis(50));
+        }
         let mut actions = Vec::new();
-        let mut talking = None;
         if let Some(listener) = self.capture.listener.as_ref() {
             while let Some(event) = listener.try_next() {
-                if event.id == TALK_ID {
-                    talking = Some(event.pressed);
-                } else if event.pressed {
-                    match event.id {
-                        SAVE_ID => actions.push(HotkeyAction::SaveClip),
-                        TOGGLE_ID => actions.push(HotkeyAction::ToggleRecording),
-                        MICROPHONE_ID => actions.push(HotkeyAction::ToggleMicrophone),
-                        SCREENSHOT_ID => actions.push(HotkeyAction::Screenshot),
-                        _ => {}
-                    }
+                if let Some(action) = receive_hotkey(
+                    &mut self.capture.talk_keys,
+                    event,
+                    self.settings_state.capturing.is_some(),
+                ) {
+                    actions.push(action);
                 }
             }
         }
-        if let Some(held) = talking {
-            self.capture.session.set_talking(held);
-        }
+        self.capture.session.set_talking(
+            !self.capture.talk_keys.is_empty() && self.settings_state.capturing.is_none(),
+        );
         if self.capture.is_active() {
             self.capture.session.set_levels(&self.recording);
         }
@@ -262,7 +279,12 @@ impl ClipCraftApp {
                 HotkeyAction::ToggleMicrophone,
                 HotkeyAction::Screenshot,
             ] {
-                if self.recording.hotkeys.get(action) == pressed {
+                if self
+                    .recording
+                    .hotkeys
+                    .bindings(action)
+                    .any(|key| key == pressed)
+                {
                     actions.push(action);
                 }
             }
@@ -362,7 +384,7 @@ impl ClipCraftApp {
     }
 
     /// Finds out once, off the interface thread, whether the graphics card can encode video.
-    fn poll_gpu_probe(&mut self) {
+    pub(crate) fn poll_gpu_probe(&mut self) {
         if self.capture.gpu == GpuProbe::Unknown {
             self.capture.gpu = GpuProbe::Checking;
             let (sender, receiver) = mpsc::channel();
@@ -391,24 +413,19 @@ impl ClipCraftApp {
 
     /// Keeps the global hotkeys in step with the settings.
     fn sync_hotkeys(&mut self) {
-        let wanted: Vec<(u32, String)> = [
-            (SAVE_ID, HotkeyAction::SaveClip),
-            (TOGGLE_ID, HotkeyAction::ToggleRecording),
-            (MICROPHONE_ID, HotkeyAction::ToggleMicrophone),
-            (TALK_ID, HotkeyAction::PushToTalk),
-            (SCREENSHOT_ID, HotkeyAction::Screenshot),
-        ]
-        .into_iter()
-        .filter_map(|(id, action)| {
-            let key = self.recording.hotkeys.get(action);
-            (!key.is_empty()).then(|| (id, key.to_owned()))
-        })
-        .collect();
-        if wanted == self.capture.listened_for {
+        if self.capture.hotkey_settings.as_ref() == Some(&self.recording.hotkeys) {
             return;
         }
-        self.capture.listened_for = wanted.clone();
+        self.capture.hotkey_settings = Some(self.recording.hotkeys.clone());
+        let wanted: Vec<(u32, String)> = self
+            .recording
+            .hotkeys
+            .registrations()
+            .map(|(id, _, key)| (id, key.to_owned()))
+            .collect();
         self.capture.listener = None;
+        self.capture.talk_keys.clear();
+        self.capture.session.set_talking(false);
         if wanted.is_empty() {
             return;
         }
@@ -586,6 +603,17 @@ impl ClipCraftApp {
                 .iter()
                 .any(|process| process.process_id == game.process_id)
         });
+        // "Found <game> running, but it has no window" is about a game that is no longer there, so
+        // it must not stay on screen after the game closes.
+        if found.matches.is_empty()
+            && self
+                .capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.error && notice.text.starts_with("ClipCraft found "))
+        {
+            self.capture.notice = None;
+        }
         self.settings_state.steam_games = found.steam;
         self.settings_state.steam_warning = found.steam_warning;
         self.settings_state.set_game_processes(Ok(found.processes));
@@ -677,94 +705,13 @@ impl ClipCraftApp {
             }
             other => other,
         };
-        if self.capture.desktop_fallback
-            || (self.capture.game_session.is_some()
-                && self.recording.desktop_capture_mode != DesktopCaptureMode::Never)
-        {
-            // The SaveJob owns the old bounded recorder, so stopping/changing source cannot
-            // overwrite its game replay. Skip post-roll because the source has disappeared.
-            if self.capture.saving.is_some() && self.capture.queued_save.is_some() {
-                self.capture.session.halt_for_transition();
-                self.capture.pending_transition = Some(transition);
-                self.capture.notice = notice(
-                    "Recording paused while the previous clips finish saving.",
-                    false,
-                    None,
-                );
-                return;
-            }
-            if !self.save_game_before_transition() {
-                return;
-            }
-        }
+        // A game closing never saves a clip by itself: clips are saved only when you ask.
         self.stop_capture();
         match transition {
             GameArmingDecision::Start(game) => self.start_capture_for_game(Some(game)),
             GameArmingDecision::StartDesktop => self.start_desktop_fallback(),
             GameArmingDecision::Stop => {}
         }
-    }
-
-    fn save_game_before_transition(&mut self) -> bool {
-        if self
-            .capture
-            .session
-            .status()
-            .is_none_or(|status| status.frames_encoded == 0)
-        {
-            return true;
-        }
-        let Some(folder) = self.clips_folder() else {
-            self.capture.notice = notice(
-                "Choose a capture folder before continuing on the desktop; the game replay is still retained.",
-                true,
-                None,
-            );
-            return false;
-        };
-        let mut settings = self.recording.clone();
-        settings.post_roll_seconds = 0;
-        let game = self
-            .capture
-            .game_session
-            .as_ref()
-            .map(|game| game.game_name.as_str());
-        let reserved: Vec<_> = self
-            .capture
-            .saving_path
-            .iter()
-            .cloned()
-            .chain(
-                self.capture
-                    .queued_save
-                    .iter()
-                    .map(|(job, _)| job.path().to_path_buf()),
-            )
-            .collect();
-        let job = match self
-            .capture
-            .session
-            .prepare_save(&settings, &folder)
-            .and_then(|job| job.avoid_paths(&reserved))
-        {
-            Ok(job) => job.with_game(game),
-            Err(error) => {
-                self.capture.notice = notice(
-                    format!(
-                        "Desktop continuation did not start: {error}. The game replay is still retained."
-                    ),
-                    true,
-                    None,
-                );
-                return false;
-            }
-        };
-        if self.capture.saving.is_some() {
-            self.capture.queued_save = Some((job, folder));
-        } else {
-            self.launch_save(job, folder);
-        }
-        true
     }
 
     fn start_desktop_fallback(&mut self) {
@@ -1229,18 +1176,35 @@ impl ClipCraftApp {
                         report.deleted.len()
                     )
                 };
-                self.capture.notice = notice(
-                    format!(
-                        "Saved {name}{removed}{}",
-                        if metadata_warning {
-                            "; game label could not be saved"
-                        } else {
-                            ""
-                        }
-                    ),
-                    metadata_warning,
-                    Some(report.clip.path.clone()),
-                );
+                if self.recording.show_save_notification {
+                    self.saved_toast = Some(crate::saved_toast::SavedToast::new(
+                        report.clip.path.clone(),
+                        report
+                            .recorded_game
+                            .clone()
+                            .unwrap_or_else(|| "Clip".to_owned()),
+                        saved_clip_facts(&report, &self.recording),
+                        self.thumbnail_dir.clone(),
+                    ));
+                }
+                // The card says it all; the top bar only speaks up when there is more to tell.
+                if !self.recording.show_save_notification
+                    || metadata_warning
+                    || !report.deleted.is_empty()
+                {
+                    self.capture.notice = notice(
+                        format!(
+                            "Saved {name}{removed}{}",
+                            if metadata_warning {
+                                "; game label could not be saved"
+                            } else {
+                                ""
+                            }
+                        ),
+                        metadata_warning,
+                        Some(report.clip.path.clone()),
+                    );
+                }
                 self.cue(Cue::ClipSaved);
                 // A saved clip belongs in the library when its folder is the one being browsed.
                 let in_library = self.capture.saved_into.as_ref().is_some_and(|folder| {
@@ -1262,6 +1226,57 @@ impl ClipCraftApp {
         }
         if let Some((job, folder)) = self.capture.queued_save.take() {
             self.launch_save(job, folder);
+        }
+    }
+
+    /// The card for a clip that was just saved: what to do with it. Called every frame.
+    pub(crate) fn saved_toast_frame(&mut self, context: &egui::Context) {
+        let Some(mut toast) = self.saved_toast.take() else {
+            return;
+        };
+        let ppp = context.pixels_per_point().max(0.5);
+        let free = clipcraft_platform::work_area().map(|(left, top, right, bottom)| {
+            egui::Rect::from_min_max(
+                egui::pos2(left as f32 / ppp, top as f32 / ppp),
+                egui::pos2(right as f32 / ppp, bottom as f32 / ppp),
+            )
+        });
+        let (action, alive) = toast.show(context, free);
+        let path = toast.path.clone();
+        match action {
+            Some(crate::saved_toast::ToastAction::Play) => {
+                self.pending_open = Some(path.clone());
+                crate::tray::show(context);
+                self.page = crate::Page::Library;
+            }
+            Some(crate::saved_toast::ToastAction::Show) => self.reveal_media(path.clone()),
+            Some(crate::saved_toast::ToastAction::Delete) => {
+                let title = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.start_trash(path.to_string_lossy().into_owned(), title);
+                toast.mark_deleted();
+            }
+            None => {}
+        }
+        if alive {
+            self.saved_toast = Some(toast);
+            context.request_repaint_after(std::time::Duration::from_millis(16));
+        }
+        // A clip the card was asked to play opens once the library lists it.
+        if let Some(wanted) = self.pending_open.clone() {
+            let found = self.library.as_ref().and_then(|library| {
+                library
+                    .entries
+                    .iter()
+                    .find(|entry| std::path::Path::new(&entry.path) == wanted)
+                    .cloned()
+            });
+            if let Some(entry) = found {
+                self.selected = Some(entry);
+                self.pending_open = None;
+            }
         }
     }
 
@@ -1392,7 +1407,11 @@ impl ClipCraftApp {
             }
             None => (FAINT, "Not clipping".to_owned()),
         };
-        kit::status_pill(ui, dot, &text);
+        if dot == LIME {
+            kit::live_status_pill(ui, &text);
+        } else {
+            kit::status_pill(ui, dot, &text);
+        }
         ui.add_space(8.0);
 
         let (icon, label) = if active {
@@ -1470,7 +1489,20 @@ impl ClipCraftApp {
                         .color(DANGER)
                         .size(12.5),
                 )
-                .on_hover_text("ClipCraft keeps trying to bring the device back.");
+                .on_hover_text({
+                    let mut message = status
+                        .audio
+                        .iter()
+                        .filter_map(|input| input.error.as_deref())
+                        .take(8)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if !message.is_empty() {
+                        message.push('\n');
+                    }
+                    message.push_str("ClipCraft keeps trying to bring the device back.");
+                    message
+                });
             } else if self.capture.session.has_microphone() {
                 let muted = self.capture.session.microphone_muted();
                 ui.label(
@@ -1597,9 +1629,111 @@ fn is_own_window(window: &CaptureTarget) -> bool {
     window.name.trim() == "ClipCraft"
 }
 
+/// The line under the title on the card: how long the clip is, how big, and at what size.
+fn saved_clip_facts(
+    report: &clipcraft_engine::SavedClipReport,
+    settings: &clipcraft_engine::RecordingSettings,
+) -> String {
+    let seconds = report.clip.duration_frames / u64::from(settings.frames_per_second.max(1));
+    let length = if seconds >= 60 {
+        format!("{}:{:02}", seconds / 60, seconds % 60)
+    } else {
+        format!("{seconds} s")
+    };
+    format!(
+        "{length} · {} · {}p",
+        clipcraft_engine::format_bytes(report.clip.bytes),
+        settings.height
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The clips saved below `root`: one folder per game, then the file.
+    fn saved_mp4s(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(root).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                found.extend(saved_mp4s(&path));
+            } else if path.extension().is_some_and(|extension| extension == "mp4")
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(clipcraft_engine::is_clip_file_name)
+            {
+                found.push(path);
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn talking_stays_open_until_every_alternative_is_released() {
+        let mut keys = clipcraft_engine::Hotkeys::default();
+        keys.set_binding(HotkeyAction::PushToTalk, 0, "F1").unwrap();
+        keys.set_binding(HotkeyAction::PushToTalk, 1, "F2").unwrap();
+        let ids: Vec<_> = keys
+            .registrations()
+            .filter(|(_, action, _)| *action == HotkeyAction::PushToTalk)
+            .map(|(id, _, _)| id)
+            .collect();
+        let mut held = std::collections::HashSet::new();
+        for (id, pressed, count) in [
+            (ids[0], true, 1),
+            (ids[1], true, 2),
+            (ids[0], false, 1),
+            (ids[1], false, 0),
+        ] {
+            assert_eq!(
+                receive_hotkey(
+                    &mut held,
+                    clipcraft_platform::HotkeyEvent { id, pressed },
+                    false
+                ),
+                None
+            );
+            assert_eq!(held.len(), count);
+        }
+        assert_eq!(
+            receive_hotkey(
+                &mut held,
+                clipcraft_platform::HotkeyEvent {
+                    id: 1,
+                    pressed: true
+                },
+                true
+            ),
+            None
+        );
+        assert_eq!(
+            receive_hotkey(
+                &mut held,
+                clipcraft_platform::HotkeyEvent {
+                    id: 1,
+                    pressed: true
+                },
+                false
+            ),
+            Some(HotkeyAction::SaveClip)
+        );
+    }
+
+    #[test]
+    fn changing_noise_suppression_requires_a_recording_restart() {
+        let started = RecordingSettings::default();
+        let capture = CaptureState {
+            started_with: Some(started.clone()),
+            ..Default::default()
+        };
+        assert!(!capture.is_stale(&started));
+        assert!(capture.is_stale(&RecordingSettings {
+            microphone_noise_suppression: true,
+            ..started
+        }));
+    }
 
     fn observation(game: Option<u32>) -> crate::game_scan::ResultSet {
         crate::game_scan::ResultSet {
@@ -1734,7 +1868,7 @@ mod tests {
     }
 
     #[test]
-    fn generated_game_desktop_reopen_exit_and_timer_save_keep_media_and_game_labels() {
+    fn game_exits_and_the_desktop_timer_never_save_a_clip_by_themselves() {
         let (mut app, root) = automatic_app(DesktopCaptureMode::AfterGame);
         let original = root.join("original.mp4");
         std::fs::write(&original, b"original untouched").unwrap();
@@ -1765,25 +1899,8 @@ mod tests {
         assert!(!app.capture.is_active());
         assert!(!app.capture.desktop_fallback);
         assert_eq!(std::fs::read(&original).unwrap(), b"original untouched");
-        let clips: Vec<_> = std::fs::read_dir(&root)
-            .unwrap()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("ClipCraft")
-            })
-            .collect();
-        assert_eq!(clips.len(), 4);
-        assert_eq!(app.saved_games.len(), 2); // game replays tagged; desktop replays untagged
-        for path in clips {
-            assert!(matches!(
-                clipcraft_engine::execute(clipcraft_engine::Command::ProbeClip { path }),
-                Ok(clipcraft_engine::CommandOutput::ClipProbe(_))
-            ));
-        }
+        assert!(saved_mp4s(&root).is_empty());
+        assert!(app.saved_games.is_empty());
         drop(app);
         remove_scratch(root);
     }
@@ -1806,51 +1923,21 @@ mod tests {
         remove_scratch(root);
     }
     #[test]
-    fn a_game_exiting_while_saves_are_busy_cannot_discard_the_retained_desktop_replay() {
-        let (mut app, root) = automatic_app(DesktopCaptureMode::AfterGame);
-        app.apply_game_observation(observation(Some(42)));
-        wait_for_frames(&app);
-        // Hold a save open deterministically so the first transition fills the queued slot.
-        let (sender, receiver) = mpsc::channel();
-        app.capture.saving = Some(receiver);
-        app.capture.saving_path = Some(root.join("in-flight.mp4"));
+    fn the_game_without_a_window_message_goes_away_when_the_game_closes() {
+        let (mut app, _root) = automatic_app(DesktopCaptureMode::Never);
+        app.capture.notice = notice(
+            "ClipCraft found Roblox running, but this desktop did not expose its game window. Capture is still idle.",
+            true,
+            None,
+        );
         app.apply_game_observation(observation(None));
-        assert!(app.capture.desktop_fallback);
-        assert!(app.capture.queued_save.is_some());
-        wait_for_frames(&app);
-        app.apply_game_observation(observation(Some(43)));
-        assert!(matches!(
-            app.capture.pending_transition,
-            Some(GameArmingDecision::Start(_))
-        ));
-        app.apply_game_observation(observation(None)); // new game exits before it can open
-        app.advance_game_transition();
-        assert!(app.capture.pending_transition.is_some());
-        assert!(app.capture.session.status().unwrap().frames_encoded > 0);
-        sender
-            .send(Err("generated slow-save failure".into()))
-            .unwrap();
-        app.poll_save();
-        app.advance_game_transition();
-        finish_saves(&mut app);
-        assert!(!app.capture.is_active());
-        assert_eq!(app.saved_games.len(), 1);
-        let clips: Vec<_> = std::fs::read_dir(&root)
-            .unwrap()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|extension| extension == "mp4"))
-            .collect();
-        assert_eq!(clips.len(), 2); // both the game replay and the retained desktop replay survive
-        for path in clips {
-            assert!(matches!(
-                clipcraft_engine::execute(clipcraft_engine::Command::ProbeClip { path }),
-                Ok(clipcraft_engine::CommandOutput::ClipProbe(_))
-            ));
-        }
-        drop(app);
-        remove_scratch(root);
+        assert!(app.capture.notice.is_none());
+        // Other messages are left alone.
+        app.capture.notice = notice("Something else went wrong", true, None);
+        app.apply_game_observation(observation(None));
+        assert!(app.capture.notice.is_some());
     }
+
     #[test]
     fn failed_game_open_and_rule_removal_cannot_start_temporary_desktop() {
         let (mut app, root) = automatic_app(DesktopCaptureMode::AfterGame);

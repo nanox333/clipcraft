@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    clipcraft_engine::set_trash_handler(clipcraft_platform::move_to_trash);
+    clipcraft_engine::update::set_http_fetcher(clipcraft_platform::https_get);
     match run(std::env::args_os().skip(1).collect()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -39,6 +41,7 @@ fn run(arguments: Vec<OsString>) -> Result<(), CliError> {
         "game-data" => run_game_data(&arguments[1..]),
         "presence" => run_presence(&arguments[1..]),
         "diagnose" => run_diagnose(&arguments[1..]),
+        "update" => run_update(&arguments[1..]),
         _ => Err(CliError::Usage),
     }
 }
@@ -314,6 +317,13 @@ fn run_library(arguments: &[OsString]) -> Result<(), CliError> {
                 _ => Err(CliError::UnexpectedOutput),
             }
         }
+        "trash" => {
+            let output = execute(Command::TrashClip { path }).map_err(CliError::Engine)?;
+            match output {
+                CommandOutput::Trashed { path } => write_json(&path),
+                _ => Err(CliError::UnexpectedOutput),
+            }
+        }
         "reveal" => {
             let output =
                 execute(Command::RevealInFileManager { path }).map_err(CliError::Engine)?;
@@ -484,6 +494,22 @@ fn run_clip(arguments: &[OsString]) -> Result<(), CliError> {
     }
 }
 
+/// `update check` asks whether a newer ClipCraft has been published, and prints the answer as JSON.
+/// It downloads nothing: the app's Update button does that.
+fn run_update(arguments: &[OsString]) -> Result<(), CliError> {
+    if arguments.len() != 1 || arguments[0].to_str() != Some("check") {
+        return Err(CliError::Usage);
+    }
+    let output = execute(Command::CheckForUpdate {
+        current_version: env!("CARGO_PKG_VERSION").to_owned(),
+    })
+    .map_err(CliError::Engine)?;
+    match output {
+        CommandOutput::Update(status) => write_json(&status),
+        _ => Err(CliError::UnexpectedOutput),
+    }
+}
+
 /// `diagnose [--json]` checks the folders, screens, sound, and encoders and says what works. It
 /// exits with failure when something that recording needs is wrong.
 fn run_diagnose(arguments: &[OsString]) -> Result<(), CliError> {
@@ -556,6 +582,51 @@ fn run_diagnose(arguments: &[OsString]) -> Result<(), CliError> {
 }
 
 fn run_recording(arguments: &[OsString]) -> Result<(), CliError> {
+    if arguments.first().and_then(|value| value.to_str()) == Some("mic-test") {
+        let seconds: u64 = arguments
+            .get(1)
+            .and_then(|value| value.to_str())
+            .and_then(|value| value.parse().ok())
+            .filter(|value| (1..=60).contains(value))
+            .ok_or(CliError::Usage)?;
+        if arguments.len() != 2 {
+            return Err(CliError::Usage);
+        }
+        let path = clipcraft_engine::default_settings_path().ok_or(CliError::Usage)?;
+        let CommandOutput::RecordingSettings(settings) =
+            execute(Command::LoadRecordingSettings { path }).map_err(CliError::Engine)?
+        else {
+            return Err(CliError::UnexpectedOutput);
+        };
+        let CommandOutput::MicrophoneTest(plan) =
+            execute(Command::PrepareMicrophoneTest { settings }).map_err(CliError::Engine)?
+        else {
+            return Err(CliError::UnexpectedOutput);
+        };
+        let test = clipcraft_audio_out::MicTest::start(plan).map_err(CliError::Capture)?;
+        let started = std::time::Instant::now();
+        while started.elapsed().as_secs() < seconds {
+            if let Some(error) = test.error() {
+                return Err(CliError::Capture(error));
+            }
+            if test.finished() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if let Some(error) = test.error() {
+            return Err(CliError::Capture(error));
+        }
+        if test.played_frames() == 0 {
+            return Err(CliError::Capture(
+                "The microphone test delivered no playback. Check the input and output devices."
+                    .into(),
+            ));
+        }
+        return write_json(
+            &serde_json::json!({"played_frames":test.played_frames(),"saved_audio":false}),
+        );
+    }
     if arguments.first().and_then(|value| value.to_str()) == Some("games") {
         let operation = arguments.get(1).and_then(|value| value.to_str());
         if operation == Some("list") && arguments.len() == 2 {
@@ -762,6 +833,7 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli library scan <folder>\n",
         "  clipcraft-cli library path <file>\n",
         "  clipcraft-cli library reveal <file>\n",
+        "  clipcraft-cli library trash <file>  (moves the clip to the Recycle Bin)\n",
         "  clipcraft-cli library probe <file>\n",
         "  clipcraft-cli library thumbnail <file>\n",
         "  clipcraft-cli clip trim <input> <output.mp4> <start-seconds> <end-seconds>\n",
@@ -770,6 +842,7 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli clip normalize <input> <output.mp4> <start-seconds> <end-seconds> [target-LUFS:-30..-8, default -16]\n",
         "  clipcraft-cli diagnose [--json]\n",
         "  clipcraft-cli recording settings\n",
+        "  clipcraft-cli recording mic-test <seconds:1..60>  (hear processed microphone; use headphones)\n",
         "  clipcraft-cli capture targets\n",
         "  clipcraft-cli capture record --seconds N [--target ID] [--out DIR]\n",
         "  clipcraft-cli version\n",
@@ -830,6 +903,22 @@ impl std::error::Error for CliError {
 mod tests {
     use super::{CliError, run};
     use std::ffi::OsString;
+
+    #[test]
+    fn microphone_test_rejects_unbounded_or_malformed_durations_before_opening_devices() {
+        for args in [
+            vec!["recording", "mic-test"],
+            vec!["recording", "mic-test", "0"],
+            vec!["recording", "mic-test", "61"],
+            vec!["recording", "mic-test", "NaN"],
+            vec!["recording", "mic-test", "1", "extra"],
+        ] {
+            assert!(matches!(
+                run(args.into_iter().map(OsString::from).collect()),
+                Err(CliError::Usage)
+            ));
+        }
+    }
 
     #[test]
     fn export_rejects_missing_target_bad_sizes_and_non_finite_times() {

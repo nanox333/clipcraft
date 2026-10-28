@@ -176,10 +176,71 @@ behavior, repeated start/stop, and no loss of already-saved clips.
 and recover when a device disconnects.
 
 **Limitations:** common game/system audio plus one microphone in the first release; advanced per-app
-routing, noise suppression, and multi-mic mixing are deferred.
+routing and multi-mic mixing are deferred. Optional microphone noise suppression is tracked in M3.1a.
 
 **Acceptance:** generated and real-device tests show bounded A/V drift over a long run, correct mute
 and gain, understandable permission errors, and recovery after device loss.
+
+### M3.1a — Offline microphone noise suppression
+
+**Status:** implemented (2026-10-27); deterministic DSP, generated MP4/MKV and Windows microphone
+adapter checks pass, along with native screenshot/search review, automated Tab/Enter controls,
+full `cargo xtask ci` and desktop/CLI release builds. Real speech quality and physical unplug
+tests remain open.
+
+**Problem/outcome:** fans, hiss and other background sounds can overwhelm recorded commentary.
+Settings › Audio offers a default-off, searchable, keyboard-accessible **Noise suppression** switch.
+It uses the shared `recording.save_settings` command and applies on the next capture start; existing
+settings files keep suppression off. Game/system sound and existing clips are unaffected.
+
+**Scope/decision:** reuse pinned BSD-3-Clause `nnnoiseless` 0.5.2 with embedded RNNoise weights,
+without its CLI/C API/training features. Pure Rust, offline inference on the existing audio worker;
+one microphone at 48 kHz before normal mixing/AAC, with independent stereo state and optional
+mono folding. See [ADR 0030](adr/0030-microphone-noise-suppression.md).
+
+**Limitations:** speech-oriented reduction, not an echo canceller or a promise of Discord/Krisp
+quality. No custom models, strength controls, virtual microphone or per-app routing. Linear rate
+conversion; input formats limited to 8–192 kHz, 1–8 channels. Processed listening/metering is M3.1b.
+Unsupported formats skip the mic with an actionable warning, preserving video/system sound.
+
+**Acceptance/verification:** deterministic tests prove chunk-invariant processing, finite output,
+bounded frames/work, signal-delay accounting, stationary-noise attenuation, device reset/recovery,
+default-off persistence, mic-only routing for mixed/separate tracks, and downstream mute/gain.
+Generated sources must save playable synchronized clips. Measure optimized synthetic throughput;
+capture native before/after settings screenshots and Tab/Enter enable/reset checks. Run
+`cargo xtask ci`. Real speech quality and physical-device disconnect evidence remain explicit gaps.
+
+**Documentation/dependencies/estimate:** update README, gaps, roadmap, architecture, settings,
+testing, dependency attribution and ADR in the same change. Depends on M3.1; medium DSP/timing risk,
+one implementation slice. No service, account, upload, new thread or capture authorization.
+
+### M3.1b — Processed microphone listening test and stereo suppression
+
+**Status:** implemented (2026-10-27); generated PCM/queue/lifecycle/keyboard checks, native
+Windows duplex playback, final native UI, full `cargo xtask ci` and release builds pass. One
+transient playback-device error was observed; 15-second CLI/desktop retries pass. Long-run
+physical-device reliability and subjective speech quality remain open.
+
+**Problem/outcome:** the raw input meter could not audition noise suppression or volume, and
+the initial suppressor unnecessarily forced stereo microphones to mono. Preserve independent
+left/right processing unless the user selects mono. Mic Test must play and meter the same
+pre-AAC microphone processing as recording, follow changes live, and stop promptly.
+
+**Scope:** shared `AudioInput::microphone`/PCM conversion; typed engine
+`recording.test_microphone` plan for desktop/CLI; one optional native listening worker with a
+replaceable settings slot and 200 ms output queue. Stop on leave/hidden row/error or 60 seconds;
+no recording, file, network or permanent monitor. Headphones avoid acoustic feedback.
+
+**Acceptance:** independent stereo/explicit mono and hostile/split input tests; monitor PCM
+matches recording through suppression, gain and channel conversion; zero-gain meter/output is
+silent; output callbacks never block or perform DSP; queues/workers are bounded; fake output
+proves stop/underrun behavior. Native duplex check must deliver processed samples to output and
+apply live zero gain/mono. Verify native settings screenshot, keyboard and `cargo xtask ci`.
+
+**Limits/docs/dependencies:** pre-AAC, default playback device, no echo cancellation, real voice
+quality still needs listening. Test bypasses recording/PTT gates intentionally; it is explicitly
+started. Update README, gaps, settings, architecture, testing, roadmap and ADR 0028 together.
+Depends on M3.1a; medium lifecycle/audio-device risk, one implementation slice.
 
 ### M3.2 — Clip finalization and local storage limits
 
@@ -410,7 +471,30 @@ mandatory update service or network telemetry.
 **Acceptance:** release checklist includes reproducible capture-to-export evidence with network
 disabled, full disk, device loss, suspend/resume, and measured CPU/GPU/memory/power behavior.
 
+### M5.1a — Multiple shortcuts, first-run setup and offline Windows installer
+
+**Status:** implemented; verification is recorded in `testing.md` and `release-checklist.md`.
+**Problem / evidence:** the maintainer requested a + beside each shortcut (up to five), initial
+setup and a Windows installer; the previous release had single bindings and a portable zip.
+**Scope:** engine shortcut/settings/installation commands, native desktop setup, safe Windows
+shell integration, Rust installer and packaging. **Limitations:** keyboard shortcuts only;
+Windows installer unsigned, no updater/admin installation/macOS bundle; maximum eight retained
+program versions. Captures and settings remain local and survive removal. No new network use.
+**Acceptance:** legacy settings migrate; +/remove/edit/reset support five collision-free bindings
+per action; all bindings register and overlapping PTT keys work. Fresh profiles show cancellable,
+keyboard-accessible setup, save completion atomically and do not capture during setup; existing
+profiles retain choices. A single offline executable installs, upgrades and uninstalls per-user,
+offers launch and optional desktop shortcut, rejects damaged/oversized bundles and unrelated
+destinations, and preserves source clips/preferences/unknown files on failure or removal.
+**Verification:** portable hostile-input/settings/hold/installation tests; native shortcut test;
+representative before/after/screens and keyboard checks; isolated real-binary install/upgrade/
+uninstall smoke test; `cargo xtask ci`. Signing and clean second-machine checks stay open.
+**Documentation:** README, roadmap, gaps, settings, architecture, testing, release guide and ADR
+0031 ship together. **Dependencies / estimate:** existing native UI/platform APIs, no blocker;
+one implementation slice.
+
 ### M5.2 — Low-copy GPU capture-to-encode path
+
 
 **Status:** Windows SDR WGC-to-D3D11-to-Media-Foundation is implemented with bounded owned surface
 leases and CPU fallback. Generated-window AMD runs confirm zero CPU readbacks at matching dimensions,

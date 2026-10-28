@@ -143,12 +143,12 @@ fn insights(settings: &RecordingSettings, gpu: &GpuProbe, live: &Live) -> Vec<In
 }
 
 /// A ready-made set of video settings.
-struct Profile {
-    name: &'static str,
-    tagline: &'static str,
-    detail: &'static str,
-    apply: fn(&mut RecordingSettings),
-    is_active: fn(&RecordingSettings) -> bool,
+pub(crate) struct Profile {
+    pub(crate) name: &'static str,
+    pub(crate) tagline: &'static str,
+    pub(crate) detail: &'static str,
+    pub(crate) apply: fn(&mut RecordingSettings),
+    pub(crate) is_active: fn(&RecordingSettings) -> bool,
 }
 
 fn performance(s: &mut RecordingSettings) {
@@ -172,7 +172,7 @@ fn best_quality(s: &mut RecordingSettings) {
     s.encoder_preset = EncoderPreset::Quality;
 }
 
-const PROFILES: [Profile; 3] = [
+pub(crate) const PROFILES: [Profile; 3] = [
     Profile {
         name: "Performance",
         tagline: "720p \u{b7} 60 FPS",
@@ -222,7 +222,8 @@ fn changed_count(settings: &RecordingSettings) -> usize {
     let (Some(now), Some(base)) = (now.as_object(), base.as_object()) else {
         return 0;
     };
-    const SKIP: [&str; 9] = [
+    const SKIP: [&str; 10] = [
+        "setup_completed",
         "game_rules",
         "disabled_steam_app_ids",
         "disabled_builtin_games",
@@ -751,10 +752,47 @@ pub(crate) fn replay_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut RecordingS
         1,
         seconds_label,
     );
+    rows.section(ui, "When a clip is saved");
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
+            "Show a notification",
+            "A card appears in the corner of the screen, even over a game, with the clip's picture and buttons to play it, find it or delete it.",
+            "popup toast notice saved clip corner overlay",
+        ),
+        |s| &mut s.show_save_notification,
+    );
     rows.finish(ui);
 }
 
 pub fn replay_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
+    // Say how the pieces fit together, since what is recorded is chosen on another page.
+    egui::Frame::new()
+        .fill(CARD)
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .corner_radius(egui::CornerRadius::same(14))
+        .inner_margin(egui::Margin::symmetric(20, 14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                RichText::new("How clipping works")
+                    .color(TEXT)
+                    .size(15.0)
+                    .family(kit::semibold()),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(
+                    "1. Capture (its own page) picks what is recorded: a screen, a window, or whichever game is running.
+                     2. While clipping is on, ClipCraft keeps only the last few moments in memory. Nothing is written to disk yet.
+                     3. Press the save hotkey and that stretch is saved as a clip. The settings below set how long it is.",
+                )
+                .color(MUTED)
+                .size(13.0),
+            );
+        });
+    ui.add_space(14.0);
     let mut rows = Rows::new("");
     replay_rows(&mut rows, ui, settings);
     section_heading(ui, "What a clip will be");
@@ -952,20 +990,6 @@ pub(crate) fn audio_rows(
             refresh_devices(state);
         }
     }
-    {
-        let snapshot = s.clone();
-        rows.custom(
-            ui,
-            Meta::new(
-                "Test your microphone",
-                "Speak and watch the bars move.",
-                "mic level meter check input",
-            ),
-            false,
-            330.0,
-            |ui| mic_test(ui, &snapshot, state),
-        );
-    }
     rows.range(
         ui,
         s,
@@ -983,8 +1007,18 @@ pub(crate) fn audio_rows(
         ui,
         s,
         Meta::new(
+            "Noise suppression",
+            "Reduce background noise in your recorded voice, offline. Preserves stereo unless mono is selected. Applies when clipping restarts; Mic Test updates live.",
+            "microphone mic voice noise reduction denoise rnnoise fan keyboard hiss",
+        ),
+        |s| &mut s.microphone_noise_suppression,
+    );
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
             "Microphone is mono",
-            "Copy a one-channel microphone to both sides so you are not heard from one ear.",
+            "Mix the microphone's left and right channels into the same sound on both sides, including with noise suppression.",
             "mic mono one ear left right",
         ),
         |s| &mut s.microphone_mono,
@@ -999,6 +1033,31 @@ pub(crate) fn audio_rows(
         ),
         |s| &mut s.push_to_talk,
     );
+    {
+        let snapshot = s.clone();
+        // Rows reserve 34 px for the control. Status belongs in the wrapping left-hand help,
+        // rather than adding vertical content to the right-to-left button/meter layout.
+        let help = if let Some(error) = &state.mic_error {
+            error.clone()
+        } else if state.mic.as_ref().is_some_and(MicTest::ready) {
+            "Listening after noise suppression, volume and mono. Changes apply live. Stops after 60 seconds. Use headphones to prevent feedback.".to_owned()
+        } else if state.mic.is_some() {
+            "Opening microphone and playback device… Use headphones to prevent feedback.".to_owned()
+        } else {
+            "Hear yourself after noise suppression, volume and mono settings. Use headphones to prevent feedback.".to_owned()
+        };
+        rows.custom(
+            ui,
+            Meta::new(
+                "Test your microphone",
+                &help,
+                "mic level meter check input listen playback monitor test",
+            ),
+            false,
+            330.0,
+            |ui| mic_test(ui, &snapshot, state),
+        );
+    }
     rows.section(ui, "Sound effects");
     rows.toggle(
         ui,
@@ -1445,11 +1504,11 @@ pub(crate) fn app_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut RecordingSett
         ui,
         s,
         Meta::new(
-            "Show advanced settings",
-            "Show extra controls for custom games.",
-            "more developer custom games advanced",
+            "Check for updates",
+            "Once at start-up, ClipCraft asks GitHub which version is newest and offers it if yours is older. Nothing about you or your clips is sent. Off, ClipCraft never goes online.",
+            "update upgrade new version network internet online automatic",
         ),
-        |s| &mut s.show_advanced,
+        |s| &mut s.check_for_updates,
     );
     rows.finish(ui);
 }

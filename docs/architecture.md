@@ -17,6 +17,14 @@ separate from the offline core.
 
 ## Dependency layers
 
+The L6 `clipcraft-installer` native entry point and its explicit unattended commands use L4 engine
+`app.install` / `app.uninstall`; the same fixed, bounded payload format is written by Rust xtask.
+L5 platform adapters create Windows shell shortcuts and HKCU app registration. See ADR 0031.
+The engine's optional update check and checksum-verified download (`engine::update`) reach the network only through a fetcher the platform layer registers (`platform::https_get`). See ADR 0032.
+Desktop first-run setup holds a draft and persists through `recording.save_settings`; it gates
+capture, audio and presence work until completion. Legacy settings skip onboarding. Shortcut
+alternatives keep backward-compatible primary strings and at most five bindings per action.
+
 Dependencies flow upward only:
 
 ```text
@@ -182,8 +190,8 @@ not a formal clean-room implementation. The small editor additionally consumes p
   after actual game exit, or maintain desktop replay between games including startup. Games always
   select their verified window; desktop policy selects an exposed monitor and skips portal chooser
   targets. A new game cancels the desktop timer; its next exit starts another. Stop pauses desktop
-  policies until Start. Desktop-policy source changes/timeout preserve the final replay through one active save
-  and one queued job; a full queue halts frame production while retaining the bounded buffer.
+  policies until Start. Desktop-policy source changes and timeouts do not save a clip (a game closing or
+  crashing never makes one); the old replay is simply replaced.
   Output names avoid in-flight collisions and remain exclusively written. Desktop clips do not
   inherit the previous game's recorded label. See [ADR 0016](adr/0016-background-steam-and-exit-fallback.md),
   [settings.md](settings.md) and [game-catalog.md](game-catalog.md).
@@ -192,6 +200,23 @@ not a formal clean-room implementation. The small editor additionally consumes p
 - **Audio mixing:** the current `AudioSource` mixer is clock-driven. The never-integrated
   timestamped audio policy was removed in M11.1j; it can be reviewed from Git history if a future
   timestamped provider needs it.
+- **Microphone noise suppression (M3.1a):** the engine wraps only an opted-in microphone with
+  `clipcraft-record::NoiseSuppressedSource`. It preserves the first two channels independently
+  unless mono is selected, converts
+  bounded device input to 48 kHz and feeds fixed 480-sample RNNoise frames on the existing audio
+  worker. The initial delayed output is discarded to align source sound; partial frames remain
+  bounded across reads. The existing 40 ms arrival slack absorbs framing/algorithm delay before
+  ordinary rate conversion, mute/gain, mixing and AAC. Device recovery clears model/resampler
+  history. The OS callback remains a bounded queue; no network, GPU or extra worker is required.
+  See [ADR 0030](adr/0030-microphone-noise-suppression.md).
+- **Processed microphone test (M3.1b):** `recording.test_microphone` returns an engine-validated
+  plan consumed by desktop/CLI and the native audio adapter (L5 → L4). Its `AudioInput::microphone`
+  factory and `PcmMonitor` reuse the recorder's denoiser, channel conversion and gain. One optional
+  monitor worker drives the existing input adapter and owns output; callbacks only enqueue input or try-drain up to 200 ms of
+  processed output. One replaceable settings update permits live gain/noise/mono/device changes.
+  Stop mutes the callback immediately; an OS open already in progress can finish asynchronously,
+  holding the sole worker permit until cleanup. Device/worker errors become UI errors; no sound
+  is saved. See [settings](settings.md) for the 60-second limit and explicit listening flow.
 - **Local match data:** engine commands `game_state.parse`/`game_state.install` normalize snapshots
   and install Valve configs. One opt-in platform worker owns authenticated loopback CS2/Dota
   listeners and Windows/macOS League HTTPS, with bounded IO and one current snapshot per game.

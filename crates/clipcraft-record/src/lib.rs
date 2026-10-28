@@ -13,6 +13,7 @@
 
 pub mod audio;
 pub mod convert;
+mod denoise;
 pub mod hardware;
 pub mod mux;
 mod recorder;
@@ -23,8 +24,9 @@ use std::fmt;
 
 pub use audio::{
     AudioConfig, AudioControl, AudioError, AudioFormat, AudioInput, AudioInputStatus, AudioKind,
-    AudioProvider, AudioSetup, AudioSource, SampleQueue, ToneSource,
+    AudioProvider, AudioSetup, AudioSource, PcmMonitor, SampleQueue, ToneSource,
 };
+pub use denoise::NoiseSuppressedSource;
 pub use hardware::{
     HardwareEncoder, HardwarePacket, HardwareProvider, HardwareRequest, StreamCodec, SurfaceFit,
 };

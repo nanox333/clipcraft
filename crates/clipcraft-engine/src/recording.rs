@@ -323,6 +323,9 @@ pub const MAX_VIDEO_KBPS: u32 = 200_000;
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
 pub struct RecordingSettings {
+    /// First-run choices have been saved. Older settings already count as configured.
+    #[serde(default = "already_configured")]
+    pub setup_completed: bool,
     /// Optional Discord disclosure; never part of capture configuration.
     pub discord_presence: crate::presence::PresenceSettings,
     /// Optional local match-data integrations. Separate from capture/game recognition.
@@ -351,7 +354,7 @@ pub struct RecordingSettings {
     pub rate_control: RateControl,
     /// Audio bitrate in kilobits per second.
     pub audio_kbps: u32,
-    /// Whether extra controls are shown at the bottom of their normal settings categories.
+    /// No longer used (custom games are always shown); kept so older settings files still load.
     pub show_advanced: bool,
     /// How hard the encoder works.
     pub encoder_preset: EncoderPreset,
@@ -379,6 +382,8 @@ pub struct RecordingSettings {
     pub push_to_talk: bool,
     /// The microphone is mono: copy it to both channels.
     pub microphone_mono: bool,
+    /// Reduce microphone background noise locally with RNNoise, preserving stereo unless mono is selected.
+    pub microphone_noise_suppression: bool,
     /// The screen or window to capture, as the capture provider names it; empty for the first
     /// screen.
     pub capture_target: String,
@@ -419,6 +424,10 @@ pub struct RecordingSettings {
     pub start_minimized: bool,
     /// Closing the window keeps ClipCraft running in the system tray.
     pub close_to_tray: bool,
+    /// A pop-up card in the corner of the screen when a clip has been saved.
+    pub show_save_notification: bool,
+    /// Ask GitHub once at start-up whether a newer ClipCraft has been published.
+    pub check_for_updates: bool,
     /// Open ClipCraft when you sign in.
     pub launch_at_startup: bool,
     /// Game sound level, 0 to 100 percent.
@@ -440,6 +449,7 @@ pub struct RecordingSettings {
 impl Default for RecordingSettings {
     fn default() -> Self {
         Self {
+            setup_completed: false,
             game_integrations: crate::game_state::GameIntegrationSettings::default(),
             discord_presence: crate::presence::PresenceSettings::default(),
             container: Container::Mp4,
@@ -468,6 +478,7 @@ impl Default for RecordingSettings {
             separate_audio_tracks: false,
             push_to_talk: false,
             microphone_mono: false,
+            microphone_noise_suppression: false,
             capture_target: String::new(),
             capture_target_name: String::new(),
             record_on_launch: false,
@@ -487,6 +498,8 @@ impl Default for RecordingSettings {
             delete_oldest_when_full: true,
             start_minimized: false,
             close_to_tray: true,
+            check_for_updates: true,
+            show_save_notification: true,
             launch_at_startup: false,
             game_audio_percent: 100,
             microphone_percent: 100,
@@ -496,6 +509,10 @@ impl Default for RecordingSettings {
             post_roll_seconds: 0,
         }
     }
+}
+
+fn already_configured() -> bool {
+    true
 }
 
 /// Container overhead on top of the encoded streams (sample tables, headers).
@@ -942,6 +959,8 @@ mod tests {
         let old: SettingsFile =
             serde_json::from_str(r#"{"version":1,"settings":{"height":720}}"#).unwrap();
         assert!(old.settings.capture_cursor && !old.settings.show_advanced);
+        assert!(!old.settings.microphone_noise_suppression);
+        assert!(!RecordingSettings::default().microphone_noise_suppression);
     }
 
     #[test]
@@ -1017,6 +1036,7 @@ mod tests {
         assert!(RecordingSettings::default().game_only_capture);
         let chosen = RecordingSettings {
             container: Container::Mkv,
+            microphone_noise_suppression: true,
             source: CaptureSource::Desktop,
             shape: OutputShape::Wide16x9,
             framing: Framing::Letterbox,

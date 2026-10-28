@@ -84,6 +84,37 @@ struct SoundControls {
     microphone: Option<AudioControl>,
 }
 
+/// Validated microphone settings shared by recording, native test monitoring and the CLI.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct MicrophoneTestPlan {
+    pub device: String,
+    pub noise_suppression: bool,
+    pub mono: bool,
+    pub gain_percent: u32,
+    pub channels: u16,
+}
+
+impl MicrophoneTestPlan {
+    pub fn from_settings(settings: &RecordingSettings) -> Self {
+        let settings = settings.clone().sanitized();
+        Self {
+            device: settings.microphone_device,
+            noise_suppression: settings.microphone_noise_suppression,
+            mono: settings.microphone_mono,
+            gain_percent: settings.microphone_percent,
+            channels: settings.audio_channels as u16,
+        }
+    }
+
+    /// Uses the same pre-mix microphone processor and controls as saved recordings.
+    pub fn input(
+        &self,
+        source: Box<dyn clipcraft_record::AudioSource>,
+    ) -> Result<AudioInput, String> {
+        AudioInput::microphone(source, self.noise_suppression, self.mono, self.gain_percent)
+    }
+}
+
 /// The sound sources the settings ask for, opened through `provider`, and what went wrong with
 /// the ones that could not be.
 fn audio_setup(
@@ -105,12 +136,17 @@ fn audio_setup(
         }
     }
     if settings.capture_microphone {
-        match provider.open(AudioKind::Microphone, &settings.microphone_device) {
-            Ok(source) => {
-                let control = AudioControl::default();
-                control.set_gain_percent(settings.microphone_percent);
+        let plan = MicrophoneTestPlan::from_settings(settings);
+        let microphone = provider
+            .open(AudioKind::Microphone, &settings.microphone_device)
+            .and_then(|source| {
+                plan.input(source).map_err(|why| format!("Microphone processing is unavailable: {why}. Choose another microphone or turn noise suppression off."))
+            });
+        match microphone {
+            Ok(input) => {
+                let control = input.control;
                 controls.microphone = Some(control.clone());
-                sources.push((AudioKind::Microphone, source, control));
+                sources.push((AudioKind::Microphone, input.source, control));
             }
             Err(why) => warnings.push(format!("The microphone could not be recorded: {why}")),
         }
@@ -374,13 +410,15 @@ impl CaptureSession {
         {
             return Err(EngineError::Record(RecordError::DiskFull));
         }
+        let unix = unix_now();
         Ok(SaveJob {
             recorded_game: None,
+            unix,
             recorder,
             format,
             seconds: settings.replay_seconds + settings.post_roll_seconds,
             post_roll: Duration::from_secs(u64::from(settings.post_roll_seconds)),
-            path: free_clip_path(folder, format, unix_now())?,
+            path: free_clip_path(folder, format, None, unix)?,
             folder: folder.to_path_buf(),
             trim_to: (limit > 0 && settings.delete_oldest_when_full).then_some(limit),
         })
@@ -390,6 +428,7 @@ impl CaptureSession {
 /// A clip save that can run on any thread.
 pub struct SaveJob {
     recorded_game: Option<String>,
+    unix: u64,
     recorder: Arc<Recorder>,
     format: ClipFormat,
     seconds: u32,
@@ -403,6 +442,12 @@ impl SaveJob {
     /// Snapshots a game name before moving threads. Invalid labels never prevent saving media.
     pub fn with_game(mut self, game: Option<&str>) -> Self {
         self.recorded_game = game.and_then(crate::library_meta::clean_recorded_game);
+        // The clip is filed under the game: `<clips>/<Game>/<Game> 2026-10-19 21-04-55.mp4`.
+        if let Some(name) = self.recorded_game.as_deref()
+            && let Ok(path) = free_clip_path(&self.folder, self.format, Some(name), self.unix)
+        {
+            self.path = path;
+        }
         self
     }
     /// Keep two in-flight transition jobs from choosing the same timestamp-based output name.
@@ -500,32 +545,100 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (year, month, day)
 }
 
-/// `ClipCraft 2026-10-19 21-04-55` for a Unix time, in UTC.
-pub fn clip_stem(unix_seconds: u64) -> String {
+/// `2026-10-19 21-04-55` for a Unix time, in UTC.
+fn timestamp(unix_seconds: u64) -> String {
     let days = i64::try_from(unix_seconds / 86_400).unwrap_or(0);
     let (year, month, day) = civil_from_days(days);
     let seconds = unix_seconds % 86_400;
     format!(
-        "{CLIP_PREFIX}{year:04}-{month:02}-{day:02} {:02}-{:02}-{:02}",
+        "{year:04}-{month:02}-{day:02} {:02}-{:02}-{:02}",
         seconds / 3_600,
         seconds % 3_600 / 60,
         seconds % 60
     )
 }
 
+/// `ClipCraft 2026-10-19 21-04-55` for a Unix time, in UTC.
+pub fn clip_stem(unix_seconds: u64) -> String {
+    format!("{CLIP_PREFIX}{}", timestamp(unix_seconds))
+}
+
+/// What a game is called on disk: no characters a file name cannot hold, and never empty.
+pub fn folder_name_for(game: Option<&str>) -> String {
+    let cleaned: String = game
+        .unwrap_or_default()
+        .chars()
+        .map(|c| {
+            if c.is_control() || "<>:\"/\\|?*".contains(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cleaned: String = cleaned.chars().take(60).collect();
+    let cleaned = cleaned.trim_matches(['.', ' ']).to_owned();
+    if cleaned.is_empty() {
+        "Desktop".to_owned()
+    } else {
+        cleaned
+    }
+}
+
+/// `Hades 2026-10-19 21-04-55` for a game (or `Desktop 2026-10-19 21-04-55`), in UTC.
+pub fn game_clip_stem(game: Option<&str>, unix_seconds: u64) -> String {
+    format!("{} {}", folder_name_for(game), timestamp(unix_seconds))
+}
+
+/// True when a file name looks like one ClipCraft saved: the old `ClipCraft ` prefix, or a
+/// game (or `Desktop`) name followed by `2026-10-19 21-04-55`, with an optional ` (2)`.
+pub fn is_clip_file_name(name: &str) -> bool {
+    if name.starts_with(CLIP_PREFIX) {
+        return true;
+    }
+    let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+    let stem = match stem.rsplit_once(" (") {
+        Some((head, tail)) if tail.ends_with(')') => head,
+        _ => stem,
+    };
+    let bytes = stem.as_bytes();
+    // " 2026-10-19 21-04-55" is 20 bytes, after at least one name character.
+    if bytes.len() < 21 {
+        return false;
+    }
+    let tail = &bytes[bytes.len() - 20..];
+    let shape = b" dddd-dd-dd dd-dd-dd";
+    tail.iter().zip(shape).all(|(&got, &want)| {
+        if want == b'd' {
+            got.is_ascii_digit()
+        } else {
+            got == want
+        }
+    })
+}
+
 fn free_clip_path(
     folder: &Path,
     format: ClipFormat,
+    game: Option<&str>,
     unix_seconds: u64,
 ) -> Result<PathBuf, EngineError> {
-    let stem = clip_stem(unix_seconds);
+    let stem = game_clip_stem(game, unix_seconds);
+    let directory = folder.join(folder_name_for(game));
+    // Without the game's folder the clip still saves, beside the others.
+    let directory = if fs::create_dir_all(&directory).is_ok() {
+        directory
+    } else {
+        folder.to_path_buf()
+    };
     for attempt in 1..=999_u32 {
         let name = if attempt == 1 {
             format!("{stem}.{}", format.extension())
         } else {
             format!("{stem} ({attempt}).{}", format.extension())
         };
-        let candidate = folder.join(name);
+        let candidate = directory.join(name);
         if !candidate.exists() {
             return Ok(candidate);
         }
@@ -541,7 +654,7 @@ fn trim_to_limit(folder: &Path, keep: &Path, limit: u64) -> Vec<PathBuf> {
         clip.path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with(CLIP_PREFIX))
+            .is_some_and(is_clip_file_name)
             && clip.path != keep
     };
     let others: u64 = clips
@@ -564,6 +677,22 @@ mod tests {
     use super::*;
     use clipcraft_capture::SyntheticSource;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn clips_are_named_and_filed_by_game() {
+        assert_eq!(game_clip_stem(None, 0), "Desktop 1970-01-01 00-00-00");
+        assert_eq!(
+            game_clip_stem(Some("Counter-Strike: 2"), 3_661),
+            "Counter-Strike 2 1970-01-01 01-01-01"
+        );
+        assert_eq!(folder_name_for(Some("  ??  ")), "Desktop");
+        assert_eq!(folder_name_for(Some("a/b")), "a b");
+        assert!(is_clip_file_name("Hades 2026-10-19 21-04-55.mp4"));
+        assert!(is_clip_file_name("Hades 2026-10-19 21-04-55 (2).mp4"));
+        assert!(is_clip_file_name("ClipCraft 2020-01-01 00-00-00.mp4"));
+        assert!(!is_clip_file_name("holiday.mp4"));
+        assert!(!is_clip_file_name("Hades 2026-10-19.mp4"));
+    }
 
     #[test]
     fn clip_names_are_utc_timestamps() {
@@ -732,8 +861,9 @@ mod tests {
                 .unwrap()
                 .to_str()
                 .unwrap()
-                .starts_with(CLIP_PREFIX)
+                .starts_with("Desktop ")
         );
+        assert_eq!(report.clip.path.parent().unwrap(), dir.join("Desktop"));
         assert_eq!(
             report.clip.path.extension().and_then(|e| e.to_str()),
             Some("mp4")
@@ -873,6 +1003,103 @@ mod tests {
     }
 
     #[test]
+    fn microphone_test_command_validates_levels_without_forcing_mono_or_recording() {
+        let settings = RecordingSettings {
+            microphone_percent: u32::MAX,
+            microphone_device: "x".repeat(20_000),
+            microphone_noise_suppression: true,
+            microphone_mono: false,
+            capture_microphone: false,
+            ..Default::default()
+        };
+        let command = crate::Command::PrepareMicrophoneTest {
+            settings: Box::new(settings),
+        };
+        assert_eq!(command.id(), "recording.test_microphone");
+        let crate::CommandOutput::MicrophoneTest(plan) = crate::execute(command).unwrap() else {
+            panic!("expected plan")
+        };
+        assert_eq!(plan.gain_percent, 100);
+        assert!(plan.device.len() < 1024);
+        assert!(plan.noise_suppression && !plan.mono);
+        assert_eq!(plan.channels, 2);
+    }
+
+    #[test]
+    fn noise_suppression_wraps_only_the_microphone_for_either_track_layout() {
+        for separate in [false, true] {
+            for enabled in [false, true] {
+                let settings = RecordingSettings {
+                    microphone_noise_suppression: enabled,
+                    microphone_percent: 73,
+                    ..sound_settings(separate)
+                };
+                let provider = AudioProvider::new(|_, _| {
+                    Ok(Box::new(clipcraft_record::ToneSource::new(
+                        clipcraft_record::AudioFormat {
+                            sample_rate: 44_100,
+                            channels: 2,
+                        },
+                        220.0,
+                        0.1,
+                    )))
+                });
+                let (setup, controls, warnings) = audio_setup(&settings, &provider);
+                assert!(warnings.is_empty());
+                let setup = setup.unwrap();
+                assert_eq!(setup.inputs.len(), 2);
+                assert_eq!(
+                    setup.inputs[0].source.format(),
+                    clipcraft_record::AudioFormat {
+                        sample_rate: 44_100,
+                        channels: 2,
+                    },
+                    "system sound must bypass suppression"
+                );
+                assert_eq!(
+                    setup.inputs[1].source.format(),
+                    clipcraft_record::AudioFormat {
+                        sample_rate: if enabled { 48_000 } else { 44_100 },
+                        channels: 2,
+                    }
+                );
+                assert_eq!(setup.inputs[1].track, usize::from(separate));
+                let control = controls.microphone.unwrap();
+                assert_eq!(control.gain_percent(), 73);
+                control.set_muted(true);
+                assert!(setup.inputs[1].control.muted());
+            }
+        }
+    }
+
+    #[test]
+    fn unsupported_denoising_format_reports_a_warning_and_keeps_system_sound() {
+        let provider = AudioProvider::new(|kind, _| {
+            Ok(Box::new(clipcraft_record::ToneSource::new(
+                clipcraft_record::AudioFormat {
+                    sample_rate: if kind == AudioKind::Microphone {
+                        0
+                    } else {
+                        48_000
+                    },
+                    channels: 1,
+                },
+                220.0,
+                0.1,
+            )))
+        });
+        let settings = RecordingSettings {
+            microphone_noise_suppression: true,
+            ..sound_settings(true)
+        };
+        let (setup, controls, warnings) = audio_setup(&settings, &provider);
+        assert_eq!(setup.unwrap().inputs.len(), 1);
+        assert!(controls.microphone.is_none());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("turn noise suppression off"));
+    }
+
+    #[test]
     fn the_settings_choose_one_mixed_track_or_separate_ones() {
         for (separate, tracks) in [(false, 1), (true, 2)] {
             let dir = std::env::temp_dir()
@@ -950,46 +1177,49 @@ mod tests {
 
     #[test]
     fn mute_toggle_and_push_to_talk_decide_whether_the_microphone_is_heard() {
-        let mut settings = sound_settings(false);
-        let mut session = CaptureSession::new();
-        session
-            .start_with_audio(
-                &settings,
-                Box::new(SyntheticSource::new(160, 90, 30)),
-                None,
-                Some(tone_provider(true)),
-            )
-            .unwrap();
-        assert!(session.has_microphone() && !session.microphone_muted());
-        assert!(session.toggle_microphone());
-        assert!(session.microphone_muted());
-        assert!(!session.toggle_microphone());
-        session.stop();
+        for suppression in [false, true] {
+            let mut settings = sound_settings(false);
+            settings.microphone_noise_suppression = suppression;
+            let mut session = CaptureSession::new();
+            session
+                .start_with_audio(
+                    &settings,
+                    Box::new(SyntheticSource::new(160, 90, 30)),
+                    None,
+                    Some(tone_provider(true)),
+                )
+                .unwrap();
+            assert!(session.has_microphone() && !session.microphone_muted());
+            assert!(session.toggle_microphone());
+            assert!(session.microphone_muted());
+            assert!(!session.toggle_microphone());
+            session.stop();
 
-        settings.push_to_talk = true;
-        session
-            .start_with_audio(
-                &settings,
-                Box::new(SyntheticSource::new(160, 90, 30)),
-                None,
-                Some(tone_provider(true)),
-            )
-            .unwrap();
-        // Silent until the key is held.
-        assert!(session.microphone_muted());
-        session.set_talking(true);
-        assert!(!session.microphone_muted());
-        // A muted microphone stays muted while the key is held.
-        session.set_microphone_off(true);
-        assert!(session.microphone_muted());
-        session.set_microphone_off(false);
-        session.set_talking(false);
-        assert!(session.microphone_muted());
-        // Levels change live.
-        settings.microphone_percent = 30;
-        session.set_levels(&settings);
-        session.stop();
-        assert!(!session.has_microphone());
+            settings.push_to_talk = true;
+            session
+                .start_with_audio(
+                    &settings,
+                    Box::new(SyntheticSource::new(160, 90, 30)),
+                    None,
+                    Some(tone_provider(true)),
+                )
+                .unwrap();
+            // Silent until the key is held.
+            assert!(session.microphone_muted());
+            session.set_talking(true);
+            assert!(!session.microphone_muted());
+            // A muted microphone stays muted while the key is held.
+            session.set_microphone_off(true);
+            assert!(session.microphone_muted());
+            session.set_microphone_off(false);
+            session.set_talking(false);
+            assert!(session.microphone_muted());
+            // Levels change live.
+            settings.microphone_percent = 30;
+            session.set_levels(&settings);
+            session.stop();
+            assert!(!session.has_microphone());
+        }
     }
 
     #[test]

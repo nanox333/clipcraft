@@ -15,11 +15,12 @@ members = [
     "crates/filmcraft-bitstream",
     "crates/filmcraft-h264enc",
     "tools/xtask",
+    "tools/clipcraft-installer",
 ]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
@@ -37,6 +38,8 @@ clipcraft-record = { path = "crates/clipcraft-record" }
 clipcraft-player = { path = "crates/clipcraft-player" }
 clipcraft-audio-out = { path = "crates/clipcraft-audio-out" }
 cpal = "0.16"
+# Offline microphone RNNoise; no CLI, C API, resampling or training dependencies (ADR 0030).
+nnnoiseless = { version = "=0.5.2", default-features = false }
 # FilmCraft crates are consumed as git dependencies pinned to one commit (docs/adr/0004).
 filmcraft-text = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
 filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "6c3948a36c80e4996d924766ba7157eec4fca85e" }
@@ -60,6 +63,7 @@ eframe = { version = "0.33", default-features = false, features = ["accesskit", 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 fs4 = "1.1"
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 libloading = "0.8"
 tray-icon = { version = "0.26", default-features = false }
 rfd = { version = "0.17.2", default-features = true }
@@ -117,3 +121,9 @@ opt-level = 3
 
 [profile.dev.package.filmcraft-color]
 opt-level = 3
+
+# Release builds ship to users: thin LTO and stripped debug info keep the download small and the hot
+# loops inlined across crates. Panics stay `unwind` because the app catches them to keep clips safe.
+[profile.release]
+lto = "thin"
+strip = "debuginfo"

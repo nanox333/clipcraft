@@ -77,6 +77,8 @@ pub struct Hotkeys {
     pub push_to_talk: String,
     /// Take screenshot.
     pub screenshot: String,
+    /// Extra bindings in action order; the original string fields remain compatible with older settings.
+    pub alternatives: [Vec<String>; 5],
 }
 
 impl Default for Hotkeys {
@@ -87,6 +89,7 @@ impl Default for Hotkeys {
             toggle_microphone: String::new(),
             push_to_talk: String::new(),
             screenshot: String::new(),
+            alternatives: Default::default(),
         };
         for action in HotkeyAction::ALL {
             *keys.slot(action) = action.default_key().to_owned();
@@ -96,6 +99,100 @@ impl Default for Hotkeys {
 }
 
 impl Hotkeys {
+    /// Maximum bindings per action, including its original shortcut.
+    pub const MAX_BINDINGS: usize = 5;
+
+    fn index(action: HotkeyAction) -> usize {
+        HotkeyAction::ALL
+            .iter()
+            .position(|item| *item == action)
+            .unwrap_or(0)
+    }
+
+    /// All assigned shortcuts, with a stable, unique native registration ID.
+    pub fn registrations(&self) -> impl Iterator<Item = (u32, HotkeyAction, &str)> {
+        HotkeyAction::ALL
+            .into_iter()
+            .enumerate()
+            .flat_map(move |(action_index, action)| {
+                self.bindings(action)
+                    .enumerate()
+                    .map(move |(binding, key)| {
+                        (
+                            (action_index * Self::MAX_BINDINGS + binding + 1) as u32,
+                            action,
+                            key,
+                        )
+                    })
+            })
+    }
+
+    /// Resolves an ID returned by a native shortcut listener.
+    pub fn action_for_id(id: u32) -> Option<HotkeyAction> {
+        let index = usize::try_from(id.checked_sub(1)?).ok()? / Self::MAX_BINDINGS;
+        HotkeyAction::ALL.get(index).copied()
+    }
+
+    /// Assigned shortcuts for an action (at most five after validation).
+    pub fn bindings(&self, action: HotkeyAction) -> impl Iterator<Item = &str> {
+        std::iter::once(self.get(action))
+            .chain(
+                self.alternatives[Self::index(action)]
+                    .iter()
+                    .take(1024)
+                    .map(String::as_str),
+            )
+            .filter(|key| !key.is_empty())
+            .take(Self::MAX_BINDINGS)
+    }
+
+    /// Replaces a binding, or appends at the current count. Invalid and duplicate keys leave settings intact.
+    pub fn set_binding(
+        &mut self,
+        action: HotkeyAction,
+        index: usize,
+        key: &str,
+    ) -> Result<(), String> {
+        let key = normalize_hotkey(key).ok_or("Choose a supported keyboard shortcut.")?;
+        let mut bindings: Vec<String> = self.bindings(action).map(str::to_owned).collect();
+        if index > bindings.len() || index >= Self::MAX_BINDINGS {
+            return Err("Each action can have up to five shortcuts.".into());
+        }
+        for other in HotkeyAction::ALL {
+            if self
+                .bindings(other)
+                .enumerate()
+                .any(|(i, existing)| existing == key && (other != action || i != index))
+            {
+                return Err(format!(
+                    "That shortcut is already assigned to {}.",
+                    other.label()
+                ));
+            }
+        }
+        if index == bindings.len() {
+            bindings.push(key);
+        } else {
+            bindings[index] = key;
+        }
+        self.replace_bindings(action, bindings);
+        Ok(())
+    }
+
+    /// Removes a binding, promoting the next one to the original slot.
+    pub fn remove_binding(&mut self, action: HotkeyAction, index: usize) {
+        let mut bindings: Vec<String> = self.bindings(action).map(str::to_owned).collect();
+        if index < bindings.len() {
+            bindings.remove(index);
+            self.replace_bindings(action, bindings);
+        }
+    }
+
+    fn replace_bindings(&mut self, action: HotkeyAction, bindings: Vec<String>) {
+        *self.slot(action) = bindings.first().cloned().unwrap_or_default();
+        self.alternatives[Self::index(action)] = bindings.into_iter().skip(1).take(4).collect();
+    }
+
     fn slot(&mut self, action: HotkeyAction) -> &mut String {
         match action {
             HotkeyAction::SaveClip => &mut self.save_clip,
@@ -128,33 +225,38 @@ impl Hotkeys {
 
     /// Another action that already uses `action`'s shortcut, if any.
     pub fn conflict(&self, action: HotkeyAction) -> Option<HotkeyAction> {
-        let own = self.get(action);
-        if own.is_empty() {
-            return None;
-        }
-        HotkeyAction::ALL
-            .into_iter()
-            .find(|other| *other != action && self.get(*other) == own)
+        HotkeyAction::ALL.into_iter().find(|other| {
+            *other != action
+                && self
+                    .bindings(action)
+                    .any(|own| self.bindings(*other).any(|key| own == key))
+        })
     }
 
     /// Replaces unusable shortcuts with the action's default and clears a later duplicate of an
     /// earlier shortcut, so no two actions share a key.
     pub fn sanitized(mut self) -> Self {
+        let mut seen = Vec::new();
         for action in HotkeyAction::ALL {
-            let current = self.get(action).to_owned();
-            if !current.is_empty() {
-                *self.slot(action) =
-                    normalize_hotkey(&current).unwrap_or_else(|| action.default_key().to_owned());
+            let primary = self.get(action);
+            let primary = if primary.is_empty() {
+                String::new()
+            } else {
+                normalize_hotkey(primary).unwrap_or_else(|| action.default_key().to_owned())
+            };
+            let candidates = std::iter::once(primary).chain(
+                self.alternatives[Self::index(action)]
+                    .iter()
+                    .filter_map(|s| normalize_hotkey(s)),
+            );
+            let mut bindings = Vec::new();
+            for key in candidates.take(1024) {
+                if !key.is_empty() && !seen.contains(&key) && bindings.len() < Self::MAX_BINDINGS {
+                    seen.push(key.clone());
+                    bindings.push(key);
+                }
             }
-        }
-        for (index, action) in HotkeyAction::ALL.into_iter().enumerate() {
-            let own = self.get(action).to_owned();
-            let taken = HotkeyAction::ALL[..index]
-                .iter()
-                .any(|earlier| !own.is_empty() && self.get(*earlier) == own);
-            if taken {
-                self.slot(action).clear();
-            }
+            self.replace_bindings(action, bindings);
         }
         self
     }
@@ -242,6 +344,62 @@ fn canonical_key(part: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alternatives_round_trip_limit_collisions_and_registration_ids() {
+        let old: Hotkeys = serde_json::from_str(r#"{"save_clip":"Ctrl+F8"}"#).unwrap();
+        assert_eq!(
+            old.bindings(HotkeyAction::SaveClip).collect::<Vec<_>>(),
+            ["Ctrl+F8"]
+        );
+        let mut keys = old;
+        for (index, key) in ["F1", "F2", "F3", "F4"].into_iter().enumerate() {
+            keys.set_binding(HotkeyAction::SaveClip, index + 1, key)
+                .unwrap();
+        }
+        let before = keys.clone();
+        assert!(keys.set_binding(HotkeyAction::SaveClip, 5, "F5").is_err());
+        assert!(
+            keys.set_binding(HotkeyAction::Screenshot, 1, "ctrl+f8")
+                .is_err()
+        );
+        assert!(keys.set_binding(HotkeyAction::SaveClip, 1, "Ctrl").is_err());
+        assert_eq!(keys, before);
+        let decoded: Hotkeys = serde_json::from_slice(&serde_json::to_vec(&keys).unwrap()).unwrap();
+        assert_eq!(decoded, keys);
+        let registrations: Vec<_> = keys.registrations().collect();
+        for (id, action, _) in &registrations {
+            assert_eq!(Hotkeys::action_for_id(*id), Some(*action));
+        }
+        assert_eq!(Hotkeys::action_for_id(0), None);
+        assert_eq!(Hotkeys::action_for_id(26), None);
+        keys.remove_binding(HotkeyAction::SaveClip, 0);
+        assert_eq!(keys.save_clip, "F1");
+        assert_eq!(keys.bindings(HotkeyAction::SaveClip).count(), 4);
+    }
+
+    #[test]
+    fn hostile_alternatives_are_bounded_normalized_and_deduplicated() {
+        let mut keys = Hotkeys::default();
+        keys.alternatives[0] = vec![
+            "f9".into(),
+            "F8".into(),
+            "???".into(),
+            "F1".into(),
+            "F2".into(),
+            "F3".into(),
+            "F4".into(),
+            "F5".into(),
+        ];
+        keys.alternatives[1] = vec!["F1".into(); 10_000];
+        let keys = keys.sanitized();
+        assert_eq!(
+            keys.bindings(HotkeyAction::SaveClip).collect::<Vec<_>>(),
+            ["F8", "F9", "F1", "F2", "F3"]
+        );
+        assert_eq!(keys.bindings(HotkeyAction::ToggleRecording).count(), 0);
+        assert_eq!(keys.registrations().count(), 7);
+    }
 
     #[test]
     fn shortcuts_are_normalized() {
