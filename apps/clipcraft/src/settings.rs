@@ -1392,7 +1392,10 @@ pub fn hotkeys_tab(
     state: &mut SettingsState,
     status: Option<&clipcraft_platform::HotkeyStatus>,
 ) -> bool {
+    #[cfg(target_os = "linux")]
     let mut retry = false;
+    #[cfg(not(target_os = "linux"))]
+    let retry = false;
     if state.capturing.is_some() {
         if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
             state.capturing = None;

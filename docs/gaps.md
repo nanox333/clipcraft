@@ -2,9 +2,10 @@
 
 ## 0.2.0 release verification
 
-Linux CI passed on the previous release candidate. Windows CI exposed an invalid Unix-style test
-path and editor preview test timeouts under parallel debug rendering; these checks must pass again
-on the release commit. Windows clean-machine install/update/uninstall, real game capture and real
+Linux CI passed on the previous release candidate. Windows tests passed after fixing an invalid
+Unix-style test path and allowing more time for parallel debug preview rendering; a Windows-only
+lint warning in the shortcut settings was also fixed and must be checked on the release commit.
+Windows clean-machine install/update/uninstall, real game capture and real
 Wayland portal behavior remain unverified. The release packages are unsigned.
 
 ## Local bug reports (M5.B1)

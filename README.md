@@ -10,6 +10,8 @@ computer.
 > other devices and Wayland remain incompletely tested. macOS capture is not implemented. See
 > [`docs/gaps.md`](docs/gaps.md) for current evidence and limits.
 
+Automated checks run on Linux and Windows; they do not replace testing on real capture hardware.
+
 ## Download
 
 The [latest published release](https://github.com/nanox333/clipcraft/releases) is 0.1.0 and provides
