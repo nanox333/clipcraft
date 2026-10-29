@@ -385,11 +385,8 @@ impl CaptureSession {
         let settings = settings.clone().sanitized();
         let format = clip_format(&settings);
         if limit > 0 && !settings.delete_oldest_when_full {
-            let used: u64 = list_clips(folder)
-                .0
-                .iter()
-                .map(|clip| clip.size_bytes)
-                .sum();
+            let (listed, _) = list_clips(folder);
+            let used: u64 = listed.iter().map(|clip| clip.size_bytes).sum();
             if used >= limit {
                 return Err(EngineError::StorageLimit);
             }
@@ -649,7 +646,12 @@ fn free_clip_path(
 /// Deletes the oldest ClipCraft clips, never `keep`, until the folder fits `limit` bytes. Files
 /// ClipCraft did not make are counted but never deleted.
 fn trim_to_limit(folder: &Path, keep: &Path, limit: u64) -> Vec<PathBuf> {
-    let (clips, _) = list_clips(folder);
+    let (clips, truncated) = list_clips(folder);
+    // A listing cut short by the entry limit is an arbitrary subset: deleting "the oldest" of it
+    // could remove newer clips while older ones survive, so nothing is deleted.
+    if truncated {
+        return Vec::new();
+    }
     let is_ours = |clip: &StoredClip| {
         clip.path
             .file_name()

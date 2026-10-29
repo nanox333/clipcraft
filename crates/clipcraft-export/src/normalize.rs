@@ -245,13 +245,7 @@ fn normalize_inner(
         cancel,
     )?;
     check_cancel(cancel)?;
-    fs::hard_link(&temporary.0, &request.output).map_err(|e| match e.kind() {
-        std::io::ErrorKind::AlreadyExists => ExportError::AlreadyExists,
-        std::io::ErrorKind::Unsupported => ExportError::Unsupported(
-            "choose an output folder on a filesystem supporting hard links",
-        ),
-        _ => io_error(&e),
-    })?;
+    crate::compress::publish_new(&temporary.0, &request.output)?;
     let bytes = fs::metadata(&request.output).map_or(0, |meta| meta.len());
     let video_span = plans
         .iter()

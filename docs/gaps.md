@@ -429,7 +429,7 @@ See [testing](testing.md).
 Text rasters and caches have explicit memory
 bounds rather than retaining every layer's rendered mask. Export preserves drafts/sources,
 supports progress/cancel and uses exclusive temporary output with no-replace publication; the
-destination filesystem must support hard links. The shared `editor.import`, `editor.edit`,
+destination filesystem should support hard links (otherwise a checked rename is used). The shared `editor.import`, `editor.edit`,
 `editor.export`, `editor.timeline` and `editor.draft.*` commands accept bounded local JSON. See [editor.md](editor.md),
 [testing.md](testing.md) and [ADR 0019](adr/0019-editor-preview-and-export-presets.md) for behavior,
 evidence and remaining platform checks.
@@ -629,7 +629,7 @@ created while encoding. FFmpeg additionally verifies decoding when available. No
 
 Limits: H.264/AAC sources only, at most 16 audio tracks, at most 30 minutes per export. Explicit
 HDR and non-square-pixel sources are refused; HDR mastering and arbitrary metadata are not
-preserved. Output needs a filesystem supporting hard links for atomic no-replace publication.
+preserved. Output uses a hard link for atomic no-replace publication, falling back to a checked rename on filesystems without hard links.
 One-pass size targets can be exceeded, and the completion report says so. Audio bitrate reduction,
 user-selected resolution/FPS/codecs, and representative 30/60-second performance measurements
 remain open. No upload, Discord account, link, or network path is added. See

@@ -318,7 +318,8 @@ pub(crate) fn edit_meta(
         .position(|folder| folder.directory == directory)
         .ok_or(EngineError::IndexMissing)?;
     // Work on copies so a refused edit leaves the index untouched.
-    let mut collections = index.collections.clone();
+    let before = index.collections.clone();
+    let mut collections = before.clone();
     let mut entries = index.folders[position].entries.clone();
     apply_edit(&mut entries, &mut collections, edit)?;
     // Renaming or deleting a collection also reaches the clips of every other remembered folder.
@@ -328,7 +329,8 @@ pub(crate) fn edit_meta(
     ) {
         for (other, folder) in index.folders.iter_mut().enumerate() {
             if other != position {
-                let mut scratch = collections.clone();
+                // Start from the list as it was before the edit, so a rename finds its old name.
+                let mut scratch = before.clone();
                 apply_edit(&mut folder.entries, &mut scratch, edit).ok();
             }
         }
@@ -978,5 +980,32 @@ mod tests {
             store_probes(&scratch.index(), "/clips", too_many),
             Err(EngineError::IndexInvalid)
         );
+    }
+
+    #[test]
+    fn renaming_a_collection_reaches_clips_in_other_remembered_folders() {
+        let scratch = Scratch::new();
+        let index = scratch.index();
+        refresh_library(scan("/a", &["/a/1.mp4"]), &index).unwrap();
+        refresh_library(scan("/b", &["/b/2.mp4"]), &index).unwrap();
+        let create = MetaEdit::CreateCollection { name: "Old".into() };
+        edit_meta(&index, "/b", &create).unwrap();
+        for (folder, path) in [("/a", "/a/1.mp4"), ("/b", "/b/2.mp4")] {
+            let add = MetaEdit::AddToCollection {
+                path: path.into(),
+                name: "Old".into(),
+            };
+            edit_meta(&index, folder, &add).unwrap();
+        }
+        let rename = MetaEdit::RenameCollection {
+            from: "Old".into(),
+            to: "New".into(),
+        };
+        edit_meta(&index, "/b", &rename).unwrap();
+        let saved = read_index(&index).unwrap();
+        assert_eq!(saved.collections, ["New"]);
+        for folder in &saved.folders {
+            assert_eq!(folder.entries[0].collections, ["New"], "{}", folder.directory);
+        }
     }
 }

@@ -188,6 +188,22 @@ fn a_clip_is_never_longer_than_the_buffer_and_never_overwrites() {
 }
 
 #[test]
+fn another_savers_temporary_file_is_neither_shared_nor_removed() {
+    let scratch = Scratch::new("claimed");
+    let recorder = Recorder::start(Box::new(SyntheticSource::new(160, 90, 30)), config()).unwrap();
+    wait_for(&recorder, "one second", |s| s.buffered_seconds >= 1.2);
+    let path = scratch.file("a.mp4");
+    let partial = scratch.file("a.mp4.partial");
+    std::fs::write(&partial, b"another save in progress").unwrap();
+    assert_eq!(
+        recorder.save_clip(5, ClipFormat::Mp4, &path),
+        Err(RecordError::AlreadyExists)
+    );
+    assert_eq!(std::fs::read(&partial).unwrap(), b"another save in progress");
+    assert!(!path.exists());
+}
+
+#[test]
 fn saving_before_any_video_is_a_clear_error() {
     let scratch = Scratch::new("early");
     let recorder = Recorder::start(

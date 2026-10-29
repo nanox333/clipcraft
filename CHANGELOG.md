@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Fixed:** saving a clip or screenshot never replaces an existing file or shares another save's
+  temporary file; export no longer needs a filesystem with hard links (exFAT and FAT drives work).
+- **Fixed:** a clip whose sound ends before its picture can be cut after the sound has ended.
+- **Fixed:** renaming a collection now updates its clips in every library folder, not only the open one.
+- **Fixed:** start-up recovery no longer deletes a clip that still plays or a crash-safe copy it could
+  not yet rebuild; "delete oldest" does nothing when the folder listing was cut short.
+- **Fixed:** a game that closes its connection early no longer leaves the game-data listener in a
+  permanent error state.
 - **Smaller software-encoded desktop clips:** the built-in H.264 encoder now uses split-block motion
   prediction, making screen recordings about a third smaller at the same quality for roughly 1.5x
   the encoding time on desktop content (game footage is unchanged).

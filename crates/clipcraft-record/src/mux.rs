@@ -142,6 +142,29 @@ pub fn write_clip(
             let _ = fs::remove_file(recovery);
         }
     };
+    // Claim the temporary names exclusively: another save of the same name must not share or
+    // truncate them, and a failed claim never removes a file this save did not create.
+    let claim = |name: &Path| {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(name)
+            .map(drop)
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    RecordError::AlreadyExists
+                } else {
+                    io_error(&error)
+                }
+            })
+    };
+    claim(&partial)?;
+    if let Some(recovery) = &recovery
+        && let Err(error) = claim(recovery)
+    {
+        let _ = fs::remove_file(&partial);
+        return Err(error);
+    }
     if let Some(recovery) = &recovery
         && let Err(error) = write_recovery_copy(samples, video, audio, recovery, None)
     {
@@ -152,10 +175,11 @@ pub fn write_clip(
         cleanup(&recovery);
         return Err(error);
     }
-    if let Err(error) = fs::rename(&partial, path) {
+    if let Err(error) = publish_new(&partial, path) {
         cleanup(&recovery);
-        return Err(io_error(&error));
+        return Err(error);
     }
+    let _ = fs::remove_file(&partial);
     if let Some(recovery) = &recovery {
         let _ = fs::remove_file(recovery);
     }
@@ -171,6 +195,23 @@ pub fn write_clip(
             .count(),
         start_frame: first.pts,
     })
+}
+
+/// Moves `from` to `to` without replacing an existing file: a hard link is atomic, and where the
+/// filesystem has none, a checked rename is the fallback.
+fn publish_new(from: &Path, to: &Path) -> Result<(), RecordError> {
+    match fs::hard_link(from, to) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(RecordError::AlreadyExists)
+        }
+        Err(_) => {
+            if fs::symlink_metadata(to).is_ok() {
+                return Err(RecordError::AlreadyExists);
+            }
+            fs::rename(from, to).map_err(|error| io_error(&error))
+        }
+    }
 }
 
 /// The input sample at which the clip's first picture is shown, and the one just after its last.

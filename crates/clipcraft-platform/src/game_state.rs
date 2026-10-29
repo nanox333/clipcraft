@@ -152,6 +152,14 @@ impl ValveInput {
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                // A client that gave up before it was accepted is not a failed listener.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::Interrupted
+                            | std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::ConnectionReset
+                    ) => {}
                 Err(_) => {
                     self.error = Some(
                         "Game data listener failed. Disable and re-enable this integration.".into(),

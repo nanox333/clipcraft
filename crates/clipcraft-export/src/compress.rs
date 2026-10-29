@@ -113,6 +113,23 @@ pub fn compress_to_mp4_with(
     .unwrap_or(Err(ExportError::EncodeFailed))
 }
 
+/// Publishes `from` as `to` without replacing anything. A hard link is atomic; on filesystems
+/// without hard links (exFAT, FAT, some network shares) it falls back to a checked rename.
+pub(crate) fn publish_new(from: &std::path::Path, to: &std::path::Path) -> Result<(), ExportError> {
+    match fs::hard_link(from, to) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(ExportError::AlreadyExists)
+        }
+        Err(_) => {
+            if fs::symlink_metadata(to).is_ok() {
+                return Err(ExportError::AlreadyExists);
+            }
+            fs::rename(from, to).map_err(|error| io_error(&error))
+        }
+    }
+}
+
 pub(crate) struct Temporary(pub(crate) PathBuf);
 
 impl Drop for Temporary {
@@ -606,13 +623,7 @@ fn finish_output(
     drop(out);
     check_cancel(cancel)?;
     // Publish without replacement, including an output created after the preflight check.
-    fs::hard_link(&temporary.0, &job.request.output).map_err(|e| match e.kind() {
-        std::io::ErrorKind::AlreadyExists => ExportError::AlreadyExists,
-        std::io::ErrorKind::Unsupported => ExportError::Unsupported(
-            "choose an output folder on a filesystem supporting hard links",
-        ),
-        _ => io_error(&e),
-    })?;
+    crate::compress::publish_new(&temporary.0, &job.request.output)?;
     progress(1.0);
     Ok(CompressReport {
         clip: ExportReport {

@@ -221,13 +221,7 @@ pub fn trim_to_mp4(
     let temporary = compress::Temporary(partial);
     let (pictures, audio_tracks) = write(&source, &plans, file, progress, cancel)?;
     compress::check_cancel(cancel)?;
-    fs::hard_link(&temporary.0, &request.output).map_err(|error| match error.kind() {
-        ErrorKind::AlreadyExists => ExportError::AlreadyExists,
-        ErrorKind::Unsupported => {
-            ExportError::Unsupported("choose a filesystem supporting hard links")
-        }
-        _ => io_error(&error),
-    })?;
+    compress::publish_new(&temporary.0, &request.output)?;
     let bytes = fs::metadata(&request.output).map_or(0, |meta| meta.len());
     let video_span = plans
         .iter()
@@ -270,6 +264,11 @@ fn plan(source: &Source, start: Tick, end: Tick) -> Result<Vec<Plan>, ExportErro
             .max()
             .unwrap_or(0);
         if s >= content_end {
+            // Sound that ends before the cut starts contributes nothing; only the picture
+            // decides whether the range lies inside the clip.
+            if stream.kind == StreamKind::Audio {
+                continue;
+            }
             return Err(ExportError::BadRange);
         }
         // The last sample, in decoding order, that is shown before the end.

@@ -203,13 +203,7 @@ fn gif_inner(
     out.get_ref().sync_all().map_err(|e| io_error(&e))?;
     let bytes = out.get_ref().metadata().map_err(|e| io_error(&e))?.len();
     drop(out);
-    fs::hard_link(&temporary.0, &request.output).map_err(|e| match e.kind() {
-        std::io::ErrorKind::AlreadyExists => ExportError::AlreadyExists,
-        std::io::ErrorKind::Unsupported => ExportError::Unsupported(
-            "choose an output folder on a filesystem supporting hard links",
-        ),
-        _ => io_error(&e),
-    })?;
+    crate::compress::publish_new(&temporary.0, &request.output)?;
     progress(1.0);
     Ok(ExportReport {
         path: request.output.clone(),

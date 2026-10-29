@@ -894,13 +894,7 @@ fn render(
         .len();
     drop(out);
     check_cancel(cancel)?;
-    fs::hard_link(&temporary.0, &request.output).map_err(|error| match error.kind() {
-        std::io::ErrorKind::AlreadyExists => ExportError::AlreadyExists,
-        std::io::ErrorKind::Unsupported => {
-            ExportError::Unsupported("choose a filesystem supporting hard links")
-        }
-        _ => io_error(&error),
-    })?;
+    crate::compress::publish_new(&temporary.0, &request.output)?;
     progress(1.0);
     let target_bytes = request.preset.map(ExportPreset::target_bytes).transpose()?;
     Ok(SequenceReport {

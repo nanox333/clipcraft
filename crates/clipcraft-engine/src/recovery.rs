@@ -139,12 +139,15 @@ fn recover_in(folder: &Path, settle: Duration, recovery: &mut Recovery) {
             continue;
         }
         // A cut-off Matroska file, or an MP4 that was finished but not yet renamed, may still play.
-        if clipcraft_media::probe_file(&path)
-            .is_ok_and(|probe| probe.width.is_some() && probe.height.is_some())
-            && let Some(target) = free_name(folder, base)
-            && fs::rename(&path, &target).is_ok()
-        {
-            recovery.salvaged.push(target);
+        // A file that plays is never removed: if it cannot be renamed it is left where it is.
+        let plays = clipcraft_media::probe_file(&path)
+            .is_ok_and(|probe| probe.width.is_some() && probe.height.is_some());
+        if plays {
+            if let Some(target) = free_name(folder, base)
+                && fs::rename(&path, &target).is_ok()
+            {
+                recovery.salvaged.push(target);
+            }
             continue;
         }
         // An MP4 with no index is unusable, but its crash-safe copy may be there; the copy is
@@ -186,10 +189,13 @@ fn remake_from_recovery_copy(folder: &Path, base: &str, copy: &Path, recovery: &
         .is_some();
     if remade {
         recovery.salvaged.push(target);
-    } else {
+        let _ = fs::remove_file(copy);
+    } else if clipcraft_media::probe_file(copy).is_ok() {
+        // It still reads, so a failed remake (a full disk, an unwritable folder) must not cost
+        // the only copy; it is tried again at the next launch.
+    } else if fs::remove_file(copy).is_ok() {
         recovery.removed.push(copy.to_path_buf());
     }
-    let _ = fs::remove_file(copy);
 }
 
 /// The length of the longest prefix of a fragmented MP4 that holds its header and only whole
