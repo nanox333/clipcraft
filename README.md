@@ -58,6 +58,22 @@ For a bug report without the desktop UI, pass JSON such as
 
 Details and known limits for every feature are in [`docs/features.md`](docs/features.md).
 
+## Screenshots
+
+ClipCraft 0.2.0 on Linux, shown with generated sample clips.
+
+**Clip library** — browse, search, and send a clip to the editor.
+
+![ClipCraft's local clip library with three sample clips](docs/screenshots/library.png)
+
+**Editor** — arrange clips, split them on the timeline, and export the result.
+
+![ClipCraft's editor showing sample clips and a split timeline](docs/screenshots/editor.png)
+
+**Capture settings** — choose a game or desktop source and configure recording.
+
+![ClipCraft's capture settings showing desktop recording options](docs/screenshots/capture-settings.png)
+
 ## Planned, not built
 
 Windows/Linux/macOS game-only capture evidence, a low-copy GPU capture path, opt-in client-side
