@@ -73,7 +73,7 @@ Keep this notice with binary redistributions, including manually assembled Windo
 
 The downloads are **not code-signed**, so Windows SmartScreen may show "unknown publisher" until a
 user chooses More info, then Run anyway; `INSTALL.txt` in each download says so. The workflow ran
-successfully for the published 0.1.0 release and the existing 0.2.0 draft. Before publishing, verify
+successfully for the published 0.1.0 and 0.2.0 releases. Before publishing, verify
 that the release tag points to the intended commit and that both platform packages were rebuilt
 from it. Store release notes in `docs/releases/v<version>.md` before running the workflow. There is
 no macOS download (no macOS provider yet).

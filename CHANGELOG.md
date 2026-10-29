@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.2.0 — in preparation
+## 0.2.0 — 2026-10-29
 
 - **Wayland shortcuts:** use the desktop Global Shortcuts portal when available, show the assigned
   keys, and offer a default-off keyboard-device fallback. Real Wayland desktops still need testing.
