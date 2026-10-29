@@ -47,8 +47,9 @@ to `%LOCALAPPDATA%/Programs/ClipCraft` by default, and needs no administrator/ac
 It adds Start menu links, an optional desktop link and a current-user Windows uninstall entry.
 The installed `uninstall.exe` (or Windows Settings → Apps) removes owned application versions,
 retaining clips and preferences. Close ClipCraft before removal. Unknown files are preserved.
-Upgrades keep earlier program versions so active replays can finish; after eight versions,
-uninstall/reinstall is required. The uninstaller's temporary executable is left for OS cleanup.
+Upgrades keep earlier program versions so active replays can finish. At the eight-version limit,
+the oldest version is removed to make room; if it cannot be removed, installation is refused.
+The uninstaller's temporary executable is left for OS cleanup.
 
 For isolated deployment checks, the setup accepts
 `--install-to <absolute-folder> --accept-license --no-integration`; remove that installation with

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 — in preparation
+
 - **Wayland shortcuts:** use the desktop Global Shortcuts portal when available, show the assigned
   keys, and offer a default-off keyboard-device fallback. Real Wayland desktops still need testing.
 - **Replay status:** see the buffered duration and get a warning when switching sources or
@@ -48,8 +50,6 @@
   draws around captured windows no longer appears around what ClipCraft records.
 - **Fixed:** the "found <game> running, but this desktop did not expose its game window" message now
   goes away when the game closes.
-
-## 0.2.0 — 2026-10-28
 
 - **Installer and downloads:** Windows is a single `ClipCraft-Setup` download with an uninstaller;
   the command line tool is a separate download.
