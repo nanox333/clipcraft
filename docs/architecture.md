@@ -17,6 +17,12 @@ separate from the offline core.
 
 ## Dependency layers
 
+`app.prepare_bug_report` is a bounded, pure engine command shared by the desktop and CLI. It
+formats user-provided text, version and OS/architecture, and an explicit allowlist of recording
+settings only when selected. It does not query devices, read files, collect logs, or access the
+network. The desktop previews and copies locally; opening a blank GitHub form is a separate user
+action, and submitting it occurs in the browser.
+
 The L6 `clipcraft-installer` native entry point and its explicit unattended commands use L4 engine
 `app.install` / `app.uninstall`; the same fixed, bounded payload format is written by Rust xtask.
 L5 platform adapters create Windows shell shortcuts and HKCU app registration. See ADR 0031.
@@ -24,6 +30,12 @@ The engine's optional update check and checksum-verified download (`engine::upda
 Desktop first-run setup holds a draft and persists through `recording.save_settings`; it gates
 capture, audio and presence work until completion. Legacy settings skip onboarding. Shortcut
 alternatives keep backward-compatible primary strings and at most five bindings per action.
+On Wayland the platform shortcut worker requests a GlobalShortcuts session asynchronously, uses
+bounded event delivery and reports portal assignments. Denial or loss falls back to XWayland; raw
+keyboard-device access is separately opt-in. Queue overflow and backend loss release held PTT keys.
+The user may retry the portal after a failure; no keystrokes or desktop-assigned keys are logged.
+The worker uses the existing zbus stack plus direct `async-io` and `futures-lite` dependencies,
+already present in the lockfile, to cancel pending D-Bus requests without blocking the window.
 
 Dependencies flow upward only:
 
@@ -192,6 +204,9 @@ not a formal clean-room implementation. The small editor additionally consumes p
   targets. A new game cancels the desktop timer; its next exit starts another. Stop pauses desktop
   policies until Start. Desktop-policy source changes and timeouts do not save a clip (a game closing or
   crashing never makes one); the old replay is simply replaced.
+  Recorder status counts complete resets that actually discarded video, separately from normal GOP
+  eviction; the capture bar uses that counter and session transitions to report lost replay and
+  displays the current buffered timestamp span against the active requested clip length.
   Output names avoid in-flight collisions and remain exclusively written. Desktop clips do not
   inherit the previous game's recorded label. See [ADR 0016](adr/0016-background-steam-and-exit-fallback.md),
   [settings.md](settings.md) and [game-catalog.md](game-catalog.md).

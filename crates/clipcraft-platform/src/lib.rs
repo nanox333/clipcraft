@@ -17,6 +17,8 @@ mod d3d11;
 #[cfg(target_os = "linux")]
 mod evdev;
 pub mod game_state;
+#[cfg(target_os = "linux")]
+mod global_shortcuts;
 #[cfg(any(target_os = "linux", test))]
 mod h264_headers;
 #[cfg(any(windows, target_os = "linux", test))]
@@ -51,7 +53,17 @@ pub use borderless::request_borderless_once;
 #[cfg(target_os = "linux")]
 pub use evdev::access as keyboard_access;
 pub use hardware::{hardware_provider, probe_hardware_encoder, register_hardware_decoding};
-pub use hotkey::{HotkeyBinding, HotkeyEvent, HotkeyListener, parse_shortcut};
+pub use hotkey::{HotkeyBinding, HotkeyEvent, HotkeyListener, HotkeyStatus, parse_shortcut};
+
+/// Connects the shortcut portal to an explicit private D-Bus address for integration tests.
+#[cfg(target_os = "linux")]
+#[doc(hidden)]
+pub fn start_wayland_hotkeys_on(
+    address: &str,
+    bindings: Vec<HotkeyBinding>,
+) -> Result<HotkeyListener, CaptureError> {
+    global_shortcuts::start(bindings, false, Some(address.to_owned()))
+}
 pub use http::https_get;
 pub use installation::{register_installation, unregister_installation};
 pub use priority::set_background_priority;
@@ -324,14 +336,13 @@ pub fn diagnose_capture() -> Vec<Finding> {
         findings.push(if evdev::wanted() {
             let (readable, why) = evdev::access();
             (
-                "Global hotkeys".to_owned(),
+                "Keyboard-device fallback".to_owned(),
                 readable,
                 if readable {
-                    format!("read from the keyboards ({why}); works under any desktop")
+                    format!("{why}; used only if explicitly enabled and the desktop shortcut portal fails")
                 } else {
                     format!(
-                        "{why}. Without it, only keys pressed while an X window (an XWayland \
-                         game) has the focus are seen"
+                        "{why}. This optional fallback needs device access; check desktop shortcut status in Settings › Hotkeys"
                     )
                 },
             )

@@ -37,6 +37,10 @@ rule inside an implementation issue.
 
 ## Required issue fields
 
+Public bug reports may initially contain only the user's description and whatever details they
+know. Triage fills in missing engineering fields before the issue is treated as ready for work;
+reporters are not expected to know internal milestone IDs or regression-test plans.
+
 Every issue, including chores and documentation tasks, must contain:
 
 - **Stable ID and milestone:** for example `M2.3` or `G1`; link the corresponding ranked gap or

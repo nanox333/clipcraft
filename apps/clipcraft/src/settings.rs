@@ -1380,7 +1380,19 @@ fn pressed_shortcut(ui: &egui::Ui) -> Option<String> {
     ui.input(pressed_shortcut_in)
 }
 
-pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &mut SettingsState) {
+#[cfg(target_os = "linux")]
+fn wayland_session(display: Option<&std::ffi::OsStr>, session: Option<&str>) -> bool {
+    display.is_some_and(|value| !value.is_empty())
+        || session.is_some_and(|value| value.eq_ignore_ascii_case("wayland"))
+}
+
+pub fn hotkeys_tab(
+    ui: &mut egui::Ui,
+    settings: &mut RecordingSettings,
+    state: &mut SettingsState,
+    status: Option<&clipcraft_platform::HotkeyStatus>,
+) -> bool {
+    let mut retry = false;
     if state.capturing.is_some() {
         if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
             state.capturing = None;
@@ -1392,6 +1404,74 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
         }
     }
     card(ui, "Shortcuts", |ui| {
+        #[cfg(target_os = "linux")]
+        if wayland_session(
+            std::env::var_os("WAYLAND_DISPLAY").as_deref(),
+            std::env::var("XDG_SESSION_TYPE").ok().as_deref(),
+        ) {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Wayland asks your desktop to register shortcuts. The desktop may choose different keys; its current bindings are shown below.")
+                    .color(MUTED)
+                    .size(12.5),
+            );
+            let status_text = match status {
+                Some(clipcraft_platform::HotkeyStatus::Pending) => {
+                    "Waiting for the desktop shortcut dialog…"
+                }
+                Some(clipcraft_platform::HotkeyStatus::Portal { .. }) => {
+                    "Desktop shortcuts are connected."
+                }
+                Some(clipcraft_platform::HotkeyStatus::Fallback {
+                    direct_keyboard: true,
+                    ..
+                }) => "Using the keyboard-device fallback.",
+                Some(clipcraft_platform::HotkeyStatus::Fallback {
+                    direct_keyboard: false,
+                    ..
+                }) => "Using limited XWayland shortcuts.",
+                Some(clipcraft_platform::HotkeyStatus::Unavailable { .. }) => {
+                    "Global shortcuts are unavailable. Some keys work while ClipCraft is focused; push-to-talk needs global access."
+                }
+                _ => "Global shortcut status is not available yet.",
+            };
+            ui.label(RichText::new(status_text).color(TEXT).size(12.5));
+            if matches!(
+                status,
+                Some(
+                    clipcraft_platform::HotkeyStatus::Fallback { .. }
+                        | clipcraft_platform::HotkeyStatus::Unavailable { .. }
+                )
+            ) && kit::labelled_button(
+                ui,
+                kit::Icon::Loop,
+                "Retry desktop shortcuts",
+                false,
+                true,
+            )
+            .clicked()
+            {
+                retry = true;
+            }
+            if let Some(
+                clipcraft_platform::HotkeyStatus::Portal { unbound, .. }
+                | clipcraft_platform::HotkeyStatus::Fallback { unbound, .. },
+            ) = status
+                && !unbound.is_empty()
+            {
+                ui.label(
+                    RichText::new(format!("Not registered globally: {}", unbound.join(", ")))
+                        .color(DANGER)
+                        .size(12.5),
+                );
+            }
+            ui.add_space(6.0);
+            ui.checkbox(
+                &mut settings.wayland_raw_hotkeys,
+                "Allow direct keyboard access if desktop shortcuts fail",
+            );
+            ui.label(RichText::new("Off by default. This fallback requires keyboard-device permission; other programs with the same access can read your keystrokes.").color(MUTED).size(12.0));
+        }
         let count = HotkeyAction::ALL.len();
         for (index, action) in HotkeyAction::ALL.into_iter().enumerate() {
             ui.add_space(14.0);
@@ -1405,6 +1485,21 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
                             .family(kit::semibold()),
                     );
                     ui.label(RichText::new(action.detail()).color(MUTED).size(12.5));
+                    if let Some(clipcraft_platform::HotkeyStatus::Portal { assigned, .. }) = status
+                    {
+                        for (preferred, actual) in assigned.iter().filter(|(key, _)| {
+                            settings
+                                .hotkeys
+                                .bindings(action)
+                                .any(|binding| binding == key)
+                        }) {
+                            ui.label(
+                                RichText::new(format!("Desktop: {actual} (requested {preferred})"))
+                                    .color(MUTED)
+                                    .size(12.0),
+                            );
+                        }
+                    }
                     if let Some(other) = settings.hotkeys.conflict(action) {
                         ui.label(
                             RichText::new(format!("Also used by “{}”.", other.label()))
@@ -1534,6 +1629,7 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
         state.hotkey_error = None;
     }
     ui.add_space(8.0);
+    retry
 }
 
 fn request_usage(state: &mut SettingsState, context: &egui::Context, folder: PathBuf, force: bool) {
@@ -1782,6 +1878,16 @@ pub fn startup_card(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
 #[cfg(test)]
 mod preset_tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wayland_shortcut_guidance_matches_both_session_indicators() {
+        use std::ffi::OsStr;
+        assert!(wayland_session(Some(OsStr::new("wayland-0")), None));
+        assert!(wayland_session(None, Some("WAYLAND")));
+        assert!(!wayland_session(Some(OsStr::new("")), Some("x11")));
+        assert!(!wayland_session(None, None));
+    }
     fn settings_frame(
         app: &mut crate::ClipCraftApp,
         context: &egui::Context,

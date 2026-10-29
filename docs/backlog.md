@@ -100,6 +100,27 @@ malformed/oversized metadata returns an error; interrupted writes preserve the p
 
 ## M2 — Windows capture and replay
 
+### M2.R1 — Replay availability and reset visibility
+
+**Status:** implemented for the first slice; generated-source tests and an X11 virtual-desktop
+visual/keyboard check pass. Physical-platform and real-game evidence remain open.
+
+**Outcome:** make it clear how much of the requested clip can be saved and when an automatic
+source or stream change discards existing buffered footage.
+
+**Requirements:** display available whole seconds against the active clip duration; detect complete
+buffer resets separately from normal keyframe eviction; notify for source/stream resets without
+overwriting errors or save feedback. Use the existing local recorder/session and keep saves explicit.
+
+**Limitations:** no automatic saving, unbounded buffer, new runtime dependency, server, or claim
+that audio and every frame are continuous. The displayed duration uses encoded timestamps and can
+be rounded to keyframes. Existing in-flight saves must remain valid. No new private data is logged.
+
+**Acceptance:** empty, partial, full and reset buffer values are conservative; simulated encoder
+failure/recovery, size change and game/desktop transitions expose reset state; normal GOP eviction
+does not; saved files and pending saves remain unchanged. Tests cover resets and transition notices;
+desktop screenshot/keyboard review and actual GPU/platform checks are recorded separately.
+
 ### M2.P1 — Replay and pixel-conversion performance
 
 Local performance work item: reduce save-time payload copying, repeated GOP scans and redundant
@@ -453,6 +474,27 @@ still needs measurement. Estimate: initial implementation complete, remaining co
 
 ## M5 — Reliability and release
 
+### M5.B1 — Reviewable local bug reports
+
+**Status:** implemented; generated engine/CLI and desktop tests cover bounded input, privacy and
+dialog behavior. X11 virtual-desktop visual, keyboard and clipboard checks pass; real Windows/macOS
+UI evidence remains open.
+
+**Outcome:** let someone describe a problem and prepare a report without exposing private media
+or needing a ClipCraft service.
+
+**Requirements:** a native About-page report dialog has bounded text, a live preview and explicit
+copy; optional settings contain an allowlist only. A separate button opens the blank GitHub bug
+form. Shared `app.prepare_bug_report` and CLI use the same validation and text generation.
+
+**Limitations:** no automatic upload, network submission, paths, device names, logs, screenshots,
+or clips in generated metadata. User-written text may itself be sensitive and must be reviewed.
+The user must paste and submit externally; offline copying stays available.
+
+**Acceptance:** blank/oversized/unknown input is rejected, settings opt-in is honored, private
+fields never enter metadata, clipboard and browser actions need separate clicks, and Escape closes
+the dialog. Test the engine, CLI and UI; inspect the dialog at a desktop size and run the CI gate.
+
 ### M5.1 — Recovery, installer, and performance gate
 
 **Status:** partial — crash and full-disk recovery, Linux package, diagnostics, keyboard access, and
@@ -634,6 +676,45 @@ Internet-addressed calls across five sessions. Namespace creation was unavailabl
 network disconnection and Windows/hardware release gates remain open. See `testing.md`.
 
 ## M6 — Additional local platforms
+
+### M6.S2 — Wayland desktop shortcut portal
+
+**Status:** implemented against a simulated desktop portal; a virtual X11 fallback/keyboard
+handover check passes. Real GNOME/KDE/wlroots evidence is open.
+
+**Outcome:** register capture, screenshot and push-to-talk shortcuts through the desktop's
+GlobalShortcuts portal without requiring raw keyboard access.
+
+**Requirements:** asynchronous session/consent and bounded event queue; respect partial and
+desktop-remapped bindings; handle press/release, denied permission, cancellation, binding edits,
+portal closure and retry. Show actual assignments and backend status in Hotkeys settings.
+Use XWayland as a limited fallback; raw keyboard-device fallback requires explicit opt-in.
+
+**Limitations:** desktop backend support, key choices, permission prompts and actual press/release
+semantics vary. Do not inject input, grant permissions, read raw keys by default, log keystrokes,
+or claim real compositor compatibility without testing. Portal failure requires manual retry;
+legacy keyboard-access permissions no longer enable raw fallback by themselves.
+
+**Acceptance:** private D-Bus fake covers approval, decline, partial binding, remapping,
+malformed IDs, press/release, overflow, disconnected service, cancellation and retry; event loss
+releases held push-to-talk. Changing the opt-in persists through recording settings; GUI remains
+responsive during the desktop dialog. X11/Windows behavior is unchanged. Desktop screenshot and
+real-compositor testing are separately recorded.
+
+### M6.S1 — Explain Wayland shortcut permissions
+
+**Status:** implemented for guidance and registration-failure feedback; tests and an X11
+virtual-desktop screenshot with a simulated Wayland session marker pass. Real Wayland evidence is open.
+
+**Requirements:** explain the keyboard-device privacy tradeoff in Wayland Hotkeys settings and
+report global listener startup failure while retaining focused-window shortcut handling.
+
+**Limitations:** no automatic permission grant, raw-key logging, portal implementation, or claim
+that X11 fallback covers native Wayland applications. Error notifications take priority.
+
+**Acceptance:** session detection handles Wayland display and session-type markers; simulated
+failure displays the focused-window limitation; X11/Windows shortcut handling remains unchanged.
+Real compositor verification remains separate.
 
 ### M6.1 — macOS capture/audio provider
 

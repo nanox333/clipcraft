@@ -11,7 +11,7 @@ use clipcraft_engine::{
     CaptureSession, DesktopCaptureMode, GameArmingDecision, GameArmingState, GameProcessMatch,
     HotkeyAction, RecordingSettings, SavedClipReport,
 };
-use clipcraft_platform::{CaptureOptions, HotkeyBinding, HotkeyListener};
+use clipcraft_platform::{CaptureOptions, HotkeyBinding, HotkeyListener, HotkeyStatus};
 use clipcraft_record::{RecordError, RecordState, RecordStatus};
 use eframe::egui;
 use egui::RichText;
@@ -24,20 +24,85 @@ use crate::settings::GpuProbe;
 /// Opens microphones and the computer's own sound for the recorder.
 fn receive_hotkey(
     held: &mut std::collections::HashSet<u32>,
+    suppressed: &mut std::collections::HashSet<u32>,
     event: clipcraft_platform::HotkeyEvent,
     assigning: bool,
 ) -> Option<HotkeyAction> {
     let action = clipcraft_engine::Hotkeys::action_for_id(event.id)?;
     if action == HotkeyAction::PushToTalk {
-        if event.pressed {
+        if event.pressed && !assigning && !suppressed.contains(&event.id) {
             held.insert(event.id);
-        } else {
+        } else if !event.pressed {
             held.remove(&event.id);
+            suppressed.remove(&event.id);
         }
         None
     } else {
         (event.pressed && !assigning).then_some(action)
     }
+}
+
+fn local_shortcut_allowed(status: Option<&HotkeyStatus>, pressed: &str) -> bool {
+    match status {
+        Some(HotkeyStatus::Portal { unbound, .. }) => unbound.iter().any(|key| key == pressed),
+        _ => true,
+    }
+}
+
+fn handle_hotkey_overflow(
+    held: &mut std::collections::HashSet<u32>,
+    suppressed: &mut std::collections::HashSet<u32>,
+    hotkeys: &clipcraft_engine::Hotkeys,
+    overflow: bool,
+) {
+    if overflow {
+        held.clear();
+        suppressed.extend(
+            hotkeys
+                .registrations()
+                .filter(|(_, action, _)| *action == HotkeyAction::PushToTalk)
+                .map(|(id, _, _)| id),
+        );
+    }
+}
+
+/// A conservative whole-second count: do not promise a full second before it is buffered.
+fn buffer_label(seconds: f32, target: u32) -> String {
+    let available = if seconds.is_finite() {
+        seconds.max(0.0).floor() as u32
+    } else {
+        0
+    };
+    format!("{} / {}s buffered", available.min(target), target)
+}
+
+fn buffer_details(status: &RecordStatus) -> String {
+    let output = status
+        .output
+        .map(|(width, height)| format!("{width} × {height} at {} FPS", status.target_fps))
+        .unwrap_or_else(|| "Waiting for the first video frame".to_owned());
+    let audio = if status.audio.is_empty() {
+        "No audio sources".to_owned()
+    } else {
+        let lost = status.audio.iter().filter(|source| source.lost).count();
+        format!("{} audio source(s), {lost} unavailable", status.audio.len())
+    };
+    format!(
+        "Available replay / requested clip length. A new capture source or encoder can clear the buffer.\n\
+         {output}\nEncoder: {}\nFrames captured: {} · encoded: {} · dropped: {}\n{audio}",
+        status.encoder, status.frames_captured, status.frames_encoded, status.frames_dropped
+    )
+}
+
+fn should_report_reset(
+    previous: Option<u64>,
+    current: Option<u64>,
+    saving: bool,
+    current_notice: Option<&Notice>,
+) -> bool {
+    !saving
+        && current_notice.is_none_or(|notice| !notice.error)
+        && matches!((previous, current), (Some(old), Some(new)) if new > old)
 }
 
 fn audio_provider() -> clipcraft_record::AudioProvider {
@@ -79,6 +144,17 @@ pub struct Notice {
     pub path: Option<PathBuf>,
 }
 
+fn hotkey_failure_notice(current: Option<&Notice>) -> Option<Notice> {
+    if current.is_some_and(|notice| notice.error) {
+        return None;
+    }
+    notice(
+        "Global shortcuts are unavailable. Some keys work while ClipCraft is focused; push-to-talk needs global access.",
+        false,
+        None,
+    )
+}
+
 /// Everything about recording the app keeps between frames.
 #[derive(Default)]
 pub struct CaptureState {
@@ -98,8 +174,12 @@ pub struct CaptureState {
     /// When the clip being saved will be written, if it is waiting for the post-roll.
     saving_at: Option<Instant>,
     listener: Option<HotkeyListener>,
+    retiring_listener: Option<HotkeyListener>,
     hotkey_settings: Option<clipcraft_engine::Hotkeys>,
+    hotkey_raw_fallback: bool,
+    hotkey_status: Option<HotkeyStatus>,
     talk_keys: std::collections::HashSet<u32>,
+    suppressed_talk_keys: std::collections::HashSet<u32>,
     pub targets: Vec<CaptureTarget>,
     targets_loaded: bool,
     /// Whether the graphics card can encode video, found by trying it once.
@@ -136,6 +216,14 @@ impl CaptureState {
     /// How the running recording is doing, if one is running.
     pub fn record_status(&self) -> Option<clipcraft_record::RecordStatus> {
         self.session.status()
+    }
+
+    pub fn shortcut_status(&self) -> Option<HotkeyStatus> {
+        self.listener.as_ref().map(HotkeyListener::status)
+    }
+
+    pub fn retry_shortcuts(&mut self) {
+        self.hotkey_settings = None;
     }
 
     pub fn game_recording_name(&self) -> Option<&str> {
@@ -243,7 +331,8 @@ impl ClipCraftApp {
             context.request_repaint_after(Duration::from_secs(1));
         }
         self.yield_to_the_game();
-        self.sync_hotkeys();
+        self.sync_hotkeys(context);
+        self.poll_hotkey_status(context);
         // Hotkeys are read here, once per frame. Without the focus no input wakes the window (it
         // may be in the tray or behind a game), so look again often enough to feel instant.
         if self.capture.listener.is_some() && !context.input(|input| input.focused) {
@@ -251,14 +340,45 @@ impl ClipCraftApp {
         }
         let mut actions = Vec::new();
         if let Some(listener) = self.capture.listener.as_ref() {
-            while let Some(event) = listener.try_next() {
+            let mut processed = 0;
+            while processed < 64 {
+                let Some(event) = listener.try_next() else {
+                    break;
+                };
+                processed += 1;
                 if let Some(action) = receive_hotkey(
                     &mut self.capture.talk_keys,
+                    &mut self.capture.suppressed_talk_keys,
                     event,
                     self.settings_state.capturing.is_some(),
                 ) {
                     actions.push(action);
                 }
+            }
+            if processed == 64 {
+                context.request_repaint();
+            }
+            // A release may have been lost or the backend changed. Fail closed for PTT.
+            let overflow = listener.take_overflow();
+            handle_hotkey_overflow(
+                &mut self.capture.talk_keys,
+                &mut self.capture.suppressed_talk_keys,
+                &self.recording.hotkeys,
+                overflow,
+            );
+            if overflow
+                && !self.capture.suppressed_talk_keys.is_empty()
+                && self
+                    .capture
+                    .notice
+                    .as_ref()
+                    .is_none_or(|notice| !notice.error)
+            {
+                self.capture.notice = notice(
+                    "Shortcuts were interrupted. Release your push-to-talk key, then press it again.",
+                    false,
+                    None,
+                );
             }
         }
         self.capture.session.set_talking(
@@ -272,6 +392,7 @@ impl ClipCraftApp {
         if !typing
             && self.settings_state.capturing.is_none()
             && let Some(pressed) = context.input(crate::settings::pressed_shortcut_in)
+            && local_shortcut_allowed(self.capture.shortcut_status().as_ref(), &pressed)
         {
             for action in [
                 HotkeyAction::SaveClip,
@@ -314,7 +435,27 @@ impl ClipCraftApp {
             }
         }
 
+        let previous_resets = self
+            .capture
+            .status
+            .as_ref()
+            .map(|status| status.buffer_resets);
         self.capture.status = self.capture.session.status();
+        if should_report_reset(
+            previous_resets,
+            self.capture
+                .status
+                .as_ref()
+                .map(|status| status.buffer_resets),
+            self.capture.saving.is_some(),
+            self.capture.notice.as_ref(),
+        ) {
+            self.capture.notice = notice(
+                "Replay buffer restarted. Previous buffered footage was cleared; the buffer is filling again.",
+                false,
+                None,
+            );
+        }
         if let Some(RecordStatus {
             state: RecordState::Failed(error),
             ..
@@ -412,19 +553,43 @@ impl ClipCraftApp {
     }
 
     /// Keeps the global hotkeys in step with the settings.
-    fn sync_hotkeys(&mut self) {
-        if self.capture.hotkey_settings.as_ref() == Some(&self.recording.hotkeys) {
+    fn sync_hotkeys(&mut self, context: &egui::Context) {
+        if self.capture.hotkey_settings.as_ref() == Some(&self.recording.hotkeys)
+            && self.capture.hotkey_raw_fallback == self.recording.wayland_raw_hotkeys
+            && self.capture.retiring_listener.is_none()
+        {
             return;
         }
+        if self.capture.retiring_listener.is_none()
+            && let Some(listener) = self.capture.listener.take()
+        {
+            listener.request_stop();
+            self.capture.retiring_listener = Some(listener);
+            self.capture.talk_keys.clear();
+            self.capture.suppressed_talk_keys.clear();
+            self.capture.session.set_talking(false);
+        }
+        if self
+            .capture
+            .retiring_listener
+            .as_ref()
+            .is_some_and(|listener| !listener.is_stopped())
+        {
+            context.request_repaint_after(Duration::from_millis(20));
+            return;
+        }
+        self.capture.retiring_listener = None;
         self.capture.hotkey_settings = Some(self.recording.hotkeys.clone());
+        self.capture.hotkey_raw_fallback = self.recording.wayland_raw_hotkeys;
+        self.capture.hotkey_status = None;
         let wanted: Vec<(u32, String)> = self
             .recording
             .hotkeys
             .registrations()
             .map(|(id, _, key)| (id, key.to_owned()))
             .collect();
-        self.capture.listener = None;
         self.capture.talk_keys.clear();
+        self.capture.suppressed_talk_keys.clear();
         self.capture.session.set_talking(false);
         if wanted.is_empty() {
             return;
@@ -435,18 +600,69 @@ impl ClipCraftApp {
             .collect();
         // Without a provider (or when another program owns a key) the shortcuts still work while
         // ClipCraft has the focus.
-        if let Ok(listener) = HotkeyListener::start(bindings) {
-            if !listener.skipped().is_empty() {
-                self.capture.notice = notice(
-                    format!(
-                        "{} is used by another program, so it only works while ClipCraft is open in front.",
-                        listener.skipped().join(", ")
-                    ),
-                    false,
-                    None,
-                );
+        match HotkeyListener::start_with_options(bindings, self.recording.wayland_raw_hotkeys) {
+            Ok(listener) => {
+                if !listener.skipped().is_empty() {
+                    self.capture.notice = notice(
+                        format!(
+                            "{} is used by another program, so it only works while ClipCraft is open in front.",
+                            listener.skipped().join(", ")
+                        ),
+                        false,
+                        None,
+                    );
+                }
+                self.capture.listener = Some(listener);
             }
-            self.capture.listener = Some(listener);
+            Err(_) => {
+                if let Some(warning) = hotkey_failure_notice(self.capture.notice.as_ref()) {
+                    self.capture.notice = Some(warning);
+                }
+            }
+        }
+    }
+
+    fn poll_hotkey_status(&mut self, context: &egui::Context) {
+        let Some(current) = self.capture.shortcut_status() else {
+            return;
+        };
+        if current == HotkeyStatus::Pending {
+            context.request_repaint_after(Duration::from_millis(200));
+        }
+        if self.capture.hotkey_status.as_ref() == Some(&current) {
+            return;
+        }
+        if matches!(current, HotkeyStatus::Unavailable { .. })
+            && matches!(
+                self.capture.hotkey_status,
+                Some(HotkeyStatus::Portal { .. } | HotkeyStatus::Fallback { .. })
+            )
+        {
+            handle_hotkey_overflow(
+                &mut self.capture.talk_keys,
+                &mut self.capture.suppressed_talk_keys,
+                &self.recording.hotkeys,
+                true,
+            );
+        }
+        self.capture.hotkey_status = Some(current.clone());
+        let message = match current {
+            HotkeyStatus::Portal { unbound, .. } if !unbound.is_empty() => Some(format!("The desktop did not bind: {}. Check Settings › Hotkeys.", unbound.join(", "))),
+            HotkeyStatus::Fallback { direct_keyboard: true, .. } => Some("Desktop shortcuts unavailable; using the keyboard-device fallback you enabled.".to_owned()),
+            HotkeyStatus::Fallback { direct_keyboard: false, denied: true, .. } => Some("Desktop shortcuts were declined. XWayland shortcuts may still work; see Settings › Hotkeys.".to_owned()),
+            HotkeyStatus::Fallback { direct_keyboard: false, denied: false, .. } => Some("Desktop shortcuts unavailable. XWayland shortcuts may still work; see Settings › Hotkeys.".to_owned()),
+            HotkeyStatus::Unavailable { denied: true } => Some("Desktop shortcuts were declined. Some keys work while ClipCraft is focused; push-to-talk needs global access.".to_owned()),
+            HotkeyStatus::Unavailable { denied: false } => Some("Global shortcuts unavailable. Some keys work while ClipCraft is focused; push-to-talk needs global access.".to_owned()),
+            _ => None,
+        };
+        if let Some(message) = message
+            && self
+                .capture
+                .notice
+                .as_ref()
+                .is_none_or(|notice| !notice.error)
+        {
+            self.capture.notice = notice(message, false, None);
         }
     }
 
@@ -705,12 +921,32 @@ impl ClipCraftApp {
             }
             other => other,
         };
+        let had_replay = self
+            .capture
+            .session
+            .status()
+            .is_some_and(|status| status.buffered_frames > 0);
         // A game closing never saves a clip by itself: clips are saved only when you ask.
         self.stop_capture();
         match transition {
             GameArmingDecision::Start(game) => self.start_capture_for_game(Some(game)),
             GameArmingDecision::StartDesktop => self.start_desktop_fallback(),
             GameArmingDecision::Stop => {}
+        }
+        if had_replay
+            && self.capture.saving.is_none()
+            && self
+                .capture
+                .notice
+                .as_ref()
+                .is_none_or(|notice| !notice.error)
+        {
+            let message = if self.capture.is_active() {
+                "Capture source changed. Previous buffered footage was cleared; the new buffer is filling."
+            } else {
+                "Capture stopped. Previous buffered footage was cleared."
+            };
+            self.capture.notice = notice(message, false, None);
         }
     }
 
@@ -1472,12 +1708,19 @@ impl ClipCraftApp {
                 status.frames_dropped as f32 * 100.0 / status.frames_captured as f32
             };
             let behind = dropped > 5.0;
+            let target = self
+                .capture
+                .started_with
+                .as_ref()
+                .map_or(self.recording.replay_seconds, |settings| {
+                    settings.replay_seconds
+                });
             ui.label(
-                RichText::new(format!("{:.0}s buffered", status.buffered_seconds))
+                RichText::new(buffer_label(status.buffered_seconds, target))
                     .color(MUTED)
                     .size(12.5),
             )
-            .on_hover_text(format!("Encoder: {}", status.encoder));
+            .on_hover_text(buffer_details(status));
             let lost: Vec<&str> = status
                 .audio
                 .iter()
@@ -1682,6 +1925,20 @@ mod tests {
             .map(|(id, _, _)| id)
             .collect();
         let mut held = std::collections::HashSet::new();
+        let mut suppressed = std::collections::HashSet::new();
+        receive_hotkey(
+            &mut held,
+            &mut suppressed,
+            clipcraft_platform::HotkeyEvent {
+                id: ids[0],
+                pressed: true,
+            },
+            true,
+        );
+        assert!(
+            held.is_empty(),
+            "assigning a shortcut must not open the microphone"
+        );
         for (id, pressed, count) in [
             (ids[0], true, 1),
             (ids[1], true, 2),
@@ -1691,6 +1948,7 @@ mod tests {
             assert_eq!(
                 receive_hotkey(
                     &mut held,
+                    &mut suppressed,
                     clipcraft_platform::HotkeyEvent { id, pressed },
                     false
                 ),
@@ -1701,6 +1959,7 @@ mod tests {
         assert_eq!(
             receive_hotkey(
                 &mut held,
+                &mut suppressed,
                 clipcraft_platform::HotkeyEvent {
                     id: 1,
                     pressed: true
@@ -1712,6 +1971,7 @@ mod tests {
         assert_eq!(
             receive_hotkey(
                 &mut held,
+                &mut suppressed,
                 clipcraft_platform::HotkeyEvent {
                     id: 1,
                     pressed: true
@@ -1813,6 +2073,81 @@ mod tests {
         ]);
         (app, root)
     }
+
+    #[test]
+    fn buffer_label_does_not_overstate_available_replay() {
+        assert_eq!(buffer_label(0.0, 30), "0 / 30s buffered");
+        assert_eq!(buffer_label(29.9, 30), "29 / 30s buffered");
+        assert_eq!(buffer_label(33.0, 30), "30 / 30s buffered");
+        assert_eq!(buffer_label(f32::NAN, 30), "0 / 30s buffered");
+        assert_eq!(buffer_label(-1.0, 30), "0 / 30s buffered");
+    }
+
+    #[test]
+    fn reset_notices_do_not_override_saving_or_errors() {
+        let error = notice("Something failed", true, None);
+        assert!(should_report_reset(Some(0), Some(1), false, None));
+        assert!(!should_report_reset(Some(1), Some(1), false, None));
+        assert!(!should_report_reset(None, Some(1), false, None));
+        assert!(!should_report_reset(Some(0), Some(1), true, None));
+        assert!(!should_report_reset(
+            Some(0),
+            Some(1),
+            false,
+            error.as_ref()
+        ));
+    }
+
+    #[test]
+    fn a_desktop_remap_does_not_also_trigger_the_old_local_shortcut() {
+        let status = HotkeyStatus::Portal {
+            unbound: vec!["F11".into()],
+            assigned: vec![("F8".into(), "Alt+F9".into())],
+        };
+        assert!(!local_shortcut_allowed(Some(&status), "F8"));
+        assert!(local_shortcut_allowed(Some(&status), "F11"));
+        assert!(local_shortcut_allowed(None, "F8"));
+    }
+
+    #[test]
+    fn a_lost_hotkey_event_releases_all_push_to_talk_bindings() {
+        let mut held = std::collections::HashSet::from([16, 17]);
+        let mut suppressed = std::collections::HashSet::new();
+        let mut keys = clipcraft_engine::Hotkeys::default();
+        keys.set_binding(HotkeyAction::PushToTalk, 0, "F12")
+            .unwrap();
+        keys.set_binding(HotkeyAction::PushToTalk, 1, "F7").unwrap();
+        handle_hotkey_overflow(&mut held, &mut suppressed, &keys, false);
+        assert_eq!(held.len(), 2);
+        handle_hotkey_overflow(&mut held, &mut suppressed, &keys, true);
+        assert!(held.is_empty());
+        assert_eq!(suppressed.len(), 2);
+        let id = keys
+            .registrations()
+            .find(|(_, action, _)| *action == HotkeyAction::PushToTalk)
+            .unwrap()
+            .0;
+        let event = |pressed| clipcraft_platform::HotkeyEvent { id, pressed };
+        receive_hotkey(&mut held, &mut suppressed, event(true), false);
+        assert!(
+            held.is_empty(),
+            "stale press after overflow must not open the microphone"
+        );
+        receive_hotkey(&mut held, &mut suppressed, event(false), false);
+        receive_hotkey(&mut held, &mut suppressed, event(true), false);
+        assert!(
+            held.contains(&id),
+            "a new press after release works normally"
+        );
+    }
+
+    #[test]
+    fn shortcut_registration_failure_explains_focused_fallback_without_hiding_errors() {
+        let warning = hotkey_failure_notice(None).unwrap();
+        assert!(warning.text.contains("while ClipCraft is focused"));
+        let error = notice("Capture failed", true, None);
+        assert!(hotkey_failure_notice(error.as_ref()).is_none());
+    }
     fn wait_for_frames(app: &ClipCraftApp) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while app
@@ -1880,10 +2215,14 @@ mod tests {
         assert_eq!(app.capture.game_session.as_ref().unwrap().process_id, 42);
         app.apply_game_observation(observation(None));
         assert!(app.capture.desktop_fallback);
+        assert!(app.capture.notice.as_ref().is_some_and(|notice| {
+            notice
+                .text
+                .contains("Previous buffered footage was cleared")
+        }));
         assert!(app.capture.game_session.is_none());
         wait_for_frames(&app);
-        // Reopen while the first game replay may still be saving. Transition saving is bounded
-        // to one running and one queued job, with distinct paths even within one timestamp.
+        // Reopening switches back to the game without saving the previous desktop replay.
         app.apply_game_observation(observation(Some(43)));
         assert!(!app.capture.desktop_fallback);
         assert_eq!(app.capture.game_session.as_ref().unwrap().process_id, 43);

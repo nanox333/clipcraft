@@ -12,7 +12,7 @@ or a udev rule). No code from them was used or ported; they are GPL-licensed.
 | Part | X11 | Wayland | Verified how |
 | --- | --- | --- | --- |
 | Screen capture | core protocol and shared memory (MIT-SHM) | desktop's screen-cast portal and PipeWire | X11: virtual display, real clips decoded by ffmpeg. Wayland: a fake portal against a real PipeWire server; **no real GNOME, KDE or wlroots desktop has delivered a picture yet** |
-| Global hotkeys | key grabs | keyboards read through evdev | X11: virtual display and `xdotool`. evdev: byte-level tests and a fake device file; not on a real keyboard |
+| Global hotkeys | key grabs | GlobalShortcuts portal; optional evdev or limited XWayland fallback | X11: virtual display. Portal: private D-Bus fake. evdev: synthetic device file; no real Wayland desktop or physical keyboard |
 | Game recognition | process list (Steam IDs, names) | process list | virtual display; no real game |
 | Sound | PulseAudio client library (also answered by PipeWire) | same | a PulseAudio null sink |
 | Encoding | processor (pure Rust H.264); NVIDIA NVENC and AMD/Intel VA-API when present | same | processor only; no graphics card was available |
@@ -30,24 +30,39 @@ or a udev rule). No code from them was used or ported; they are GPL-licensed.
     `-kde`, `-wlr` or `-hyprland`). The desktop shows its own screen chooser the first time; ClipCraft
     remembers the choice (portal version 4 and newer) so it does not ask again. To be asked again,
     delete `screencast-restore-token` in the ClipCraft data folder (`~/.local/share/ClipCraft`).
-  * For global hotkeys: read access to the keyboards (next section).
+  * For global hotkeys: a desktop backend implementing GlobalShortcuts; otherwise see the fallbacks
+    below. Direct keyboard access is not enabled by default.
 
 ## Hotkeys on Wayland
 
-A Wayland program cannot grab a key for the whole desktop, so ClipCraft reads the keyboards
-(`/dev/input/event*`). That needs permission, and it is a real privacy trade-off: whatever can read
-the keyboard can read what you type. Pick one:
+A Wayland program cannot grab a key for the whole desktop directly. ClipCraft first asks the
+desktop's GlobalShortcuts portal to register its shortcuts. The desktop may display a consent or
+configuration dialog, choose different keys, or decline some bindings. Settings › Hotkeys displays
+the desktop's assignments, reports failures and offers **Retry desktop shortcuts**. Support varies
+by desktop and has not yet been verified against a real compositor.
+If shortcut events are interrupted, ClipCraft closes push-to-talk until its key is released and
+pressed again, so a missed release cannot leave the microphone open.
+
+If the portal is unavailable or declined, ClipCraft tries X11 grabs, which only see keys while an
+XWayland window has focus. The person's configured local shortcuts also work in the focused
+ClipCraft window when not registered with the portal. Push-to-talk requires a working global
+listener. Native Wayland games may not deliver shortcuts through the X11 fallback.
+
+Alternatively, explicitly turn on **Allow direct keyboard access if desktop shortcuts fail** in
+Settings › Hotkeys. The fallback reads `/dev/input/event*` and still needs operating-system
+permission. This is a real privacy trade-off: other programs with the same access can also read
+what you type. To grant permission, choose one:
 
 1. **Join the `input` group:** `sudo usermod -aG input $USER`, then sign out and in. (Every program
    you run can read the keyboards from then on.)
 2. **Install the udev rule** in `packaging/linux/70-clipcraft-keyboard.rules`, which grants the person
    signed in at the computer the same access. The file explains how to install and remove it.
-3. **Neither:** ClipCraft then only sees keys pressed while an X window (a game running under
-   XWayland) has the focus, and falls back to X11 grabs. Bind a desktop shortcut to your own
-   command instead; in KDE, GNOME and most others that is Settings > Keyboard > Shortcuts.
+3. **Neither:** keep direct keyboard access disabled and use the limited XWayland/focused-window
+   fallback described above.
 
-ClipCraft never records or stores keys; it only matches the shortcuts you set. Shortcut letters use
-the physical (US) key positions, so on other layouts a letter shortcut is where the US key is.
+ClipCraft never records or stores raw keys; it only matches the shortcuts you set. With the direct
+keyboard fallback, shortcut letters use physical US key positions; portal key interpretation is
+controlled by the desktop.
 Unplugging and re-plugging a keyboard is noticed within a few seconds.
 
 ## If something does not work
@@ -70,5 +85,4 @@ Unplugging and re-plugging a keyboard is noticed within a few seconds.
   compositors, fractional scaling and several monitors are untested.
 * Tagging a clip with the game in front on Wayland: Wayland does not say which window has the focus.
 * Flatpak and other sandboxed packages (including immutable Fedora variants); AppImage.
-* The xdg-desktop-portal GlobalShortcuts interface (KDE, GNOME 48+, Hyprland), which would avoid
-  reading the keyboards at all.
+* Real GlobalShortcuts portal compatibility and consent behavior on GNOME, KDE and wlroots desktops.

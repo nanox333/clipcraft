@@ -1,5 +1,19 @@
 # Testing
 
+M6.S2: `cargo test -p clipcraft-platform --test global_shortcuts_portal` runs a fake portal on a
+private D-Bus daemon and covers partial bindings, remapping, press/release, denial, cancellation,
+queue saturation, service disappearance, and reconnect by starting a new listener. The desktop
+tests cover held-PTT release on event loss and old-shortcut suppression on portal remapping. Real
+GNOME/KDE/wlroots, hardware keyboards and compositor-specific permission UX remain unverified.
+An X11 virtual-desktop check with a simulated Wayland session marker inspected the fallback and
+opt-in controls, changed the fallback setting and confirmed F9 still starts capture after the
+old X11 listener releases its grabs. This does not verify a real Wayland compositor.
+
+M5.B1: the bug-report command has bounded/invalid/unknown-input and privacy tests, with a CLI
+stdin integration test. A 1440×900 Linux/X11 virtual-desktop check covers the About entry, report
+preview, typing, clipboard copy and Escape. The GitHub action is a separate user click; no
+issue was submitted during testing. Actual Windows/macOS UI and clipboard checks remain open.
+
 ## Shortcuts, first launch and installation (M5.1a)
 
 Engine hotkey tests cover old string-only JSON, five bindings, round-trip persistence, canonical

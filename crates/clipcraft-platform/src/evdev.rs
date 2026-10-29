@@ -322,11 +322,13 @@ pub(crate) fn start_with(
     let (sender, receiver) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
-    std::thread::Builder::new()
+    let worker = std::thread::Builder::new()
         .name("evdev-hotkeys".into())
         .spawn(move || listen(devices, first, Tracker::new(registered), sender, &flag))
         .map_err(|_| CaptureError::Failed)?;
-    Ok(HotkeyListener::from_channel(receiver, stop, skipped))
+    Ok(HotkeyListener::from_channel(
+        receiver, stop, skipped, worker,
+    ))
 }
 
 fn listen(

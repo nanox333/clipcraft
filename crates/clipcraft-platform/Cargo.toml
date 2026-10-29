@@ -29,6 +29,8 @@ x11rb = { version = "0.14", default-features = false, features = ["randr", "shm"
 rustix = { version = "1", default-features = false, features = ["std", "fs", "event"] }
 libloading.workspace = true
 zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+async-io = "2.6"
+futures-lite = "2.6"
 
 [target.'cfg(windows)'.dependencies]
 interprocess = "=2.4.6"

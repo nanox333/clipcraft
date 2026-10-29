@@ -1,5 +1,47 @@
 # Known gaps
 
+## Local bug reports (M5.B1)
+
+Settings › About prepares a reviewable report locally, with optional basic recording settings. It
+does not automatically attach paths, device names, logs, screenshots, or clips. User-written text
+can contain private information; review it before copying or submitting. Opening the GitHub form
+is a separate action and does not submit or prefill the report. Offline report preparation remains
+available. The existing general diagnostics copier is separate and can include private paths and
+device names. At 1440×900 on an X11 virtual desktop, typing, preview, clipboard copy and Escape
+were checked. Real Windows/macOS UI and clipboard behavior remain unverified.
+
+[Current improvement research](research-improvements-2026-10-29.md) reviews main `f91de58`,
+public references and a prioritized set of potential improvements. The report is a historical
+snapshot; current implementation status and remaining evidence are described below.
+
+## Replay readiness (M2.R1)
+
+The capture bar displays buffered whole seconds against the active requested clip length. A
+notification reports when an automatic source switch discards an existing replay, or when a
+recording-stream reset discards buffered video. Normal keyframe eviction is not a reset. Existing
+clips and in-flight saves are unchanged; transitions do not save a clip automatically. Error and
+save notifications take priority over reset notices. Readiness is an estimate based on encoded
+frame timestamps, not a guarantee of uninterrupted footage or audio. Hovering the count shows the
+encoder, output size and target FPS, captured/encoded/dropped frame counts, and audio-source
+availability; this is a live view, not an exported diagnostic report. Linux/X11 virtual-desktop
+review at 1440×900 checked the counter and diagnostic tooltip; F8 saved a generated-screen MP4
+whose 21.5-second duration was verified with ffprobe. Generated-source tests cover size change,
+simulated hardware fallback/recovery, normal eviction and automatic game/desktop transitions.
+Physical Windows/GPU, real-game and Wayland verification remain open.
+
+## Wayland shortcut guidance (M6.S1)
+
+Settings › Hotkeys shows the desktop GlobalShortcuts portal status and assigned keys. Portal setup
+runs asynchronously. A bounded event queue fails closed for push-to-talk on loss or disconnect;
+the key must be released and pressed again after an interruption;
+partial bindings are displayed and the user can retry after failure. XWayland grabs are the limited
+fallback. Direct keyboard-device access is off by default, requires explicit opt-in and separate OS
+permission, and grants key-reading access to other programs with that permission. Private D-Bus
+fake tests cover the protocol and failures; actual GNOME/KDE/wlroots behavior and physical-keyboard
+recovery remain unverified. An X11 virtual-desktop check with a simulated Wayland session marker
+checked the fallback controls and an F9 capture after changing the fallback setting. Desktop-assigned
+keys may differ from requested keys.
+
 ## Multiple shortcuts, first-run setup and Windows installer (M5.1a)
 
 Each action accepts five keyboard bindings with a + button, individual removal, collision feedback
@@ -7,7 +49,7 @@ and legacy-settings migration. PTT holds are combined across alternatives. Nativ
 uses unique binding IDs; registration is rebuilt only when shortcuts change. Global availability
 still depends on OS permissions and other applications owning the shortcut.
 
-Fresh profiles see four setup steps for local storage/replay, capture/audio and shortcuts. Setup
+Fresh profiles see seven setup steps for welcome, quality, capture, sound, storage, shortcuts and readiness. Setup
 uses a draft; no capture/audio/presence worker starts during it. Finish or Skip saves completion
 with the choices through the shared settings command. Existing preference files skip setup.
 
@@ -19,7 +61,7 @@ Optional update check and one-click update (ADR 0032) are built and checked agai
 It installs per-user, makes Start menu/optional desktop links and registers an uninstaller.
 Upgrades retain previous program versions (maximum eight); uninstall removes owned program files
 and retains unknown files, preferences and recordings. A temporary uninstaller executable can
-remain in the Windows temporary directory for OS cleanup. No automatic updates, code signing,
+remain in the Windows temporary directory for OS cleanup. No automatic update installation, code signing,
 macOS installer or clean second-machine/SmartScreen verification is claimed. The portable zip
 and Linux archive remain available. See ADR 0031 and the release checklist for scope/evidence.
 
@@ -86,7 +128,11 @@ Linux speed (2026-10-26, 4-core cloud VM, Xvfb): X11 capture now uses MIT-SHM sh
 
 Linux hardware-encoder input (2026-10-26): the RGBA-to-NV12 conversion that VA-API (and the Windows processor-memory path) runs on the processor before upload is rewritten to vectorise (whole-pixel integer masks, fixed 16-pixel blocks), bit-identical to the old formula (random and extreme-picture tests) and 2.5x faster: 1080p 10.1 -> 4.1 ms on one thread, 3.0 -> 1.6 ms on four (VM, `cargo test --release -p clipcraft-platform nv12_speed -- --ignored --nocapture`). It now uses up to four threads, never more than the computer has. Not done, because it cannot be checked without a graphics card: zero-copy DMA-BUF input and graphics-card scaling through the VA-API video-processing entry point (the Windows `SurfaceFit` equivalent), and overlapping conversion with the encode of the previous picture; VA-API pictures are still copied through a mapped surface and waited on one at a time.
 
-Linux compatibility (2026-10-26): [docs/linux.md](linux.md) lists what works on X11 and Wayland, what each needs, and what is unverified. New: global hotkeys on Wayland by reading the keyboards (evdev; needs the `input` group or an optional udev rule, `packaging/linux/`), with X11 grabs as the fallback; the Wayland portal's chosen screen is remembered between runs (`restore_token`); `diagnose` reports the session type and hotkey access. Verified against a real PipeWire server with a fake desktop portal and with synthetic device files; **no real Wayland desktop or physical keyboard was tried**, and the download needs glibc 2.35 or newer and ALSA.
+Linux compatibility: [docs/linux.md](linux.md) lists X11 and Wayland requirements. Global shortcuts
+now try the desktop portal first; raw keyboard-device fallback is explicitly opt-in. The screen
+portal's chosen screen is remembered between runs (`restore_token`). The shortcut and capture
+portals have fake-desktop evidence, and keyboard-device tests use synthetic files; **no real Wayland
+desktop or physical keyboard was tried**. The download needs glibc 2.35 or newer and ALSA.
 
 Encoder ownership (2026-10-26): the pure-Rust H.264 encoder (and its bit writer) now lives in `crates/filmcraft-h264enc` and `crates/filmcraft-bitstream`, vendored from FilmCraft commit `6c3948a` with licences and provenance kept (ADR 0029), so ClipCraft can tune it for screen recording. Encoder speed work (2026-10-26, Speed preset): static-content skip, zero-residual shortcut, deblock/intra/SATD/chroma-MC fast paths made pictures 1.3-2.1x faster on 1440x900 test clips at the same quality (desktop 23.1 -> 10.9 ms, scroll 48.9 -> 37.9, pan 51.5 -> 37.4, rotate 42.0 -> 27.8, game-like 55.2 -> 39.6 ms on 2 threads; table in `crates/filmcraft-h264enc/UPSTREAM.md`). Compression (2026-10-28): Speed now uses inter partitions, so desktop clips are about a third smaller at the same quality (still about 1.9x x264 `veryfast`'s bits; see `docs/performance.md`). Keyframes still stall 70-180 ms at 2 threads, 1080p60 software on 4 cores still needs a graphics-card encoder, and real game footage was not measured. FilmCraft's ffmpeg-oracle tests were not copied (they need its private test kit), so tuning work must add equivalent checks.
 
@@ -145,10 +191,9 @@ including startup. A game opening during the timer switches to its verified wind
 successful process scan; its next exit starts a new timer. The top bar identifies desktop capture
 and shows a countdown for temporary capture. Capture-open failures and scan errors never authorize
 a temporary desktop fallback. Explicit Stop pauses the two desktop modes until Start; mode changes
-and timer expiry are handled without changing source files. Automatic transitions in the desktop modes save the prior
-replay (up to the configured replay length, not the entire session), with game labels only on game
-captures. One save and one queued transition save are allowed; a full save queue pauses frame
-production rather than growing without limit. Pending paths are kept distinct.
+and timer expiry are handled without changing source files. Automatic source changes and timer
+expiry do not save a clip; the prior replay is replaced. Game captures retain their game label
+when the user saves them. Pending output paths remain distinct.
 
 Generated-source tests cover timed/constant modes, reopening, timer reset/expiry, pause, failures,
 source switching, saved-media validity and labels. Native X11 evidence and remaining platform checks are listed

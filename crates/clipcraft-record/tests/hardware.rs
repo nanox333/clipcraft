@@ -478,6 +478,7 @@ fn a_gpu_that_comes_back_takes_the_encoding_over_again() {
         s.restarts >= 2 && s.encoder == "GPU (Fake GPU)" && s.buffered_seconds >= 1.5
     });
     assert!(opened.load(Ordering::SeqCst) >= 2);
+    assert!(recorder.status().buffer_resets >= 1);
     let path = scratch.0.join("back.mp4");
     recorder.save_clip(5, ClipFormat::Mp4, &path).unwrap();
     judged(&path, 320, 180);
@@ -530,6 +531,7 @@ fn a_gpu_that_fails_midway_hands_over_to_software() {
     });
     let status = recorder.status();
     assert_eq!(status.encoder, "CPU (GPU stopped: boom)");
+    assert!(status.buffer_resets >= 1);
     assert!(matches!(status.state, RecordState::Running), "{status:?}");
     let path = scratch.0.join("after.mp4");
     recorder.save_clip(5, ClipFormat::Mp4, &path).unwrap();

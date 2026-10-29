@@ -41,8 +41,39 @@ fn run(arguments: Vec<OsString>) -> Result<(), CliError> {
         "game-data" => run_game_data(&arguments[1..]),
         "presence" => run_presence(&arguments[1..]),
         "diagnose" => run_diagnose(&arguments[1..]),
+        "bug-report" => run_bug_report(&arguments[1..]),
         "update" => run_update(&arguments[1..]),
         _ => Err(CliError::Usage),
+    }
+}
+
+/// Prepare a bug report locally from bounded JSON on stdin; no network or submission.
+fn run_bug_report(arguments: &[OsString]) -> Result<(), CliError> {
+    use std::io::Read;
+    if !arguments.is_empty() {
+        return Err(CliError::Usage);
+    }
+    let mut bytes = Vec::new();
+    io::stdin()
+        .lock()
+        .take(32_769)
+        .read_to_end(&mut bytes)
+        .map_err(CliError::Io)?;
+    if bytes.len() > 32_768 {
+        return Err(CliError::Usage);
+    }
+    let input = serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?;
+    let settings = clipcraft_engine::default_settings_path()
+        .and_then(
+            |path| match execute(Command::LoadRecordingSettings { path }) {
+                Ok(CommandOutput::RecordingSettings(settings)) => Some(settings),
+                _ => None,
+            },
+        )
+        .unwrap_or_default();
+    match execute(Command::PrepareBugReport { input, settings }).map_err(CliError::Engine)? {
+        CommandOutput::BugReport(text) => write_stdout(text.as_bytes()),
+        _ => Err(CliError::UnexpectedOutput),
     }
 }
 
@@ -851,6 +882,7 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli clip gif <input> <output.gif> <start-seconds> <end-seconds> [width:160..960 [fps:5..20]]\n",
         "  clipcraft-cli clip normalize <input> <output.mp4> <start-seconds> <end-seconds> [target-LUFS:-30..-8, default -16]\n",
         "  clipcraft-cli diagnose [--json]\n",
+        "  clipcraft-cli bug-report  (JSON on stdin; prints a local report, never submits it)\n",
         "  clipcraft-cli recording settings\n",
         "  clipcraft-cli recording mic-test <seconds:1..60>  (hear processed microphone; use headphones)\n",
         "  clipcraft-cli capture targets\n",

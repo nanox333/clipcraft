@@ -23,11 +23,17 @@ Settings → General and it never goes online. See [`CHANGELOG.md`](CHANGELOG.md
 
 New profiles get a short setup for storage, capture, audio and shortcuts. Each hotkey action
 supports up to five shortcuts: use **+** in Settings → Hotkeys.
+On Wayland, ClipCraft asks the desktop's Global Shortcuts portal to register keys. Settings →
+Hotkeys shows the desktop's assigned keys and offers an explicit, default-off keyboard-device
+fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
 
 ## What it does
 
 - **Record and replay:** capture a screen or game window into a bounded replay buffer and save the
   last moments with a global hotkey. Game-only mode waits until a recognized game is running.
+  The capture bar shows the available replay against the requested clip length and reports when
+  buffered footage is cleared by a source or recording-stream change. Hover over it for the
+  encoder, frame counts, output size, and audio-source status.
 - **Encoding:** hardware H.264 and H.265 on supported GPUs (Windows), or a built-in software H.264
   encoder tuned for screen recording (desktop clips are about a third smaller than before). If the graphics-card encoder fails or is busy, recording
   continues on the processor and the card is tried again every 20 s or longer.
@@ -39,7 +45,13 @@ supports up to five shortcuts: use **+** in Settings → Hotkeys.
   evening, and a small sequence editor with text, fades and colour effects.
 - **Desktop:** searchable, categorized Settings; system tray (Windows); a "clip saved" pop-up that
   never takes focus from your game; optional Discord Rich Presence.
+- **Bug reports:** Settings → About lets you prepare and review a report locally, optionally add
+  basic recording settings, and copy it. Open the GitHub form separately if you choose to share it.
 - **Command line:** `clipcraft-cli` runs the same commands as the app.
+
+For a bug report without the desktop UI, pass JSON such as
+`{"observed":"Clipping stopped","steps":"Press F8","include_settings":false}` to
+`clipcraft-cli bug-report` on standard input. It prints the report locally and does not submit it.
 
 Details and known limits for every feature are in [`docs/features.md`](docs/features.md).
 

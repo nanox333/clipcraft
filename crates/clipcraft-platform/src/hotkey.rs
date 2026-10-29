@@ -3,6 +3,28 @@
 #[cfg(not(windows))]
 use std::sync::mpsc::Receiver;
 
+/// How global shortcut registration is progressing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum HotkeyStatus {
+    /// The desktop is being asked for permission.
+    Pending,
+    /// The desktop portal is active; these configured shortcuts were not bound.
+    Portal {
+        unbound: Vec<String>,
+        assigned: Vec<(String, String)>,
+    },
+    /// The portal was unavailable or closed and a fallback is active.
+    Fallback {
+        direct_keyboard: bool,
+        denied: bool,
+        unbound: Vec<String>,
+    },
+    /// Global shortcuts are unavailable; in-window handling remains available.
+    Unavailable { denied: bool },
+    /// A non-portal listener is active.
+    Ready,
+}
+
 /// A shortcut to listen for, as `Ctrl+Alt+Shift+Key` text, with the number the caller wants back.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HotkeyBinding {
@@ -69,6 +91,7 @@ enum Backend {
         receiver: Receiver<HotkeyEvent>,
         // Dropping this ends the listening thread.
         stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        worker: std::thread::JoinHandle<()>,
     },
     /// The operating system delivers events to a hidden window owned by this process.
     #[cfg(windows)]
@@ -79,6 +102,10 @@ enum Backend {
 pub struct HotkeyListener {
     backend: Backend,
     skipped: Vec<String>,
+    #[cfg(target_os = "linux")]
+    pub(crate) portal_status: Option<std::sync::Arc<std::sync::Mutex<HotkeyStatus>>>,
+    #[cfg(target_os = "linux")]
+    pub(crate) overflow: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl HotkeyListener {
@@ -86,25 +113,32 @@ impl HotkeyListener {
     /// unknown key) are skipped and listed in [`HotkeyListener::skipped`]. On Windows this must
     /// be called on the thread that runs the application's window loop.
     pub fn start(bindings: Vec<HotkeyBinding>) -> Result<Self, clipcraft_capture::CaptureError> {
+        Self::start_with_options(bindings, false)
+    }
+
+    /// Start global shortcuts, allowing raw keyboard access only when explicitly selected.
+    pub fn start_with_options(
+        bindings: Vec<HotkeyBinding>,
+        allow_raw_keyboard: bool,
+    ) -> Result<Self, clipcraft_capture::CaptureError> {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
-            // On Wayland, X11 grabs only see keys while an X window has the focus, so the
-            // keyboards are read instead; when that is not allowed, the grabs are the fallback.
             #[cfg(target_os = "linux")]
-            if crate::evdev::wanted()
-                && let Ok(listener) = crate::evdev::start(bindings.clone())
-            {
-                return Ok(listener);
+            if crate::evdev::wanted() {
+                return crate::global_shortcuts::start(bindings, allow_raw_keyboard, None);
             }
+            let _ = allow_raw_keyboard;
             crate::x11::start_hotkeys(None, bindings)
         }
         #[cfg(windows)]
         {
+            let _ = allow_raw_keyboard;
             crate::windows::start_hotkeys(bindings)
         }
         #[cfg(not(any(all(unix, not(target_os = "macos")), windows)))]
         {
             let _ = bindings;
+            let _ = allow_raw_keyboard;
             Err(clipcraft_capture::CaptureError::NoProvider)
         }
     }
@@ -123,10 +157,19 @@ impl HotkeyListener {
         receiver: Receiver<HotkeyEvent>,
         stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
         skipped: Vec<String>,
+        worker: std::thread::JoinHandle<()>,
     ) -> Self {
         Self {
-            backend: Backend::Channel { receiver, stop },
+            backend: Backend::Channel {
+                receiver,
+                stop,
+                worker,
+            },
             skipped,
+            #[cfg(target_os = "linux")]
+            portal_status: None,
+            #[cfg(target_os = "linux")]
+            overflow: None,
         }
     }
 
@@ -154,6 +197,51 @@ impl HotkeyListener {
     /// Shortcuts that could not be registered.
     pub fn skipped(&self) -> &[String] {
         &self.skipped
+    }
+
+    /// Current backend and any portal bindings the desktop did not accept.
+    pub fn status(&self) -> HotkeyStatus {
+        #[cfg(target_os = "linux")]
+        if let Some(status) = &self.portal_status {
+            let current = status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            if self.is_stopped() && !matches!(current, HotkeyStatus::Unavailable { .. }) {
+                return HotkeyStatus::Unavailable { denied: false };
+            }
+            return current;
+        }
+        HotkeyStatus::Ready
+    }
+
+    /// Reports a full bounded event queue so the caller can release held push-to-talk keys.
+    pub fn take_overflow(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        if let Some(overflow) = &self.overflow {
+            return overflow.swap(false, std::sync::atomic::Ordering::AcqRel);
+        }
+        false
+    }
+
+    /// Ask a listener to stop without blocking the UI thread.
+    pub fn request_stop(&self) {
+        match &self.backend {
+            #[cfg(not(windows))]
+            Backend::Channel { stop, .. } => stop.store(true, std::sync::atomic::Ordering::Release),
+            #[cfg(windows)]
+            Backend::Windows(_) => {}
+        }
+    }
+
+    /// Whether an asynchronous listener has finished releasing its native resources.
+    pub fn is_stopped(&self) -> bool {
+        match &self.backend {
+            #[cfg(not(windows))]
+            Backend::Channel { worker, .. } => worker.is_finished(),
+            #[cfg(windows)]
+            Backend::Windows(_) => true,
+        }
     }
 }
 

@@ -251,6 +251,7 @@ fn a_changing_picture_size_restarts_the_stream_with_matching_clips() {
     wait_for(&recorder, "the restart", |s| {
         s.restarts >= 1 && s.buffered_seconds >= 1.0
     });
+    assert!(recorder.status().buffer_resets >= 1);
     let path = scratch.file("resized.mkv");
     recorder.save_clip(60, ClipFormat::Mkv, &path).unwrap();
     if tool("ffprobe") && tool("ffmpeg") {

@@ -242,6 +242,40 @@ fn bad_targets_and_missing_displays_are_errors_not_panics() {
 }
 
 #[test]
+fn a_new_listener_can_register_after_the_previous_listener_stops() {
+    let Some(server) = Server::start(69) else {
+        return;
+    };
+    let bindings = vec![
+        HotkeyBinding {
+            id: 1,
+            shortcut: "F8".into(),
+        },
+        HotkeyBinding {
+            id: 2,
+            shortcut: "F9".into(),
+        },
+    ];
+    let first = HotkeyListener::start_on(&server.display, bindings.clone()).unwrap();
+    assert!(first.skipped().is_empty());
+    first.request_stop();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !first.is_stopped() {
+        assert!(
+            Instant::now() < deadline,
+            "listener did not release its grabs"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    drop(first);
+    let next = HotkeyListener::start_on(&server.display, bindings).unwrap();
+    assert!(
+        next.skipped().is_empty(),
+        "the old listener still owns a shortcut"
+    );
+}
+
+#[test]
 fn a_global_hotkey_fires_on_press_and_release_even_with_lock_keys_on() {
     let Some(server) = Server::start(64) else {
         return;
