@@ -1,5 +1,12 @@
 # Known gaps
 
+## 0.2.0 release verification
+
+Linux CI passed on the previous release candidate. Windows CI exposed an invalid Unix-style test
+path and editor preview test timeouts under parallel debug rendering; these checks must pass again
+on the release commit. Windows clean-machine install/update/uninstall, real game capture and real
+Wayland portal behavior remain unverified. The release packages are unsigned.
+
 ## Local bug reports (M5.B1)
 
 Settings › About prepares a reviewable report locally, with optional basic recording settings. It

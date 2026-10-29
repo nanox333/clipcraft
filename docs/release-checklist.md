@@ -23,7 +23,7 @@ alone.
 | Keyboard access | Verified here | Tab reaches every control; the focused control gets a visible ring; Enter activates it (checked in the running app). |
 | Screen reader names | Verified here | A test walks the accessibility tree of the library, clip view, and every settings tab and fails on any unnamed control. Open: an actual screen reader (NVDA, Orca, VoiceOver). |
 | Diagnostics | Verified here | `clipcraft-cli diagnose [--json]` and Settings › General › Copy report. |
-| Installer | Partly | `cargo xtask package` builds a Linux tarball (18 MB; binaries, desktop entry, licences, and `SHA256SUMS`). Run to completion on Linux x86_64: the checksum verifies, the archive unpacks into an empty folder, every shared library the binaries need is present, and `clipcraft-cli diagnose` runs from it. It was not installed on a clean second machine. The Windows zip (`cargo xtask package`, 23 MB) was also built and checked on Windows 11: it unpacks into an empty folder, `clipcraft-cli diagnose` runs from it, and `clipcraft.exe` starts. The offline Rust Windows setup is implemented (M5.1a; evidence below). Open: macOS bundle, code signing and notarisation (need the maintainers' certificates), an update story (there is none by design). |
+| Installer | Partly | Earlier Linux and Windows packages were built and smoke-tested; the offline Rust Windows setup is implemented (M5.1a; evidence below). Automatic update checks and a user-initiated installer handoff are implemented. Open: a clean second-machine install/upgrade/remove check, a full update from a published release with the installer, macOS packaging, and code signing/notarisation. |
 | Windows capture | Partial | Windows/AMD generated-window WGC-to-MP4 runs, one-minute native SDR 1080p60 throughput and real D3D11 lease/color/resize tests pass. Hotkeys, games, device loss, default HDR performance and a two-hour 1080p60 soak remain open; see [measurements](windows-performance.md). |
 | Hardware encoders | Partial | AMD Media Foundation has generated-window CPU/native-surface evidence. NVENC, VideoToolbox and VA-API real-device claims remain open. |
 | Real sound devices | Partial | The Windows input/denoiser check delivered finite samples; M3.1b's real duplex test delivered 108,000 processed frames to the playback callback, applied live zero gain/mono and cleaned up after Stop, without saving audio. Real speech listening quality and physical unplug/recovery remain open; see [testing](testing.md). |
@@ -67,9 +67,12 @@ Keep this notice with binary redistributions, including manually assembled Windo
 1. Set the version in `Cargo.toml` (`[workspace.package]`) and merge it.
 2. Push a tag that matches it, for example `git tag v0.1.0 && git push origin v0.1.0` (or run the
    workflow by hand from the Actions tab).
-3. Open the draft release, check the files, and publish it.
+3. Open the draft release, check the files, and publish it. When a draft already exists, the
+   workflow refreshes its files and notes; it refuses to overwrite a published release.
 
-The downloads are **not code-signed**, so Windows SmartScreen shows "unknown publisher" until a user
-chooses More info, then Run anyway; `INSTALL.txt` in each download says so. The workflow has **not
-been run yet**: the Linux package is verified locally, the Windows zip was built and smoke-tested locally on Windows 11, and the release step has not run.
-There is no macOS download (no macOS provider yet).
+The downloads are **not code-signed**, so Windows SmartScreen may show "unknown publisher" until a
+user chooses More info, then Run anyway; `INSTALL.txt` in each download says so. The workflow ran
+successfully for the published 0.1.0 release and the existing 0.2.0 draft. Before publishing, verify
+that the release tag points to the intended commit and that both platform packages were rebuilt
+from it. Store release notes in `docs/releases/v<version>.md` before running the workflow. There is
+no macOS download (no macOS provider yet).

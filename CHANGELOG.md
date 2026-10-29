@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Wayland shortcuts:** use the desktop Global Shortcuts portal when available, show the assigned
+  keys, and offer a default-off keyboard-device fallback. Real Wayland desktops still need testing.
+- **Replay status:** see the buffered duration and get a warning when switching sources or
+  restarting the recording stream clears buffered video.
+- **Bug reports:** prepare and review a report locally in Settings → About, then optionally open
+  the GitHub form to submit it yourself.
 - **Fixed:** playback steps over a picture the decoder cannot read (up to 30 in a row) instead of
   stopping the whole clip.
 - **Fixed:** a cut no longer moves sound that starts late earlier than the picture; sound that ends
