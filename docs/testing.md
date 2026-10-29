@@ -1,5 +1,8 @@
 # Testing
 
+The surround-audio regression checks that downmixing retains the front-channel balance alongside
+the existing centre-channel test; it no longer assumes that surround inputs are discarded.
+
 M6.S2: `cargo test -p clipcraft-platform --test global_shortcuts_portal` runs a fake portal on a
 private D-Bus daemon and covers partial bindings, remapping, press/release, denial, cancellation,
 queue saturation, service disappearance, and reconnect by starting a new listener. The desktop

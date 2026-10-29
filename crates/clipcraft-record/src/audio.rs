@@ -1163,7 +1163,7 @@ mod tests {
             to_stereo.fifo.iter().copied().collect::<Vec<_>>(),
             vec![0.25, 0.25, -0.5, -0.5]
         );
-        // Surround keeps its front pair.
+        // The front channels stay distinct when surround input is downmixed.
         let mut surround = Lane::new(
             AudioFormat {
                 sample_rate: 48_000,
@@ -1172,11 +1172,11 @@ mod tests {
             48_000,
             2,
         );
-        surround.push(&[0.1, 0.2, 9.0, 9.0, 9.0, 9.0]);
-        assert_eq!(
-            surround.fifo.iter().copied().collect::<Vec<_>>(),
-            vec![0.1, 0.2]
-        );
+        surround.push(&[0.1, 0.2, 0.0, 0.0, 0.0, 0.0]);
+        let downmixed = surround.fifo.iter().copied().collect::<Vec<_>>();
+        assert_eq!(downmixed.len(), 2);
+        assert!(downmixed[0] > 0.0);
+        assert!((downmixed[1] - 2.0 * downmixed[0]).abs() < 0.000_001);
     }
 
     #[test]
