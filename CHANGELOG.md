@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed:** playback steps over a picture the decoder cannot read (up to 30 in a row) instead of
+  stopping the whole clip.
 - **Fixed:** a cut no longer moves sound that starts late earlier than the picture; sound that ends
   before the cut is left out; GIFs stop at the end of the clip.
 - **Fixed:** surround game sound is folded to stereo with the centre channel kept; sound read in
