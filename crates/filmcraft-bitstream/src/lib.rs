@@ -94,7 +94,7 @@ impl<'a> BitReader<'a> {
 
     #[inline]
     pub fn read_bits(&mut self, n: u32) -> Result<u32> {
-        if n as usize > self.bits_left() {
+        if n > 32 || n as usize > self.bits_left() {
             return Err(BitError::Eof);
         }
         let v = self.peek(n);

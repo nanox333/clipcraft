@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Fixed:** a cut no longer moves sound that starts late earlier than the picture; sound that ends
+  before the cut is left out; GIFs stop at the end of the clip.
+- **Fixed:** surround game sound is folded to stereo with the centre channel kept; sound read in
+  split pieces no longer shifts channels.
+- **Fixed:** recording survives brief capture errors (about five seconds) instead of stopping at the first.
+- **Fixed:** library edits, scans and probes can no longer overwrite each other's changes; a second
+  damaged settings or library file no longer replaces the first kept copy.
+- **Fixed:** only files named like ClipCraft's own timestamped clips are removed by "delete oldest".
+- **Fixed:** X11 window capture picks the largest visible window of a game, keeps shared-memory
+  capture after a single hiccup, and reads very large screens; the update check only contacts
+  GitHub's release hosts; `Ctrl++` and lower-case modifiers work in shortcuts.
+- **Fixed:** a stray local request no longer hides working game data; Steam files with `\n` or `\t`
+  escapes are read; the CLI says what is wrong with JSON input.
 - **Fixed:** screens running in 30-bit colour are no longer captured with wrong colours on X11.
 - **Fixed:** after you stop game capture yourself, automatic capture resumes once the game has
   closed (it stayed paused forever in "after game" desktop mode).

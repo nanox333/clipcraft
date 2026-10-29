@@ -1086,6 +1086,7 @@ impl ClipCraftApp {
     /// Saves the replay buffer as a clip on another thread.
     pub(crate) fn save_clip(&mut self) {
         if self.capture.saving.is_some() {
+            self.capture.notice = notice("A clip is already being saved.", false, None);
             return;
         }
         let Some(folder) = self.clips_folder() else {
@@ -1142,10 +1143,10 @@ impl ClipCraftApp {
                 let mut metadata_warning = false;
                 if let Some(game) = report.recorded_game.as_ref() {
                     let path = report.clip.path.to_string_lossy().into_owned();
-                    if self.saved_games.len() >= clipcraft_engine::MAX_LIBRARY_RESULTS
-                        && let Some(oldest) = self.saved_games.keys().next().cloned()
-                    {
-                        self.saved_games.remove(&oldest);
+                    // Labels are only needed until the next scan stores them, so a full map is
+                    // simply started again.
+                    if self.saved_games.len() >= clipcraft_engine::MAX_LIBRARY_RESULTS {
+                        self.saved_games.clear();
                     }
                     self.saved_games.insert(path, game.clone());
                     if let (Some(index_path), Some(directory)) =

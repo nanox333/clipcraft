@@ -15,7 +15,7 @@ use clipcraft_time::Tick;
 use filmcraft_aac::{Decoder, Encoder, EncoderConfig};
 use filmcraft_audio_dsp::loudness::LoudnessMeter;
 use filmcraft_isobmff::{
-    Brand, CodecConfig, Edit, Mp4Writer, SampleEntry, TrackConfig, WriteSample, WriterOptions,
+    Brand, CodecConfig, Mp4Writer, SampleEntry, TrackConfig, WriteSample, WriterOptions,
 };
 
 use crate::compress::{Temporary, check_cancel};
@@ -321,11 +321,11 @@ fn write_file(
             )
         };
         let mut config = TrackConfig::new(entry, scale);
-        config.edits = vec![Edit {
-            segment_duration: p.segment,
-            media_time,
-            media_rate: 0x0001_0000,
-        }];
+        let mut edits = p.edits();
+        if let Some(media) = edits.last_mut() {
+            media.media_time = media_time;
+        }
+        config.edits = edits;
         ids.push(
             mp4.add_track(config)
                 .map_err(|_| ExportError::Unsupported("the codec cannot be stored in an MP4"))?,

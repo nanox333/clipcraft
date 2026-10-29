@@ -8,7 +8,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use clipcraft_capture::reframe::{Framing, OutputShape, PixelRect, Reframe, reframe};
-use clipcraft_capture::{CaptureFrame, CaptureSource, MAX_CAPTURE_EDGE, NativeCaptureFrame};
+use clipcraft_capture::{
+    CaptureError, CaptureFrame, CaptureSource, MAX_CAPTURE_EDGE, NativeCaptureFrame,
+};
 use filmcraft_h264enc::{Encoder, EncoderConfig, PacketFormat, Preset, Profile, RateControl};
 
 use crate::RecordError;
@@ -250,6 +252,8 @@ struct Shared {
     /// only waiting for it to start, so they are not counted as dropped.
     encoder_ready: AtomicBool,
     screenshot: Mutex<Option<CaptureFrame>>,
+    /// The requested picture could not be read back, so the waiter need not wait it out.
+    screenshot_failed: AtomicBool,
     screenshot_ready: Condvar,
 }
 
@@ -329,6 +333,7 @@ impl Recorder {
             screenshot_wanted: AtomicBool::new(false),
             encoder_ready: AtomicBool::new(false),
             screenshot: Mutex::new(None),
+            screenshot_failed: AtomicBool::new(false),
             screenshot_ready: Condvar::new(),
         });
         let encode_shared = shared.clone();
@@ -489,6 +494,7 @@ impl Recorder {
     pub fn screenshot(&self, wait: Duration) -> Option<CaptureFrame> {
         let mut slot = lock(&self.shared.screenshot);
         *slot = None;
+        self.shared.screenshot_failed.store(false, Ordering::SeqCst);
         self.shared.screenshot_wanted.store(true, Ordering::SeqCst);
         let deadline = Instant::now() + wait;
         loop {
@@ -496,7 +502,10 @@ impl Recorder {
                 return Some(frame);
             }
             let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() || self.shared.stop.load(Ordering::SeqCst) {
+            if left.is_zero()
+                || self.shared.stop.load(Ordering::SeqCst)
+                || self.shared.screenshot_failed.load(Ordering::SeqCst)
+            {
                 self.shared.screenshot_wanted.store(false, Ordering::SeqCst);
                 return None;
             }
@@ -557,6 +566,8 @@ impl Drop for Recorder {
 fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, start: Instant) {
     let nanos_per_second = 1_000_000_000_u128;
     let mut next: u64 = 0;
+    // Consecutive picture failures that may pass (a mode switch, a window being resized).
+    let mut failures = 0_u32;
     while !shared.stop.load(Ordering::SeqCst) {
         let due = Duration::from_nanos(
             u64::try_from(u128::from(next) * nanos_per_second / u128::from(fps))
@@ -578,12 +589,16 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
         };
         match captured {
             Ok(mut frame) => {
+                failures = 0;
                 let pts =
                     i64::try_from(start.elapsed().as_nanos() * u128::from(fps) / nanos_per_second)
                         .unwrap_or(i64::MAX);
                 lock(&shared.stats).captured += 1;
                 if shared.screenshot_wanted.swap(false, Ordering::SeqCst) {
-                    *lock(&shared.screenshot) = frame.readback().ok().cloned();
+                    match frame.readback().ok().cloned() {
+                        Some(picture) => *lock(&shared.screenshot) = Some(picture),
+                        None => shared.screenshot_failed.store(true, Ordering::SeqCst),
+                    }
                     shared.screenshot_ready.notify_all();
                 }
                 let mut mailbox = lock(&shared.mailbox);
@@ -596,6 +611,12 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
                 shared.wake.notify_all();
                 // If the encoder or the capture call fell behind, skip the frames already missed.
                 next = (next + 1).max(u64::try_from(pts).unwrap_or(0) + 1);
+            }
+            Err(error @ (CaptureError::Failed | CaptureError::BadFrame)) if failures < 50 => {
+                // About five seconds of trying before giving up on something that may be a blip.
+                failures += 1;
+                let _ = error;
+                std::thread::sleep(Duration::from_millis(100));
             }
             Err(error) => {
                 shared.fail(RecordError::Capture(error));

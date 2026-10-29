@@ -960,7 +960,9 @@ fn write_audio_until(
                 )
                 .map_err(|_| ExportError::EncodeFailed)?;
             let factor = gain;
-            if let Some(channel) = buffer.channels.first() {
+            let mixed = downmix(&buffer.channels);
+            let channels = mixed.as_ref().map_or(&buffer.channels, |pair| pair);
+            if let Some(channel) = channels.first() {
                 for (out, sample) in left.iter_mut().zip(channel) {
                     *out = if sample.is_finite() {
                         (sample * factor).clamp(-1.0, 1.0)
@@ -969,7 +971,7 @@ fn write_audio_until(
                     };
                 }
             }
-            if let Some(channel) = buffer.channels.get(1) {
+            if let Some(channel) = channels.get(1) {
                 for (out, sample) in right.iter_mut().zip(channel) {
                     *out = if sample.is_finite() {
                         (sample * factor).clamp(-1.0, 1.0)
@@ -988,6 +990,27 @@ fn write_audio_until(
     }
     Ok(())
 }
+/// Folds surround sound (5.1, 7.1: front pair, centre, LFE, then surrounds) into a stereo pair so
+/// dialogue in the centre channel is not lost. `None` for mono and stereo, which are used as is.
+fn downmix(channels: &[Vec<f32>]) -> Option<Vec<Vec<f32>>> {
+    if channels.len() < 3 {
+        return None;
+    }
+    let length = channels.iter().map(Vec::len).min().unwrap_or(0);
+    let sample = |channel: usize, at: usize| channels.get(channel).map_or(0.0, |c| c[at]);
+    let scale = 1.0 / (1.0 + 2.0 * std::f32::consts::FRAC_1_SQRT_2);
+    let (mut left, mut right) = (Vec::with_capacity(length), Vec::with_capacity(length));
+    for at in 0..length {
+        let centre = sample(2, at) * std::f32::consts::FRAC_1_SQRT_2;
+        // Surrounds sit at 4/5 in 5.1 and at 4/5 (rear) and 6/7 (side) in 7.1.
+        let l_surround = (sample(4, at) + sample(6, at)) * std::f32::consts::FRAC_1_SQRT_2;
+        let r_surround = (sample(5, at) + sample(7, at)) * std::f32::consts::FRAC_1_SQRT_2;
+        left.push((sample(0, at) + centre + l_surround) * scale);
+        right.push((sample(1, at) + centre + r_surround) * scale);
+    }
+    Some(vec![left, right])
+}
+
 fn write_audio_packet(
     mp4: &mut Mp4Writer<BufWriter<std::fs::File>>,
     id: usize,

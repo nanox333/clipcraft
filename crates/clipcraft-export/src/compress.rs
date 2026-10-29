@@ -13,7 +13,7 @@ use filmcraft_h264enc::{
     Encoder, EncoderConfig, PacketFormat, Preset, Profile, RateControl, YuvFrame,
 };
 use filmcraft_isobmff::{
-    AvcConfig, Brand, Edit, Mp4Writer, SampleEntry, TrackConfig, WriteSample, WriterOptions,
+    AvcConfig, Brand, Mp4Writer, SampleEntry, TrackConfig, WriteSample, WriterOptions,
 };
 use filmcraft_media::reader::{FileReader, open_reader_within};
 use filmcraft_media::{FrameRequest, SharedReader};
@@ -371,6 +371,12 @@ fn export_inner(
     // registered; the switch goes back as soon as the decoder exists. Pictures it cannot take, or
     // a decoder that fails part-way, are decoded in software without the export noticing.
     let frames_before = filmcraft_codecs::hw::hw_stats().frames;
+    // The switch is process-wide: concurrent exports must not read each other's temporary value
+    // as the setting to restore.
+    static SWITCH: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let switch_guard = SWITCH
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let hardware_switch = filmcraft_codecs::hw::hardware_decoding();
     if hardware.is_some() {
         filmcraft_codecs::hw::set_hardware_decoding(true);
@@ -383,6 +389,7 @@ fn export_inner(
         64 * 1024 * 1024,
     );
     filmcraft_codecs::hw::set_hardware_decoding(hardware_switch);
+    drop(switch_guard);
     let decoder = opened.map_err(|_| ExportError::EncodeFailed)?;
     let info = decoder.info().video.as_ref().ok_or(ExportError::Damaged)?;
     source_size(info.width, info.height)?;
@@ -592,11 +599,7 @@ fn open_output(job: &Job<'_>, avc: AvcConfig) -> Result<Output, ExportError> {
     for p in job.audio {
         let stream = &job.source.streams[p.stream];
         let mut config = TrackConfig::new(stream.entry.clone(), stream.timescale);
-        config.edits = vec![Edit {
-            segment_duration: p.segment,
-            media_time: p.media_time,
-            media_rate: 0x0001_0000,
-        }];
+        config.edits = p.edits();
         tracks.push((mp4.add_track(config).map_err(mp4_error)?, p.first));
     }
     Ok(Output {

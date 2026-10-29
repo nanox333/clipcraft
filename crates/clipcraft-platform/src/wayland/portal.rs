@@ -54,7 +54,10 @@ pub fn write_token(path: &Path, token: &str) {
     if token.is_empty() || token.len() > MAX_TOKEN {
         return;
     }
-    let temporary = path.with_extension("partial");
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(".partial");
+    let temporary = std::path::PathBuf::from(temporary);
+    let _ = std::fs::remove_file(&temporary);
     let written = std::fs::OpenOptions::new()
         .write(true)
         .create(true)

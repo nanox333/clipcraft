@@ -20,7 +20,9 @@ fn clip(video_frames: u32, audio_units: u32) -> Vec<u8> {
         1920,
         1080,
     );
-    let video = writer.add_track(TrackConfig::new(entry, 30)).expect("video");
+    let video = writer
+        .add_track(TrackConfig::new(entry, 30))
+        .expect("video");
     let audio = writer
         .add_track(TrackConfig::new(
             SampleEntry::aac(vec![0x11, 0x90], 2, 48_000),

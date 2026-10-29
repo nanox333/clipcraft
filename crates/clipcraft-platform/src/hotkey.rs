@@ -36,11 +36,20 @@ pub struct Modifiers {
 pub fn parse_shortcut(text: &str) -> Option<(Modifiers, String)> {
     let mut modifiers = Modifiers::default();
     let mut key = None;
-    for part in text.split('+') {
+    // The plus key itself is written `Ctrl++`: a trailing `+` after a separator.
+    let (text, plus) = match text.strip_suffix("++") {
+        Some(rest) => (rest, true),
+        None if text == "+" => ("", true),
+        None => (text, false),
+    };
+    if plus {
+        key = Some("+".to_owned());
+    }
+    for part in text.split('+').filter(|_| !(plus && text.is_empty())) {
         match part.trim() {
-            "Ctrl" => modifiers.ctrl = true,
-            "Alt" => modifiers.alt = true,
-            "Shift" => modifiers.shift = true,
+            name if name.eq_ignore_ascii_case("ctrl") => modifiers.ctrl = true,
+            name if name.eq_ignore_ascii_case("alt") => modifiers.alt = true,
+            name if name.eq_ignore_ascii_case("shift") => modifiers.shift = true,
             "" => return None,
             name => {
                 if key.replace(name.to_owned()).is_some() {
@@ -172,5 +181,15 @@ mod tests {
         for bad in ["", "Ctrl", "Ctrl+", "A+B", "+A"] {
             assert!(parse_shortcut(bad).is_none(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn modifiers_ignore_case_and_the_plus_key_can_be_bound() {
+        let (modifiers, key) = parse_shortcut("ctrl+SHIFT+F8").unwrap();
+        assert!(modifiers.ctrl && modifiers.shift && key == "F8");
+        let (modifiers, key) = parse_shortcut("Ctrl++").unwrap();
+        assert!(modifiers.ctrl && key == "+");
+        assert_eq!(parse_shortcut("+").unwrap().1, "+");
+        assert!(parse_shortcut("Ctrl++A").is_none());
     }
 }

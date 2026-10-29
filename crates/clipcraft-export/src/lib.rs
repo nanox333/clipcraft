@@ -176,6 +176,29 @@ struct Plan {
     /// Media time the edit starts at, and the length of the edit in the movie timescale.
     media_time: i64,
     segment: u64,
+    /// How long after the cut starts this stream's first sample is shown, in the movie
+    /// timescale: a track that begins late is delayed by an empty edit, not shifted earlier.
+    lead: u64,
+}
+
+impl Plan {
+    /// The edit list: an empty edit for the lead, then the media.
+    pub(crate) fn edits(&self) -> Vec<Edit> {
+        let mut edits = Vec::new();
+        if self.lead > 0 {
+            edits.push(Edit {
+                segment_duration: self.lead,
+                media_time: -1,
+                media_rate: 0x0001_0000,
+            });
+        }
+        edits.push(Edit {
+            segment_duration: self.segment,
+            media_time: self.media_time,
+            media_rate: 0x0001_0000,
+        });
+        edits
+    }
 }
 
 /// Writes `request.start..request.end` of the input to the output as an MP4.
@@ -311,7 +334,11 @@ fn plan(source: &Source, start: Tick, end: Tick) -> Result<Vec<Plan>, ExportErro
         let segment = u64::try_from(span.saturating_mul(i64::from(MOVIE_TIMESCALE)) / scale)
             .unwrap_or(0)
             .max(1);
+        let lead =
+            u64::try_from((effective_start - s).saturating_mul(i64::from(MOVIE_TIMESCALE)) / scale)
+                .unwrap_or(0);
         plans.push(Plan {
+            lead,
             stream: number,
             first,
             last: last_decoded,
@@ -340,11 +367,7 @@ fn write(
     for plan in plans {
         let stream = &source.streams[plan.stream];
         let mut config = TrackConfig::new(stream.entry.clone(), stream.timescale);
-        config.edits = vec![Edit {
-            segment_duration: plan.segment,
-            media_time: plan.media_time,
-            media_rate: 0x0001_0000,
-        }];
+        config.edits = plan.edits();
         ids.push(
             mp4.add_track(config)
                 .map_err(|_| ExportError::Unsupported("the codec cannot be stored in an MP4"))?,

@@ -265,10 +265,11 @@ fn write_partial(
             for clip_audio in &audio {
                 let info = &clip_audio.info;
                 let (from, until) = clip_span(samples, video, info.sample_rate);
-                // Matroska stamps every block, so the warm-up unit is simply left out.
+                // Matroska stamps every block and has no edit list, so a unit that starts before
+                // the clip (the warm-up unit) cannot be placed truthfully and is left out.
                 let units: Vec<&AudioPacket> = trimmed(&clip_audio.packets, until)
                     .into_iter()
-                    .filter(|unit| unit.start + AAC_FRAME > from)
+                    .filter(|unit| unit.start >= from)
                     .collect();
                 if units.is_empty() {
                     continue;

@@ -307,6 +307,8 @@ struct Lane {
     /// Interleaved samples at the clip's format, waiting for the clock.
     fifo: VecDeque<f32>,
     mono_mix: bool,
+    /// Samples of a frame that arrived split across two reads, kept for the next one.
+    partial: Vec<f32>,
 }
 
 impl Lane {
@@ -321,6 +323,7 @@ impl Lane {
             started: false,
             fifo: VecDeque::new(),
             mono_mix: false,
+            partial: Vec::new(),
         }
     }
 
@@ -331,6 +334,17 @@ impl Lane {
     /// Takes interleaved input samples: converts the channels, resamples, and queues.
     fn push(&mut self, input: &[f32]) {
         let in_channels = usize::from(self.from.channels.max(1));
+        // A read may end inside a frame; the rest of it comes with the next read.
+        let joined;
+        let input = if self.partial.is_empty() {
+            input
+        } else {
+            joined = [self.partial.as_slice(), input].concat();
+            &joined[..]
+        };
+        let whole = input.len() / in_channels * in_channels;
+        self.partial = input[whole..].to_vec();
+        let input = &input[..whole];
         let frames = input.len() / in_channels;
         if frames == 0 {
             return;
@@ -345,8 +359,19 @@ impl Lane {
                     0.0
                 }
             };
-            let left = clean(frame[0]);
-            let right = clean(*frame.get(1).unwrap_or(&frame[0]));
+            let (left, right) = if frame.len() > 2 {
+                // Surround: fold the centre and the surrounds in, so dialogue is not lost.
+                let at = |i: usize| clean(frame.get(i).copied().unwrap_or(0.0));
+                let root = std::f32::consts::FRAC_1_SQRT_2;
+                let scale = 1.0 / (1.0 + 2.0 * root);
+                let centre = at(2) * root;
+                (
+                    (at(0) + centre + (at(4) + at(6)) * root) * scale,
+                    (at(1) + centre + (at(5) + at(7)) * root) * scale,
+                )
+            } else {
+                (clean(frame[0]), clean(*frame.get(1).unwrap_or(&frame[0])))
+            };
             if self.channels == 1 {
                 converted.push((left + right) * 0.5);
             } else if self.mono_mix {
@@ -1399,5 +1424,32 @@ mod tests {
                 data: vec![0; 100],
             },
         );
+    }
+
+    #[test]
+    fn a_frame_split_across_two_reads_is_not_lost_or_shifted() {
+        let format = AudioFormat {
+            sample_rate: 48_000,
+            channels: 2,
+        };
+        let mut split = Lane::new(format, 48_000, 2);
+        let mut whole = Lane::new(format, 48_000, 2);
+        let samples: Vec<f32> = (0..20).map(|n| n as f32 / 100.0).collect();
+        split.push(&samples[..7]);
+        split.push(&samples[7..]);
+        whole.push(&samples);
+        assert_eq!(split.fifo, whole.fifo);
+    }
+
+    #[test]
+    fn surround_input_keeps_the_centre_channel() {
+        let format = AudioFormat {
+            sample_rate: 48_000,
+            channels: 6,
+        };
+        let mut lane = Lane::new(format, 48_000, 2);
+        // Only the centre speaker carries sound.
+        lane.push(&[0.0, 0.0, 0.8, 0.0, 0.0, 0.0]);
+        assert!(lane.fifo.iter().all(|sample| *sample > 0.1));
     }
 }

@@ -734,9 +734,20 @@ pub(crate) fn load_settings(path: &Path) -> Result<RecordingSettings, EngineErro
 /// defaults afterwards does not destroy it (it may be from a newer version, or recoverable by
 /// hand). Best effort.
 pub(crate) fn set_aside(path: &Path) {
-    let mut aside = path.as_os_str().to_owned();
-    aside.push(".damaged");
-    let _ = fs::rename(path, PathBuf::from(aside));
+    // An earlier damaged file is kept too: the first free `.damaged`, `.damaged.1`, ...
+    for number in 0..100_u32 {
+        let mut aside = path.as_os_str().to_owned();
+        aside.push(if number == 0 {
+            ".damaged".to_owned()
+        } else {
+            format!(".damaged.{number}")
+        });
+        let aside = PathBuf::from(aside);
+        if fs::symlink_metadata(&aside).is_err() {
+            let _ = fs::rename(path, aside);
+            return;
+        }
+    }
 }
 
 /// Saves settings with a temp file and rename; returns what was stored.
@@ -1139,11 +1150,11 @@ mod tests {
         );
         save_settings(&path, RecordingSettings::default()).expect("saved");
         assert!(dir.join("recording-settings.json.damaged").exists());
-        // A settings file from a newer version is kept too.
+        // A settings file from a newer version is kept too, without replacing the first.
         fs::write(&path, br#"{"version":999,"settings":{}}"#).expect("fixture");
         assert_eq!(load_settings(&path), Err(EngineError::SettingsInvalid));
         assert!(
-            fs::read(dir.join("recording-settings.json.damaged"))
+            fs::read(dir.join("recording-settings.json.damaged.1"))
                 .expect("kept")
                 .starts_with(b"{\"version\":999")
         );

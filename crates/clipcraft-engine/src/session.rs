@@ -591,12 +591,15 @@ pub fn game_clip_stem(game: Option<&str>, unix_seconds: u64) -> String {
 /// True when a file name looks like one ClipCraft saved: the old `ClipCraft ` prefix, or a
 /// game (or `Desktop`) name followed by `2026-10-19 21-04-55`, with an optional ` (2)`.
 pub fn is_clip_file_name(name: &str) -> bool {
-    if name.starts_with(CLIP_PREFIX) {
-        return true;
-    }
     let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
     let stem = match stem.rsplit_once(" (") {
-        Some((head, tail)) if tail.ends_with(')') => head,
+        Some((head, tail))
+            if tail
+                .strip_suffix(')')
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())) =>
+        {
+            head
+        }
         _ => stem,
     };
     let bytes = stem.as_bytes();
@@ -1442,5 +1445,15 @@ mod tests {
             "old clips must survive a failed save"
         );
         session.stop();
+    }
+
+    #[test]
+    fn only_clip_names_with_a_timestamp_count_as_ours() {
+        assert!(!is_clip_file_name("ClipCraft notes.mp4"));
+        assert!(!is_clip_file_name("Holiday 2026-10-19 21-04-55 (copy).mp4"));
+        assert!(is_clip_file_name("Holiday 2026-10-19 21-04-55 (12).mp4"));
+        assert!(is_clip_file_name(
+            "ClipCraft Screenshot 2026-10-19 21-04-55.png"
+        ));
     }
 }

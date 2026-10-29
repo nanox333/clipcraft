@@ -139,6 +139,17 @@ pub fn apply_edit(
             entries.remove(position);
         }
         MetaEdit::RelinkFile { from, to } => {
+            let is_video = std::path::Path::new(to)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    crate::VIDEO_EXTENSIONS
+                        .iter()
+                        .any(|known| known.eq_ignore_ascii_case(extension))
+                });
+            if !std::path::Path::new(to).is_absolute() || !is_video {
+                return Err(EngineError::MediaUnsupported);
+            }
             let metadata = std::fs::metadata(to)
                 .ok()
                 .filter(|metadata| metadata.is_file())

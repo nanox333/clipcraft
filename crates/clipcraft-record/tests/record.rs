@@ -199,7 +199,10 @@ fn another_savers_temporary_file_is_neither_shared_nor_removed() {
         recorder.save_clip(5, ClipFormat::Mp4, &path),
         Err(RecordError::AlreadyExists)
     );
-    assert_eq!(std::fs::read(&partial).unwrap(), b"another save in progress");
+    assert_eq!(
+        std::fs::read(&partial).unwrap(),
+        b"another save in progress"
+    );
     assert!(!path.exists());
 }
 

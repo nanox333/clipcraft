@@ -157,10 +157,13 @@ impl Parser<'_> {
                         .get(self.position)
                         .ok_or(EngineError::SteamMetadataInvalid)?;
                     self.position += 1;
-                    if !matches!(escaped, b'\\' | b'"') {
-                        return Err(EngineError::SteamMetadataInvalid);
-                    }
-                    bytes.push(escaped);
+                    bytes.push(match escaped {
+                        b'\\' | b'"' => escaped,
+                        b'n' => b'\n',
+                        b't' => b'\t',
+                        b'r' => b'\r',
+                        _ => return Err(EngineError::SteamMetadataInvalid),
+                    });
                 }
                 0 => return Err(EngineError::SteamMetadataInvalid),
                 _ => bytes.push(byte),

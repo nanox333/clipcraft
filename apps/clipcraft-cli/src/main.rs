@@ -224,16 +224,20 @@ fn run_editor(arguments: &[OsString]) -> Result<(), CliError> {
         .lock()
         .take(LIMIT + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| CliError::Usage)?;
+        .map_err(|error| CliError::Input(error.to_string()))?;
     if bytes.len() as u64 > LIMIT {
         return Err(CliError::Usage);
     }
     let command = match arguments[0].to_str() {
         Some("timeline") => Command::AnalyzeEditorTimeline {
-            request: Box::new(serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?),
+            request: Box::new(
+                serde_json::from_slice(&bytes)
+                    .map_err(|error| CliError::Input(error.to_string()))?,
+            ),
         },
         Some("draft-load") | Some("draft-discard") => {
-            let path: PathBuf = serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?;
+            let path: PathBuf = serde_json::from_slice(&bytes)
+                .map_err(|error| CliError::Input(error.to_string()))?;
             if arguments[0].to_str() == Some("draft-load") {
                 Command::LoadEditorDraft { path }
             } else {
@@ -246,14 +250,16 @@ fn run_editor(arguments: &[OsString]) -> Result<(), CliError> {
                 path: PathBuf,
                 draft: clipcraft_engine::EditorDraft,
             }
-            let request: Save = serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?;
+            let request: Save = serde_json::from_slice(&bytes)
+                .map_err(|error| CliError::Input(error.to_string()))?;
             Command::SaveEditorDraft {
                 path: request.path,
                 draft: Box::new(request.draft),
             }
         }
         Some("import") => Command::ImportEditorMedia {
-            paths: serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?,
+            paths: serde_json::from_slice(&bytes)
+                .map_err(|error| CliError::Input(error.to_string()))?,
         },
         Some("apply") => {
             #[derive(serde::Deserialize)]
@@ -262,7 +268,8 @@ fn run_editor(arguments: &[OsString]) -> Result<(), CliError> {
                 session: clipcraft_engine::EditorSession,
                 action: clipcraft_engine::EditorAction,
             }
-            let request: Edit = serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?;
+            let request: Edit = serde_json::from_slice(&bytes)
+                .map_err(|error| CliError::Input(error.to_string()))?;
             Command::EditSequence {
                 session: Box::new(request.session),
                 action: request.action,
@@ -283,7 +290,10 @@ fn run_editor(arguments: &[OsString]) -> Result<(), CliError> {
                         settings.video_encoder == clipcraft_engine::VideoEncoder::Gpu
                     });
                 clipcraft_engine::enable_export_hardware(gpu);
-                Box::new(serde_json::from_slice(&bytes).map_err(|_| CliError::Usage)?)
+                Box::new(
+                    serde_json::from_slice(&bytes)
+                        .map_err(|error| CliError::Input(error.to_string()))?,
+                )
             },
         },
         _ => return Err(CliError::Usage),
@@ -870,6 +880,8 @@ enum CliError {
     UnexpectedOutput,
     Json(serde_json::Error),
     Io(io::Error),
+    /// Input read from standard input that could not be read or understood.
+    Input(String),
 }
 
 impl fmt::Display for CliError {
@@ -884,6 +896,7 @@ impl fmt::Display for CliError {
             }
             Self::Json(_) => formatter.write_str("the result could not be written as JSON."),
             Self::Io(_) => formatter.write_str("standard output could not be written."),
+            Self::Input(message) => write!(formatter, "the input was not understood: {message}"),
         }
     }
 }
@@ -891,7 +904,7 @@ impl fmt::Display for CliError {
 impl std::error::Error for CliError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Usage | Self::UnexpectedOutput | Self::Capture(_) => None,
+            Self::Usage | Self::UnexpectedOutput | Self::Capture(_) | Self::Input(_) => None,
             Self::Engine(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::Io(error) => Some(error),

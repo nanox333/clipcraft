@@ -54,7 +54,7 @@ impl Stream {
             return sample.duration;
         }
         let gap = |a: usize, b: usize| {
-            u32::try_from(self.samples[b].dts - self.samples[a].dts)
+            u32::try_from(self.samples[b].dts.saturating_sub(self.samples[a].dts))
                 .ok()
                 .filter(|gap| *gap > 0)
         };

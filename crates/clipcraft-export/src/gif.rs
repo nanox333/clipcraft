@@ -104,6 +104,16 @@ fn gif_inner(
     .map_err(|_| ExportError::Unreadable)?;
     let info = decoder.info().video.as_ref().ok_or(ExportError::Damaged)?;
     source_size(info.width, info.height)?;
+    // A range past the end of the clip stops at the end instead of repeating the last picture.
+    let duration = if decoder.info().duration > Tick::ZERO {
+        let available = decoder.info().duration - request.start;
+        if available < Tick::from_units(100, 1_000) {
+            return Err(ExportError::BadRange);
+        }
+        duration.min(available)
+    } else {
+        duration
+    };
     let (width, height) = gif_size(info.width, info.height, options.max_width);
     let rate = FrameRate {
         num: i64::from(options.fps),

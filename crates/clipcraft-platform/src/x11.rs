@@ -143,8 +143,21 @@ pub fn window_for_process(
     let Some(windows) = reply.value32() else {
         return Ok(None);
     };
+    // A process may own several windows (a launcher, a splash screen): the largest mapped one
+    // is the game.
+    let mut best: Option<(u64, CaptureTarget)> = None;
     for window in windows.take(MAX_WINDOWS) {
         if window_pid(&conn, window) != Some(process_id) {
+            continue;
+        }
+        let viewable = conn
+            .get_window_attributes(window)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .is_some_and(|attributes| {
+                attributes.map_state == x11rb::protocol::xproto::MapState::VIEWABLE
+            });
+        if !viewable {
             continue;
         }
         let Some(geometry) = conn
@@ -157,15 +170,21 @@ pub fn window_for_process(
         if geometry.width == 0 || geometry.height == 0 {
             continue;
         }
-        return Ok(Some(CaptureTarget {
-            id: format!("window:{window:x}"),
-            name: window_name(&conn, window, net_name, utf8),
-            kind: TargetKind::Window,
-            width: u32::from(geometry.width),
-            height: u32::from(geometry.height),
-        }));
+        let area = u64::from(geometry.width) * u64::from(geometry.height);
+        if best.as_ref().is_none_or(|(largest, _)| area > *largest) {
+            best = Some((
+                area,
+                CaptureTarget {
+                    id: format!("window:{window:x}"),
+                    name: window_name(&conn, window, net_name, utf8),
+                    kind: TargetKind::Window,
+                    width: u32::from(geometry.width),
+                    height: u32::from(geometry.height),
+                },
+            ));
+        }
     }
-    Ok(None)
+    Ok(best.map(|(_, target)| target))
 }
 
 pub fn list_targets(display: Option<&str>) -> Result<Vec<CaptureTarget>, CaptureError> {
@@ -281,6 +300,8 @@ struct X11Source {
     /// The last picture of a window, shown again while the window is minimised.
     last: Option<CaptureFrame>,
     shm: Shm,
+    /// Shared-memory reads that failed in a row.
+    shm_failures: u32,
 }
 
 pub fn open(
@@ -341,6 +362,7 @@ pub fn open(
         started: Instant::now(),
         last: None,
         shm: Shm::Untried,
+        shm_failures: 0,
     }))
 }
 
@@ -373,8 +395,11 @@ impl X11Source {
         let size = (width as usize)
             .checked_mul(height as usize)
             .and_then(|pixels| pixels.checked_mul(4))
-            .filter(|size| *size <= MAX_SHM_BYTES)
             .ok_or(CaptureError::BadFrame)?;
+        // Too big for shared memory: the plain path reads it in bands instead.
+        if size > MAX_SHM_BYTES {
+            return Ok(None);
+        }
         let (Ok(wide), Ok(high)) = (u16::try_from(width), u16::try_from(height)) else {
             return Ok(None);
         };
@@ -410,8 +435,17 @@ impl X11Source {
             Ok(reply) => reply,
             Err(CaptureError::TargetGone) => return Err(CaptureError::TargetGone),
             Err(CaptureError::Denied) => return Err(CaptureError::Denied),
-            Err(_) => return self.disable_shared(),
+            // One failure (a window partly off screen, say) takes this picture the plain way;
+            // shared memory is only given up on after several in a row.
+            Err(_) => {
+                self.shm_failures += 1;
+                if self.shm_failures >= 5 {
+                    return self.disable_shared();
+                }
+                return Ok(None);
+            }
         };
+        self.shm_failures = 0;
         let mut bgra = vec![0_u8; size];
         if usize::try_from(reply.size).ok() != Some(size)
             || shared.file.read_exact_at(&mut bgra, 0).is_err()
@@ -553,7 +587,13 @@ impl CaptureSource for X11Source {
             }
             // A minimised or momentarily unmapped window cannot be read: show the last picture.
             Err(CaptureError::Failed) if matches!(self.place, Place::Window(_)) => {
-                self.last.clone().ok_or(CaptureError::Failed)
+                let mut frame = self.last.clone().ok_or(CaptureError::Failed)?;
+                // Shown again now, so it carries the time it is shown, not the time it was taken.
+                frame.captured_at = Tick::from_units(
+                    i64::try_from(self.started.elapsed().as_micros()).unwrap_or(i64::MAX),
+                    1_000_000,
+                );
+                Ok(frame)
             }
             Err(error) => Err(error),
         }
