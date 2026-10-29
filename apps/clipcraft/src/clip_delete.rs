@@ -72,9 +72,8 @@ impl ClipCraftApp {
                 ui.add_space(18.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
-                    if danger_button(ui, "Move to Recycle Bin").clicked()
-                        || ui.input(|input| input.key_pressed(egui::Key::Enter))
-                    {
+                    // Enter does not confirm: the default for a destructive step is to keep.
+                    if danger_button(ui, "Move to Recycle Bin").clicked() {
                         decision = Some(true);
                     }
                     if kit::labelled_button(ui, Icon::Restart, "Keep it", false, true).clicked() {

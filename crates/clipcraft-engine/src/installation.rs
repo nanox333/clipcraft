@@ -166,6 +166,15 @@ pub(crate) fn install(bundle: &Path, root: &Path) -> Result<PathBuf, String> {
             releases: Vec::new(),
         }
     };
+    // Older versions are removed to make room, oldest first; one that cannot be removed (still
+    // running, say) keeps its place and the install is refused as before.
+    while record.releases.len() >= 8 {
+        let oldest = record.releases[0].clone();
+        if remove_release(&root.join(&oldest)).is_err() {
+            break;
+        }
+        record.releases.remove(0);
+    }
     if record.releases.len() >= 8 {
         return Err("Eight application versions are installed. Uninstall ClipCraft before reinstalling; clips and settings will be kept.".into());
     }

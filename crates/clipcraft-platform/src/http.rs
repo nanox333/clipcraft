@@ -167,7 +167,7 @@ fn unchunk(mut data: &[u8]) -> Result<Vec<u8>, String> {
         if size == 0 {
             return Ok(out);
         }
-        if data.len() < size + 2 {
+        if size.checked_add(2).is_none_or(|needed| data.len() < needed) {
             return Err("a chunked answer was cut short".into());
         }
         out.extend_from_slice(&data[..size]);

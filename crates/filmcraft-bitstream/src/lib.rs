@@ -334,6 +334,9 @@ pub fn annexb_nals(data: &[u8]) -> Vec<&[u8]> {
 
 /// Split a length-prefixed sample (AVCC/HVCC, `length_size` 1/2/4 bytes) into NAL units.
 pub fn length_prefixed_nals(data: &[u8], length_size: usize) -> Result<Vec<&[u8]>> {
+    if !(1..=4).contains(&length_size) {
+        return Err(BitError::InvalidExpGolomb);
+    }
     let mut out = Vec::new();
     let mut i = 0;
     while i < data.len() {
@@ -510,5 +513,13 @@ mod tests {
             prop_assert_eq!(unescape_rbsp(&e), data);
             for w in e.windows(3) { prop_assert!(!(w[0] == 0 && w[1] == 0 && w[2] < 3)); }
         }
+    }
+
+    #[test]
+    fn unusable_length_sizes_are_refused_instead_of_looping() {
+        for size in [0, 5, 9, usize::MAX] {
+            assert!(length_prefixed_nals(&[0, 0, 0, 0], size).is_err());
+        }
+        assert_eq!(length_prefixed_nals(&[0, 1, 7], 2).unwrap(), vec![&[7][..]]);
     }
 }

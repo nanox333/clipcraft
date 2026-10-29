@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Fixed:** screens running in 30-bit colour are no longer captured with wrong colours on X11.
+- **Fixed:** after you stop game capture yourself, automatic capture resumes once the game has
+  closed (it stayed paused forever in "after game" desktop mode).
+- **Fixed:** updating no longer fails after eight installs; the oldest version is removed to make room.
+- **Changed:** pressing Enter in the delete-clip box no longer confirms the delete.
 - **Fixed:** saving a clip or screenshot never replaces an existing file or shares another save's
   temporary file; export no longer needs a filesystem with hard links (exFAT and FAT drives work).
 - **Fixed:** a clip whose sound ends before its picture can be cut after the sound has ended.

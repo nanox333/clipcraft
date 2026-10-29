@@ -302,7 +302,7 @@ pub fn open(
                 && format.bits_per_pixel == 32
                 && format.scanline_pad == 32
         })
-        && screen.root_depth >= 24;
+        && matches!(screen.root_depth, 24 | 32);
     if !format_ok {
         return Err(CaptureError::NoProvider);
     }

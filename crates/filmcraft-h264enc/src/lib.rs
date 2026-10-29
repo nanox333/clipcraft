@@ -777,7 +777,7 @@ impl Encoder {
             } else if self.all_pts.len() >= 2 {
                 let mut v = self.all_pts.clone();
                 v.sort_unstable();
-                self.dts_offset = Some(v[1] - v[0]);
+                self.dts_offset = Some(v[1].saturating_sub(v[0]));
             } else if flushing {
                 self.dts_offset = Some(0);
             } else {
@@ -787,7 +787,7 @@ impl Encoder {
         let off = self.dts_offset.unwrap_or(0);
         let mut res = std::mem::take(&mut self.held);
         for p in res.iter_mut() {
-            p.dts -= off;
+            p.dts = p.dts.saturating_sub(off);
         }
         res
     }

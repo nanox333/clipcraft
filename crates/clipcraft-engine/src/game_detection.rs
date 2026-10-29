@@ -73,8 +73,9 @@ impl GameArmingState {
     ) -> Option<GameArmingDecision> {
         self.observed = matches.first().cloned();
         if self.paused {
-            // Constant desktop mode must stay paused even while no game is running.
-            if mode != DesktopCaptureMode::Never || self.observed.is_some() {
+            // Constant desktop mode must stay paused even while no game is running; otherwise the
+            // pause lasts until every selected game has exited.
+            if mode == DesktopCaptureMode::Always || self.observed.is_some() {
                 return None;
             }
             self.paused = false;
@@ -658,5 +659,25 @@ mod tests {
         );
         arming.capture_started(replacement.clone());
         assert_eq!(arming.observe(std::slice::from_ref(&replacement)), None);
+    }
+
+    #[test]
+    fn a_manual_pause_in_after_game_mode_ends_when_every_game_has_exited() {
+        let game = GameProcessMatch {
+            game_name: "Game".to_owned(),
+            process_id: 42,
+        };
+        let mut arming = GameArmingState::default();
+        arming.capture_started(game.clone());
+        arming.capture_stopped_by_user();
+        let mode = DesktopCaptureMode::AfterGame;
+        assert_eq!(arming.observe_automatic(&[game.clone()], mode, false), None);
+        assert!(arming.is_paused());
+        assert_eq!(arming.observe_automatic(&[], mode, true), None);
+        assert!(!arming.is_paused());
+        assert_eq!(
+            arming.observe_automatic(&[game.clone()], mode, false),
+            Some(GameArmingDecision::Start(game))
+        );
     }
 }
