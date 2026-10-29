@@ -38,40 +38,40 @@ impl ClipCraftApp {
                 egui::Frame::new()
                     .fill(kit::PANEL)
                     .stroke(egui::Stroke::new(1.0_f32, kit::BORDER))
-                    .corner_radius(egui::CornerRadius::same(14))
-                    .inner_margin(egui::Margin::same(22)),
+                    .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
+                    .inner_margin(egui::Margin::same(24)),
             )
             .show(context, |ui| {
                 ui.set_width(380.0);
                 ui.label(
                     RichText::new("Delete this clip?")
                         .color(TEXT)
-                        .size(18.0)
+                        .size(crate::kit::text_size::LEAD)
                         .family(kit::semibold()),
                 );
-                ui.add_space(8.0);
+                ui.add_space(crate::kit::space::SM);
                 ui.label(
                     RichText::new(&entry.title)
                         .color(TEXT)
-                        .size(14.0)
+                        .size(crate::kit::text_size::BODY)
                         .family(kit::medium()),
                 );
                 ui.label(
                     RichText::new(format_bytes(entry.size_bytes))
                         .color(MUTED)
-                        .size(12.5),
+                        .size(crate::kit::text_size::CAPTION),
                 );
-                ui.add_space(10.0);
+                ui.add_space(crate::kit::space::MD);
                 ui.label(
                     RichText::new(
                         "It goes to the Recycle Bin, so you can put it back from there if you change your mind.",
                     )
                     .color(MUTED)
-                    .size(13.0),
+                    .size(crate::kit::text_size::SMALL),
                 );
-                ui.add_space(18.0);
+                ui.add_space(crate::kit::space::XL);
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 10.0;
+                    ui.spacing_mut().item_spacing.x = crate::kit::space::MD;
                     if danger_button(ui, "Move to Recycle Bin").clicked()
                         || ui.input(|input| input.key_pressed(egui::Key::Enter))
                     {
@@ -162,7 +162,7 @@ impl ClipCraftApp {
 
 /// A red button for a step that removes something.
 fn danger_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    let font = egui::FontId::new(13.5, kit::medium());
+    let font = egui::FontId::new(crate::kit::text_size::SMALL, kit::medium());
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), font, egui::Color32::PLACEHOLDER);
@@ -176,7 +176,8 @@ fn danger_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     } else {
         DANGER
     };
-    ui.painter().rect_filled(rect, 10.0, fill);
+    ui.painter()
+        .rect_filled(rect, f32::from(crate::kit::radius::MD), fill);
     ui.painter().galley(
         egui::pos2(
             rect.center().x - galley.size().x / 2.0,

@@ -83,7 +83,8 @@ impl GridState {
             self.painted = 0;
         }
         ui.scope(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(16.0, 16.0);
+            ui.spacing_mut().item_spacing =
+                egui::Vec2::new(crate::kit::space::LG, crate::kit::space::LG);
             scroll.show_rows(
                 ui,
                 height,

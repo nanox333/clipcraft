@@ -241,7 +241,8 @@ fn changed_count(settings: &RecordingSettings) -> usize {
 
 fn stat_tile(ui: &mut egui::Ui, width: f32, label: &str, value: &str, note: &str) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 92.0), egui::Sense::hover());
-    ui.painter().rect_filled(rect, 14.0, CARD);
+    ui.painter()
+        .rect_filled(rect, f32::from(crate::kit::radius::LG), CARD);
     ui.painter().rect_stroke(
         rect,
         14.0,
@@ -252,36 +253,33 @@ fn stat_tile(ui: &mut egui::Ui, width: f32, label: &str, value: &str, note: &str
         egui::pos2(rect.left() + 16.0, rect.top() + 18.0),
         egui::Align2::LEFT_CENTER,
         label.to_uppercase(),
-        egui::FontId::new(10.5, kit::semibold()),
+        egui::FontId::new(crate::kit::text_size::CAPTION, kit::semibold()),
         FAINT,
     );
     ui.painter().text(
         egui::pos2(rect.left() + 16.0, rect.top() + 44.0),
         egui::Align2::LEFT_CENTER,
         value,
-        egui::FontId::new(19.0, kit::semibold()),
+        egui::FontId::new(crate::kit::text_size::TITLE, kit::semibold()),
         TEXT,
     );
     ui.painter().text(
         egui::pos2(rect.left() + 16.0, rect.top() + 70.0),
         egui::Align2::LEFT_CENTER,
         note,
-        egui::FontId::proportional(12.0),
+        egui::FontId::proportional(crate::kit::text_size::CAPTION),
         MUTED,
     );
 }
 
 fn insight_card(ui: &mut egui::Ui, insight: &Insight) -> bool {
     let mut clicked = false;
-    egui::Frame::new()
-        .fill(CARD)
-        .stroke(Stroke::new(1.0_f32, BORDER))
-        .corner_radius(egui::CornerRadius::same(14))
-        .inner_margin(egui::Margin::symmetric(18, 14))
+    kit::card_frame()
+        .inner_margin(egui::Margin::symmetric(20, 16))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 12.0;
+                ui.spacing_mut().item_spacing.x = crate::kit::space::MD;
                 let (dot, _) = ui.allocate_exact_size(Vec2::new(10.0, 22.0), egui::Sense::hover());
                 ui.painter()
                     .circle_filled(dot.center(), 4.5, insight.tone.color());
@@ -291,10 +289,14 @@ fn insight_card(ui: &mut egui::Ui, insight: &Insight) -> bool {
                     ui.label(
                         RichText::new(&insight.title)
                             .color(TEXT)
-                            .size(14.5)
+                            .size(crate::kit::text_size::BODY)
                             .family(kit::semibold()),
                     );
-                    ui.label(RichText::new(&insight.body).color(MUTED).size(12.5));
+                    ui.label(
+                        RichText::new(&insight.body)
+                            .color(MUTED)
+                            .size(crate::kit::text_size::CAPTION),
+                    );
                 });
                 if let Some((label, _)) = insight.action {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -337,19 +339,19 @@ fn profile_card(ui: &mut egui::Ui, width: f32, profile: &Profile, active: bool) 
         egui::pos2(rect.left() + 16.0, rect.top() + 22.0),
         egui::Align2::LEFT_CENTER,
         profile.name,
-        egui::FontId::new(15.0, kit::semibold()),
+        egui::FontId::new(crate::kit::text_size::LEAD, kit::semibold()),
         if active { LIME } else { TEXT },
     );
     ui.painter().text(
         egui::pos2(rect.left() + 16.0, rect.top() + 46.0),
         egui::Align2::LEFT_CENTER,
         profile.tagline,
-        egui::FontId::proportional(12.5),
+        egui::FontId::proportional(crate::kit::text_size::CAPTION),
         TEXT,
     );
     let galley = ui.painter().layout(
         profile.detail.to_owned(),
-        egui::FontId::proportional(12.0),
+        egui::FontId::proportional(crate::kit::text_size::CAPTION),
         MUTED,
         width - 32.0,
     );
@@ -420,7 +422,7 @@ pub(crate) fn overview(
             "estimated",
         );
     });
-    ui.add_space(26.0);
+    ui.add_space(crate::kit::space::XXL);
     section_heading(ui, "Suggestions");
     for insight in insights(settings, gpu, live) {
         if insight_card(ui, &insight)
@@ -428,9 +430,9 @@ pub(crate) fn overview(
         {
             apply(settings);
         }
-        ui.add_space(8.0);
+        ui.add_space(crate::kit::space::SM);
     }
-    ui.add_space(18.0);
+    ui.add_space(crate::kit::space::XL);
     section_heading(ui, "Profiles");
     let width = ((ui.available_width() - gap * 2.0) / 3.0).max(80.0);
     let mut chosen = None;
@@ -445,13 +447,13 @@ pub(crate) fn overview(
     if let Some(apply) = chosen {
         apply(settings);
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::kit::space::SM);
     ui.label(
         RichText::new("A profile sets quality, encoder and effort together. You can still change each one in Video.")
             .color(FAINT)
-            .size(12.0),
+            .size(crate::kit::text_size::CAPTION),
     );
-    ui.add_space(22.0);
+    ui.add_space(crate::kit::space::XXL);
     let changed = changed_count(settings);
     ui.label(
         RichText::new(if changed == 0 {
@@ -463,9 +465,9 @@ pub(crate) fn overview(
             )
         })
         .color(MUTED)
-        .size(12.5),
+        .size(crate::kit::text_size::CAPTION),
     );
-    ui.add_space(20.0);
+    ui.add_space(crate::kit::space::XL);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -486,7 +488,7 @@ pub(crate) fn video_rows(
     rows.page(ui, "Video");
     rows.extra(ui, |ui| {
         card_plain(ui, "Recording quality", |ui| {
-            ui.add_space(10.0);
+            ui.add_space(crate::kit::space::MD);
             let gap = 10.0;
             let width = (ui.available_width() - gap * 3.0) / 4.0;
             ui.horizontal(|ui| {
@@ -500,13 +502,13 @@ pub(crate) fn video_rows(
             });
             clip_size_note(ui, s);
             if s.quality != QualityMode::Custom {
-                ui.add_space(4.0);
+                ui.add_space(crate::kit::space::XS);
                 ui.label(
                     RichText::new(
                         "Choose Custom to set resolution, frame rate and bitrate yourself.",
                     )
                     .color(FAINT)
-                    .size(12.0),
+                    .size(crate::kit::text_size::CAPTION),
                 );
             }
         });
@@ -768,20 +770,17 @@ pub(crate) fn replay_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut RecordingS
 
 pub fn replay_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
     // Say how the pieces fit together, since what is recorded is chosen on another page.
-    egui::Frame::new()
-        .fill(CARD)
-        .stroke(Stroke::new(1.0_f32, BORDER))
-        .corner_radius(egui::CornerRadius::same(14))
-        .inner_margin(egui::Margin::symmetric(20, 14))
+    kit::card_frame()
+        .inner_margin(egui::Margin::symmetric(20, 16))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(
                 RichText::new("How clipping works")
                     .color(TEXT)
-                    .size(15.0)
+                    .size(crate::kit::text_size::LEAD)
                     .family(kit::semibold()),
             );
-            ui.add_space(4.0);
+            ui.add_space(crate::kit::space::XS);
             ui.label(
                 RichText::new(
                     "1. Capture (its own page) picks what is recorded: a screen, a window, or whichever game is running.
@@ -789,18 +788,15 @@ pub fn replay_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
                      3. Press the save hotkey and that stretch is saved as a clip. The settings below set how long it is.",
                 )
                 .color(MUTED)
-                .size(13.0),
+                .size(crate::kit::text_size::SMALL),
             );
         });
-    ui.add_space(14.0);
+    ui.add_space(crate::kit::space::LG);
     let mut rows = Rows::new("");
     replay_rows(&mut rows, ui, settings);
     section_heading(ui, "What a clip will be");
-    egui::Frame::new()
-        .fill(CARD)
-        .stroke(Stroke::new(1.0_f32, BORDER))
-        .corner_radius(egui::CornerRadius::same(14))
-        .inner_margin(egui::Margin::symmetric(20, 10))
+    kit::card_frame()
+        .inner_margin(egui::Margin::symmetric(20, 12))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             let total = settings.replay_seconds + settings.post_roll_seconds;
@@ -823,11 +819,11 @@ pub fn replay_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
                 true,
             );
         });
-    ui.add_space(8.0);
+    ui.add_space(crate::kit::space::SM);
     ui.label(
         RichText::new("Sizes are estimated from the bitrate. Change quality in Video.")
             .color(FAINT)
-            .size(12.0),
+            .size(crate::kit::text_size::CAPTION),
     );
 }
 
@@ -1164,7 +1160,7 @@ pub fn audio_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &mu
         ui.label(
             RichText::new("No push-to-talk key is set yet. Choose one in Hotkeys.")
                 .color(DANGER)
-                .size(12.5),
+                .size(crate::kit::text_size::CAPTION),
         );
     }
 }
@@ -1299,7 +1295,7 @@ pub(crate) fn capture_rows(
             ui.label(
                 RichText::new("No windows were found. Open the game, then press Refresh.")
                     .color(FAINT)
-                    .size(12.5),
+                    .size(crate::kit::text_size::CAPTION),
             );
         }
     }

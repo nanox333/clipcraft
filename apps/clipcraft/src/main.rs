@@ -590,7 +590,7 @@ impl ClipCraftApp {
             egui::Id::new("focus-ring"),
         ));
         let rect = response.rect.expand(3.0);
-        let rounding = egui::CornerRadius::same(10);
+        let rounding = egui::CornerRadius::same(crate::kit::radius::PILL);
         // A dark halo under a bright ring, so it shows on both light and dark controls.
         painter.rect_stroke(
             rect.expand(1.5),
@@ -992,21 +992,21 @@ impl ClipCraftApp {
                     ));
                 }
                 ui.horizontal_centered(|ui| {
-                    ui.add_space(20.0);
+                    ui.add_space(crate::kit::space::XL);
                     let (logo, _) = ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::hover());
                     kit::brand_mark(ui, logo);
-                    ui.add_space(2.0);
+                    ui.add_space(crate::kit::space::XS);
                     ui.label(
                         RichText::new("ClipCraft")
                             .color(TEXT)
-                            .size(17.0)
+                            .size(crate::kit::text_size::LEAD)
                             .family(kit::semibold()),
                     );
-                    ui.add_space(22.0);
+                    ui.add_space(crate::kit::space::XXL);
 
                     // Leave the right of the bar for the size label and window buttons, so a long
                     // message is cut short instead of running underneath them.
-                    let room = (ui.available_width() - 300.0).max(220.0);
+                    let room = (ui.available_width() - 420.0).max(220.0);
                     ui.allocate_ui_with_layout(
                         Vec2::new(room, ui.available_height()),
                         Layout::left_to_right(Align::Center),
@@ -1033,15 +1033,16 @@ impl ClipCraftApp {
                         if window_button(ui, WindowButton::Minimize) {
                             context.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                         }
-                        ui.add_space(18.0);
-                        ui.label(
-                            RichText::new(format!(
-                                "{}p  ·  {} FPS",
-                                self.recording.height, self.recording.frames_per_second
-                            ))
-                            .color(MUTED)
-                            .size(13.0),
+                        ui.add_space(crate::kit::space::XL);
+                        let (summary, tip) = self.bar_summary();
+                        let label = ui.label(
+                            RichText::new(summary)
+                                .color(MUTED)
+                                .size(crate::kit::text_size::SMALL),
                         );
+                        if let Some(tip) = tip {
+                            label.on_hover_text(tip);
+                        }
                     });
                 });
             });
@@ -1057,9 +1058,9 @@ impl ClipCraftApp {
                     .stroke(Stroke::new(1.0_f32, BORDER)),
             )
             .show(context, |ui| {
-                ui.add_space(18.0);
+                ui.add_space(crate::kit::space::XL);
                 ui.vertical_centered(|ui| {
-                    ui.spacing_mut().item_spacing.y = 10.0;
+                    ui.spacing_mut().item_spacing.y = crate::kit::space::MD;
                     if nav_button(ui, Icon::Library, "Clips", self.page == Page::Library) {
                         self.editor.close();
                         self.page = Page::Library;
@@ -1073,7 +1074,7 @@ impl ClipCraftApp {
                 });
                 // Settings sits at the bottom of the rail.
                 ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
-                    ui.add_space(18.0);
+                    ui.add_space(crate::kit::space::XL);
                     if nav_button(ui, Icon::Gear, "Settings", self.page == Page::Settings) {
                         self.editor.close();
                         self.page = Page::Settings;
@@ -1110,7 +1111,7 @@ impl ClipCraftApp {
                         }
                     },
                 );
-                ui.add_space(16.0);
+                ui.add_space(crate::kit::space::LG);
                 let width = ui.available_width().max(0.0);
                 ui.allocate_ui_with_layout(
                     Vec2::new(width, height),
@@ -1397,7 +1398,7 @@ impl ClipCraftApp {
                 }
             });
         });
-        ui.add_space(4.0);
+        ui.add_space(crate::kit::space::XS);
 
         // Search, sort, and folder.
         // In a narrow window the folder pill and the search box both give way so they never touch.
@@ -1405,64 +1406,62 @@ impl ClipCraftApp {
         let folder_width = (row * 0.4).clamp(200.0, 340.0);
         let search_width = (row - folder_width - 190.0).clamp(90.0, 230.0);
         ui.horizontal(|ui| {
-            egui::Frame::new()
-                .fill(CARD)
-                .corner_radius(egui::CornerRadius::same(18))
-                .inner_margin(egui::Margin::symmetric(12, 5))
-                .show(ui, |ui| {
-                    let (icon, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
-                    kit::draw_icon(ui.painter(), icon.center(), Icon::Search, MUTED, 0.7);
-                    let search = ui.add(
-                        egui::TextEdit::singleline(&mut self.search_text)
-                            .frame(false)
-                            .hint_text("Search clips")
-                            .desired_width(search_width),
-                    );
-                    kit::name_text_box(&search, "Search clips", &self.search_text);
-                });
+            kit::field_frame().show(ui, |ui| {
+                ui.set_min_height(crate::kit::control::FIELD_INNER);
+                let (icon, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
+                kit::draw_icon(ui.painter(), icon.center(), Icon::Search, MUTED, 0.75);
+                let search = ui.add(
+                    egui::TextEdit::singleline(&mut self.search_text)
+                        .frame(false)
+                        .hint_text("Search clips")
+                        .desired_width(search_width),
+                );
+                kit::name_text_box(&search, "Search clips", &self.search_text);
+            });
             self.sort_menu(ui);
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                egui::Frame::new()
-                    .fill(CARD)
-                    .corner_radius(egui::CornerRadius::same(18))
-                    .inner_margin(egui::Margin::symmetric(12, 5))
-                    .show(ui, |ui| {
-                        // A fixed width, with the field filling it, so the whole pill is clickable.
-                        ui.set_width(folder_width);
-                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                            let (icon, _) =
-                                ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
-                            kit::draw_icon(ui.painter(), icon.center(), Icon::Folder, MUTED, 0.75);
-                            // The folder is chosen here, not typed: new clips are saved in it.
-                            let shown = if self.directory_text.trim().is_empty() {
-                                "Choose where clips are saved".to_owned()
-                            } else {
-                                self.directory_text.clone()
-                            };
-                            let button = ui
-                                .add(
-                                    egui::Label::new(RichText::new(shown).color(TEXT).size(13.0))
-                                        .truncate()
-                                        .sense(egui::Sense::click()),
+                kit::field_frame().show(ui, |ui| {
+                    ui.set_min_height(crate::kit::control::FIELD_INNER);
+                    // A fixed width, with the field filling it, so the whole pill is clickable.
+                    ui.set_width(folder_width);
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        let (icon, _) =
+                            ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
+                        kit::draw_icon(ui.painter(), icon.center(), Icon::Folder, MUTED, 0.75);
+                        // The folder is chosen here, not typed: new clips are saved in it.
+                        let shown = if self.directory_text.trim().is_empty() {
+                            "Choose where clips are saved".to_owned()
+                        } else {
+                            self.directory_text.clone()
+                        };
+                        let button = ui
+                            .add(
+                                egui::Label::new(
+                                    RichText::new(shown)
+                                        .color(TEXT)
+                                        .size(crate::kit::text_size::SMALL),
                                 )
-                                .on_hover_text("Where new clips are saved. Click to change it.")
-                                .on_hover_cursor(egui::CursorIcon::PointingHand);
-                            button.widget_info(|| {
-                                egui::WidgetInfo::labeled(
-                                    egui::WidgetType::Button,
-                                    true,
-                                    "Change clips folder",
-                                )
-                            });
-                            if button.clicked() {
-                                self.choose_library_folder();
-                            }
+                                .truncate()
+                                .sense(egui::Sense::click()),
+                            )
+                            .on_hover_text("Where new clips are saved. Click to change it.")
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        button.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Button,
+                                true,
+                                "Change clips folder",
+                            )
                         });
+                        if button.clicked() {
+                            self.choose_library_folder();
+                        }
                     });
+                });
             });
         });
-        ui.add_space(10.0);
+        ui.add_space(crate::kit::space::MD);
 
         if self.scanning.is_some() {
             ui.horizontal(|ui| {
@@ -1472,15 +1471,15 @@ impl ClipCraftApp {
                     self.scanning = None;
                 }
             });
-            ui.add_space(8.0);
+            ui.add_space(crate::kit::space::SM);
         }
         if let Some(job) = self.finding.as_ref() {
             ui.label(
                 RichText::new(format!("Looking for {}\u{2026}", job.name))
                     .color(MUTED)
-                    .size(13.0),
+                    .size(crate::kit::text_size::SMALL),
             );
-            ui.add_space(8.0);
+            ui.add_space(crate::kit::space::SM);
         }
         if let Some(error) = self.error.as_deref() {
             egui::Frame::new()
@@ -1489,13 +1488,13 @@ impl ClipCraftApp {
                     1.0_f32,
                     Color32::from_rgba_unmultiplied(255, 112, 112, 90),
                 ))
-                .corner_radius(egui::CornerRadius::same(10))
-                .inner_margin(egui::Margin::symmetric(14, 10))
+                .corner_radius(egui::CornerRadius::same(crate::kit::radius::MD))
+                .inner_margin(egui::Margin::symmetric(16, 12))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.label(RichText::new(error).color(DANGER));
                 });
-            ui.add_space(10.0);
+            ui.add_space(crate::kit::space::MD);
         }
 
         let mut card_action = None;
@@ -1601,7 +1600,7 @@ impl ClipCraftApp {
             if kit::labelled_button(ui, Icon::ChevronLeft, "Clips", false, true).clicked() {
                 back = true;
             }
-            ui.add_space(6.0);
+            ui.add_space(crate::kit::space::SM);
             if kit::labelled_button(ui, Icon::Scissors, "Send to editor", false, !entry.offline)
                 .clicked()
             {
@@ -1624,7 +1623,7 @@ impl ClipCraftApp {
         }
 
         ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.spacing_mut().item_spacing.y = crate::kit::space::SM;
             kit::chip(ui, &entry.extension.to_uppercase());
             if let Some(probe) = entry.probe.as_ref() {
                 if let (Some(width), Some(height)) = (probe.width, probe.height) {
@@ -1640,7 +1639,7 @@ impl ClipCraftApp {
             }
             kit::chip(ui, &format_bytes(entry.size_bytes));
         });
-        ui.add_space(6.0);
+        ui.add_space(crate::kit::space::SM);
 
         let side = 340.0_f32;
         let gap = 22.0_f32;
@@ -1657,7 +1656,7 @@ impl ClipCraftApp {
                     if let Some(open) = self.playback.as_mut() {
                         open.show(ui);
                         if open.file_missing() {
-                            ui.add_space(12.0);
+                            ui.add_space(crate::kit::space::MD);
                             ui.horizontal(|ui| {
                                 if kit::labelled_button(ui, Icon::Search, "Find file", true, true)
                                     .on_hover_text("Search a folder for this clip")
@@ -1699,7 +1698,7 @@ impl ClipCraftApp {
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             self.organize_card(ui, entry, side);
-                            ui.add_space(12.0);
+                            ui.add_space(crate::kit::space::MD);
                             self.details_card(ui, entry, side);
                         });
                 },
@@ -1728,17 +1727,17 @@ impl ClipCraftApp {
         egui::Frame::new()
             .fill(PANEL)
             .stroke(Stroke::new(1.0_f32, BORDER))
-            .corner_radius(egui::CornerRadius::same(14))
+            .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
             .inner_margin(egui::Margin::same(20))
             .show(ui, |ui| {
                 ui.set_width((width - 42.0).max(0.0));
                 ui.label(
                     RichText::new("Organize")
                         .color(TEXT)
-                        .size(16.0)
+                        .size(crate::kit::text_size::LEAD)
                         .family(kit::semibold()),
                 );
-                ui.add_space(8.0);
+                ui.add_space(crate::kit::space::SM);
                 let label = if entry.favorite {
                     "Favorited"
                 } else {
@@ -1764,21 +1763,22 @@ impl ClipCraftApp {
                     egui::pos2(rect.left() + 42.0, rect.center().y),
                     egui::Align2::LEFT_CENTER,
                     label,
-                    egui::FontId::new(14.0, kit::medium()),
+                    egui::FontId::new(crate::kit::text_size::BODY, kit::medium()),
                     TEXT,
                 );
                 if response.clicked() {
                     favorite = Some(!entry.favorite);
                 }
-                ui.add_space(12.0);
-                ui.label(RichText::new("Game").color(MUTED).size(12.5));
+                ui.add_space(crate::kit::space::MD);
+                ui.label(
+                    RichText::new("Game")
+                        .color(MUTED)
+                        .size(crate::kit::text_size::CAPTION),
+                );
                 if let Some((_, text)) = self.game_draft.as_mut() {
-                    let field = egui::Frame::new()
-                        .fill(Color32::from_rgb(13, 13, 15))
-                        .stroke(Stroke::new(1.0_f32, BORDER))
-                        .corner_radius(egui::CornerRadius::same(8))
-                        .inner_margin(egui::Margin::symmetric(10, 6))
+                    let field = kit::field_frame()
                         .show(ui, |ui| {
+                            ui.set_min_height(crate::kit::control::FIELD_INNER);
                             ui.add(
                                 egui::TextEdit::singleline(text)
                                     .frame(false)
@@ -1803,20 +1803,25 @@ impl ClipCraftApp {
                         "Detected from the folder or file name. Type to change it."
                     })
                     .color(FAINT)
-                    .size(12.0),
+                    .size(crate::kit::text_size::CAPTION),
                 );
-                ui.add_space(12.0);
-                ui.label(RichText::new("Collections").color(MUTED).size(12.5));
-                ui.add_space(4.0);
+                ui.add_space(crate::kit::space::MD);
+                ui.label(
+                    RichText::new("Collections")
+                        .color(MUTED)
+                        .size(crate::kit::text_size::CAPTION),
+                );
+                ui.add_space(crate::kit::space::XS);
                 if collections.is_empty() {
                     ui.label(
                         RichText::new("Make a collection with + in the Library sidebar.")
                             .color(FAINT)
-                            .size(12.0),
+                            .size(crate::kit::text_size::CAPTION),
                     );
                 }
                 ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+                    ui.spacing_mut().item_spacing =
+                        Vec2::new(crate::kit::space::SM, crate::kit::space::SM);
                     for name in &collections {
                         let member = entry.collections.contains(name);
                         if settings::toggle_chip(ui, name, member, true, "Add or remove") {
@@ -1859,17 +1864,17 @@ impl ClipCraftApp {
         egui::Frame::new()
             .fill(PANEL)
             .stroke(Stroke::new(1.0_f32, BORDER))
-            .corner_radius(egui::CornerRadius::same(14))
+            .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
             .inner_margin(egui::Margin::same(20))
             .show(ui, |ui| {
                 ui.set_width((width - 42.0).max(0.0));
                 ui.label(
                     RichText::new("Details")
                         .color(TEXT)
-                        .size(16.0)
+                        .size(crate::kit::text_size::LEAD)
                         .family(kit::semibold()),
                 );
-                ui.add_space(6.0);
+                ui.add_space(crate::kit::space::SM);
                 detail_row(ui, "Source", "Local video");
                 detail_row(ui, "Modified", &format_date(entry.modified_unix_seconds));
                 if let Some(probe) = entry.probe.as_ref() {
@@ -1895,22 +1900,38 @@ impl ClipCraftApp {
                 }
                 detail_row(ui, "File size", &format_bytes(entry.size_bytes));
 
-                ui.add_space(4.0);
+                ui.add_space(crate::kit::space::XS);
                 let (line, _) = ui.allocate_exact_size(
                     Vec2::new(ui.available_width(), 1.0),
                     egui::Sense::hover(),
                 );
                 ui.painter().rect_filled(line, 0.0, BORDER);
-                ui.add_space(6.0);
-                ui.label(RichText::new("Location").color(FAINT).size(12.0));
-                ui.add(
-                    egui::Label::new(RichText::new(&entry.path).color(MUTED).size(12.5))
-                        .wrap_mode(egui::TextWrapMode::Wrap),
+                ui.add_space(crate::kit::space::SM);
+                ui.label(
+                    RichText::new("Location")
+                        .color(FAINT)
+                        .size(crate::kit::text_size::CAPTION),
                 );
-                ui.add_space(8.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&entry.path)
+                            .color(MUTED)
+                            .size(crate::kit::text_size::CAPTION),
+                    )
+                    .wrap_mode(egui::TextWrapMode::Wrap),
+                );
+                ui.add_space(crate::kit::space::SM);
                 let full = ui.available_width();
-                if kit::labelled_button_sized(ui, Icon::Copy, "Copy file path", false, true, full)
-                    .clicked()
+                if kit::labelled_button_sized(
+                    ui,
+                    Icon::Copy,
+                    "Copy file path",
+                    "",
+                    false,
+                    true,
+                    full,
+                )
+                .clicked()
                 {
                     self.copy_media_path(ui.ctx(), PathBuf::from(&entry.path));
                 }
@@ -1918,6 +1939,7 @@ impl ClipCraftApp {
                     ui,
                     Icon::Folder,
                     open_in_file_manager_label(),
+                    "",
                     false,
                     true,
                     full,
@@ -1926,16 +1948,16 @@ impl ClipCraftApp {
                 {
                     self.reveal_media(PathBuf::from(&entry.path));
                 }
-                if kit::labelled_button_sized(ui, Icon::Trash, "Delete clip", false, true, full)
+                if kit::labelled_button_sized(ui, Icon::Trash, "Delete clip", "", false, true, full)
                     .clicked()
                 {
                     self.ask_to_delete(entry.clone());
                 }
-                ui.add_space(4.0);
+                ui.add_space(crate::kit::space::XS);
                 ui.label(
                     RichText::new("Quick trim and export is available below the player.")
                         .color(MUTED)
-                        .size(12.0),
+                        .size(crate::kit::text_size::CAPTION),
                 );
             });
     }
@@ -1959,7 +1981,7 @@ impl ClipCraftApp {
                         .id_salt(("settings-content", self.settings_tab.label()))
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            let column = (content_width - 56.0).clamp(0.0, 720.0);
+                            let column = (content_width - 56.0).clamp(0.0, 800.0);
                             ui.horizontal_top(|ui| {
                                 ui.add_space(((content_width - column) / 2.0).max(0.0));
                                 ui.vertical(|ui| {
@@ -1976,7 +1998,7 @@ impl ClipCraftApp {
     /// The category list on the left of Settings, with a search that finds any setting.
     fn settings_nav(&mut self, ui: &mut egui::Ui) {
         ui.set_width(ui.available_width());
-        ui.add_space(12.0);
+        ui.add_space(crate::kit::space::MD);
         ui.allocate_ui(
             Vec2::new((ui.available_width() - 12.0).max(0.0), 40.0),
             |ui| {
@@ -1985,7 +2007,7 @@ impl ClipCraftApp {
                 kit::name_text_box(&response, "Search settings", &self.settings_search);
             },
         );
-        ui.add_space(8.0);
+        ui.add_space(crate::kit::space::SM);
         let searching = !self.settings_search.trim().is_empty();
         let groups: [(&str, Vec<SettingsTab>); 3] = [
             ("", vec![SettingsTab::Overview]),
@@ -2011,14 +2033,14 @@ impl ClipCraftApp {
         ];
         for (group, tabs) in groups {
             if !group.is_empty() {
-                ui.add_space(8.0);
+                ui.add_space(crate::kit::space::SM);
                 ui.label(
                     RichText::new(group.to_uppercase())
                         .color(FAINT)
-                        .size(11.5)
+                        .size(crate::kit::text_size::CAPTION)
                         .family(kit::semibold()),
                 );
-                ui.add_space(4.0);
+                ui.add_space(crate::kit::space::XS);
             }
             for tab in tabs {
                 let selected = !searching && self.settings_tab == tab;
@@ -2040,15 +2062,17 @@ impl ClipCraftApp {
             egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.to_owned())
         });
         if selected {
-            ui.painter().rect_filled(rect, 8.0, kit::CARD_HOVER);
+            ui.painter()
+                .rect_filled(rect, f32::from(crate::kit::radius::MD), kit::CARD_HOVER);
         } else if response.hovered() {
-            ui.painter().rect_filled(rect, 8.0, kit::CARD);
+            ui.painter()
+                .rect_filled(rect, f32::from(crate::kit::radius::MD), kit::CARD);
         }
         ui.painter().text(
             egui::pos2(rect.left() + 12.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             label,
-            egui::FontId::new(14.0, kit::medium()),
+            egui::FontId::new(crate::kit::text_size::BODY, kit::medium()),
             if selected { TEXT } else { MUTED },
         );
         response.clicked()
@@ -2086,17 +2110,17 @@ impl ClipCraftApp {
             ui.label(
                 RichText::new("No setting matches that.")
                     .color(MUTED)
-                    .size(14.0),
+                    .size(crate::kit::text_size::BODY),
             );
         }
         if !others.is_empty() {
             ui.label(
                 RichText::new("Also on these pages")
                     .color(TEXT)
-                    .size(15.5)
+                    .size(crate::kit::text_size::LEAD)
                     .family(kit::semibold()),
             );
-            ui.add_space(8.0);
+            ui.add_space(crate::kit::space::SM);
             for (title, tab) in others {
                 let (rect, response) = ui.allocate_exact_size(
                     Vec2::new(ui.available_width(), 46.0),
@@ -2118,21 +2142,21 @@ impl ClipCraftApp {
                     egui::pos2(rect.left() + 18.0, rect.center().y),
                     egui::Align2::LEFT_CENTER,
                     title,
-                    egui::FontId::new(14.0, kit::medium()),
+                    egui::FontId::new(crate::kit::text_size::BODY, kit::medium()),
                     TEXT,
                 );
                 ui.painter().text(
                     egui::pos2(rect.right() - 18.0, rect.center().y),
                     egui::Align2::RIGHT_CENTER,
                     format!("{} \u{203a}", tab.label()),
-                    egui::FontId::proportional(12.5),
+                    egui::FontId::proportional(crate::kit::text_size::CAPTION),
                     MUTED,
                 );
                 if response.clicked() {
                     self.settings_tab = tab;
                     self.settings_search.clear();
                 }
-                ui.add_space(6.0);
+                ui.add_space(crate::kit::space::SM);
             }
         }
         self.apply_recording(before, working);
@@ -2152,7 +2176,7 @@ impl ClipCraftApp {
         egui::Frame::new()
             .fill(CARD)
             .stroke(Stroke::new(1.0_f32, BORDER))
-            .corner_radius(egui::CornerRadius::same(12))
+            .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
             .inner_margin(egui::Margin::symmetric(16, 12))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -2160,7 +2184,7 @@ impl ClipCraftApp {
                     ui.label(
                         RichText::new("You changed some settings")
                             .color(TEXT)
-                            .size(14.0)
+                            .size(crate::kit::text_size::BODY)
                             .family(kit::semibold()),
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -2180,7 +2204,7 @@ impl ClipCraftApp {
                     });
                 });
             });
-        ui.add_space(12.0);
+        ui.add_space(crate::kit::space::MD);
         if cancel {
             let before = self.recording.clone();
             self.apply_recording(before, snapshot);
@@ -2192,7 +2216,7 @@ impl ClipCraftApp {
 
     fn settings_content(&mut self, ui: &mut egui::Ui) {
         let query = self.settings_search.trim().to_owned();
-        ui.add_space(22.0);
+        ui.add_space(crate::kit::space::XXL);
         ui.label(
             RichText::new(if query.is_empty() {
                 self.settings_tab.label()
@@ -2203,7 +2227,7 @@ impl ClipCraftApp {
             .size(28.0)
             .family(kit::semibold()),
         );
-        ui.add_space(2.0);
+        ui.add_space(crate::kit::space::XS);
         ui.label(
             RichText::new(if query.is_empty() {
                 self.settings_tab.help().to_owned()
@@ -2211,9 +2235,9 @@ impl ClipCraftApp {
                 format!("Results for \u{201c}{query}\u{201d}")
             })
             .color(MUTED)
-            .size(14.0),
+            .size(crate::kit::text_size::BODY),
         );
-        ui.add_space(24.0);
+        ui.add_space(crate::kit::space::XXL);
         self.unsaved_changes_bar(ui);
         if self.capture.is_stale(&self.recording) {
             let mut restart = false;
@@ -2223,8 +2247,8 @@ impl ClipCraftApp {
                     1.0_f32,
                     Color32::from_rgba_unmultiplied(190, 255, 43, 70),
                 ))
-                .corner_radius(egui::CornerRadius::same(12))
-                .inner_margin(egui::Margin::symmetric(16, 14))
+                .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
+                .inner_margin(egui::Margin::symmetric(16, 16))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
@@ -2235,7 +2259,7 @@ impl ClipCraftApp {
                             ui.label(
                                 RichText::new("New settings are ready")
                                     .color(TEXT)
-                                    .size(14.5)
+                                    .size(crate::kit::text_size::BODY)
                                     .family(kit::semibold()),
                             );
                             ui.label(
@@ -2243,7 +2267,7 @@ impl ClipCraftApp {
                                     "Clipping is still using the earlier settings. Restarting applies them and empties the replay buffer.",
                                 )
                                 .color(MUTED)
-                                .size(12.5),
+                                .size(crate::kit::text_size::CAPTION),
                             );
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -2254,7 +2278,7 @@ impl ClipCraftApp {
                         });
                     });
                 });
-            ui.add_space(12.0);
+            ui.add_space(crate::kit::space::MD);
             if restart {
                 self.stop_capture();
                 self.start_capture();
@@ -2262,7 +2286,7 @@ impl ClipCraftApp {
         }
         if !query.is_empty() {
             self.settings_search_results(ui, &query);
-            ui.add_space(8.0);
+            ui.add_space(crate::kit::space::SM);
             return;
         }
         let tab = self.settings_tab;
@@ -2342,7 +2366,7 @@ impl ClipCraftApp {
             }
         }
         self.apply_recording(before, working);
-        ui.add_space(8.0);
+        ui.add_space(crate::kit::space::SM);
     }
 
     fn general_settings(&mut self, ui: &mut egui::Ui, working: &mut RecordingSettings) {
@@ -2362,46 +2386,38 @@ impl ClipCraftApp {
                 "Your clips live here: ClipCraft shows the videos in this folder, and new clips are saved into it. Nothing is moved or changed.",
                 true,
                 |ui| {
-                    egui::Frame::new()
-                        .fill(Color32::from_rgb(13, 13, 15))
-                        .stroke(Stroke::new(1.0_f32, BORDER))
-                        .corner_radius(egui::CornerRadius::same(10))
-                        .inner_margin(egui::Margin::symmetric(14, 8))
-                        .show(ui, |ui| {
-                            // An exact row height: a centered layout would otherwise claim all
-                            // the height a scroll area offers.
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(ui.available_width(), 34.0),
-                                Layout::left_to_right(Align::Center),
-                                |ui| {
-                                    let (icon, _) = ui.allocate_exact_size(
-                                        Vec2::splat(20.0),
-                                        egui::Sense::hover(),
-                                    );
-                                    kit::draw_icon(
-                                        ui.painter(),
-                                        icon.center(),
+                    kit::field_frame().show(ui, |ui| {
+                        // An exact row height: a centered layout would otherwise claim all
+                        // the height a scroll area offers.
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(ui.available_width(), 34.0),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                let (icon, _) =
+                                    ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
+                                kit::draw_icon(
+                                    ui.painter(),
+                                    icon.center(),
+                                    Icon::Folder,
+                                    MUTED,
+                                    0.8,
+                                );
+                                ui.add(
+                                    egui::Label::new(RichText::new(folder).color(TEXT)).truncate(),
+                                );
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    browse = kit::labelled_button(
+                                        ui,
                                         Icon::Folder,
-                                        MUTED,
-                                        0.8,
-                                    );
-                                    ui.add(
-                                        egui::Label::new(RichText::new(folder).color(TEXT))
-                                            .truncate(),
-                                    );
-                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                        browse = kit::labelled_button(
-                                            ui,
-                                            Icon::Folder,
-                                            "Browse",
-                                            false,
-                                            true,
-                                        )
-                                        .clicked();
-                                    });
-                                },
-                            );
-                        });
+                                        "Browse",
+                                        false,
+                                        true,
+                                    )
+                                    .clicked();
+                                });
+                            },
+                        );
+                    });
                 },
             );
         });
@@ -2725,8 +2741,11 @@ fn nav_button(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) -> boo
             LIME,
         );
     } else if response.hovered() {
-        ui.painter()
-            .rect_filled(plate, 12.0, Color32::from_white_alpha(12));
+        ui.painter().rect_filled(
+            plate,
+            f32::from(crate::kit::radius::LG),
+            Color32::from_white_alpha(12),
+        );
     }
     let color = if selected {
         LIME
@@ -2759,7 +2778,7 @@ fn empty_panel(
             Stroke::new(1.0_f32, Color32::from_rgb(48, 48, 55)),
         );
         kit::draw_icon(ui.painter(), circle.center(), icon, MUTED, 1.9);
-        ui.add_space(10.0);
+        ui.add_space(crate::kit::space::MD);
         ui.label(
             RichText::new(headline)
                 .color(TEXT)
@@ -2768,7 +2787,7 @@ fn empty_panel(
         );
         ui.label(RichText::new(help).color(MUTED));
         if let Some(button) = button {
-            ui.add_space(8.0);
+            ui.add_space(crate::kit::space::SM);
             clicked = kit::labelled_button(ui, Icon::Folder, button, true, true).clicked();
         }
     });
@@ -2982,14 +3001,14 @@ fn clip_card(
             thumbnail.center() + Vec2::new(0.0, -8.0),
             egui::Align2::CENTER_CENTER,
             "File not found",
-            egui::FontId::new(15.0, kit::medium()),
+            egui::FontId::new(crate::kit::text_size::LEAD, kit::medium()),
             TEXT,
         );
         painter.text(
             thumbnail.center() + Vec2::new(0.0, 14.0),
             egui::Align2::CENTER_CENTER,
             "It was moved, renamed or deleted.",
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(crate::kit::text_size::CAPTION),
             MUTED,
         );
     }
@@ -3012,7 +3031,7 @@ fn clip_card(
     if let Some(game) = game {
         let galley = painter.layout_no_wrap(
             game.to_owned(),
-            egui::FontId::new(12.0, kit::medium()),
+            egui::FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
             TEXT,
         );
         let badge_width = (galley.size().x + 18.0).min(width - 24.0).max(0.0);
@@ -3032,7 +3051,7 @@ fn clip_card(
     let text_left = card.left() + 14.0;
     let mut title = egui::text::LayoutJob::simple_singleline(
         entry.title.clone(),
-        egui::FontId::new(15.0, kit::medium()),
+        egui::FontId::new(crate::kit::text_size::LEAD, kit::medium()),
         TEXT,
     );
     title.wrap.max_width = width - 28.0;
@@ -3057,7 +3076,7 @@ fn clip_card(
         egui::pos2(text_left, thumbnail.bottom() + 38.0),
         egui::Align2::LEFT_TOP,
         details,
-        egui::FontId::proportional(12.5),
+        egui::FontId::proportional(crate::kit::text_size::CAPTION),
         if entry.offline { DANGER } else { MUTED },
     );
 
@@ -3124,7 +3143,7 @@ fn clip_card(
             egui::pos2(area.left() + 42.0, area.center().y),
             egui::Align2::LEFT_CENTER,
             label,
-            egui::FontId::proportional(13.0),
+            egui::FontId::proportional(crate::kit::text_size::SMALL),
             if danger {
                 DANGER
             } else if hot {
@@ -3312,14 +3331,14 @@ fn paint_video_placeholder(
     );
     painter.rect_filled(
         badge,
-        egui::CornerRadius::same(6),
+        egui::CornerRadius::same(crate::kit::radius::SM),
         Color32::from_black_alpha(170),
     );
     painter.text(
         badge.center(),
         egui::Align2::CENTER_CENTER,
         entry.extension.to_uppercase(),
-        egui::FontId::new(10.5, kit::medium()),
+        egui::FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
         TEXT,
     );
     let duration = format_duration(entry.probe.as_ref());
@@ -3329,14 +3348,14 @@ fn paint_video_placeholder(
     );
     painter.rect_filled(
         duration_badge,
-        egui::CornerRadius::same(6),
+        egui::CornerRadius::same(crate::kit::radius::SM),
         Color32::from_black_alpha(200),
     );
     painter.text(
         duration_badge.center(),
         egui::Align2::CENTER_CENTER,
         duration,
-        egui::FontId::new(12.0, kit::medium()),
+        egui::FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
         TEXT,
     );
 }

@@ -11,6 +11,45 @@ use egui::{
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// The spacing scale: every gap, margin and padding in the app is one of these, so the same kind of
+/// gap looks the same on every screen. Multiples of four.
+pub mod space {
+    pub const XS: f32 = 4.0;
+    pub const SM: f32 = 8.0;
+    pub const MD: f32 = 12.0;
+    pub const LG: f32 = 16.0;
+    pub const XL: f32 = 20.0;
+    pub const XXL: f32 = 24.0;
+    pub const HUGE: f32 = 32.0;
+}
+
+/// Corner radii: small for chips and inputs, medium for buttons and rows, large for cards, panels
+/// and windows. Fully round shapes (pills) use half their height instead.
+pub mod radius {
+    pub const SM: u8 = 6;
+    pub const MD: u8 = 10;
+    pub const LG: u8 = 14;
+    /// Buttons, chips, fields and menus: fully round at the standard control height.
+    pub const PILL: u8 = 17;
+}
+
+/// Type sizes: captions and hints, secondary text, body text, lead text and titles.
+pub mod text_size {
+    pub const CAPTION: f32 = 12.0;
+    pub const SMALL: f32 = 13.0;
+    pub const BODY: f32 = 14.0;
+    pub const LEAD: f32 = 16.0;
+    pub const TITLE: f32 = 20.0;
+}
+
+/// Heights of controls, so buttons, inputs and rows line up: compact and standard.
+pub mod control {
+    pub const COMPACT: f32 = 28.0;
+    pub const STANDARD: f32 = 34.0;
+    /// The height inside a [`super::field_frame`] (its vertical margins take the rest).
+    pub const FIELD_INNER: f32 = STANDARD - 8.0;
+}
+
 pub const CANVAS: Color32 = Color32::from_rgb(17, 17, 19);
 pub const SIDEBAR: Color32 = Color32::from_rgb(22, 22, 25);
 pub const PANEL: Color32 = Color32::from_rgb(27, 27, 31);
@@ -92,8 +131,8 @@ pub fn apply_theme(context: &egui::Context) {
     visuals.panel_fill = CANVAS;
     visuals.window_fill = PANEL;
     visuals.window_stroke = Stroke::new(1.0_f32, BORDER);
-    visuals.window_corner_radius = CornerRadius::same(12);
-    visuals.menu_corner_radius = CornerRadius::same(10);
+    visuals.window_corner_radius = CornerRadius::same(radius::LG);
+    visuals.menu_corner_radius = CornerRadius::same(radius::MD);
     visuals.popup_shadow = egui::Shadow {
         offset: [0, 8],
         blur: 24,
@@ -108,14 +147,14 @@ pub fn apply_theme(context: &egui::Context) {
     visuals.widgets.noninteractive.fg_stroke.color = TEXT;
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER);
 
-    let radius = CornerRadius::same(9);
+    let widget_radius = CornerRadius::same(radius::PILL);
     for (state, fill) in [
         (&mut visuals.widgets.inactive, CARD),
         (&mut visuals.widgets.hovered, CARD_HOVER),
         (&mut visuals.widgets.active, Color32::from_rgb(58, 74, 30)),
         (&mut visuals.widgets.open, CARD_HOVER),
     ] {
-        state.corner_radius = radius;
+        state.corner_radius = widget_radius;
         state.bg_fill = fill;
         state.weak_bg_fill = fill;
         state.bg_stroke = Stroke::NONE;
@@ -130,12 +169,15 @@ pub fn apply_theme(context: &egui::Context) {
         style.text_styles = [
             (
                 TextStyle::Small,
-                FontId::new(12.0, FontFamily::Proportional),
+                FontId::new(text_size::CAPTION, FontFamily::Proportional),
             ),
-            (TextStyle::Body, FontId::new(14.5, FontFamily::Proportional)),
+            (
+                TextStyle::Body,
+                FontId::new(text_size::BODY, FontFamily::Proportional),
+            ),
             (
                 TextStyle::Button,
-                FontId::new(14.0, FontFamily::Proportional),
+                FontId::new(text_size::BODY, FontFamily::Proportional),
             ),
             (
                 TextStyle::Heading,
@@ -143,12 +185,12 @@ pub fn apply_theme(context: &egui::Context) {
             ),
             (
                 TextStyle::Monospace,
-                FontId::new(13.5, FontFamily::Monospace),
+                FontId::new(text_size::SMALL, FontFamily::Monospace),
             ),
         ]
         .into();
-        style.spacing.item_spacing = Vec2::new(8.0, 8.0);
-        style.spacing.button_padding = Vec2::new(12.0, 6.0);
+        style.spacing.item_spacing = Vec2::new(space::SM, space::SM);
+        style.spacing.button_padding = Vec2::new(space::MD, space::SM);
         style.spacing.menu_margin = egui::Margin::same(8);
         style.spacing.scroll = egui::style::ScrollStyle {
             bar_width: 7.0,
@@ -276,7 +318,7 @@ pub fn draw_icon(painter: &Painter, c: Pos2, icon: Icon, color: Color32, scale: 
             c + Vec2::new(0.0, 0.5 * scale),
             Align2::CENTER_CENTER,
             "10",
-            FontId::proportional(8.5 * scale),
+            FontId::proportional(text_size::CAPTION * scale),
             color,
         );
     }
@@ -310,7 +352,7 @@ pub fn icon_button(
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tooltip));
     if response.hovered() && enabled {
         ui.painter()
-            .rect_filled(rect, 8.0, Color32::from_white_alpha(14));
+            .rect_filled(rect, f32::from(radius::MD), Color32::from_white_alpha(14));
     }
     draw_icon(
         ui.painter(),
@@ -330,25 +372,51 @@ pub fn labelled_button(
     primary: bool,
     enabled: bool,
 ) -> Response {
-    labelled_button_sized(ui, icon, label, primary, enabled, 0.0)
+    labelled_button_hint(ui, icon, label, "", primary, enabled)
 }
 
-/// Like [`labelled_button`], at least `min_width` wide (pass the available width for a full-width
-/// button).
+/// Like [`labelled_button`], with a shortcut hint such as `F8` set into the right of the button.
+pub fn labelled_button_hint(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    label: &str,
+    hint: &str,
+    primary: bool,
+    enabled: bool,
+) -> Response {
+    labelled_button_sized(ui, icon, label, hint, primary, enabled, 0.0)
+}
+
+/// Like [`labelled_button_hint`], at least `min_width` wide (pass the available width for a
+/// full-width button).
 pub fn labelled_button_sized(
     ui: &mut egui::Ui,
     icon: Icon,
     label: &str,
+    hint: &str,
     primary: bool,
     enabled: bool,
     min_width: f32,
 ) -> Response {
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
-        FontId::new(14.0, medium()),
+        FontId::new(text_size::BODY, medium()),
         Color32::PLACEHOLDER,
     );
-    let size = Vec2::new((galley.size().x + 52.0).max(min_width), 36.0);
+    let hint_galley = (!hint.is_empty()).then(|| {
+        ui.painter().layout_no_wrap(
+            hint.to_owned(),
+            FontId::new(text_size::CAPTION, medium()),
+            Color32::PLACEHOLDER,
+        )
+    });
+    let hint_width = hint_galley
+        .as_ref()
+        .map_or(0.0, |hint| hint.size().x + space::MD + space::SM);
+    let size = Vec2::new(
+        (galley.size().x + 52.0 + hint_width).max(min_width),
+        control::STANDARD,
+    );
     let sense = if enabled {
         Sense::click()
     } else {
@@ -364,11 +432,12 @@ pub fn labelled_button_sized(
         (false, _, true) => (CONTROL_HOVER, TEXT),
         (false, _, false) => (CONTROL, TEXT),
     };
-    ui.painter().rect_filled(rect, 17.0, fill);
+    ui.painter()
+        .rect_filled(rect, control::STANDARD / 2.0, fill);
     if !primary && enabled {
         ui.painter().rect_stroke(
             rect,
-            17.0,
+            control::STANDARD / 2.0,
             Stroke::new(1.0_f32, CONTROL_BORDER),
             egui::StrokeKind::Inside,
         );
@@ -384,20 +453,93 @@ pub fn labelled_button_sized(
         Pos2::new(rect.left() + 36.0, rect.center().y),
         Align2::LEFT_CENTER,
         label,
-        FontId::new(14.0, medium()),
+        FontId::new(text_size::BODY, medium()),
         content,
     );
+    if let Some(hint) = hint_galley {
+        // The shortcut sits in a small dark plate inside the button, at its right end.
+        let width = hint.size().x + space::MD;
+        let plate = Rect::from_center_size(
+            Pos2::new(
+                rect.right() - space::SM - 2.0 - width / 2.0,
+                rect.center().y,
+            ),
+            Vec2::new(width, 22.0),
+        );
+        let plate_fill = if enabled {
+            Color32::from_black_alpha(70)
+        } else {
+            Color32::from_black_alpha(30)
+        };
+        ui.painter()
+            .rect_filled(plate, f32::from(radius::SM), plate_fill);
+        ui.painter().galley(
+            Pos2::new(
+                plate.center().x - hint.size().x / 2.0,
+                plate.center().y - hint.size().y / 2.0,
+            ),
+            hint,
+            if enabled { MUTED } else { FAINT },
+        );
+    }
     response
+}
+
+/// The heading over a group of settings, with a short lime tick ahead of it.
+pub fn section_heading(ui: &mut egui::Ui, title: &str) {
+    ui.horizontal(|ui| {
+        // A short lime tick ahead of the heading marks where a group starts.
+        let (tick, _) = ui.allocate_exact_size(Vec2::new(3.0, 16.0), egui::Sense::hover());
+        ui.painter().rect_filled(tick, 1.5, LIME);
+        ui.add_space(space::XS);
+        ui.label(
+            egui::RichText::new(title)
+                .color(TEXT)
+                .size(text_size::LEAD)
+                .family(semibold()),
+        );
+    });
+    ui.add_space(space::MD);
+}
+
+/// A raised surface for a group of content: the card colour, a hairline border and a soft shadow so
+/// it lifts off the page. Set the inner margin at the call site.
+pub fn card_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(CARD)
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .corner_radius(CornerRadius::same(radius::LG))
+        .shadow(egui::Shadow {
+            offset: [0, 4],
+            blur: 14,
+            spread: 0,
+            color: Color32::from_black_alpha(90),
+        })
+}
+
+/// The frame of a search box or a folder field: a dark, round-ended plate as tall as a standard
+/// button, so a row of fields and buttons lines up. Put a `ui.set_min_height(control::FIELD_INNER)`
+/// call first thing inside it.
+pub fn field_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(Color32::from_rgb(13, 13, 15))
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .corner_radius(CornerRadius::same((control::STANDARD / 2.0) as u8))
+        .inner_margin(egui::Margin::symmetric(space::MD as i8, space::XS as i8))
 }
 
 /// A small rounded label such as `MP4` or `1920×1080`.
 pub fn chip(ui: &mut egui::Ui, text: &str) {
     egui::Frame::new()
         .fill(CARD)
-        .corner_radius(CornerRadius::same(8))
-        .inner_margin(egui::Margin::symmetric(9, 4))
+        .corner_radius(CornerRadius::same(radius::MD))
+        .inner_margin(egui::Margin::symmetric(8, 4))
         .show(ui, |ui| {
-            ui.label(egui::RichText::new(text).color(MUTED).size(12.5));
+            ui.label(
+                egui::RichText::new(text)
+                    .color(MUTED)
+                    .size(text_size::CAPTION),
+            );
         });
 }
 
@@ -507,11 +649,11 @@ pub fn pill_menu(
     tooltip: &str,
     content: impl FnOnce(&mut egui::Ui),
 ) -> Response {
-    let font = FontId::new(13.5, medium());
+    let font = FontId::new(text_size::SMALL, medium());
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), font.clone(), Color32::PLACEHOLDER);
-    let size = Vec2::new(galley.size().x + 44.0, 32.0);
+    let size = Vec2::new(galley.size().x + 44.0, control::STANDARD);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, label));
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
@@ -520,10 +662,11 @@ pub fn pill_menu(
     } else {
         CONTROL
     };
-    ui.painter().rect_filled(rect, 16.0, fill);
+    ui.painter()
+        .rect_filled(rect, control::STANDARD / 2.0, fill);
     ui.painter().rect_stroke(
         rect,
-        16.0,
+        control::STANDARD / 2.0,
         Stroke::new(1.0_f32, CONTROL_BORDER),
         egui::StrokeKind::Inside,
     );
@@ -549,7 +692,7 @@ pub fn pill_menu(
 
 /// A key-style label such as `F8`, painted at an exact size so it never stretches in a row.
 pub fn keycap(ui: &mut egui::Ui, text: &str) {
-    let font = FontId::new(12.0, medium());
+    let font = FontId::new(text_size::CAPTION, medium());
     let galley = ui
         .painter()
         .layout_no_wrap(text.to_owned(), font.clone(), Color32::PLACEHOLDER);
@@ -569,19 +712,22 @@ pub fn keycap(ui: &mut egui::Ui, text: &str) {
 /// text, so it is clear at a glance that the replay buffer is running. Static, so it costs nothing
 /// to draw while recording.
 pub fn live_status_pill(ui: &mut egui::Ui, text: &str) {
-    let font = FontId::new(13.0, semibold());
+    let font = FontId::new(text_size::SMALL, semibold());
     let galley = ui
         .painter()
         .layout_no_wrap(text.to_owned(), font.clone(), Color32::PLACEHOLDER);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(galley.size().x + 44.0, 30.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(galley.size().x + 44.0, control::STANDARD),
+        Sense::hover(),
+    );
     ui.painter().rect_filled(
         rect,
-        15.0,
+        control::STANDARD / 2.0,
         Color32::from_rgba_unmultiplied(190, 255, 43, 28),
     );
     ui.painter().rect_stroke(
         rect,
-        15.0,
+        control::STANDARD / 2.0,
         Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(190, 255, 43, 120)),
         StrokeKind::Inside,
     );
@@ -603,12 +749,15 @@ pub fn live_status_pill(ui: &mut egui::Ui, text: &str) {
 
 /// A rounded status label with a colored dot, painted at an exact size.
 pub fn status_pill(ui: &mut egui::Ui, dot: Color32, text: &str) {
-    let font = FontId::proportional(13.0);
+    let font = FontId::proportional(text_size::SMALL);
     let galley = ui
         .painter()
         .layout_no_wrap(text.to_owned(), font.clone(), Color32::PLACEHOLDER);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(galley.size().x + 38.0, 28.0), Sense::hover());
-    ui.painter().rect_filled(rect, 14.0, CARD);
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(galley.size().x + 38.0, control::COMPACT),
+        Sense::hover(),
+    );
+    ui.painter().rect_filled(rect, control::COMPACT / 2.0, CARD);
     ui.painter()
         .circle_filled(Pos2::new(rect.left() + 15.0, rect.center().y), 4.0, dot);
     ui.painter().text(

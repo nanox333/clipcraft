@@ -11,6 +11,8 @@ Fresh profiles see four setup steps for local storage/replay, capture/audio and 
 uses a draft; no capture/audio/presence worker starts during it. Finish or Skip saves completion
 with the choices through the shared settings command. Existing preference files skip setup.
 
+UI consistency (2026-10-29): every gap, margin, corner radius, text size and control height in the desktop app was moved onto one scale in `apps/clipcraft/src/kit.rs` (spacing 4/8/12/16/20/24/32, radii 6/10/14, text 12/13/14/16/20, controls 28 compact and 34 standard); search boxes, folder fields and text inputs share `kit::field_frame`, and the two settings row styles share row padding and switch position. Checked by screenshots of Clips, Player, Editor, every Settings page and the setup steps on Windows (Linux and the tray menu, saved-clip toast, trim panel and dialogs were not re-inspected); nothing enforces the scale beyond review.
+
 The software H.264 encoder's Speed preset is 1.3-3x faster than FilmCraft's original (see `docs/performance.md`); on a scrolling-UI clip it matches x264 `veryfast`'s speed (about 7 ms per 1080p picture on one thread), but real gameplay was not measured and keyframes still stall, so a hardware encoder stays the recommended path.
 ClipCraft asks Windows for borderless capture access once per run (ADR 0033); Windows answered Allowed on the development machine, but the yellow frame was not checked on screen against a captured game.
 The first-run setup and the installer/uninstaller use the app's own look (Inter, charcoal and lime); development builds of the installer accept `--preview-working` and `--preview-done` to show those pages without installing.

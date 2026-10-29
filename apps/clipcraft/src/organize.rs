@@ -4,7 +4,7 @@ use clipcraft_engine::LibraryScanResult;
 #[cfg(test)]
 use clipcraft_engine::{MediaEntry, game_of};
 use eframe::egui;
-use egui::{Color32, RichText, Vec2};
+use egui::{RichText, Vec2};
 
 use crate::kit::{self, CARD, CARD_HOVER, DANGER, FAINT, LIME, MUTED, TEXT};
 
@@ -106,9 +106,11 @@ fn rail_row(
         egui::Sense::click(),
     );
     if selected {
-        ui.painter().rect_filled(rect, 8.0, CARD_HOVER);
+        ui.painter()
+            .rect_filled(rect, f32::from(crate::kit::radius::MD), CARD_HOVER);
     } else if response.hovered() {
-        ui.painter().rect_filled(rect, 8.0, CARD);
+        ui.painter()
+            .rect_filled(rect, f32::from(crate::kit::radius::MD), CARD);
     }
     let mut left = rect.left() + 10.0;
     if let Some(icon) = icon {
@@ -125,7 +127,7 @@ fn rail_row(
     let count_width = 8.0 + count_text.len() as f32 * 7.5;
     let mut job = egui::text::LayoutJob::simple_singleline(
         label.to_owned(),
-        egui::FontId::new(13.5, kit::medium()),
+        egui::FontId::new(crate::kit::text_size::SMALL, kit::medium()),
         if selected { TEXT } else { MUTED },
     );
     job.wrap.max_width = (rect.right() - left - count_width - 12.0).max(0.0);
@@ -142,14 +144,14 @@ fn rail_row(
         egui::pos2(rect.right() - 10.0, rect.center().y),
         egui::Align2::RIGHT_CENTER,
         count_text,
-        egui::FontId::proportional(12.0),
+        egui::FontId::proportional(crate::kit::text_size::CAPTION),
         FAINT,
     );
     response
 }
 
 fn section_header(ui: &mut egui::Ui, title: &str) -> egui::Response {
-    ui.add_space(12.0);
+    ui.add_space(crate::kit::space::MD);
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(ui.available_width().max(0.0), 22.0),
         egui::Sense::click(),
@@ -158,7 +160,7 @@ fn section_header(ui: &mut egui::Ui, title: &str) -> egui::Response {
         egui::pos2(rect.left() + 10.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         title.to_uppercase(),
-        egui::FontId::new(11.5, kit::semibold()),
+        egui::FontId::new(crate::kit::text_size::CAPTION, kit::semibold()),
         FAINT,
     );
     response
@@ -178,7 +180,7 @@ pub fn rail(
         .id_salt("library_rail")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.spacing_mut().item_spacing.y = crate::kit::space::XS;
             if rail_row(ui, "All clips", result.entries.len(), *filter == LibraryFilter::All, Some(kit::Icon::Library)).clicked() {
                 actions.push(RailAction::Select(LibraryFilter::All));
             }
@@ -231,7 +233,7 @@ pub fn rail(
                 ui.label(
                     RichText::new("Group clips your way. Press + to make one.")
                         .color(FAINT)
-                        .size(12.0),
+                        .size(crate::kit::text_size::CAPTION),
                 );
             }
 
@@ -242,7 +244,7 @@ pub fn rail(
                 ui.label(
                     RichText::new("Games appear from recordings, folders and file names.")
                         .color(FAINT)
-                        .size(12.0),
+                        .size(crate::kit::text_size::CAPTION),
                 );
             }
             for group in groups {
@@ -251,7 +253,7 @@ pub fn rail(
                     actions.push(RailAction::Select(LibraryFilter::Game(group.name.clone())));
                 }
             }
-            ui.add_space(12.0);
+            ui.add_space(crate::kit::space::MD);
         });
     actions
 }
@@ -260,12 +262,10 @@ fn edit_row(ui: &mut egui::Ui, edit: &mut Option<CollectionEdit>, actions: &mut 
     let Some(state) = edit.as_mut() else {
         return;
     };
-    egui::Frame::new()
-        .fill(Color32::from_rgb(13, 13, 15))
+    kit::field_frame()
         .stroke(egui::Stroke::new(1.0_f32, LIME))
-        .corner_radius(egui::CornerRadius::same(8))
-        .inner_margin(egui::Margin::symmetric(8, 4))
         .show(ui, |ui| {
+            ui.set_min_height(crate::kit::control::FIELD_INNER);
             let field = ui.add(
                 egui::TextEdit::singleline(&mut state.text)
                     .frame(false)

@@ -1412,7 +1412,7 @@ impl ClipCraftApp {
         } else {
             kit::status_pill(ui, dot, &text);
         }
-        ui.add_space(8.0);
+        ui.add_space(crate::kit::space::SM);
 
         let (icon, label) = if active {
             (Icon::Stop, "Stop clipping")
@@ -1429,7 +1429,7 @@ impl ClipCraftApp {
         {
             self.toggle_capture();
         }
-        ui.add_space(4.0);
+        ui.add_space(crate::kit::space::XS);
         let saving = self.capture.saving.is_some();
         let seconds = self.recording.replay_seconds;
         let length = if seconds >= 60 {
@@ -1438,10 +1438,11 @@ impl ClipCraftApp {
             format!("{seconds}s")
         };
         let key = self.recording.hotkeys.save_clip.replace('+', " + ");
-        if kit::labelled_button(
+        if kit::labelled_button_hint(
             ui,
             Icon::Import,
             &format!("Save last {length}"),
+            &key,
             false,
             active && !saving,
         )
@@ -1454,9 +1455,6 @@ impl ClipCraftApp {
         {
             self.save_clip();
         }
-        if !key.is_empty() {
-            kit::keycap(ui, &key);
-        }
 
         if let Some(status) = self
             .capture
@@ -1464,19 +1462,13 @@ impl ClipCraftApp {
             .as_ref()
             .filter(|s| s.state == RecordState::Running)
         {
-            ui.add_space(10.0);
+            ui.add_space(crate::kit::space::MD);
             let dropped = if status.frames_captured == 0 {
                 0.0
             } else {
                 status.frames_dropped as f32 * 100.0 / status.frames_captured as f32
             };
             let behind = dropped > 5.0;
-            ui.label(
-                RichText::new(format!("{:.0}s buffered", status.buffered_seconds))
-                    .color(MUTED)
-                    .size(12.5),
-            )
-            .on_hover_text(format!("Encoder: {}", status.encoder));
             let lost: Vec<&str> = status
                 .audio
                 .iter()
@@ -1487,7 +1479,7 @@ impl ClipCraftApp {
                 ui.label(
                     RichText::new(format!("\u{00b7} sound lost: {}", lost.join(", ")))
                         .color(DANGER)
-                        .size(12.5),
+                        .size(crate::kit::text_size::CAPTION),
                 )
                 .on_hover_text({
                     let mut message = status
@@ -1503,30 +1495,49 @@ impl ClipCraftApp {
                     message.push_str("ClipCraft keeps trying to bring the device back.");
                     message
                 });
-            } else if self.capture.session.has_microphone() {
-                let muted = self.capture.session.microphone_muted();
-                ui.label(
-                    RichText::new(if muted {
-                        "\u{00b7} mic off"
-                    } else {
-                        "\u{00b7} mic on"
-                    })
-                    .color(if muted { FAINT } else { MUTED })
-                    .size(12.5),
-                )
-                .on_hover_text("Mute or unmute with the microphone shortcut in Settings.");
             }
             if behind {
                 ui.label(
                     RichText::new(format!("\u{00b7} dropping {dropped:.0}% of frames"))
                         .color(DANGER)
-                        .size(12.5),
+                        .size(crate::kit::text_size::CAPTION),
                 )
                 .on_hover_text(
                     "This computer cannot encode at this quality in real time. Lower the resolution or frame rate in Settings \u{203a} Quality, or pick the Fast encoder in Advanced.",
                 );
             }
         }
+    }
+
+    /// The quiet facts at the right of the top bar: how much is buffered, the microphone, and the
+    /// picture size. The tooltip names the encoder.
+    pub(crate) fn bar_summary(&self) -> (String, Option<String>) {
+        let mut parts = Vec::new();
+        let mut tip = None;
+        if let Some(status) = self
+            .capture
+            .status
+            .as_ref()
+            .filter(|s| s.state == RecordState::Running)
+        {
+            parts.push(format!("{:.0}s buffered", status.buffered_seconds));
+            tip = Some(format!("Encoder: {}", status.encoder));
+            if self.capture.session.has_microphone() {
+                parts.push(
+                    if self.capture.session.microphone_muted() {
+                        "mic off"
+                    } else {
+                        "mic on"
+                    }
+                    .to_owned(),
+                );
+            }
+        }
+        parts.push(format!(
+            "{}p {} FPS",
+            self.recording.height, self.recording.frames_per_second
+        ));
+        (parts.join("  \u{b7}  "), tip)
     }
 
     /// The latest message as a small card under the top bar, so a long one is never squeezed into
@@ -1556,8 +1567,8 @@ impl ClipCraftApp {
                             kit::BORDER
                         },
                     ))
-                    .corner_radius(egui::CornerRadius::same(12))
-                    .inner_margin(egui::Margin::symmetric(14, 10))
+                    .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
+                    .inner_margin(egui::Margin::symmetric(16, 12))
                     .shadow(egui::Shadow {
                         offset: [0, 4],
                         blur: 16,
@@ -1571,11 +1582,11 @@ impl ClipCraftApp {
                                 egui::Label::new(
                                     RichText::new(&text)
                                         .color(if error { DANGER } else { TEXT })
-                                        .size(13.0),
+                                        .size(crate::kit::text_size::SMALL),
                                 )
                                 .wrap(),
                             );
-                            ui.add_space(6.0);
+                            ui.add_space(crate::kit::space::SM);
                             if path.is_some()
                                 && kit::labelled_button(ui, Icon::Folder, "Show", false, true)
                                     .clicked()

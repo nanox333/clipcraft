@@ -162,15 +162,15 @@ impl ClipCraftApp {
                 1.0_f32,
                 egui::Color32::from_rgba_unmultiplied(190, 255, 43, 80),
             ))
-            .corner_radius(egui::CornerRadius::same(12))
-            .inner_margin(egui::Margin::symmetric(16, 10))
+            .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
+            .inner_margin(egui::Margin::symmetric(16, 12))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new(format!("ClipCraft {} is available", update.version))
                             .color(TEXT)
-                            .size(14.0)
+                            .size(crate::kit::text_size::BODY)
                             .family(kit::semibold()),
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -186,7 +186,7 @@ impl ClipCraftApp {
                     });
                 });
             });
-        ui.add_space(10.0);
+        ui.add_space(crate::kit::space::MD);
         if install {
             self.download_update(update, ui.ctx());
         } else if later {
@@ -203,19 +203,19 @@ impl ClipCraftApp {
         egui::Frame::new()
             .fill(CARD)
             .stroke(Stroke::new(1.0_f32, BORDER))
-            .corner_radius(egui::CornerRadius::same(14))
-            .inner_margin(egui::Margin::symmetric(20, 14))
+            .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
+            .inner_margin(egui::Margin::symmetric(20, 16))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.label(
                     RichText::new("Updates")
                         .color(TEXT)
-                        .size(15.0)
+                        .size(crate::kit::text_size::LEAD)
                         .family(kit::semibold()),
                 );
-                ui.add_space(4.0);
+                ui.add_space(crate::kit::space::XS);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(self.updater.summary()).color(MUTED).size(13.5));
+                    ui.label(RichText::new(self.updater.summary()).color(MUTED).size(crate::kit::text_size::SMALL));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if let Updater::Available(update) = &self.updater {
                             if kit::labelled_button(ui, Icon::Import, "Update now", true, true)
@@ -236,16 +236,16 @@ impl ClipCraftApp {
                         }
                     });
                 });
-                ui.add_space(4.0);
+                ui.add_space(crate::kit::space::XS);
                 ui.label(
                     RichText::new(
                         "Checking asks GitHub for the newest published version and sends nothing about you. You can turn the automatic check off in Settings \u{203a} General.",
                     )
                     .color(MUTED)
-                    .size(12.5),
+                    .size(crate::kit::text_size::CAPTION),
                 );
             });
-        ui.add_space(12.0);
+        ui.add_space(crate::kit::space::MD);
         if check {
             self.check_for_update(ui.ctx());
         }

@@ -271,7 +271,7 @@ impl EditorState {
         let mut retry = false;
         egui::Frame::new()
             .fill(kit::PANEL)
-            .corner_radius(8)
+            .corner_radius(crate::kit::radius::MD)
             .inner_margin(10)
             .show(ui, |ui| {
                 if let Some(error) = &self.draft.error {
@@ -285,7 +285,7 @@ impl EditorState {
                         .wrap(),
                     );
                 }
-                ui.add_space(6.0);
+                ui.add_space(crate::kit::space::SM);
                 ui.horizontal_wrapped(|ui| {
                     if self.draft.pending.is_some() {
                         restore = super::button(
@@ -304,7 +304,7 @@ impl EditorState {
                             .clicked();
                 });
             });
-        ui.add_space(8.0);
+        ui.add_space(crate::kit::space::SM);
         if discard {
             self.discard_draft(ui.ctx());
         } else if restore && let Some(draft) = self.draft.pending.take() {
@@ -323,7 +323,11 @@ impl EditorState {
         } else {
             "Editor drafts save automatically on this device. Originals are never changed."
         };
-        ui.label(RichText::new(status).size(12.0).color(kit::FAINT));
+        ui.label(
+            RichText::new(status)
+                .size(crate::kit::text_size::CAPTION)
+                .color(kit::FAINT),
+        );
         if enabled
             && !self.draft.loading
             && !self.draft.suppressed

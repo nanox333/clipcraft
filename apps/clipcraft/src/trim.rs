@@ -299,20 +299,25 @@ impl TrimState {
         }
         let bytes = self.source_bytes(input);
         let mut seek = None;
-        ui.add_space(12.0);
+        ui.add_space(crate::kit::space::MD);
         ui.painter().hline(
             ui.max_rect().x_range(),
             ui.cursor().top(),
             egui::Stroke::new(1.0_f32, kit::BORDER),
         );
-        ui.add_space(12.0);
+        ui.add_space(crate::kit::space::MD);
         let idle = self.job.is_none();
         let (start, end) = self.range(duration);
         let length = end - start;
 
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Trim").color(TEXT).size(15.0).strong());
-            ui.add_space(6.0);
+            ui.label(
+                RichText::new("Trim")
+                    .color(TEXT)
+                    .size(crate::kit::text_size::LEAD)
+                    .strong(),
+            );
+            ui.add_space(crate::kit::space::SM);
             let size = bytes
                 .filter(|_| duration > 0.0)
                 .map(|bytes| format_bytes((bytes as f64 * length / duration) as u64));
@@ -329,7 +334,7 @@ impl TrimState {
                 }
             });
         });
-        ui.add_space(8.0);
+        ui.add_space(crate::kit::space::SM);
 
         let edit = range_bar(
             ui,
@@ -351,11 +356,15 @@ impl TrimState {
         if seek.is_none() {
             seek = edit.seek;
         }
-        ui.add_space(10.0);
+        ui.add_space(crate::kit::space::MD);
 
         ui.add_enabled_ui(idle, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Export").color(MUTED).size(13.0));
+                ui.label(
+                    RichText::new("Export")
+                        .color(MUTED)
+                        .size(crate::kit::text_size::SMALL),
+                );
                 egui::ComboBox::from_id_salt("export-preset")
                     .height(320.0)
                     .selected_text(preset_label(self.preset, self.gif, self.normalize))
@@ -409,13 +418,17 @@ impl TrimState {
                 } else {
                     "Keeps the original picture and sound quality."
                 };
-                ui.label(RichText::new(hint).size(12.0).color(MUTED));
+                ui.label(
+                    RichText::new(hint)
+                        .size(crate::kit::text_size::CAPTION)
+                        .color(MUTED),
+                );
             });
         });
-        ui.add_space(8.0);
+        ui.add_space(crate::kit::space::SM);
 
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
             if kit::labelled_button(ui, Icon::StepForward, "Start here", false, idle)
                 .on_hover_text("The new clip starts at the picture on screen (I)")
                 .clicked()
@@ -429,10 +442,10 @@ impl TrimState {
                 self.set_end(position, duration);
             }
             if idle && (self.start.is_some() || self.end.is_some()) {
-                ui.add_space(4.0);
+                ui.add_space(crate::kit::space::XS);
                 if ui
                     .add(
-                        egui::Label::new(RichText::new("Reset").color(MUTED).size(13.0))
+                        egui::Label::new(RichText::new("Reset").color(MUTED).size(crate::kit::text_size::SMALL))
                             .sense(egui::Sense::click()),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -498,16 +511,22 @@ impl TrimState {
             .clone()
             .filter(|_| idle && self.message.as_ref().is_some_and(|(_, error)| !error));
         if note.is_some() || saved.is_some() {
-            ui.add_space(6.0);
+            ui.add_space(crate::kit::space::SM);
             ui.horizontal_wrapped(|ui| {
                 if let Some((text, color)) = note {
-                    ui.label(RichText::new(text).color(color).size(12.5));
+                    ui.label(
+                        RichText::new(text)
+                            .color(color)
+                            .size(crate::kit::text_size::CAPTION),
+                    );
                 }
                 if let Some(path) = saved
                     && ui
                         .add(
                             egui::Label::new(
-                                RichText::new("Show in folder").color(LIME).size(12.5),
+                                RichText::new("Show in folder")
+                                    .color(LIME)
+                                    .size(crate::kit::text_size::CAPTION),
                             )
                             .sense(egui::Sense::click()),
                         )
@@ -600,7 +619,8 @@ fn range_bar(
     );
     let mut edit = RangeEdit::default();
     if duration <= 0.0 || track.width() <= 1.0 {
-        ui.painter().rect_filled(track, 8.0, kit::CARD);
+        ui.painter()
+            .rect_filled(track, f32::from(crate::kit::radius::MD), kit::CARD);
         return edit;
     }
     let x_of =
@@ -622,7 +642,7 @@ fn range_bar(
         edit.seek = Some(time_at(pointer.x));
     }
     let painter = ui.painter();
-    painter.rect_filled(track, 8.0, kit::CARD);
+    painter.rect_filled(track, f32::from(crate::kit::radius::MD), kit::CARD);
     painter.rect_stroke(
         track,
         8.0,

@@ -902,6 +902,29 @@ impl EditorState {
         self.recovery_banner(ui);
         ui.horizontal(|ui| {
             ui.set_min_height(44.0);
+            // The edit's name is the page heading: type over it to rename the edit. Left empty it
+            // stays an unnamed edit.
+            let title = ui.add(
+                egui::TextEdit::singleline(&mut self.title)
+                    .char_limit(100)
+                    .hint_text("Unnamed edit")
+                    .font(FontId::new(
+                        crate::kit::text_size::TITLE + 6.0,
+                        kit::semibold(),
+                    ))
+                    .frame(false)
+                    .desired_width(360.0),
+            );
+            title.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Edit title")
+            });
+            title
+                .clone()
+                .on_hover_cursor(egui::CursorIcon::Text)
+                .on_hover_text("Click to name this edit");
+            if title.changed() {
+                self.dirty_recovery();
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if tool(
                     ui,
@@ -953,7 +976,7 @@ impl EditorState {
                 }
             });
         });
-        ui.add_space(10.0);
+        ui.add_space(crate::kit::space::MD);
         let status_height = if self.message.is_some() { 26.0 } else { 0.0 };
         let full_top = (view - 432.0 - status_height).max(MIN_TOP + 40.0);
         let top = self
@@ -984,7 +1007,7 @@ impl EditorState {
         };
         let row_left = ui.cursor().left();
         ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = 12.0;
+            ui.spacing_mut().item_spacing.x = crate::kit::space::MD;
             let library = ui.allocate_ui_with_layout(
                 Vec2::new(browser, top),
                 Layout::top_down(Align::Min),
@@ -1029,41 +1052,13 @@ impl EditorState {
                 |ui| {
                     egui::Frame::new()
                         .fill(PANEL)
-                        .corner_radius(12)
+                        .corner_radius(crate::kit::radius::LG)
                         .stroke(Stroke::new(1.0_f32, BORDER))
                         .inner_margin(egui::Margin::symmetric(12, 8))
                         .show(ui, |ui| {
                             ui.set_width((preview_width - 24.0).max(1.0));
                             ui.set_min_height((top - 16.0).max(0.0));
-                            // A boxed field with a hint, so it reads as something to type in.
-                            let title = egui::Frame::new()
-                                .fill(CARD)
-                                .stroke(Stroke::new(1.0_f32, BORDER))
-                                .corner_radius(8)
-                                .inner_margin(egui::Margin::symmetric(10, 4))
-                                .show(ui, |ui| {
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut self.title)
-                                            .char_limit(100)
-                                            .hint_text("Unnamed edit \u{2014} click to name it")
-                                            .font(FontId::new(13.0, kit::semibold()))
-                                            .horizontal_align(Align::Center)
-                                            .frame(false)
-                                            .desired_width(ui.available_width()),
-                                    )
-                                })
-                                .inner;
-                            title.widget_info(|| {
-                                egui::WidgetInfo::labeled(
-                                    egui::WidgetType::TextEdit,
-                                    true,
-                                    "Edit title",
-                                )
-                            });
-                            if title.changed() {
-                                self.dirty_recovery();
-                            }
-                            let size = Vec2::new(ui.available_width(), (top - 90.0).max(40.0));
+                            let size = Vec2::new(ui.available_width(), (top - 56.0).max(40.0));
                             let area = egui::Rect::from_min_size(ui.cursor().min, size);
                             let canvas = self.export_canvas().unwrap_or((1280, 720));
                             if let Some(preview) = self.preview.as_mut() {
@@ -1075,16 +1070,27 @@ impl EditorState {
                                 self.paint_text_handles(ui, area);
                             } else {
                                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-                                ui.painter().rect_filled(rect, 12, Color32::BLACK);
+                                ui.painter().rect_filled(
+                                    rect,
+                                    f32::from(crate::kit::radius::LG),
+                                    Color32::BLACK,
+                                );
+                                kit::draw_icon(
+                                    ui.painter(),
+                                    rect.center() - Vec2::new(0.0, 34.0),
+                                    kit::Icon::Scissors,
+                                    kit::FAINT,
+                                    1.6,
+                                );
                                 ui.painter().text(
-                                    rect.center(),
+                                    rect.center() + Vec2::new(0.0, 14.0),
                                     Align2::CENTER_CENTER,
                                     "Add clips to begin",
-                                    FontId::new(16.0, kit::medium()),
+                                    FontId::new(crate::kit::text_size::LEAD, kit::medium()),
                                     MUTED,
                                 );
                             }
-                            ui.add_space(6.0);
+                            ui.add_space(crate::kit::space::SM);
                             // Transport centred under the picture, the time at the right edge.
                             let (row, _) = ui.allocate_exact_size(
                                 Vec2::new(ui.available_width(), 28.0),
@@ -1149,7 +1155,7 @@ impl EditorState {
         }
         egui::Frame::new()
             .fill(PANEL)
-            .corner_radius(12)
+            .corner_radius(crate::kit::radius::LG)
             .stroke(Stroke::new(1.0_f32, BORDER))
             .inner_margin(12)
             .show(ui, |ui| {
@@ -1161,9 +1167,9 @@ impl EditorState {
         if let Some((text, error)) = &self.message {
             kit::status_pill(ui, if *error { DANGER } else { LIME }, text);
         }
-        ui.add_space(4.0);
+        ui.add_space(crate::kit::space::XS);
         ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
             for (key, what) in [
                 ("Space", "play"),
                 ("S", "split"),
@@ -1172,8 +1178,12 @@ impl EditorState {
                 ("Ctrl Z", "undo"),
             ] {
                 kit::keycap(ui, key);
-                ui.label(RichText::new(what).size(12.0).color(MUTED));
-                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(what)
+                        .size(crate::kit::text_size::CAPTION)
+                        .color(MUTED),
+                );
+                ui.add_space(crate::kit::space::SM);
             }
             self.recovery_footer(ui);
         });
@@ -1225,7 +1235,7 @@ impl EditorState {
         .resizable(false)
         .default_width(380.0)
         .show(context, |ui| {
-            ui.spacing_mut().item_spacing.y = 12.0;
+            ui.spacing_mut().item_spacing.y = crate::kit::space::MD;
             ui.label(
                 RichText::new("Choose quality and file size for the finished video.").color(MUTED),
             );
@@ -1331,7 +1341,7 @@ impl EditorState {
             }
             ui.label(
                 RichText::new("File sizes are estimates. The saved result shows its actual size.")
-                    .size(12.0)
+                    .size(crate::kit::text_size::CAPTION)
                     .color(MUTED),
             );
             ui.separator();
@@ -1411,14 +1421,14 @@ impl EditorState {
     /// Transitions and colour effects, applied to the selected segment with one click.
     fn effects_tab(&mut self, ui: &mut egui::Ui, height: f32) {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
             for (name, effects) in [("Transitions", false), ("Effects", true)] {
                 if tab_pill(ui, name, self.effect_tab == effects).clicked() {
                     self.effect_tab = effects;
                 }
             }
         });
-        ui.add_space(10.0);
+        ui.add_space(crate::kit::space::MD);
         let selected = self.selected_look();
         let target_text = self.selected_text_layer();
         let has_target = selected.is_some() || target_text.is_some();
@@ -1426,24 +1436,24 @@ impl EditorState {
         if target_text.is_some() {
             ui.label(
                 RichText::new("Applies to the selected text layer.")
-                    .size(12.0)
+                    .size(crate::kit::text_size::CAPTION)
                     .color(FAINT),
             );
-            ui.add_space(6.0);
+            ui.add_space(crate::kit::space::SM);
         } else if selected.is_none() && !self.effect_tab {
             ui.label(
                 RichText::new("Pick a segment on the timeline, or use a preset for every segment.")
-                    .size(12.0)
+                    .size(crate::kit::text_size::CAPTION)
                     .color(FAINT),
             );
-            ui.add_space(6.0);
+            ui.add_space(crate::kit::space::SM);
         } else if !has_target {
             ui.label(
                 RichText::new("Pick a segment or text layer on the timeline first.")
-                    .size(12.0)
+                    .size(crate::kit::text_size::CAPTION)
                     .color(FAINT),
             );
-            ui.add_space(6.0);
+            ui.add_space(crate::kit::space::SM);
         }
         let columns = (((ui.available_width() + 8.0) / 118.0).floor() as usize).clamp(2, 6);
         let card = Vec2::new(
@@ -1455,7 +1465,8 @@ impl EditorState {
             .id_salt("editor-effects")
             .max_height((height - 130.0).max(30.0))
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+                ui.spacing_mut().item_spacing =
+                    Vec2::new(crate::kit::space::SM, crate::kit::space::SM);
                 ui.horizontal_wrapped(|ui| {
                     if self.effect_tab {
                         for effect in Effect::ALL {
@@ -1643,13 +1654,13 @@ impl EditorState {
                 }
             }
         });
-        ui.add_space(10.0);
+        ui.add_space(crate::kit::space::MD);
         let Some((id, layer)) = self.selected_text_layer() else {
             ui.label(
                 RichText::new(
                     "Add text, or pick a text layer on the track above the video. Effects and Transitions apply to it too.",
                 )
-                .size(12.0)
+                .size(crate::kit::text_size::CAPTION)
                 .color(FAINT),
             );
             return;
@@ -1664,7 +1675,7 @@ impl EditorState {
                 egui::TextEdit::singleline(&mut self.title_draft.1)
                     .hint_text("Type the text, then press Enter")
                     .char_limit(clipcraft_engine::MAX_TITLE_CHARS)
-                    .margin(egui::Margin::symmetric(10, 8))
+                    .margin(egui::Margin::symmetric(12, 8))
                     .desired_width(ui.available_width()),
             );
             field.widget_info(|| {
@@ -1673,10 +1684,14 @@ impl EditorState {
             if field.lost_focus() {
                 next.text = self.title_draft.1.replace(char::is_control, " ");
             }
-            ui.add_space(8.0);
+            ui.add_space(crate::kit::space::SM);
             ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                ui.label(RichText::new("Starts").size(13.0).color(MUTED));
+                ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
+                ui.label(
+                    RichText::new("Starts")
+                        .size(crate::kit::text_size::SMALL)
+                        .color(MUTED),
+                );
                 let mut start = layer.start.seconds();
                 if ui
                     .add(
@@ -1693,7 +1708,11 @@ impl EditorState {
                     next.start = moved.min(total - MIN_TEXT).max(Tick::ZERO);
                     next.end = (next.start + length).min(total.max(next.start + MIN_TEXT));
                 }
-                ui.label(RichText::new("Lasts").size(13.0).color(MUTED));
+                ui.label(
+                    RichText::new("Lasts")
+                        .size(crate::kit::text_size::SMALL)
+                        .color(MUTED),
+                );
                 let mut length = layer.duration().seconds();
                 if ui
                     .add(
@@ -1709,10 +1728,14 @@ impl EditorState {
                     next.end = (layer.start + ticks).min(total.max(layer.start + MIN_TEXT));
                 }
             });
-            ui.add_space(8.0);
+            ui.add_space(crate::kit::space::SM);
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                ui.label(RichText::new("Size").size(13.0).color(MUTED));
+                ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
+                ui.label(
+                    RichText::new("Size")
+                        .size(crate::kit::text_size::SMALL)
+                        .color(MUTED),
+                );
                 let mut size = u32::from(layer.size);
                 if ui
                     .add(
@@ -1726,7 +1749,11 @@ impl EditorState {
                     next.size = size.clamp(20, 250) as u16;
                 }
                 separator(ui);
-                ui.label(RichText::new("Colour").size(13.0).color(MUTED));
+                ui.label(
+                    RichText::new("Colour")
+                        .size(crate::kit::text_size::SMALL)
+                        .color(MUTED),
+                );
                 for (name, rgb) in TEXT_COLORS {
                     let (rect, response) =
                         ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
@@ -1751,7 +1778,7 @@ impl EditorState {
                     }
                 }
             });
-            ui.add_space(10.0);
+            ui.add_space(crate::kit::space::MD);
             let columns = (((ui.available_width() + 8.0) / 118.0).floor() as usize).clamp(2, 6);
             let card = Vec2::new(
                 ((ui.available_width() - 8.0 * (columns - 1) as f32) / columns as f32).max(20.0),
@@ -1761,7 +1788,8 @@ impl EditorState {
                 .id_salt("editor-text")
                 .max_height((height - 215.0).max(100.0))
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+                    ui.spacing_mut().item_spacing =
+                        Vec2::new(crate::kit::space::SM, crate::kit::space::SM);
                     ui.horizontal_wrapped(|ui| {
                         for (name, x, y) in [
                             ("Title", 500_u16, 500_u16),
@@ -1780,7 +1808,7 @@ impl EditorState {
                                         ),
                                         Align2::CENTER_CENTER,
                                         "Aa",
-                                        FontId::new(15.0, kit::semibold()),
+                                        FontId::new(crate::kit::text_size::LEAD, kit::semibold()),
                                         Color32::WHITE,
                                     );
                                 });
@@ -1792,7 +1820,7 @@ impl EditorState {
                 });
             ui.label(
                 RichText::new("Drag the text in the preview to move it anywhere.")
-                    .size(12.0)
+                    .size(crate::kit::text_size::CAPTION)
                     .color(FAINT),
             );
         });
@@ -1806,7 +1834,7 @@ impl EditorState {
         let mut details = None;
         egui::Frame::new()
             .fill(PANEL)
-            .corner_radius(12)
+            .corner_radius(crate::kit::radius::LG)
             .stroke(Stroke::new(1.0_f32, BORDER))
             .inner_margin(12)
             .show(ui, |ui| {
@@ -1814,7 +1842,7 @@ impl EditorState {
                 // Every tab fills the panel, so the divider never moves when the tab changes.
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
                     for (tab, name) in [
                         (LibraryTab::Library, "Library"),
                         (LibraryTab::Effects, "Effects"),
@@ -1840,7 +1868,7 @@ impl EditorState {
                         });
                     }
                 });
-                ui.add_space(10.0);
+                ui.add_space(crate::kit::space::MD);
                 match self.tab {
                     LibraryTab::Effects => {
                         self.effects_tab(ui, height);
@@ -1853,7 +1881,7 @@ impl EditorState {
                     LibraryTab::Library => {}
                 }
                 crate::settings::search_box(ui, &mut self.search, "Search clips");
-                ui.add_space(10.0);
+                ui.add_space(crate::kit::space::MD);
                 let filtered = self.browser_search.prepare(&media, &self.search);
                 let columns = (((ui.available_width() + 8.0) / 148.0).floor() as usize).clamp(2, 6);
                 let card_width = ((ui.available_width() - 8.0 * (columns - 1) as f32)
@@ -1910,7 +1938,11 @@ impl EditorState {
                                                     card.min,
                                                     Vec2::new(card_width, thumb_height),
                                                 );
-                                                ui.painter().rect_filled(rect, 10, CARD);
+                                                ui.painter().rect_filled(
+                                                    rect,
+                                                    f32::from(crate::kit::radius::MD),
+                                                    CARD,
+                                                );
                                                 if let Some(texture) = thumbs.texture(
                                                     ui.ctx(),
                                                     &entry.path,
@@ -1921,7 +1953,7 @@ impl EditorState {
                                                             texture,
                                                         ),
                                                     )
-                                                    .corner_radius(10)
+                                                    .corner_radius(crate::kit::radius::MD)
                                                     .paint_at(ui, rect);
                                                 }
                                                 if response.hovered() || response.has_focus() {
@@ -1954,13 +1986,19 @@ impl EditorState {
                                                     badge.center(),
                                                     Align2::CENTER_CENTER,
                                                     duration,
-                                                    FontId::new(11.0, kit::medium()),
+                                                    FontId::new(
+                                                        crate::kit::text_size::CAPTION,
+                                                        kit::medium(),
+                                                    ),
                                                     TEXT,
                                                 );
                                                 let mut title_job =
                                                     egui::text::LayoutJob::simple_singleline(
                                                         entry.title.clone(),
-                                                        FontId::new(11.5, kit::medium()),
+                                                        FontId::new(
+                                                            crate::kit::text_size::CAPTION,
+                                                            kit::medium(),
+                                                        ),
                                                         TEXT,
                                                     );
                                                 title_job.wrap.max_width = card_width;
@@ -1997,7 +2035,10 @@ impl EditorState {
                                                         rect.left_bottom() + Vec2::new(0.0, 22.0),
                                                         Align2::LEFT_TOP,
                                                         meta,
-                                                        FontId::new(10.5, kit::medium()),
+                                                        FontId::new(
+                                                            crate::kit::text_size::CAPTION,
+                                                            kit::medium(),
+                                                        ),
                                                         MUTED,
                                                     );
                                                 if response.clicked() {
@@ -2046,28 +2087,28 @@ impl EditorState {
                     ui.spinner();
                     ui.label(RichText::new("Importing clips…").small().color(MUTED));
                 } else if filtered.is_empty() {
-                    ui.add_space(16.0);
+                    ui.add_space(crate::kit::space::LG);
                     ui.vertical_centered(|ui| {
                         ui.label(
                             RichText::new("No clips here yet")
-                                .size(14.0)
+                                .size(crate::kit::text_size::BODY)
                                 .family(kit::semibold())
                                 .color(kit::TEXT),
                         );
-                        ui.add_space(2.0);
+                        ui.add_space(crate::kit::space::XS);
                         ui.label(
                             RichText::new("Import clips, or send them from Clips.")
-                                .size(12.5)
+                                .size(crate::kit::text_size::CAPTION)
                                 .color(MUTED),
                         );
                     });
                 }
-                ui.add_space(6.0);
+                ui.add_space(crate::kit::space::SM);
                 ui.label(
                     RichText::new(
                         "Double-click or drag a clip to add it.\nRight-click for details.",
                     )
-                    .size(12.0)
+                    .size(crate::kit::text_size::CAPTION)
                     .color(kit::FAINT),
                 );
             });
@@ -2215,7 +2256,7 @@ impl EditorState {
     }
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+            ui.spacing_mut().item_spacing = Vec2::new(crate::kit::space::SM, crate::kit::space::SM);
             let enabled = !self.busy();
             if tool(
                 ui,
@@ -2329,7 +2370,7 @@ impl EditorState {
                 }
             });
         });
-        ui.add_space(8.0);
+        ui.add_space(crate::kit::space::SM);
     }
     fn timeline(&mut self, ui: &mut egui::Ui, _thumbs: &mut crate::thumbs::Thumbnails, lift: f32) {
         let lift = lift.max(0.0);
@@ -2358,7 +2399,7 @@ impl EditorState {
                     Sense::click_and_drag(),
                 );
                 let painter = ui.painter();
-                painter.rect_filled(rect, 10, CANVAS);
+                painter.rect_filled(rect, f32::from(crate::kit::radius::MD), CANVAS);
                 painter.line_segment(
                     [
                         egui::pos2(rect.left(), rect.top() + 20.0),
@@ -2444,7 +2485,7 @@ impl EditorState {
                             format!("Select segment {}: {}", index + 1, clip.name),
                         )
                     });
-                    painter.rect_filled(card, 6, CARD_HOVER);
+                    painter.rect_filled(card, f32::from(crate::kit::radius::SM), CARD_HOVER);
                     let sample = timeline_window(clip.start, clip.end, card, ui.clip_rect());
                     if let Some((start, end, frames, buckets)) = sample {
                         self.timeline_media.request(
@@ -2507,7 +2548,7 @@ impl EditorState {
                                 card.center(),
                                 Align2::CENTER_CENTER,
                                 label,
-                                FontId::new(10.0, kit::medium()),
+                                FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
                                 FAINT,
                             );
                         }
@@ -2528,7 +2569,7 @@ impl EditorState {
                         card.left_top() + Vec2::new(6.0, 6.0),
                         Align2::LEFT_TOP,
                         format!("{} · {}", index + 1, clip.name),
-                        FontId::new(11.5, kit::medium()),
+                        FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
                         TEXT,
                     );
                     clipped.text(
@@ -2665,7 +2706,7 @@ impl EditorState {
                         audio.left_center() + Vec2::new(5.0, 0.0),
                         Align2::LEFT_CENTER,
                         format!("{audio_label} · {}%", clip.volume_percent),
-                        FontId::new(10.0, kit::medium()),
+                        FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
                         MUTED,
                     );
                     if r.clicked() || r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
@@ -2712,7 +2753,7 @@ impl EditorState {
                         lane.left_center() + Vec2::new(8.0, 0.0),
                         Align2::LEFT_CENTER,
                         "Text track",
-                        FontId::new(11.0, kit::medium()),
+                        FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
                         FAINT,
                     );
                 }
@@ -2757,7 +2798,7 @@ impl EditorState {
                         block.left_center() + Vec2::new(8.0, 0.0),
                         Align2::LEFT_CENTER,
                         &text.layer.text,
-                        FontId::new(11.0, kit::medium()),
+                        FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
                         TEXT,
                     );
                     for (fade, left) in [(text.layer.fade_in, true), (text.layer.fade_out, false)] {
@@ -2886,7 +2927,7 @@ impl EditorState {
                         rect.center(),
                         Align2::CENTER_CENTER,
                         "Drag clips here, or double-click one in the library to add it",
-                        FontId::new(14.0, kit::medium()),
+                        FontId::new(crate::kit::text_size::BODY, kit::medium()),
                         MUTED,
                     );
                 }
@@ -2926,7 +2967,7 @@ impl EditorState {
         else {
             return;
         };
-        ui.add_space(6.0);
+        ui.add_space(crate::kit::space::SM);
         let label = if self.segment_settings {
             "Hide segment settings"
         } else {
@@ -2934,8 +2975,12 @@ impl EditorState {
         };
         if ui
             .add(
-                egui::Label::new(RichText::new(label).size(12.5).color(MUTED))
-                    .sense(Sense::click()),
+                egui::Label::new(
+                    RichText::new(label)
+                        .size(crate::kit::text_size::CAPTION)
+                        .color(MUTED),
+                )
+                .sense(Sense::click()),
             )
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
@@ -2945,20 +2990,25 @@ impl EditorState {
         if !self.segment_settings {
             return;
         }
-        ui.add_space(6.0);
+        ui.add_space(crate::kit::space::SM);
         ui.add_enabled_ui(!self.busy(), |ui| {
             egui::Frame::new()
                 .fill(CANVAS)
-                .corner_radius(10)
+                .corner_radius(crate::kit::radius::MD)
                 .inner_margin(egui::Margin::symmetric(12, 8))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+                        ui.spacing_mut().item_spacing =
+                            Vec2::new(crate::kit::space::SM, crate::kit::space::SM);
                         let mut start = clip.start.seconds();
                         let mut end = clip.end.seconds();
                         let mut volume = clip.volume_percent;
-                        ui.label(RichText::new("Source in / out").size(13.0).color(MUTED));
+                        ui.label(
+                            RichText::new("Source in / out")
+                                .size(crate::kit::text_size::SMALL)
+                                .color(MUTED),
+                        );
                         let changed = ui
                             .add(
                                 egui::DragValue::new(&mut start)
@@ -2986,7 +3036,11 @@ impl EditorState {
                             });
                         }
                         separator(ui);
-                        ui.label(RichText::new("Volume").size(13.0).color(MUTED));
+                        ui.label(
+                            RichText::new("Volume")
+                                .size(crate::kit::text_size::SMALL)
+                                .color(MUTED),
+                        );
                         if ui
                             .add(egui::DragValue::new(&mut volume).range(0..=100).suffix("%"))
                             .on_hover_text("Selected segment audio volume")
@@ -3085,11 +3139,13 @@ const TRANSITIONS: [TransitionItem; 8] = [
 fn tab_pill(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
-        FontId::new(13.0, kit::medium()),
+        FontId::new(crate::kit::text_size::SMALL, kit::medium()),
         Color32::PLACEHOLDER,
     );
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(galley.size().x + 28.0, 28.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(galley.size().x + 28.0, crate::kit::control::COMPACT),
+        Sense::click(),
+    );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     let (fill, text) = if active {
         (LIME, Color32::BLACK)
@@ -3103,7 +3159,7 @@ fn tab_pill(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
         rect.center(),
         Align2::CENTER_CENTER,
         label,
-        FontId::new(13.0, kit::medium()),
+        FontId::new(crate::kit::text_size::SMALL, kit::medium()),
         text,
     );
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -3149,7 +3205,7 @@ fn preset_card(
         egui::pos2(rect.left(), rect.bottom() - 2.0),
         Align2::LEFT_BOTTOM,
         name,
-        FontId::new(12.0, kit::medium()),
+        FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
         if enabled { TEXT } else { FAINT },
     );
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -3158,14 +3214,16 @@ fn preset_card(
 /// Quiet or lime text button. Standard egui buttons keep keyboard activation and the app's
 /// focus/hover states; the colours match the rest of the app.
 fn button(ui: &mut egui::Ui, label: &str, primary: bool, enabled: bool) -> egui::Response {
-    let text = RichText::new(label).family(kit::medium()).size(12.5);
+    let text = RichText::new(label)
+        .family(kit::medium())
+        .size(crate::kit::text_size::SMALL);
     let mut button = egui::Button::new(if primary && enabled {
         text.color(Color32::BLACK)
     } else {
         text
     })
-    .corner_radius(15)
-    .min_size(Vec2::new(30.0, 30.0));
+    .corner_radius((crate::kit::control::COMPACT / 2.0) as u8)
+    .min_size(Vec2::splat(crate::kit::control::COMPACT));
     if primary && enabled {
         button = button.fill(LIME).stroke(Stroke::NONE);
     } else {
@@ -3173,7 +3231,13 @@ fn button(ui: &mut egui::Ui, label: &str, primary: bool, enabled: bool) -> egui:
             .fill(kit::CONTROL)
             .stroke(Stroke::new(1.0_f32, kit::CONTROL_BORDER));
     }
-    ui.add_enabled(enabled, button)
+    // Editor buttons are compact: as tall as the tab pills and tools next to them.
+    ui.scope(|ui| {
+        ui.spacing_mut().interact_size.y = crate::kit::control::COMPACT;
+        ui.spacing_mut().button_padding.y = crate::kit::space::XS;
+        ui.add_enabled(enabled, button)
+    })
+    .inner
 }
 
 /// A button with an icon, in the same pill shape as the rest of the app.
@@ -3202,7 +3266,7 @@ impl EditorState {
                 egui::Frame::new()
                     .fill(PANEL)
                     .stroke(Stroke::new(1.0_f32, BORDER))
-                    .corner_radius(14)
+                    .corner_radius(crate::kit::radius::LG)
                     .inner_margin(egui::Margin::same(20)),
             )
             .show(context, |ui| {
@@ -3210,7 +3274,7 @@ impl EditorState {
                 ui.label(
                     RichText::new("Add clips to your edit")
                         .color(TEXT)
-                        .size(18.0)
+                        .size(crate::kit::text_size::LEAD)
                         .family(kit::semibold()),
                 );
                 ui.label(
@@ -3218,15 +3282,15 @@ impl EditorState {
                         "Tick the clips from your library, or browse for files elsewhere.",
                     )
                     .color(MUTED)
-                    .size(13.0),
+                    .size(crate::kit::text_size::SMALL),
                 );
-                ui.add_space(10.0);
+                ui.add_space(crate::kit::space::MD);
                 ui.add(
                     egui::TextEdit::singleline(&mut picker.search)
                         .hint_text("Search clips")
                         .desired_width(f32::INFINITY),
                 );
-                ui.add_space(8.0);
+                ui.add_space(crate::kit::space::SM);
                 let query = picker.search.trim().to_lowercase();
                 egui::ScrollArea::vertical()
                     .max_height(320.0)
@@ -3259,13 +3323,13 @@ impl EditorState {
                             ui.label(
                                 RichText::new("No clips in your library match.")
                                     .color(MUTED)
-                                    .size(13.0),
+                                    .size(crate::kit::text_size::SMALL),
                             );
                         }
                     });
-                ui.add_space(14.0);
+                ui.add_space(crate::kit::space::LG);
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 10.0;
+                    ui.spacing_mut().item_spacing.x = crate::kit::space::MD;
                     let count = picker.chosen.len();
                     let label = if count == 0 {
                         "Add clips".to_owned()
@@ -3314,10 +3378,10 @@ fn tool(
 ) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
-        FontId::new(12.5, kit::medium()),
+        FontId::new(crate::kit::text_size::SMALL, kit::medium()),
         Color32::PLACEHOLDER,
     );
-    let size = Vec2::new(galley.size().x + 40.0, 30.0);
+    let size = Vec2::new(galley.size().x + 44.0, crate::kit::control::COMPACT);
     let sense = if enabled {
         Sense::click()
     } else {
@@ -3332,7 +3396,8 @@ fn tool(
         (false, _, true) => (kit::CONTROL_HOVER, kit::TEXT),
         (false, _, false) => (kit::CONTROL, kit::TEXT),
     };
-    ui.painter().rect_filled(rect, 14, fill);
+    ui.painter()
+        .rect_filled(rect, crate::kit::control::COMPACT / 2.0, fill);
     kit::draw_icon(
         ui.painter(),
         egui::pos2(rect.left() + 15.0, rect.center().y),
@@ -3341,10 +3406,10 @@ fn tool(
         0.55,
     );
     ui.painter().text(
-        egui::pos2(rect.left() + 27.0, rect.center().y),
+        egui::pos2(rect.left() + 30.0, rect.center().y),
         Align2::LEFT_CENTER,
         label,
-        FontId::new(12.5, kit::medium()),
+        FontId::new(crate::kit::text_size::SMALL, kit::medium()),
         content,
     );
     response

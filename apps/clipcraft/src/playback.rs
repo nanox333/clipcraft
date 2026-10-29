@@ -649,7 +649,7 @@ impl Playback {
                 rect.center(),
                 Align2::CENTER_CENTER,
                 message,
-                FontId::proportional(16.0),
+                FontId::proportional(crate::kit::text_size::LEAD),
                 MUTED,
             );
         }
@@ -671,11 +671,11 @@ impl Playback {
         let room = (ui.available_height() - CONTROLS_HEIGHT - trim_room - 12.0).max(180.0);
         let height = (width * 9.0 / 16.0).min(room);
         self.draw_picture(ui, Vec2::new(width, height), true);
-        ui.add_space(12.0);
+        ui.add_space(crate::kit::space::MD);
         egui::Frame::new()
             .fill(PANEL)
             .stroke(egui::Stroke::new(1.0_f32, kit::BORDER))
-            .corner_radius(egui::CornerRadius::same(14))
+            .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
             .inner_margin(egui::Margin::symmetric(16, 12))
             .show(ui, |ui| {
                 ui.set_width((width - 34.0).max(0.0));
@@ -750,18 +750,26 @@ impl Playback {
             self.playing = true;
         }
 
-        ui.add_space(2.0);
+        ui.add_space(crate::kit::space::XS);
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.spacing_mut().item_spacing.x = crate::kit::space::XS;
             let enabled = usable;
-            if kit::icon_button(ui, Icon::SkipBack, 36.0, false, enabled, "Back 10 s (J)").clicked()
+            if kit::icon_button(
+                ui,
+                Icon::SkipBack,
+                crate::kit::control::STANDARD,
+                false,
+                enabled,
+                "Back 10 s (J)",
+            )
+            .clicked()
             {
                 self.skip(-BIG_SKIP_SECONDS);
             }
             if kit::icon_button(
                 ui,
                 Icon::StepBack,
-                36.0,
+                crate::kit::control::STANDARD,
                 false,
                 enabled,
                 "Previous frame (,)",
@@ -786,7 +794,7 @@ impl Playback {
             if kit::icon_button(
                 ui,
                 Icon::StepForward,
-                36.0,
+                crate::kit::control::STANDARD,
                 false,
                 enabled,
                 "Next frame (.)",
@@ -798,7 +806,7 @@ impl Playback {
             if kit::icon_button(
                 ui,
                 Icon::SkipForward,
-                36.0,
+                crate::kit::control::STANDARD,
                 false,
                 enabled,
                 "Forward 10 s (L)",
@@ -807,23 +815,23 @@ impl Playback {
             {
                 self.skip(BIG_SKIP_SECONDS);
             }
-            ui.add_space(10.0);
+            ui.add_space(crate::kit::space::MD);
             ui.label(
                 RichText::new(format_clock(self.position))
                     .color(TEXT)
                     .monospace()
-                    .size(14.0),
+                    .size(crate::kit::text_size::BODY),
             );
-            ui.add_space(2.0);
+            ui.add_space(crate::kit::space::XS);
             ui.label(
                 RichText::new(format!("/ {}", format_clock(self.duration())))
                     .color(MUTED)
                     .monospace()
-                    .size(14.0),
+                    .size(crate::kit::text_size::BODY),
             );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.spacing_mut().item_spacing.x = crate::kit::space::XS;
                 let fullscreen = if self.fullscreen {
                     Icon::ExitFullscreen
                 } else {
@@ -834,19 +842,34 @@ impl Playback {
                 } else {
                     "Fullscreen (F)"
                 };
-                if kit::icon_button(ui, fullscreen, 36.0, self.fullscreen, true, tooltip).clicked()
+                if kit::icon_button(
+                    ui,
+                    fullscreen,
+                    crate::kit::control::STANDARD,
+                    self.fullscreen,
+                    true,
+                    tooltip,
+                )
+                .clicked()
                 {
                     self.toggle_fullscreen();
                 }
-                if kit::icon_button(ui, Icon::Loop, 36.0, self.prefs.looping, true, "Loop (R)")
-                    .clicked()
+                if kit::icon_button(
+                    ui,
+                    Icon::Loop,
+                    crate::kit::control::STANDARD,
+                    self.prefs.looping,
+                    true,
+                    "Loop (R)",
+                )
+                .clicked()
                 {
                     self.toggle_loop();
                 }
                 if kit::icon_button(
                     ui,
                     Icon::Scissors,
-                    36.0,
+                    crate::kit::control::STANDARD,
                     self.trim.open,
                     usable,
                     "Trim this clip into a new file (T)",
@@ -870,7 +893,11 @@ impl Playback {
         }
         // The note would run off the bottom edge over a fullscreen picture; it shows windowed.
         if let Some(note) = self.audio_note.as_ref().filter(|_| !self.fullscreen) {
-            ui.label(RichText::new(note).color(MUTED).size(12.0));
+            ui.label(
+                RichText::new(note)
+                    .color(MUTED)
+                    .size(crate::kit::text_size::CAPTION),
+            );
         }
     }
 
@@ -935,7 +962,7 @@ impl Playback {
         let off = self.prefs.muted || self.prefs.volume == 0.0 || self.audio.is_none();
         let icon = if off { Icon::SpeakerOff } else { Icon::Speaker };
         let tip = if off { "Unmute (M)" } else { "Mute (M)" };
-        if kit::icon_button(ui, icon, 36.0, false, true, tip).clicked() {
+        if kit::icon_button(ui, icon, crate::kit::control::STANDARD, false, true, tip).clicked() {
             self.toggle_mute();
         }
     }

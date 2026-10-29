@@ -208,14 +208,14 @@ fn header(ui: &mut egui::Ui, status: &Status) {
         Pos2::new(rect.left() + 30.0, rect.center().y - 7.0),
         Align2::LEFT_CENTER,
         "ClipCraft",
-        FontId::new(14.0, semibold()),
+        FontId::new(crate::kit::text_size::BODY, semibold()),
         TEXT,
     );
     painter.text(
         Pos2::new(rect.left() + 30.0, rect.center().y + 9.0),
         Align2::LEFT_CENTER,
         &status.text,
-        FontId::proportional(12.0),
+        FontId::proportional(crate::kit::text_size::CAPTION),
         MUTED,
     );
 }
@@ -243,7 +243,7 @@ fn row(ui: &mut egui::Ui, item: &Item) -> bool {
     let hovered = item.enabled && response.hovered();
     let painter = ui.painter();
     if hovered {
-        painter.rect_filled(rect, 8.0, CARD_HOVER);
+        painter.rect_filled(rect, f32::from(crate::kit::radius::MD), CARD_HOVER);
     }
     let ink = if !item.enabled {
         FAINT
@@ -265,7 +265,7 @@ fn row(ui: &mut egui::Ui, item: &Item) -> bool {
         Pos2::new(rect.left() + 40.0, rect.center().y),
         Align2::LEFT_CENTER,
         item.label,
-        FontId::new(13.5, medium()),
+        FontId::new(crate::kit::text_size::SMALL, medium()),
         if item.enabled { TEXT } else { FAINT },
     );
     if hovered {

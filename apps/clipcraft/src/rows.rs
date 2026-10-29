@@ -4,9 +4,7 @@
 //! whether it differs from the default and put it back with one click.
 
 use clipcraft_engine::RecordingSettings;
-use eframe::egui::{
-    self, Align, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Shape, Stroke, Vec2,
-};
+use eframe::egui::{self, Align, Color32, FontId, Layout, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 
 use crate::kit::{self, BORDER, CARD, LIME, MUTED, TEXT};
 
@@ -104,17 +102,26 @@ impl Rows {
                 Pos2::new(surface.left, surface.top),
                 Pos2::new(surface.left + surface.width, bottom),
             );
+            let shadow = egui::Shadow {
+                offset: [0, 4],
+                blur: 14,
+                spread: 0,
+                color: egui::Color32::from_black_alpha(90),
+            };
             ui.painter().set(
                 surface.slot,
-                Shape::Rect(egui::epaint::RectShape::new(
-                    rect,
-                    14.0,
-                    CARD,
-                    Stroke::new(1.0_f32, BORDER),
-                    egui::StrokeKind::Inside,
-                )),
+                Shape::Vec(vec![
+                    shadow.as_shape(rect, crate::kit::radius::LG).into(),
+                    Shape::Rect(egui::epaint::RectShape::new(
+                        rect,
+                        f32::from(crate::kit::radius::LG),
+                        CARD,
+                        Stroke::new(1.0_f32, BORDER),
+                        egui::StrokeKind::Inside,
+                    )),
+                ]),
             );
-            ui.add_space(26.0);
+            ui.add_space(crate::kit::space::XXL);
         }
     }
 
@@ -144,13 +151,7 @@ impl Rows {
             } else {
                 pending.title
             };
-            ui.label(
-                RichText::new(heading)
-                    .color(TEXT)
-                    .size(15.5)
-                    .family(kit::semibold()),
-            );
-            ui.add_space(10.0);
+            kit::section_heading(ui, &heading);
             let slot = ui.painter().add(Shape::Noop);
             self.surface = Some(Surface {
                 slot,
@@ -199,23 +200,23 @@ impl Rows {
         }
         let title = ui.painter().layout_no_wrap(
             meta.title.to_owned(),
-            FontId::new(14.5, kit::semibold()),
+            FontId::new(crate::kit::text_size::BODY, kit::semibold()),
             TEXT,
         );
         let help = ui.painter().layout(
             meta.help.to_owned(),
-            FontId::proportional(12.5),
+            FontId::proportional(crate::kit::text_size::CAPTION),
             MUTED,
             text_width,
         );
-        let text_height = 14.0
+        let text_height = crate::kit::space::LG
             + title.size().y
             + if meta.help.is_empty() {
                 0.0
             } else {
                 3.0 + help.size().y
             }
-            + 14.0;
+            + crate::kit::space::LG;
         let height = if stacked {
             text_height + 36.0 + 4.0
         } else {
@@ -231,7 +232,7 @@ impl Rows {
                 Stroke::new(1.0_f32, BORDER),
             );
         }
-        let title_pos = Pos2::new(left, rect.top() + 14.0);
+        let title_pos = Pos2::new(left, rect.top() + crate::kit::space::LG);
         let title_width = title.size().x;
         ui.painter().galley(title_pos, title, TEXT);
         if !meta.help.is_empty() {
@@ -258,7 +259,7 @@ impl Rows {
                 tag.left_center(),
                 egui::Align2::LEFT_CENTER,
                 "\u{21ba} Reset",
-                FontId::proportional(12.0),
+                FontId::proportional(crate::kit::text_size::CAPTION),
                 if response.hovered() { LIME } else { MUTED },
             );
             reset = response.clicked();
@@ -277,7 +278,7 @@ impl Rows {
             Layout::right_to_left(Align::Center)
         };
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(control_rect).layout(layout));
-        child.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+        child.spacing_mut().item_spacing = Vec2::new(crate::kit::space::SM, crate::kit::space::SM);
         control(&mut child);
         reset
     }
@@ -512,7 +513,7 @@ fn slider_control(
             Pos2::new(x, rect.center().y),
             align,
             shown,
-            FontId::new(14.0, kit::semibold()),
+            FontId::new(crate::kit::text_size::BODY, kit::semibold()),
             LIME,
         );
     };

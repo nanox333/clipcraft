@@ -37,7 +37,7 @@ supports up to five shortcuts: use **+** in Settings → Hotkeys.
   clips to the Recycle Bin from a right-click menu.
 - **Playback and editing:** smooth playback, quick trims, small-file and GIF export, loudness
   evening, and a small sequence editor with text, fades and colour effects.
-- **Desktop:** searchable, categorized Settings; system tray (Windows); a "clip saved" pop-up that
+- **Desktop:** one shared spacing, radius, type and control-height scale (`kit::space`, `kit::radius`, `kit::text_size`, `kit::control`) across every screen; searchable, categorized Settings; system tray (Windows); a "clip saved" pop-up that
   never takes focus from your game; optional Discord Rich Presence.
 - **Command line:** `clipcraft-cli` runs the same commands as the app.
 

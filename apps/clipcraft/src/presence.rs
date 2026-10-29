@@ -90,7 +90,11 @@ impl State {
                 } else {
                     self.status.label()
                 };
-                ui.label(RichText::new(text).size(12.5).color(crate::kit::MUTED));
+                ui.label(
+                    RichText::new(text)
+                        .size(crate::kit::text_size::CAPTION)
+                        .color(crate::kit::MUTED),
+                );
                 crate::settings::toggle_row(
                     ui,
                     "Show the captured game's name",
@@ -103,19 +107,19 @@ impl State {
                         "Also publishes available map, game mode, team score and hero/champion from an enabled local game integration. No health, money, K/D/A or account identifiers.",&mut settings.show_match,true);
                 });
                 if let Some(activity) = &self.preview {
-                    ui.add_space(8.0);
+                    ui.add_space(crate::kit::space::SM);
                     egui::Frame::new()
                         .fill(egui::Color32::from_rgb(30, 31, 34))
-                        .corner_radius(8.0)
+                        .corner_radius(crate::kit::radius::MD)
                         .inner_margin(16.0)
                         .show(ui, |ui| {
                             ui.set_min_width(ui.available_width().min(340.0));
                             ui.label(
                                 RichText::new("LOCAL CARD PREVIEW")
-                                    .size(10.5)
+                                    .size(crate::kit::text_size::CAPTION)
                                     .color(crate::kit::MUTED),
                             );
-                            ui.add_space(8.0);
+                            ui.add_space(crate::kit::space::SM);
                             ui.horizontal(|ui| {
                                 let key = activity.asset_key();
                                 for key in [key, "clipcraft"] {
@@ -146,7 +150,7 @@ impl State {
                                         rect,
                                         egui::Image::new(texture)
                                             .fit_to_exact_size(rect.size())
-                                            .corner_radius(10.0),
+                                            .corner_radius(crate::kit::radius::MD),
                                     );
                                 }
                                 if activity.game.is_some() {
@@ -159,11 +163,11 @@ impl State {
                                             badge,
                                             egui::Image::new(texture)
                                                 .fit_to_exact_size(badge.size())
-                                                .corner_radius(12.0),
+                                                .corner_radius(crate::kit::radius::LG),
                                         );
                                     }
                                 }
-                                ui.add_space(12.0);
+                                ui.add_space(crate::kit::space::MD);
                                 ui.vertical(|ui| {
                                     ui.label(
                                         RichText::new("ClipCraft").family(crate::kit::medium()),
@@ -178,9 +182,9 @@ impl State {
                                 });
                             });
                         });
-                    ui.label(RichText::new("Preview only; shows the offline ClipCraft artwork. Discord loads supported game icons and controls final rendering.").size(11.5).color(crate::kit::FAINT));
+                    ui.label(RichText::new("Preview only; shows the offline ClipCraft artwork. Discord loads supported game icons and controls final rendering.").size(crate::kit::text_size::CAPTION).color(crate::kit::FAINT));
                 }
-                ui.label(RichText::new("Requires the Discord desktop app and activity sharing enabled in Discord. Discord controls visibility to other people. Local recording works without it.").size(12.0).color(crate::kit::FAINT));
+                ui.label(RichText::new("Requires the Discord desktop app and activity sharing enabled in Discord. Discord controls visibility to other people. Local recording works without it.").size(crate::kit::text_size::CAPTION).color(crate::kit::FAINT));
             }
         });
     }

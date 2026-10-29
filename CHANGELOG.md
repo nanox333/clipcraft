@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Consistent layout:** spacing, corner radii, text sizes and control heights now come from one
+  shared scale, so buttons, search boxes, folder fields, pills and settings rows line up across the
+  Clips, Editor, Settings and setup screens.
 - **Smaller software-encoded desktop clips:** the built-in H.264 encoder now uses split-block motion
   prediction, making screen recordings about a third smaller at the same quality for roughly 1.5x
   the encoding time on desktop content (game footage is unchanged).

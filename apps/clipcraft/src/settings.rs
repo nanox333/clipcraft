@@ -166,7 +166,7 @@ fn game_row(ui: &mut egui::Ui, name: &str, included: bool) -> bool {
         egui::pos2(rect.left() + 16.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         name,
-        egui::FontId::new(14.0, kit::medium()),
+        egui::FontId::new(crate::kit::text_size::BODY, kit::medium()),
         if included { TEXT } else { MUTED },
     );
     let switch = egui::Rect::from_center_size(
@@ -205,7 +205,7 @@ pub(crate) fn toggle_chip(
     enabled: bool,
     hint: &str,
 ) -> bool {
-    let font = egui::FontId::new(13.5, kit::medium());
+    let font = egui::FontId::new(crate::kit::text_size::SMALL, kit::medium());
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), font, Color32::PLACEHOLDER);
@@ -232,10 +232,11 @@ pub(crate) fn toggle_chip(
     } else {
         (Color32::from_rgb(26, 26, 30), BORDER, TEXT)
     };
-    ui.painter().rect_filled(rect, 10.0, fill);
+    ui.painter()
+        .rect_filled(rect, f32::from(crate::kit::radius::PILL), fill);
     ui.painter().rect_stroke(
         rect,
-        10.0,
+        f32::from(crate::kit::radius::PILL),
         Stroke::new(1.0_f32, stroke),
         egui::StrokeKind::Inside,
     );
@@ -253,36 +254,27 @@ pub(crate) fn toggle_chip(
 
 /// The heading over a group of settings.
 fn section_heading(ui: &mut egui::Ui, title: &str) {
-    ui.label(
-        RichText::new(title)
-            .color(TEXT)
-            .size(15.5)
-            .family(kit::semibold()),
-    );
-    ui.add_space(10.0);
+    kit::section_heading(ui, title);
 }
 
 /// A titled group of setting rows on a rounded surface. Every settings page is built from these,
 /// so spacing, edges and headings are the same everywhere.
 pub(crate) fn card(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
     section_heading(ui, title);
-    egui::Frame::new()
-        .fill(kit::CARD)
-        .stroke(Stroke::new(1.0_f32, BORDER))
-        .corner_radius(egui::CornerRadius::same(14))
+    kit::card_frame()
         .inner_margin(egui::Margin::symmetric(20, 4))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             body(ui);
         });
-    ui.add_space(28.0);
+    ui.add_space(crate::kit::space::XXL);
 }
 
 /// A titled group that draws its own surfaces, such as a row of option tiles.
 pub(crate) fn card_plain(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
     section_heading(ui, title);
     body(ui);
-    ui.add_space(28.0);
+    ui.add_space(crate::kit::space::XXL);
 }
 
 /// Paints an on/off switch into `rect` (about 40 x 22).
@@ -311,45 +303,48 @@ pub(crate) fn paint_switch(painter: &egui::Painter, rect: egui::Rect, on: bool) 
 /// A search box with a magnifying glass, in the same style as the other text inputs.
 pub(crate) fn search_box(ui: &mut egui::Ui, text: &mut String, hint: &str) -> egui::Response {
     let mut response = None;
-    egui::Frame::new()
-        .fill(Color32::from_rgb(13, 13, 15))
-        .stroke(Stroke::new(1.0_f32, BORDER))
-        .corner_radius(egui::CornerRadius::same(10))
-        .inner_margin(egui::Margin::symmetric(12, 8))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let (icon, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
-                kit::draw_icon(ui.painter(), icon.center(), kit::Icon::Search, MUTED, 0.75);
-                response = Some(
-                    ui.add(
-                        egui::TextEdit::singleline(text)
-                            .hint_text(hint)
-                            .frame(false)
-                            .char_limit(100)
-                            .desired_width(f32::INFINITY),
-                    ),
-                );
-            });
+    kit::field_frame().show(ui, |ui| {
+        ui.set_min_height(crate::kit::control::FIELD_INNER);
+        ui.horizontal(|ui| {
+            let (icon, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
+            kit::draw_icon(ui.painter(), icon.center(), kit::Icon::Search, MUTED, 0.75);
+            response = Some(
+                ui.add(
+                    egui::TextEdit::singleline(text)
+                        .hint_text(hint)
+                        .frame(false)
+                        .char_limit(100)
+                        .desired_width(f32::INFINITY),
+                ),
+            );
         });
+    });
     response.unwrap_or_else(|| ui.allocate_response(Vec2::ZERO, egui::Sense::hover()))
 }
 
 /// A row with a switch on the right.
 pub(crate) fn toggle_row(ui: &mut egui::Ui, title: &str, help: &str, value: &mut bool, last: bool) {
-    ui.add_space(14.0);
+    ui.add_space(crate::kit::space::LG);
     ui.horizontal(|ui| {
-        let text_width = (ui.available_width() - 56.0).max(0.0);
+        // The switch sits at the row's right edge, where the switches of the other pages sit.
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let text_width = (ui.available_width() - 40.0 - crate::kit::space::MD).max(0.0);
         ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = crate::kit::space::XS;
             ui.set_width(text_width);
             ui.label(
                 RichText::new(title)
                     .color(TEXT)
-                    .size(14.5)
+                    .size(crate::kit::text_size::BODY)
                     .family(kit::semibold()),
             );
-            ui.label(RichText::new(help).color(MUTED).size(12.5));
+            ui.label(
+                RichText::new(help)
+                    .color(MUTED)
+                    .size(crate::kit::text_size::CAPTION),
+            );
         });
-        ui.add_space(12.0);
+        ui.add_space(crate::kit::space::MD);
         let (rect, response) = ui.allocate_exact_size(Vec2::new(40.0, 22.0), egui::Sense::click());
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *value, title)
@@ -359,7 +354,7 @@ pub(crate) fn toggle_row(ui: &mut egui::Ui, title: &str, help: &str, value: &mut
             *value = !*value;
         }
     });
-    ui.add_space(14.0);
+    ui.add_space(crate::kit::space::LG);
     if !last {
         divider(ui);
     }
@@ -373,19 +368,23 @@ pub(crate) fn divider(ui: &mut egui::Ui) {
 
 /// A label on the left and its value on the right, for facts rather than settings.
 pub(crate) fn info_row(ui: &mut egui::Ui, label: &str, value: &str, last: bool) {
-    ui.add_space(14.0);
+    ui.add_space(crate::kit::space::LG);
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(label)
                 .color(TEXT)
-                .size(14.5)
+                .size(crate::kit::text_size::BODY)
                 .family(kit::semibold()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(RichText::new(value).color(MUTED).size(13.5));
+            ui.label(
+                RichText::new(value)
+                    .color(MUTED)
+                    .size(crate::kit::text_size::SMALL),
+            );
         });
     });
-    ui.add_space(14.0);
+    ui.add_space(crate::kit::space::LG);
     if !last {
         divider(ui);
     }
@@ -397,13 +396,13 @@ pub(crate) fn radio_row(ui: &mut egui::Ui, title: &str, help: &str, selected: bo
     let text_width = (width - 30.0).max(1.0);
     let title_galley = ui.painter().layout(
         title.to_owned(),
-        egui::FontId::new(14.0, kit::medium()),
+        egui::FontId::new(crate::kit::text_size::BODY, kit::medium()),
         TEXT,
         text_width,
     );
     let help_galley = ui.painter().layout(
         help.to_owned(),
-        egui::FontId::proportional(12.5),
+        egui::FontId::proportional(crate::kit::text_size::CAPTION),
         MUTED,
         text_width,
     );
@@ -440,20 +439,25 @@ pub(crate) fn setting_row(
     last: bool,
     controls: impl FnOnce(&mut egui::Ui),
 ) {
-    ui.add_space(14.0);
+    ui.add_space(crate::kit::space::LG);
     ui.label(
         RichText::new(title)
             .color(TEXT)
-            .size(14.5)
+            .size(crate::kit::text_size::BODY)
             .family(kit::semibold()),
     );
-    ui.label(RichText::new(help).color(MUTED).size(12.5));
-    ui.add_space(8.0);
+    ui.label(
+        RichText::new(help)
+            .color(MUTED)
+            .size(crate::kit::text_size::CAPTION),
+    );
+    ui.add_space(crate::kit::space::SM);
     ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+        ui.spacing_mut().item_spacing =
+            egui::Vec2::new(crate::kit::space::SM, crate::kit::space::SM);
         controls(ui);
     });
-    ui.add_space(14.0);
+    ui.add_space(crate::kit::space::LG);
     if !last {
         let (line, _) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
@@ -470,8 +474,12 @@ fn dropdown(
 ) -> Option<usize> {
     let mut chosen = None;
     ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 6.0;
-        ui.label(RichText::new(label).color(MUTED).size(12.5));
+        ui.spacing_mut().item_spacing.y = crate::kit::space::SM;
+        ui.label(
+            RichText::new(label)
+                .color(MUTED)
+                .size(crate::kit::text_size::CAPTION),
+        );
         let shown: String = if current.chars().count() > 30 {
             current
                 .chars()
@@ -538,7 +546,8 @@ fn quality_tile(
     } else {
         CARD
     };
-    ui.painter().rect_filled(rect, 12.0, fill);
+    ui.painter()
+        .rect_filled(rect, f32::from(crate::kit::radius::LG), fill);
     ui.painter().rect_stroke(
         rect,
         12.0,
@@ -561,25 +570,25 @@ fn quality_tile(
     write(
         14.0,
         mode.label(),
-        egui::FontId::new(15.0, kit::semibold()),
+        egui::FontId::new(crate::kit::text_size::LEAD, kit::semibold()),
         TEXT,
     );
     write(
         36.0,
         &facts.picture,
-        egui::FontId::proportional(12.5),
+        egui::FontId::proportional(crate::kit::text_size::CAPTION),
         MUTED,
     );
     write(
         56.0,
         &format!("\u{2248} {}", facts.size),
-        egui::FontId::new(20.0, kit::semibold()),
+        egui::FontId::new(crate::kit::text_size::TITLE, kit::semibold()),
         if selected { LIME } else { TEXT },
     );
     write(
         82.0,
         &format!("per {} clip", facts.length),
-        egui::FontId::proportional(12.0),
+        egui::FontId::proportional(crate::kit::text_size::CAPTION),
         FAINT,
     );
     response.clicked() && !selected
@@ -630,14 +639,14 @@ fn clip_length(settings: &RecordingSettings) -> String {
 
 /// One line: clipping keeps no full recording.
 fn clip_size_note(ui: &mut egui::Ui, settings: &RecordingSettings) {
-    ui.add_space(10.0);
+    ui.add_space(crate::kit::space::MD);
     ui.label(
         RichText::new(format!(
             "Clipping keeps only the last {} in memory. Nothing is saved to disk until you save a clip.",
             clip_length(settings)
         ))
         .color(MUTED)
-        .size(12.5),
+        .size(crate::kit::text_size::CAPTION),
     )
     .on_hover_text(
         "Sizes are estimated from the bitrate for your clip length (Settings \u{203a} Audio). Variable bitrate can be smaller when the picture is calm.",
@@ -761,8 +770,8 @@ pub fn games_tab(
                 );
             }
             if settings.desktop_capture_mode != DesktopCaptureMode::Never {
-                ui.add_space(8.0);
-                ui.label(RichText::new("Desktop capture can include other apps. These modes keep a bounded replay buffer. Nothing is saved when a game closes or the desktop timer ends; clips are saved only when you press the save shortcut. Stop pauses automatic recording until you press Start again.").color(MUTED).size(12.5));
+                ui.add_space(crate::kit::space::SM);
+                ui.label(RichText::new("Desktop capture can include other apps. These modes keep a bounded replay buffer. Nothing is saved when a game closes or the desktop timer ends; clips are saved only when you press the save shortcut. Stop pauses automatic recording until you press Start again.").color(MUTED).size(crate::kit::text_size::CAPTION));
             }
         }
     });
@@ -775,17 +784,17 @@ pub fn games_tab(
             &mut settings.detect_built_in_games,
             true,
         );
-        ui.add_space(4.0);
+        ui.add_space(crate::kit::space::XS);
         let response = search_box(ui, &mut state.builtin_game_search, "Search known games");
         kit::name_text_box(&response, "Search known games", &state.builtin_game_search);
-        ui.add_space(12.0);
+        ui.add_space(crate::kit::space::MD);
         let query = state.builtin_game_search.trim().to_lowercase();
         let mut change = None;
         let mut found = 0;
         egui::Frame::new()
             .fill(Color32::from_rgb(22, 22, 26))
             .stroke(Stroke::new(1.0_f32, BORDER))
-            .corner_radius(egui::CornerRadius::same(10))
+            .corner_radius(egui::CornerRadius::same(crate::kit::radius::MD))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 egui::ScrollArea::vertical()
@@ -810,12 +819,12 @@ pub fn games_tab(
                         }
                     });
             });
-        ui.add_space(10.0);
+        ui.add_space(crate::kit::space::MD);
         if found == 0 {
             ui.label(
                 RichText::new("No known games match. You can add a custom game below.")
                     .color(FAINT)
-                    .size(12.5),
+                    .size(crate::kit::text_size::CAPTION),
             );
         }
         if let Some((id, enabled)) = change {
@@ -824,9 +833,13 @@ pub fn games_tab(
                 .map(|error| error.to_string());
         }
         if let Some(error) = &state.game_preset_error {
-            ui.label(RichText::new(error).color(DANGER).size(12.5));
+            ui.label(
+                RichText::new(error)
+                    .color(DANGER)
+                    .size(crate::kit::text_size::CAPTION),
+            );
         }
-        ui.add_space(5.0);
+        ui.add_space(crate::kit::space::XS);
         ui.label(
             RichText::new(if settings.detect_built_in_games {
                 format!(
@@ -837,7 +850,7 @@ pub fn games_tab(
                 "Built-in recognition is off. Custom rules still apply.".to_owned()
             })
             .color(MUTED)
-            .size(12.5),
+            .size(crate::kit::text_size::CAPTION),
         );
     });
 
@@ -853,7 +866,11 @@ pub fn games_tab(
             refresh_processes = true;
         }
         if let Some(warning) = &state.steam_warning {
-            ui.label(RichText::new(warning).color(DANGER).size(12.5));
+            ui.label(
+                RichText::new(warning)
+                    .color(DANGER)
+                    .size(crate::kit::text_size::CAPTION),
+            );
         }
         if state.steam_games.skipped > 0 {
             ui.label(
@@ -862,11 +879,11 @@ pub fn games_tab(
                     state.steam_games.skipped
                 ))
                 .color(MUTED)
-                .size(12.5),
+                .size(crate::kit::text_size::CAPTION),
             );
         }
         if state.steam_games.games.is_empty() {
-            ui.label(RichText::new("No installed Steam games found yet. Refresh after opening Steam or adding a library.").color(MUTED).size(12.5));
+            ui.label(RichText::new("No installed Steam games found yet. Refresh after opening Steam or adding a library.").color(MUTED).size(crate::kit::text_size::CAPTION));
         } else {
             let query = state.builtin_game_search.trim().to_lowercase();
             egui::ScrollArea::vertical()
@@ -912,10 +929,11 @@ pub fn games_tab(
 fn game_form_section(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
     ui.scope(|ui| {
         ui.set_width(ui.available_width().max(0.0));
-        ui.spacing_mut().item_spacing = Vec2::new(16.0, 10.0);
+        ui.spacing_mut().item_spacing =
+            egui::Vec2::new(crate::kit::space::LG, crate::kit::space::MD);
         ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0_f32, BORDER);
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(13, 13, 15);
-        let rounding = egui::CornerRadius::same(10);
+        let rounding = egui::CornerRadius::same(crate::kit::radius::PILL);
         ui.visuals_mut().widgets.inactive.corner_radius = rounding;
         ui.visuals_mut().widgets.hovered.corner_radius = rounding;
         ui.visuals_mut().widgets.active.corner_radius = rounding;
@@ -926,11 +944,11 @@ fn game_form_section(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
 
 fn game_field(ui: &mut egui::Ui, label: &str, hint: &str, value: &mut String, limit: usize) {
     ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 7.0;
+        ui.spacing_mut().item_spacing.y = crate::kit::space::SM;
         ui.label(
             RichText::new(label)
                 .color(TEXT)
-                .size(13.0)
+                .size(crate::kit::text_size::SMALL)
                 .family(kit::medium()),
         );
         let response = ui.add(
@@ -968,16 +986,16 @@ fn game_fields(
     ui.label(
         RichText::new("Use executable names, not file paths. Separate multiple names with commas.")
             .color(MUTED)
-            .size(12.0),
+            .size(crate::kit::text_size::CAPTION),
     );
-    ui.add_space(4.0);
+    ui.add_space(crate::kit::space::XS);
     game_field(ui, "Steam app IDs (optional)", "e.g. 730", steam_ids, 168);
     ui.label(
         RichText::new(
             "Linux only. An exact Steam ID can distinguish games that share a process name.",
         )
         .color(MUTED)
-        .size(12.0),
+        .size(crate::kit::text_size::CAPTION),
     );
 }
 
@@ -989,15 +1007,15 @@ fn custom_games(
     let mut refresh_processes = false;
     card(ui, "Add a custom game", |ui| {
         game_form_section(ui, |ui| {
-            ui.add_space(14.0);
+            ui.add_space(crate::kit::space::LG);
             ui.label(
                 RichText::new(
                     "Add a game that is missing from the built-in list, or give it your own name. Custom rules take priority.",
                 )
                 .color(MUTED)
-                .size(12.5),
+                .size(crate::kit::text_size::CAPTION),
             );
-            ui.add_space(12.0);
+            ui.add_space(crate::kit::space::MD);
             let mut unique_processes: Vec<clipcraft_platform::RunningProcess> = Vec::new();
             for process in &state.game_processes {
                 if unique_processes.iter().any(|existing| {
@@ -1036,7 +1054,7 @@ fn custom_games(
                     state.select_game_process(process);
                 }
                 ui.vertical(|ui| {
-                    ui.add_space(21.0);
+                    ui.add_space(crate::kit::space::XL);
                     if kit::labelled_button(ui, kit::Icon::Loop, "Refresh apps", false, true)
                         .clicked()
                     {
@@ -1045,23 +1063,27 @@ fn custom_games(
                 });
             });
             if let Some(error) = state.game_process_error.as_ref() {
-                ui.label(RichText::new(error).color(DANGER).size(12.5));
+                ui.label(
+                    RichText::new(error)
+                        .color(DANGER)
+                        .size(crate::kit::text_size::CAPTION),
+                );
             } else if state.game_processes_loaded && state.game_processes.is_empty() {
                 ui.label(
                     RichText::new("No running apps found. You can enter the details below.")
                         .color(MUTED)
-                        .size(12.5),
+                        .size(crate::kit::text_size::CAPTION),
                 );
             } else if unique_processes.is_empty() {
                 ui.label(
                     RichText::new("Refresh apps to load the list, or enter a process name below.")
                         .color(MUTED)
-                        .size(12.5),
+                        .size(crate::kit::text_size::CAPTION),
                 );
             }
-            ui.add_space(12.0);
+            ui.add_space(crate::kit::space::MD);
             divider(ui);
-            ui.add_space(14.0);
+            ui.add_space(crate::kit::space::LG);
             ui.push_id("new-game", |ui| {
                 game_fields(
                     ui,
@@ -1070,7 +1092,7 @@ fn custom_games(
                     &mut state.game_steam_id_draft,
                 );
             });
-            ui.add_space(14.0);
+            ui.add_space(crate::kit::space::LG);
         });
         divider(ui);
         toggle_row(
@@ -1123,22 +1145,26 @@ fn custom_games(
             ("", MUTED)
         };
         if !message.is_empty() {
-            ui.add_space(6.0);
-            ui.label(RichText::new(message).color(color).size(12.5));
+            ui.add_space(crate::kit::space::SM);
+            ui.label(
+                RichText::new(message)
+                    .color(color)
+                    .size(crate::kit::text_size::CAPTION),
+            );
         }
     });
-    ui.add_space(28.0);
+    ui.add_space(crate::kit::space::HUGE);
     card(ui, "Custom games and overrides", |ui| {
         if settings.game_rules.is_empty() {
-            ui.add_space(14.0);
+            ui.add_space(crate::kit::space::LG);
             ui.label(
                 RichText::new(
                     "No custom rules yet. Known games are handled by the built-in list above.",
                 )
                 .color(MUTED)
-                .size(12.5),
+                .size(crate::kit::text_size::CAPTION),
             );
-            ui.add_space(14.0);
+            ui.add_space(crate::kit::space::LG);
         }
         let mut remove = None;
         for (index, rule) in settings.game_rules.iter_mut().enumerate() {
@@ -1147,12 +1173,12 @@ fn custom_games(
             }
             ui.push_id(("custom-game", index), |ui| {
                 game_form_section(ui, |ui| {
-                    ui.add_space(14.0);
+                    ui.add_space(crate::kit::space::LG);
                     ui.horizontal(|ui| {
                         ui.label(
                             RichText::new(format!("Custom rule {}", index + 1))
                                 .color(TEXT)
-                                .size(14.5)
+                                .size(crate::kit::text_size::BODY)
                                 .family(kit::semibold()),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1169,7 +1195,7 @@ fn custom_games(
                             }
                         });
                     });
-                    ui.add_space(6.0);
+                    ui.add_space(crate::kit::space::SM);
                     let mut needles = rule.needles.join(", ");
                     let mut app_ids = rule.steam_app_ids.join(", ");
                     let before = (needles.clone(), app_ids.clone());
@@ -1180,7 +1206,7 @@ fn custom_games(
                     if app_ids != before.1 {
                         rule.steam_app_ids = parse_list(&app_ids);
                     }
-                    ui.add_space(8.0);
+                    ui.add_space(crate::kit::space::SM);
                 });
                 toggle_row(
                     ui,
@@ -1394,26 +1420,30 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
     card(ui, "Shortcuts", |ui| {
         let count = HotkeyAction::ALL.len();
         for (index, action) in HotkeyAction::ALL.into_iter().enumerate() {
-            ui.add_space(14.0);
+            ui.add_space(crate::kit::space::LG);
             ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.x = 12.0;
+                ui.spacing_mut().item_spacing.x = crate::kit::space::MD;
                 ui.vertical(|ui| {
                     ui.label(
                         RichText::new(action.label())
                             .color(TEXT)
-                            .size(14.5)
+                            .size(crate::kit::text_size::BODY)
                             .family(kit::semibold()),
                     );
-                    ui.label(RichText::new(action.detail()).color(MUTED).size(12.5));
+                    ui.label(
+                        RichText::new(action.detail())
+                            .color(MUTED)
+                            .size(crate::kit::text_size::CAPTION),
+                    );
                     if let Some(other) = settings.hotkeys.conflict(action) {
                         ui.label(
                             RichText::new(format!("Also used by “{}”.", other.label()))
                                 .color(DANGER)
-                                .size(12.5),
+                                .size(crate::kit::text_size::CAPTION),
                         );
                     }
                 });
-                ui.add_space(6.0);
+                ui.add_space(crate::kit::space::SM);
                 let bindings: Vec<String> = settings
                     .hotkeys
                     .bindings(action)
@@ -1439,7 +1469,7 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
                             }))
                             .fill(Color32::from_rgb(13, 13, 15))
                             .stroke(Stroke::new(1.0_f32, if waiting { LIME } else { BORDER }))
-                            .min_size(Vec2::new(150.0, 34.0)),
+                            .min_size(Vec2::new(150.0, crate::kit::control::STANDARD)),
                         );
                         response.widget_info(|| {
                             egui::WidgetInfo::labeled(
@@ -1490,7 +1520,7 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
                     let add = ui.add_enabled(
                         count < clipcraft_engine::Hotkeys::MAX_BINDINGS,
                         egui::Button::new(if adding { "Press a key…" } else { "+" })
-                            .min_size(Vec2::new(34.0, 34.0)),
+                            .min_size(Vec2::splat(crate::kit::control::STANDARD)),
                     );
                     add.widget_info(|| {
                         egui::WidgetInfo::labeled(
@@ -1506,14 +1536,18 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
                         state.capturing = if adding { None } else { Some((action, count)) };
                         state.hotkey_error = None;
                     }
-                    ui.label(RichText::new(format!("{count}/5")).color(FAINT).size(12.0));
+                    ui.label(
+                        RichText::new(format!("{count}/5"))
+                            .color(FAINT)
+                            .size(crate::kit::text_size::CAPTION),
+                    );
                 });
                 if let Some(index) = remove {
                     settings.hotkeys.remove_binding(action, index);
                     state.capturing = None;
                 }
             });
-            ui.add_space(14.0);
+            ui.add_space(crate::kit::space::LG);
             if index + 1 < count {
                 divider(ui);
             }
@@ -1525,15 +1559,15 @@ pub fn hotkeys_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &
     ui.label(
         RichText::new("Click a shortcut, then press the keys you want. Press Esc to cancel.")
             .color(FAINT)
-            .size(12.5),
+            .size(crate::kit::text_size::CAPTION),
     );
-    ui.add_space(12.0);
+    ui.add_space(crate::kit::space::MD);
     if kit::labelled_button(ui, kit::Icon::Loop, "Reset to defaults", false, true).clicked() {
         settings.hotkeys = clipcraft_engine::Hotkeys::default();
         state.capturing = None;
         state.hotkey_error = None;
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::kit::space::SM);
 }
 
 fn request_usage(state: &mut SettingsState, context: &egui::Context, folder: PathBuf, force: bool) {
@@ -1582,11 +1616,11 @@ pub fn storage_tab(
         state.usage = Some(usage);
     }
     card(ui, "Clips folder", |ui| {
-        ui.add_space(14.0);
+        ui.add_space(crate::kit::space::LG);
         ui.label(
             RichText::new("Where clips are saved")
                 .color(TEXT)
-                .size(14.5)
+                .size(crate::kit::text_size::BODY)
                 .family(kit::semibold()),
         );
         ui.label(
@@ -1594,40 +1628,34 @@ pub fn storage_tab(
                 "New clips go here, and this is the folder your library shows. Existing clips are not moved.",
             )
             .color(MUTED)
-            .size(12.5),
+            .size(crate::kit::text_size::CAPTION),
         );
-        ui.add_space(8.0);
-        egui::Frame::new()
-            .fill(Color32::from_rgb(13, 13, 15))
-            .stroke(Stroke::new(1.0_f32, BORDER))
-            .corner_radius(egui::CornerRadius::same(10))
-            .inner_margin(egui::Margin::symmetric(14, 8))
-            .show(ui, |ui| {
-                ui.allocate_ui_with_layout(
-                    Vec2::new(ui.available_width(), 34.0),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        let (icon, _) =
-                            ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
-                        kit::draw_icon(ui.painter(), icon.center(), kit::Icon::Folder, MUTED, 0.8);
-                        let shown = folder.as_ref().map_or_else(
-                            || "No folder available".to_owned(),
-                            |f| f.to_string_lossy().into_owned(),
-                        );
-                        ui.add_space(6.0);
-                        ui.add(egui::Label::new(RichText::new(shown).color(TEXT)).truncate());
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            *browse =
-                                kit::labelled_button(ui, kit::Icon::Folder, "Browse", false, true)
-                                    .clicked();
-                        });
-                    },
-                );
-            });
-        ui.add_space(14.0);
+        ui.add_space(crate::kit::space::SM);
+        kit::field_frame().show(ui, |ui| {
+            ui.allocate_ui_with_layout(
+                Vec2::new(ui.available_width(), 34.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    let (icon, _) = ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
+                    kit::draw_icon(ui.painter(), icon.center(), kit::Icon::Folder, MUTED, 0.8);
+                    let shown = folder.as_ref().map_or_else(
+                        || "No folder available".to_owned(),
+                        |f| f.to_string_lossy().into_owned(),
+                    );
+                    ui.add_space(crate::kit::space::SM);
+                    ui.add(egui::Label::new(RichText::new(shown).color(TEXT)).truncate());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        *browse =
+                            kit::labelled_button(ui, kit::Icon::Folder, "Browse", false, true)
+                                .clicked();
+                    });
+                },
+            );
+        });
+        ui.add_space(crate::kit::space::LG);
     });
     card(ui, "Storage used", |ui| {
-        ui.add_space(14.0);
+        ui.add_space(crate::kit::space::LG);
         let limit_bytes = u64::from(settings.storage_limit_gb) * 1_000_000_000;
         match &state.usage {
             Some(usage) => {
@@ -1641,17 +1669,17 @@ pub fn storage_tab(
                 ui.label(
                     RichText::new(clips)
                         .color(TEXT)
-                        .size(14.5)
+                        .size(crate::kit::text_size::BODY)
                         .family(kit::semibold()),
                 );
-                ui.add_space(8.0);
+                ui.add_space(crate::kit::space::SM);
                 if limit_bytes > 0 {
                     usage_bar(
                         ui,
                         usage.used_bytes as f32 / limit_bytes as f32,
                         usage.used_bytes > limit_bytes,
                     );
-                    ui.add_space(6.0);
+                    ui.add_space(crate::kit::space::SM);
                     ui.label(
                         RichText::new(format!(
                             "{} of your {} GB limit",
@@ -1659,12 +1687,12 @@ pub fn storage_tab(
                             settings.storage_limit_gb
                         ))
                         .color(MUTED)
-                        .size(12.5),
+                        .size(crate::kit::text_size::CAPTION),
                     );
                 } else if let Some(total) = usage.total_bytes.filter(|total| *total > 0) {
                     usage_bar(ui, usage.used_bytes as f32 / total as f32, false);
                 }
-                ui.add_space(10.0);
+                ui.add_space(crate::kit::space::MD);
                 if let (Some(free), Some(total)) = (usage.free_bytes, usage.total_bytes) {
                     ui.label(
                         RichText::new(format!(
@@ -1673,14 +1701,14 @@ pub fn storage_tab(
                             crate::format_bytes(total)
                         ))
                         .color(MUTED)
-                        .size(12.5),
+                        .size(crate::kit::text_size::CAPTION),
                     );
                 }
                 if !usage.exists {
                     ui.label(
                         RichText::new("The folder does not exist yet. It is created when the first clip is saved.")
                             .color(FAINT)
-                            .size(12.5),
+                            .size(crate::kit::text_size::CAPTION),
                     );
                 }
             }
@@ -1688,13 +1716,13 @@ pub fn storage_tab(
                 ui.label(RichText::new("Measuring…").color(MUTED));
             }
         }
-        ui.add_space(10.0);
+        ui.add_space(crate::kit::space::MD);
         if kit::labelled_button(ui, kit::Icon::Loop, "Refresh", false, true).clicked()
             && let Some(folder) = folder.clone()
         {
             request_usage(state, ui.ctx(), folder, true);
         }
-        ui.add_space(14.0);
+        ui.add_space(crate::kit::space::LG);
     });
     let mut rows = crate::rows::Rows::new("");
     pages::storage_rows(&mut rows, ui, settings);
@@ -1703,7 +1731,7 @@ pub fn storage_tab(
 /// The About tab: what ClipCraft is, which version this is, and where to find the project.
 pub fn about_tab(ui: &mut egui::Ui) {
     card(ui, "ClipCraft", |ui| {
-        ui.add_space(10.0);
+        ui.add_space(crate::kit::space::MD);
         ui.label(
             RichText::new(
                 "ClipCraft records your monitor or game window and keeps the last moments ready to save. Press \
@@ -1711,18 +1739,18 @@ pub fn about_tab(ui: &mut egui::Ui) {
                  clips from one library.",
             )
             .color(TEXT)
-            .size(14.5),
+            .size(crate::kit::text_size::BODY),
         );
-        ui.add_space(8.0);
+        ui.add_space(crate::kit::space::SM);
         ui.label(
             RichText::new(
                 "Everything happens on this computer. ClipCraft has no account, no upload, no \
                  sharing service and no tracking, and it works without a network connection.",
             )
             .color(MUTED)
-            .size(13.5),
+            .size(crate::kit::text_size::SMALL),
         );
-        ui.add_space(14.0);
+        ui.add_space(crate::kit::space::LG);
     });
     card(ui, "Details", |ui| {
         let version = format!(
@@ -1736,41 +1764,45 @@ pub fn about_tab(ui: &mut egui::Ui) {
     });
     card(ui, "Project", |ui| {
         let url = "https://github.com/nanox333/clipcraft";
-        ui.add_space(14.0);
+        ui.add_space(crate::kit::space::LG);
         ui.horizontal(|ui| {
             ui.add(egui::Hyperlink::from_label_and_url(
                 RichText::new("Source code and issues")
                     .color(kit::LIME)
-                    .size(14.5)
+                    .size(crate::kit::text_size::BODY)
                     .family(kit::semibold()),
                 url,
             ));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new(url).color(MUTED).size(13.0));
+                ui.label(
+                    RichText::new(url)
+                        .color(MUTED)
+                        .size(crate::kit::text_size::SMALL),
+                );
             });
         });
-        ui.add_space(14.0);
+        ui.add_space(crate::kit::space::LG);
     });
 }
 
 /// The advanced controls stay within their normal category, below its basic settings.
 pub(crate) fn custom_games_heading(ui: &mut egui::Ui) {
-    ui.add_space(4.0);
+    ui.add_space(crate::kit::space::XS);
     divider(ui);
-    ui.add_space(26.0);
+    ui.add_space(crate::kit::space::XXL);
     ui.label(
         RichText::new("Custom games")
             .color(TEXT)
             .size(20.0)
             .family(kit::semibold()),
     );
-    ui.add_space(2.0);
+    ui.add_space(crate::kit::space::XS);
     ui.label(
         RichText::new("Add a game ClipCraft does not know yet, by its program name.")
             .color(MUTED)
-            .size(13.5),
+            .size(crate::kit::text_size::SMALL),
     );
-    ui.add_space(20.0);
+    ui.add_space(crate::kit::space::XL);
 }
 
 /// The start-up switches shown on the General tab.

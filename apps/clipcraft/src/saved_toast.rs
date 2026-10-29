@@ -217,11 +217,16 @@ impl SavedToast {
             Some(texture) => {
                 ui.put(
                     picture,
-                    egui::Image::new((texture.id(), picture.size())).corner_radius(8.0),
+                    egui::Image::new((texture.id(), picture.size()))
+                        .corner_radius(crate::kit::radius::MD),
                 );
             }
             None => {
-                painter.rect_filled(picture, 8.0, Color32::from_rgb(20, 20, 24));
+                painter.rect_filled(
+                    picture,
+                    f32::from(crate::kit::radius::MD),
+                    Color32::from_rgb(20, 20, 24),
+                );
                 kit::draw_icon(&painter, picture.center(), Icon::Play, MUTED, 1.0);
             }
         }
@@ -242,22 +247,32 @@ impl SavedToast {
             } else {
                 "CLIP SAVED"
             },
-            FontId::new(10.5, semibold()),
+            FontId::new(crate::kit::text_size::CAPTION, semibold()),
             if self.deleted { DANGER } else { LIME },
         );
         let room = rect.right() - left - 34.0;
         painter.text(
             Pos2::new(left, rect.top() + 46.0),
             Align2::LEFT_CENTER,
-            fit(&painter, &self.title, FontId::new(16.0, semibold()), room),
-            FontId::new(16.0, semibold()),
+            fit(
+                &painter,
+                &self.title,
+                FontId::new(crate::kit::text_size::LEAD, semibold()),
+                room,
+            ),
+            FontId::new(crate::kit::text_size::LEAD, semibold()),
             TEXT,
         );
         painter.text(
             Pos2::new(left, rect.top() + 66.0),
             Align2::LEFT_CENTER,
-            fit(&painter, &self.meta, FontId::proportional(12.5), room),
-            FontId::proportional(12.5),
+            fit(
+                &painter,
+                &self.meta,
+                FontId::proportional(crate::kit::text_size::CAPTION),
+                room,
+            ),
+            FontId::proportional(crate::kit::text_size::CAPTION),
             MUTED,
         );
 
@@ -310,7 +325,7 @@ impl SavedToast {
             Pos2::new(play.left() + 31.0, play.center().y),
             Align2::LEFT_CENTER,
             "Play",
-            FontId::new(13.0, medium()),
+            FontId::new(crate::kit::text_size::SMALL, medium()),
             Color32::BLACK,
         );
         if response.clicked() {
@@ -342,7 +357,7 @@ impl SavedToast {
                 sure.center(),
                 Align2::CENTER_CENTER,
                 "Delete?",
-                FontId::new(13.0, medium()),
+                FontId::new(crate::kit::text_size::SMALL, medium()),
                 Color32::BLACK,
             );
             let _ = asked;

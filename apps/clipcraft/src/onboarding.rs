@@ -80,7 +80,7 @@ fn ease(t: f32) -> f32 {
 
 /// A rounded text button: lime when it is the way forward, quiet otherwise.
 fn pill_button(ui: &mut egui::Ui, label: &str, primary: bool) -> egui::Response {
-    let font = egui::FontId::new(14.5, kit::medium());
+    let font = egui::FontId::new(crate::kit::text_size::BODY, kit::medium());
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), font, Color::PLACEHOLDER);
@@ -110,8 +110,12 @@ fn pill_button(ui: &mut egui::Ui, label: &str, primary: bool) -> egui::Response 
 /// A quiet clickable word.
 fn text_link(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
-        egui::Label::new(egui::RichText::new(label).color(kit::MUTED).size(13.5))
-            .sense(egui::Sense::click()),
+        egui::Label::new(
+            egui::RichText::new(label)
+                .color(kit::MUTED)
+                .size(crate::kit::text_size::SMALL),
+        )
+        .sense(egui::Sense::click()),
     )
     .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -202,14 +206,14 @@ fn stepper(ui: &mut egui::Ui, current: usize, progress: f32) {
             } else {
                 (index + 1).to_string()
             },
-            egui::FontId::new(13.5, kit::semibold()),
+            egui::FontId::new(crate::kit::text_size::SMALL, kit::semibold()),
             ink,
         );
         painter.text(
             egui::pos2(at.x, rect.top() + 46.0),
             egui::Align2::CENTER_CENTER,
             name,
-            egui::FontId::new(12.5, kit::medium()),
+            egui::FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
             if index == current {
                 kit::TEXT
             } else {
@@ -258,7 +262,7 @@ fn choice_tile(
             at,
             egui::Align2::CENTER_CENTER,
             "\u{2713}",
-            egui::FontId::new(12.5, kit::semibold()),
+            egui::FontId::new(crate::kit::text_size::CAPTION, kit::semibold()),
             Color::BLACK,
         );
     }
@@ -297,7 +301,11 @@ fn monitor(ui: &mut egui::Ui, games: bool) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(120.0, 84.0), egui::Sense::hover());
     let screen = egui::Rect::from_min_size(rect.min, egui::vec2(120.0, 66.0));
     let painter = ui.painter();
-    painter.rect_filled(screen, 8.0, Color::from_rgb(20, 20, 23));
+    painter.rect_filled(
+        screen,
+        f32::from(crate::kit::radius::MD),
+        Color::from_rgb(20, 20, 23),
+    );
     painter.rect_stroke(
         screen,
         8.0,
@@ -350,25 +358,30 @@ fn tile_text(ui: &mut egui::Ui, heading: &str, body: &str) {
     ui.label(
         egui::RichText::new(heading)
             .color(kit::TEXT)
-            .size(17.0)
+            .size(crate::kit::text_size::LEAD)
             .family(kit::semibold()),
     );
-    ui.add_space(3.0);
-    ui.label(egui::RichText::new(body).color(kit::MUTED).size(13.0));
+    ui.add_space(crate::kit::space::XS);
+    ui.label(
+        egui::RichText::new(body)
+            .color(kit::MUTED)
+            .size(crate::kit::text_size::SMALL),
+    );
 }
 
 /// A little pill with a dot: green when something is ready.
 fn chip(ui: &mut egui::Ui, ready: bool, text: &str) {
     let galley = ui.painter().layout_no_wrap(
         text.to_owned(),
-        egui::FontId::new(12.5, kit::medium()),
+        egui::FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
         Color::PLACEHOLDER,
     );
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(galley.size().x + 38.0, 30.0),
         egui::Sense::hover(),
     );
-    ui.painter().rect_filled(rect, 15.0, kit::CARD);
+    ui.painter()
+        .rect_filled(rect, f32::from(crate::kit::radius::LG), kit::CARD);
     ui.painter().rect_stroke(
         rect,
         15.0,
@@ -391,7 +404,7 @@ fn chip(ui: &mut egui::Ui, ready: bool, text: &str) {
 fn keycap(ui: &mut egui::Ui, text: &str, active: bool) {
     let galley = ui.painter().layout_no_wrap(
         text.to_owned(),
-        egui::FontId::new(15.0, kit::semibold()),
+        egui::FontId::new(crate::kit::text_size::LEAD, kit::semibold()),
         Color::PLACEHOLDER,
     );
     let (rect, _) = ui.allocate_exact_size(
@@ -399,8 +412,11 @@ fn keycap(ui: &mut egui::Ui, text: &str, active: bool) {
         egui::Sense::hover(),
     );
     let body = egui::Rect::from_min_max(rect.min, rect.max - egui::vec2(0.0, 3.0));
-    ui.painter()
-        .rect_filled(rect, 9.0, Color::from_rgb(20, 20, 23));
+    ui.painter().rect_filled(
+        rect,
+        f32::from(crate::kit::radius::MD),
+        Color::from_rgb(20, 20, 23),
+    );
     ui.painter().rect_filled(
         body,
         9.0,
@@ -464,14 +480,14 @@ fn timeline(ui: &mut egui::Ui, seconds: u32) {
         egui::pos2(bar.left(), rect.top() + 8.0),
         egui::Align2::LEFT_CENTER,
         "Earlier",
-        egui::FontId::new(12.0, kit::medium()),
+        egui::FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
         kit::FAINT,
     );
     painter.text(
         egui::pos2(bar.right(), rect.top() + 8.0),
         egui::Align2::RIGHT_CENTER,
         "You press the save shortcut",
-        egui::FontId::new(12.0, kit::medium()),
+        egui::FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
         kit::MUTED,
     );
     let near_end = lit.left() > bar.right() - 280.0;
@@ -490,7 +506,7 @@ fn timeline(ui: &mut egui::Ui, seconds: u32) {
             egui::Align2::LEFT_CENTER
         },
         format!("\u{2190} the last {seconds} seconds become your clip"),
-        egui::FontId::new(13.0, kit::semibold()),
+        egui::FontId::new(crate::kit::text_size::SMALL, kit::semibold()),
         kit::LIME,
     );
 }
@@ -518,18 +534,18 @@ impl ClipCraftApp {
                 egui::Frame::new()
                     .fill(kit::SIDEBAR)
                     .stroke(egui::Stroke::new(1.0_f32, kit::BORDER))
-                    .inner_margin(egui::Margin::symmetric(18, 0)),
+                    .inner_margin(egui::Margin::symmetric(20, 0)),
             )
             .show(context, |ui| {
                 ui.horizontal_centered(|ui| {
                     let (rect, _) =
                         ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::hover());
                     kit::brand_mark(ui, rect);
-                    ui.add_space(6.0);
+                    ui.add_space(crate::kit::space::SM);
                     ui.label(
                         egui::RichText::new("ClipCraft setup")
                             .color(kit::TEXT)
-                            .size(15.0)
+                            .size(crate::kit::text_size::LEAD)
                             .family(kit::semibold()),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -585,7 +601,7 @@ impl ClipCraftApp {
                                         }
                                     }
                                     if !last {
-                                        ui.add_space(8.0);
+                                        ui.add_space(crate::kit::space::SM);
                                         if text_link(ui, "Skip setup")
                                             .on_hover_text(
                                                 "Keep the settings shown and leave setup.",
@@ -653,7 +669,7 @@ impl ClipCraftApp {
                             ui.add_space(pad);
                             ui.vertical(|ui| {
                                 ui.set_width(width);
-                                ui.add_space(24.0);
+                                ui.add_space(crate::kit::space::XXL);
                                 stepper(ui, setup.step, arrived);
                                 ui.add_space(10.0 + (1.0 - arrived) * 22.0);
                                 ui.scope(|ui| {
@@ -693,9 +709,13 @@ fn heading(ui: &mut egui::Ui, title: &str, lead: &str) {
             .size(32.0)
             .family(kit::semibold()),
     );
-    ui.add_space(4.0);
-    ui.label(egui::RichText::new(lead).color(kit::MUTED).size(15.0));
-    ui.add_space(24.0);
+    ui.add_space(crate::kit::space::XS);
+    ui.label(
+        egui::RichText::new(lead)
+            .color(kit::MUTED)
+            .size(crate::kit::text_size::LEAD),
+    );
+    ui.add_space(crate::kit::space::XXL);
 }
 
 /// The first page: a glowing mark, a big hello, what was found, and three reasons to carry on.
@@ -707,14 +727,14 @@ fn welcome(ui: &mut egui::Ui, gpu: &settings::GpuProbe) {
             ui,
             egui::Rect::from_center_size(rect.center(), egui::vec2(92.0, 92.0)),
         );
-        ui.add_space(6.0);
+        ui.add_space(crate::kit::space::SM);
         ui.label(
             egui::RichText::new("Welcome to ClipCraft")
                 .color(kit::TEXT)
                 .size(40.0)
                 .family(kit::semibold()),
         );
-        ui.add_space(8.0);
+        ui.add_space(crate::kit::space::SM);
         ui.scope(|ui| {
             ui.set_max_width(560.0);
             ui.label(
@@ -722,10 +742,10 @@ fn welcome(ui: &mut egui::Ui, gpu: &settings::GpuProbe) {
                     "Instant game clips, saved on your own computer. Setup takes about a minute, and everything can be changed later in Settings.",
                 )
                 .color(kit::MUTED)
-                .size(15.0),
+                .size(crate::kit::text_size::LEAD),
             );
         });
-        ui.add_space(16.0);
+        ui.add_space(crate::kit::space::LG);
         ui.horizontal(|ui| {
             // Centre the row of chips.
             let chips_width = 330.0;
@@ -737,10 +757,10 @@ fn welcome(ui: &mut egui::Ui, gpu: &settings::GpuProbe) {
             }
         });
     });
-    ui.add_space(24.0);
+    ui.add_space(crate::kit::space::XXL);
     let tile_width = (ui.available_width() - 28.0) / 3.0;
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 14.0;
+        ui.spacing_mut().item_spacing.x = crate::kit::space::LG;
         for (icon, title, body) in [
             (
                 kit::Icon::Record,
@@ -759,7 +779,7 @@ fn welcome(ui: &mut egui::Ui, gpu: &settings::GpuProbe) {
             ),
         ] {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(tile_width, 168.0), egui::Sense::hover());
-            ui.painter().rect_filled(rect, 18.0, kit::CARD);
+            ui.painter().rect_filled(rect, f32::from(crate::kit::radius::LG), kit::CARD);
             ui.painter().rect_stroke(
                 rect,
                 18.0,
@@ -774,7 +794,7 @@ fn welcome(ui: &mut egui::Ui, gpu: &settings::GpuProbe) {
             let (badge, _) = inner.allocate_exact_size(egui::vec2(42.0, 42.0), egui::Sense::hover());
             inner.painter().circle_filled(badge.center(), 21.0, lime_alpha(30));
             kit::draw_icon(inner.painter(), badge.center(), icon, kit::LIME, 0.9);
-            inner.add_space(12.0);
+            inner.add_space(crate::kit::space::MD);
             tile_text(&mut inner, title, body);
         }
     });
@@ -809,19 +829,19 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
             );
             let width = (ui.available_width() - 28.0) / 3.0;
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 14.0;
+                ui.spacing_mut().item_spacing.x = crate::kit::space::LG;
                 for (index, profile) in settings::PROFILES.iter().enumerate() {
                     let selected = (profile.is_active)(&setup.draft);
                     let clicked =
                         choice_tile(ui, egui::vec2(width, 232.0), selected, profile.name, |ui| {
                             level_bars(ui, index + 1);
-                            ui.add_space(14.0);
+                            ui.add_space(crate::kit::space::LG);
                             tile_text(ui, profile.name, profile.detail);
-                            ui.add_space(8.0);
+                            ui.add_space(crate::kit::space::SM);
                             ui.label(
                                 egui::RichText::new(profile.tagline)
                                     .color(kit::LIME)
-                                    .size(13.0)
+                                    .size(crate::kit::text_size::SMALL)
                                     .family(kit::semibold()),
                             );
                         })
@@ -831,13 +851,13 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                     }
                 }
             });
-            ui.add_space(14.0);
+            ui.add_space(crate::kit::space::LG);
             ui.label(
                 egui::RichText::new(
                     "Balanced suits most computers. If your game stutters while clipping, choose Performance.",
                 )
                 .color(kit::MUTED)
-                .size(13.0),
+                .size(crate::kit::text_size::SMALL),
             );
         }
         2 => {
@@ -848,7 +868,7 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
             );
             let width = (ui.available_width() - 14.0) / 2.0;
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 14.0;
+                ui.spacing_mut().item_spacing.x = crate::kit::space::LG;
                 for (games, title, body) in [
                     (
                         true,
@@ -864,7 +884,7 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                     let selected = setup.draft.game_only_capture == games;
                     let clicked = choice_tile(ui, egui::vec2(width, 230.0), selected, title, |ui| {
                         monitor(ui, games);
-                        ui.add_space(14.0);
+                        ui.add_space(crate::kit::space::LG);
                         tile_text(ui, title, body);
                     })
                     .clicked();
@@ -873,14 +893,14 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                     }
                 }
             });
-            ui.add_space(26.0);
+            ui.add_space(crate::kit::space::XXL);
             ui.label(
                 egui::RichText::new("How far back should a clip reach?")
                     .color(kit::TEXT)
-                    .size(17.0)
+                    .size(crate::kit::text_size::LEAD)
                     .family(kit::semibold()),
             );
-            ui.add_space(8.0);
+            ui.add_space(crate::kit::space::SM);
             timeline(ui, setup.draft.replay_seconds);
             let mut rows = Rows::new("");
             rows.section(ui, "");
@@ -907,7 +927,7 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
             );
             let width = (ui.available_width() - 14.0) / 2.0;
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 14.0;
+                ui.spacing_mut().item_spacing.x = crate::kit::space::LG;
                 for (microphone, title, body) in [
                     (
                         false,
@@ -944,7 +964,7 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                             if on { kit::LIME } else { kit::MUTED },
                             0.95,
                         );
-                        ui.add_space(12.0);
+                        ui.add_space(crate::kit::space::MD);
                         tile_text(ui, title, body);
                     })
                     .clicked();
@@ -958,7 +978,7 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                 }
             });
             if setup.draft.capture_microphone {
-                ui.add_space(20.0);
+                ui.add_space(crate::kit::space::XL);
                 let mut rows = Rows::new("");
                 rows.section(ui, "Microphone");
                 rows.toggle(
@@ -992,19 +1012,43 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                         } else {
                             setup.draft.capture_folder.clone()
                         };
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(folder).color(kit::TEXT).size(13.5),
-                            )
-                            .truncate(),
-                        );
-                        if pill_button(ui, "Browse\u{2026}", false).clicked()
-                            && let Some(path) = rfd::FileDialog::new()
-                                .set_title("Choose your clips folder")
-                                .pick_folder()
-                        {
-                            setup.draft.capture_folder = path.to_string_lossy().into_owned();
-                        }
+                        kit::field_frame().show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.set_min_height(crate::kit::control::FIELD_INNER);
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if kit::labelled_button(
+                                        ui,
+                                        kit::Icon::Folder,
+                                        "Browse",
+                                        false,
+                                        true,
+                                    )
+                                    .clicked()
+                                        && let Some(path) = rfd::FileDialog::new()
+                                            .set_title("Choose your clips folder")
+                                            .pick_folder()
+                                    {
+                                        setup.draft.capture_folder =
+                                            path.to_string_lossy().into_owned();
+                                    }
+                                    ui.with_layout(
+                                        egui::Layout::left_to_right(egui::Align::Center),
+                                        |ui| {
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(folder)
+                                                        .color(kit::TEXT)
+                                                        .size(crate::kit::text_size::SMALL),
+                                                )
+                                                .truncate(),
+                                            );
+                                        },
+                                    );
+                                },
+                            );
+                        });
                     },
                 );
             });
@@ -1064,11 +1108,11 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
             if let Some(free) = setup.free_bytes {
                 facts.push(format!("{} is free on that drive.", size_text(free)));
             }
-            ui.add_space(14.0);
+            ui.add_space(crate::kit::space::LG);
             ui.label(
                 egui::RichText::new(facts.join(" "))
                     .color(kit::MUTED)
-                    .size(13.5),
+                    .size(crate::kit::text_size::SMALL),
             );
         }
         5 => {
@@ -1090,7 +1134,7 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                         1.0_f32,
                         if waiting { kit::LIME } else { kit::BORDER },
                     ))
-                    .corner_radius(16.0)
+                    .corner_radius(crate::kit::radius::LG)
                     .inner_margin(egui::Margin::symmetric(20, 16))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -1100,13 +1144,13 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                                 ui.label(
                                     egui::RichText::new(action.label())
                                         .color(kit::TEXT)
-                                        .size(16.0)
+                                        .size(crate::kit::text_size::LEAD)
                                         .family(kit::semibold()),
                                 );
                                 ui.label(
                                     egui::RichText::new(action.detail())
                                         .color(kit::MUTED)
-                                        .size(13.0),
+                                        .size(crate::kit::text_size::SMALL),
                                 );
                                 if let Some(other) = setup.draft.hotkeys.conflict(action) {
                                     ui.label(
@@ -1115,7 +1159,7 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                                             other.label()
                                         ))
                                         .color(kit::DANGER)
-                                        .size(12.5),
+                                        .size(crate::kit::text_size::CAPTION),
                                     );
                                 }
                             });
@@ -1128,12 +1172,12 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                                             if waiting { None } else { Some((action, 0)) };
                                         setup.controls.hotkey_error = None;
                                     }
-                                    ui.add_space(6.0);
+                                    ui.add_space(crate::kit::space::SM);
                                     if waiting {
                                         ui.label(
                                             egui::RichText::new("Press the keys\u{2026}")
                                                 .color(kit::LIME)
-                                                .size(14.0)
+                                                .size(crate::kit::text_size::BODY)
                                                 .family(kit::semibold()),
                                         );
                                     } else {
@@ -1152,7 +1196,7 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                                             ui.label(
                                                 egui::RichText::new("Not set")
                                                     .color(kit::FAINT)
-                                                    .size(14.0),
+                                                    .size(crate::kit::text_size::BODY),
                                             );
                                         }
                                         for (index, part) in parts.iter().enumerate().rev() {
@@ -1161,7 +1205,7 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                                                 ui.label(
                                                     egui::RichText::new("+")
                                                         .color(kit::FAINT)
-                                                        .size(14.0),
+                                                        .size(crate::kit::text_size::BODY),
                                                 );
                                             }
                                         }
@@ -1170,7 +1214,7 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                             );
                         });
                     });
-                ui.add_space(10.0);
+                ui.add_space(crate::kit::space::MD);
             }
             if let Some(error) = setup.controls.hotkey_error.as_ref() {
                 ui.colored_label(kit::DANGER, error);
@@ -1180,7 +1224,7 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                     "Push to talk, screenshots and extra shortcuts are in Settings \u{203a} Hotkeys.",
                 )
                 .color(kit::MUTED)
-                .size(13.0),
+                .size(crate::kit::text_size::SMALL),
             );
         }
         _ => {
@@ -1196,14 +1240,14 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                     egui::FontId::new(38.0, kit::semibold()),
                     Color::BLACK,
                 );
-                ui.add_space(6.0);
+                ui.add_space(crate::kit::space::SM);
                 ui.label(
                     egui::RichText::new("You\u{2019}re all set")
                         .color(kit::TEXT)
                         .size(38.0)
                         .family(kit::semibold()),
                 );
-                ui.add_space(6.0);
+                ui.add_space(crate::kit::space::SM);
                 let save = setup
                     .draft
                     .hotkeys
@@ -1217,10 +1261,10 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                         seconds_text(setup.draft.replay_seconds)
                     ))
                     .color(kit::MUTED)
-                    .size(15.0),
+                    .size(crate::kit::text_size::LEAD),
                 );
             });
-            ui.add_space(22.0);
+            ui.add_space(crate::kit::space::XXL);
             let profile = settings::PROFILES
                 .iter()
                 .find(|profile| (profile.is_active)(&setup.draft))
@@ -1267,10 +1311,10 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
         }
     }
     if let Some(error) = setup.error.as_ref() {
-        ui.add_space(12.0);
+        ui.add_space(crate::kit::space::MD);
         ui.colored_label(kit::DANGER, error);
     }
-    ui.add_space(32.0);
+    ui.add_space(crate::kit::space::HUGE);
 }
 
 #[cfg(test)]

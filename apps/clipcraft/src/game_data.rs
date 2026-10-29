@@ -84,8 +84,8 @@ impl State {
 
     pub(crate) fn show(&mut self, ui: &mut egui::Ui, settings: &mut GameIntegrationSettings) {
         crate::settings::card(ui, "Live game data", |ui| {
-            ui.label(RichText::new("Optional match details, read locally from the game. Off by default; recording works without this. Discord sharing is controlled separately in General.").color(crate::kit::MUTED).size(12.5));
-            ui.add_space(12.0);
+            ui.label(RichText::new("Optional match details, read locally from the game. Off by default; recording works without this. Discord sharing is controlled separately in General.").color(crate::kit::MUTED).size(crate::kit::text_size::CAPTION));
+            ui.add_space(crate::kit::space::MD);
             for game in GameIntegration::ALL {
                 ui.push_id(game.port(), |ui| {
                     let enabled = match game {
@@ -118,7 +118,7 @@ impl State {
                     if *enabled {
                         ui.label(
                             RichText::new(self.statuses.get(game).label())
-                                .size(12.5)
+                                .size(crate::kit::text_size::CAPTION)
                                 .color(crate::kit::MUTED),
                         );
                         if let clipcraft_platform::game_state::IntegrationStatus::Live(snapshot) =
@@ -174,17 +174,17 @@ impl State {
                             ui.label(RichText::new(match game {
                                 GameIntegration::Cs2 => "Choose Counter-Strike Global Offensive/game/csgo/cfg. Restart CS2 after setup.",
                                 _ => "Choose dota 2 beta/game/dota/cfg/gamestate_integration. Add -gamestateintegration to Dota's Steam launch options, then restart Dota.",
-                            }).size(12.0).color(crate::kit::FAINT));
+                            }).size(crate::kit::text_size::CAPTION).color(crate::kit::FAINT));
                         } else {
-                            ui.label(RichText::new("No config file or API key needed. Start a match; the client must expose its HTTPS API on 127.0.0.1:2999.").size(12.0).color(crate::kit::FAINT));
+                            ui.label(RichText::new("No config file or API key needed. Start a match; the client must expose its HTTPS API on 127.0.0.1:2999.").size(crate::kit::text_size::CAPTION).color(crate::kit::FAINT));
                         }
                     }
                     if let Some((which, message)) = &self.message
                         && *which == game
                     {
-                        ui.label(RichText::new(message).size(12.5).color(crate::kit::MUTED));
+                        ui.label(RichText::new(message).size(crate::kit::text_size::CAPTION).color(crate::kit::MUTED));
                     }
-                    ui.add_space(8.0);
+                    ui.add_space(crate::kit::space::SM);
                 });
             }
         });
