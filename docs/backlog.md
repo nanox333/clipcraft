@@ -856,7 +856,7 @@ See [testing.md](testing.md#m71b--background-discovery-and-desktopgame-switching
 
 **Issue:** [#5](https://github.com/nanox333/clipcraft/issues/5). **Status:** adapters and setup/status
 UI/CLI implemented; portable protocol/socket/keyboard checks and Windows compilation verified;
-native live-game/League TLS evidence remains open.
+native live-game/League TLS evidence remains open ([#15](https://github.com/nanox333/clipcraft/issues/15)).
 
 **Problem/evidence:** process recognition cannot provide map, match phase or local-player stats.
 The maintainer requested these integrations using public Valve GSI/Dota configuration and Riot
@@ -999,7 +999,7 @@ input. **Verification:** fake-device tests plus named controller/OS integration 
 **Issue:** [#6](https://github.com/nanox333/clipcraft/issues/6). **Status:** Rust policy, IPC worker,
 General settings/CLI and mock verification implemented. The maintainer-supplied shared identity and
 basic Windows IPC activity acknowledgment are verified; artwork/profile visibility, live games
-and macOS runtime still need live checks.
+and macOS runtime still need live checks ([#16](https://github.com/nanox333/clipcraft/issues/16)).
 
 **Requirements:** provide opt-in local Rich Presence that can show ClipCraft activity and, only if
 the user enables it, the captured game name and matching fresh map/mode/team score/hero information.
