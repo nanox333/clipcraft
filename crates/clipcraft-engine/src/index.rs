@@ -14,6 +14,16 @@ use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 
+/// Serialises read-modify-write cycles on the index within this process, so a scan, a probe
+/// result and a metadata edit cannot overwrite one another's changes.
+static INDEX_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn index_guard() -> std::sync::MutexGuard<'static, ()> {
+    INDEX_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Index format version written by this build.
 pub const INDEX_VERSION: u32 = 1;
 /// Largest index file that will be read or written.
@@ -89,6 +99,7 @@ pub(crate) fn refresh_library(
     index_path: &Path,
 ) -> Result<LibraryScanResult, EngineError> {
     validate_scan(&scan)?;
+    let _guard = index_guard();
     let mut index = match read_index(index_path) {
         Ok(index) => index,
         Err(EngineError::IndexMissing) => LibraryIndex::default(),
@@ -168,6 +179,9 @@ pub fn merge_entries(previous: Option<&[MediaEntry]>, scanned: Vec<MediaEntry>) 
         })
         .collect();
     let mut paths: HashSet<String> = merged.iter().map(|entry| entry.path.clone()).collect();
+    // Checking that a remembered file exists touches the disk, and an unplugged network drive
+    // makes each check slow, so only so many are made per refresh.
+    let mut checks_left = 2_000_usize;
     for old in previous {
         if merged.len() >= MAX_ENTRIES_PER_FOLDER {
             break;
@@ -175,7 +189,10 @@ pub fn merge_entries(previous: Option<&[MediaEntry]>, scanned: Vec<MediaEntry>) 
         if paths.insert(old.path.clone()) {
             // A clip that was relinked to a place outside the scanned folder is still there.
             let mut remembered = old.clone();
-            remembered.offline = !Path::new(&old.path).exists();
+            if checks_left > 0 {
+                checks_left -= 1;
+                remembered.offline = !Path::new(&old.path).exists();
+            }
             merged.push(remembered);
         }
     }
@@ -273,6 +290,7 @@ pub(crate) fn store_probes(
     if probes.len() > MAX_STORED_PROBES {
         return Err(EngineError::IndexInvalid);
     }
+    let _guard = index_guard();
     let mut index = read_index(index_path)?;
     let folder = index
         .folders
@@ -311,6 +329,7 @@ pub(crate) fn edit_meta(
     directory: &str,
     edit: &MetaEdit,
 ) -> Result<LibraryScanResult, EngineError> {
+    let _guard = index_guard();
     let mut index = read_index(index_path)?;
     let position = index
         .folders
@@ -318,7 +337,8 @@ pub(crate) fn edit_meta(
         .position(|folder| folder.directory == directory)
         .ok_or(EngineError::IndexMissing)?;
     // Work on copies so a refused edit leaves the index untouched.
-    let mut collections = index.collections.clone();
+    let before = index.collections.clone();
+    let mut collections = before.clone();
     let mut entries = index.folders[position].entries.clone();
     apply_edit(&mut entries, &mut collections, edit)?;
     // Renaming or deleting a collection also reaches the clips of every other remembered folder.
@@ -328,7 +348,8 @@ pub(crate) fn edit_meta(
     ) {
         for (other, folder) in index.folders.iter_mut().enumerate() {
             if other != position {
-                let mut scratch = collections.clone();
+                // Start from the list as it was before the edit, so a rename finds its old name.
+                let mut scratch = before.clone();
                 apply_edit(&mut folder.entries, &mut scratch, edit).ok();
             }
         }
@@ -418,8 +439,14 @@ fn write_index(path: &Path, index: &LibraryIndex) -> Result<(), EngineError> {
     {
         fs::create_dir_all(parent).map_err(|_| EngineError::IndexSaveFailed)?;
     }
+    // A name of its own per write, so two writers can never share one temporary file.
+    static NEXT_TEMPORARY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let mut temporary = path.as_os_str().to_owned();
-    temporary.push(".tmp");
+    temporary.push(format!(
+        ".{}-{}.tmp",
+        std::process::id(),
+        NEXT_TEMPORARY.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     let temporary = PathBuf::from(temporary);
 
     let result = (|| {
@@ -978,5 +1005,37 @@ mod tests {
             store_probes(&scratch.index(), "/clips", too_many),
             Err(EngineError::IndexInvalid)
         );
+    }
+
+    #[test]
+    fn renaming_a_collection_reaches_clips_in_other_remembered_folders() {
+        let scratch = Scratch::new();
+        let index = scratch.index();
+        refresh_library(scan("/a", &["/a/1.mp4"]), &index).unwrap();
+        refresh_library(scan("/b", &["/b/2.mp4"]), &index).unwrap();
+        let create = MetaEdit::CreateCollection { name: "Old".into() };
+        edit_meta(&index, "/b", &create).unwrap();
+        for (folder, path) in [("/a", "/a/1.mp4"), ("/b", "/b/2.mp4")] {
+            let add = MetaEdit::AddToCollection {
+                path: path.into(),
+                name: "Old".into(),
+            };
+            edit_meta(&index, folder, &add).unwrap();
+        }
+        let rename = MetaEdit::RenameCollection {
+            from: "Old".into(),
+            to: "New".into(),
+        };
+        edit_meta(&index, "/b", &rename).unwrap();
+        let saved = read_index(&index).unwrap();
+        assert_eq!(saved.collections, ["New"]);
+        for folder in &saved.folders {
+            assert_eq!(
+                folder.entries[0].collections,
+                ["New"],
+                "{}",
+                folder.directory
+            );
+        }
     }
 }

@@ -17,6 +17,13 @@ real desktop. Decision record: [ADR 0012](adr/0012-wayland-capture.md).
 
 ## What was tested
 
+Global shortcuts use a separate GlobalShortcuts portal session. A private D-Bus fake covers
+registration, assignment changes, press/release, denial, cancellation, overflow, service loss and
+retry. Direct keyboard-device access is a separate default-off fallback; see [Linux](linux.md).
+Real desktop shortcut dialogs and physical keyboards have not been tested.
+The shortcut bind request currently uses an empty parent-window identifier, so compositor-specific
+dialog placement and focus are also unverified.
+
 | Layer | How | Result |
 | --- | --- | --- |
 | Format offer | Byte comparison with the pod PipeWire's C builder writes (`wayland/pod.rs`) | exact match |

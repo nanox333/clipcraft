@@ -83,11 +83,29 @@ pub(crate) fn write_png(path: &Path, frame: &CaptureFrame) -> Result<(), EngineE
         .write_image(&rgb, frame.width, frame.height, ExtendedColorType::Rgb8)
         .map_err(|_| EngineError::ScreenshotFailed)?;
     let partial = PathBuf::from(format!("{}.partial", path.to_string_lossy()));
-    if fs::write(&partial, &encoded).is_err() || fs::rename(&partial, path).is_err() {
-        let _ = fs::remove_file(&partial);
+    use std::io::Write;
+    // The partial is claimed exclusively, and the picture never replaces an existing file.
+    let Ok(mut file) = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&partial)
+    else {
         return Err(EngineError::ScreenshotFailed);
+    };
+    let written = file.write_all(&encoded).and_then(|()| file.sync_all());
+    drop(file);
+    let published = written.is_ok()
+        && match fs::hard_link(&partial, path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+            Err(_) => fs::symlink_metadata(path).is_err() && fs::rename(&partial, path).is_ok(),
+        };
+    let _ = fs::remove_file(&partial);
+    if published {
+        Ok(())
+    } else {
+        Err(EngineError::ScreenshotFailed)
     }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -104,6 +104,16 @@ fn gif_inner(
     .map_err(|_| ExportError::Unreadable)?;
     let info = decoder.info().video.as_ref().ok_or(ExportError::Damaged)?;
     source_size(info.width, info.height)?;
+    // A range past the end of the clip stops at the end instead of repeating the last picture.
+    let duration = if decoder.info().duration > Tick::ZERO {
+        let available = decoder.info().duration - request.start;
+        if available < Tick::from_units(100, 1_000) {
+            return Err(ExportError::BadRange);
+        }
+        duration.min(available)
+    } else {
+        duration
+    };
     let (width, height) = gif_size(info.width, info.height, options.max_width);
     let rate = FrameRate {
         num: i64::from(options.fps),
@@ -203,13 +213,7 @@ fn gif_inner(
     out.get_ref().sync_all().map_err(|e| io_error(&e))?;
     let bytes = out.get_ref().metadata().map_err(|e| io_error(&e))?.len();
     drop(out);
-    fs::hard_link(&temporary.0, &request.output).map_err(|e| match e.kind() {
-        std::io::ErrorKind::AlreadyExists => ExportError::AlreadyExists,
-        std::io::ErrorKind::Unsupported => ExportError::Unsupported(
-            "choose an output folder on a filesystem supporting hard links",
-        ),
-        _ => io_error(&e),
-    })?;
+    crate::compress::publish_new(&temporary.0, &request.output)?;
     progress(1.0);
     Ok(ExportReport {
         path: request.output.clone(),

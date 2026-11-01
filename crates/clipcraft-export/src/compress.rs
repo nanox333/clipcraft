@@ -13,7 +13,7 @@ use filmcraft_h264enc::{
     Encoder, EncoderConfig, PacketFormat, Preset, Profile, RateControl, YuvFrame,
 };
 use filmcraft_isobmff::{
-    AvcConfig, Brand, Edit, Mp4Writer, SampleEntry, TrackConfig, WriteSample, WriterOptions,
+    AvcConfig, Brand, Mp4Writer, SampleEntry, TrackConfig, WriteSample, WriterOptions,
 };
 use filmcraft_media::reader::{FileReader, open_reader_within};
 use filmcraft_media::{FrameRequest, SharedReader};
@@ -111,6 +111,23 @@ pub fn compress_to_mp4_with(
         export_inner(request, target, hardware, progress, cancel)
     }))
     .unwrap_or(Err(ExportError::EncodeFailed))
+}
+
+/// Publishes `from` as `to` without replacing anything. A hard link is atomic; on filesystems
+/// without hard links (exFAT, FAT, some network shares) it falls back to a checked rename.
+pub(crate) fn publish_new(from: &std::path::Path, to: &std::path::Path) -> Result<(), ExportError> {
+    match fs::hard_link(from, to) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(ExportError::AlreadyExists)
+        }
+        Err(_) => {
+            if fs::symlink_metadata(to).is_ok() {
+                return Err(ExportError::AlreadyExists);
+            }
+            fs::rename(from, to).map_err(|error| io_error(&error))
+        }
+    }
 }
 
 pub(crate) struct Temporary(pub(crate) PathBuf);
@@ -354,6 +371,12 @@ fn export_inner(
     // registered; the switch goes back as soon as the decoder exists. Pictures it cannot take, or
     // a decoder that fails part-way, are decoded in software without the export noticing.
     let frames_before = filmcraft_codecs::hw::hw_stats().frames;
+    // The switch is process-wide: concurrent exports must not read each other's temporary value
+    // as the setting to restore.
+    static SWITCH: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let switch_guard = SWITCH
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let hardware_switch = filmcraft_codecs::hw::hardware_decoding();
     if hardware.is_some() {
         filmcraft_codecs::hw::set_hardware_decoding(true);
@@ -366,6 +389,7 @@ fn export_inner(
         64 * 1024 * 1024,
     );
     filmcraft_codecs::hw::set_hardware_decoding(hardware_switch);
+    drop(switch_guard);
     let decoder = opened.map_err(|_| ExportError::EncodeFailed)?;
     let info = decoder.info().video.as_ref().ok_or(ExportError::Damaged)?;
     source_size(info.width, info.height)?;
@@ -575,11 +599,7 @@ fn open_output(job: &Job<'_>, avc: AvcConfig) -> Result<Output, ExportError> {
     for p in job.audio {
         let stream = &job.source.streams[p.stream];
         let mut config = TrackConfig::new(stream.entry.clone(), stream.timescale);
-        config.edits = vec![Edit {
-            segment_duration: p.segment,
-            media_time: p.media_time,
-            media_rate: 0x0001_0000,
-        }];
+        config.edits = p.edits();
         tracks.push((mp4.add_track(config).map_err(mp4_error)?, p.first));
     }
     Ok(Output {
@@ -606,13 +626,7 @@ fn finish_output(
     drop(out);
     check_cancel(cancel)?;
     // Publish without replacement, including an output created after the preflight check.
-    fs::hard_link(&temporary.0, &job.request.output).map_err(|e| match e.kind() {
-        std::io::ErrorKind::AlreadyExists => ExportError::AlreadyExists,
-        std::io::ErrorKind::Unsupported => ExportError::Unsupported(
-            "choose an output folder on a filesystem supporting hard links",
-        ),
-        _ => io_error(&e),
-    })?;
+    crate::compress::publish_new(&temporary.0, &job.request.output)?;
     progress(1.0);
     Ok(CompressReport {
         clip: ExportReport {

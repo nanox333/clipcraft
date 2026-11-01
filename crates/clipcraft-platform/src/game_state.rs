@@ -152,6 +152,14 @@ impl ValveInput {
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                // A client that gave up before it was accepted is not a failed listener.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::Interrupted
+                            | std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::ConnectionReset
+                    ) => {}
                 Err(_) => {
                     self.error = Some(
                         "Game data listener failed. Disable and re-enable this integration.".into(),
@@ -162,13 +170,15 @@ impl ValveInput {
         }
     }
     fn status(&self, now: Instant) -> IntegrationStatus {
-        if let Some(e) = &self.error {
-            return IntegrationStatus::Error(e.clone());
-        }
+        // Fresh game data wins over an earlier rejected request: a stray local request must not
+        // hide a working integration.
         if let Some((when, state)) = &self.last
             && now.saturating_duration_since(*when) <= FRESH
         {
             return IntegrationStatus::Live(state.clone());
+        }
+        if let Some(e) = &self.error {
+            return IntegrationStatus::Error(e.clone());
         }
         IntegrationStatus::Waiting
     }
@@ -273,7 +283,7 @@ fn receive_gsi(
 
 /// Strict HTTP input: no chunked requests, duplicate length, pipelining or unbounded headers/body.
 fn read_request(reader: &mut impl Read) -> Result<(String, Vec<u8>), GameStateError> {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_millis(500);
     let mut bytes = Vec::new();
     let mut buffer = [0; 4096];
     loop {
@@ -572,7 +582,12 @@ mod tests {
             IntegrationStatus::Waiting
         ));
         input.error = Some("invalid".into());
-        assert!(matches!(input.status(now), IntegrationStatus::Error(_)));
+        // A rejected request does not hide data that is still fresh.
+        assert!(matches!(input.status(now), IntegrationStatus::Live(_)));
+        assert!(matches!(
+            input.status(now + FRESH + Duration::from_secs(1)),
+            IntegrationStatus::Error(_)
+        ));
     }
 
     #[test]

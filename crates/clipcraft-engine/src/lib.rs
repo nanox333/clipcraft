@@ -9,6 +9,7 @@ use std::process::Stdio;
 use std::sync::atomic::AtomicBool;
 
 pub mod brand;
+mod bug_report;
 mod diagnose;
 mod editor;
 mod editor_draft;
@@ -58,6 +59,7 @@ pub use clipcraft_player::timeline::{
 };
 use clipcraft_record::{HardwareEncoder, HardwareProvider, HardwareRequest};
 
+pub use bug_report::{BUG_REPORT_FIELD_BYTES, BugReportInput};
 pub use clipcraft_capture::reframe::{
     Framing, MAX_OUTPUT_EDGE, MIN_OUTPUT_EDGE, OutputShape, PixelRect, Reframe, reframe,
 };
@@ -104,6 +106,11 @@ const VIDEO_EXTENSIONS: [&str; 7] = ["avi", "m4v", "mkv", "mov", "mp4", "webm", 
 /// A typed operation exposed by the shared command registry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
+    /// Prepares a local, reviewable report without submitting it.
+    PrepareBugReport {
+        input: BugReportInput,
+        settings: Box<RecordingSettings>,
+    },
     /// Installs a bounded offline Windows bundle, preserving earlier versions and user data.
     InstallApplication {
         bundle: PathBuf,
@@ -295,6 +302,7 @@ impl Command {
     /// Returns this operation's stable command ID.
     pub const fn id(&self) -> &'static str {
         match self {
+            Self::PrepareBugReport { .. } => "app.prepare_bug_report",
             Self::InstallApplication { .. } => "app.install",
             Self::UninstallApplication { .. } => "app.uninstall",
             Self::PreviewDiscordCard { .. } => "presence.card",
@@ -765,6 +773,8 @@ fn copy_path(input: &std::path::Path, suffix: &str, extension: &str) -> Option<P
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum CommandOutput {
+    /// A report prepared locally; sharing is the user's choice.
+    BugReport(String),
     /// Executable installed, or installation root removed.
     Installation(PathBuf),
     DiscordCard(Option<presence::PresenceActivity>),
@@ -828,6 +838,8 @@ pub enum CommandOutput {
 /// Actionable errors returned by engine commands.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineError {
+    /// A report has no description or exceeds its text limits.
+    BugReportInvalid,
     /// An offline installation failed without deleting user media.
     Installation(String),
     GameState(game_state::GameStateError),
@@ -918,6 +930,7 @@ pub enum EngineError {
 impl fmt::Display for EngineError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::BugReportInvalid => formatter.write_str("Describe what happened and keep each field under 4096 bytes."),
             Self::Installation(message) => formatter.write_str(message),
             Self::GameState(error) => error.fmt(formatter),
             Self::EditorTimeline(error) => error.fmt(formatter),
@@ -1032,6 +1045,9 @@ pub fn execute_cancellable(
     cancel: &AtomicBool,
 ) -> Result<CommandOutput, EngineError> {
     match command {
+        Command::PrepareBugReport { input, settings } => {
+            bug_report::build(&input, &settings).map(CommandOutput::BugReport)
+        }
         Command::InstallApplication {
             bundle,
             destination,
@@ -1432,6 +1448,7 @@ fn scan_library_directory_with_limit(
 /// Lists stable user-facing command IDs available to the first application slice.
 pub const fn command_ids() -> &'static [&'static str] {
     &[
+        "app.prepare_bug_report",
         "presence.card",
         "presence.preview",
         "game_state.parse",

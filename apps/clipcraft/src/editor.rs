@@ -1225,7 +1225,7 @@ impl EditorState {
         let previous_quality = self.export_quality;
         let window = egui::Window::new(
             RichText::new("Export video")
-                .size(20.0)
+                .size(crate::kit::text_size::TITLE)
                 .family(kit::semibold()),
         )
         .id(egui::Id::new("editor-export-window"))
@@ -3697,7 +3697,9 @@ mod tests {
         context: &egui::Context,
         ready: impl Fn(&EditorState) -> bool,
     ) {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // Debug builds composite 720p pictures in software. Parallel tests on a busy CI runner
+        // can take longer than a normal interactive preview; still fail if no frame arrives.
+        let deadline = Instant::now() + Duration::from_secs(30);
         while !ready(state) && Instant::now() < deadline {
             // Test decode completion without depending on UI frame rate or advancing wall time.
             state.clock = None;
@@ -3707,8 +3709,11 @@ mod tests {
         }
         assert!(
             ready(state),
-            "preview did not become ready: {:?}",
-            state.message
+            "preview did not become ready: message={:?}, workers={}, seeking={}, target={:?}",
+            state.message,
+            state.preview_workers(),
+            state.seek_pending,
+            state.preview_target
         );
     }
 

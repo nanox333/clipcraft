@@ -14,7 +14,8 @@ Engine commands `app.install` / `app.uninstall` write only a fixed set of progra
 Installations use new version directories and publish their bounded ownership record last.
 An unrelated nonempty destination, symlink/junction ancestry, malformed payload or ownership
 record is rejected. Upgrades retain earlier executable directories, allowing a running replay
-to finish. At eight versions the user must uninstall/reinstall; no automatic updater is added.
+to finish. At eight versions the oldest is removed to make room; if it cannot be removed,
+installation is refused. A later change added optional update checks and a user-initiated installer handoff.
 Removal enumerates owned files, never recursively deletes a caller-supplied directory, and keeps
 unknown files, clips, settings and library metadata. Installation does not enable login startup.
 

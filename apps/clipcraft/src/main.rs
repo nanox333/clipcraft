@@ -7,6 +7,7 @@ use clipcraft_engine::{
     RecordingSettings, apply_edit, default_capture_folder, default_index_path,
     default_thumbnail_dir, execute, game_of,
 };
+mod bug_report;
 mod capture;
 mod clip_delete;
 mod editor;
@@ -108,6 +109,7 @@ struct ClipCraftApp {
     keyboard_focus: bool,
     /// When the diagnostics report was last copied, to confirm it on the button.
     diagnostics_copied: Option<std::time::Instant>,
+    bug_report: Option<bug_report::Draft>,
     search_text: String,
     sort: library_view::Sort,
     page: Page,
@@ -330,7 +332,7 @@ const SETTINGS_INDEX: &[(&str, &str, SettingsTab)] = &[
     ),
     (
         "About ClipCraft",
-        "version license project",
+        "version license project bug report feedback help",
         SettingsTab::About,
     ),
 ];
@@ -665,6 +667,7 @@ impl ClipCraftApp {
                 }
             });
         self.delete_dialog(context);
+        self.bug_report_dialog(context);
         self.thumbs.end_frame();
         self.settings_state.end_frame(&self.recording);
     }
@@ -2320,7 +2323,16 @@ impl ClipCraftApp {
                 }
             }
             SettingsTab::Hotkeys => {
-                settings::hotkeys_tab(ui, &mut working, &mut self.settings_state)
+                let status = self.capture.shortcut_status();
+                if settings::hotkeys_tab(
+                    ui,
+                    &mut working,
+                    &mut self.settings_state,
+                    status.as_ref(),
+                ) {
+                    self.capture.retry_shortcuts();
+                    ui.ctx().request_repaint();
+                }
             }
             SettingsTab::Games => {
                 let refresh = settings::games_tab(
@@ -2351,6 +2363,7 @@ impl ClipCraftApp {
             SettingsTab::Replay => settings::replay_tab(ui, &mut working),
             SettingsTab::About => {
                 settings::about_tab(ui);
+                self.bug_report_card(ui);
                 self.updates_card(ui);
             }
         }
@@ -2771,7 +2784,7 @@ fn empty_panel(
         ui.label(
             RichText::new(headline)
                 .color(TEXT)
-                .size(20.0)
+                .size(crate::kit::text_size::TITLE)
                 .family(kit::semibold()),
         );
         ui.label(RichText::new(help).color(MUTED));

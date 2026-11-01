@@ -15,7 +15,7 @@ use clipcraft_time::Tick;
 use filmcraft_aac::{Decoder, Encoder, EncoderConfig};
 use filmcraft_audio_dsp::loudness::LoudnessMeter;
 use filmcraft_isobmff::{
-    Brand, CodecConfig, Edit, Mp4Writer, SampleEntry, TrackConfig, WriteSample, WriterOptions,
+    Brand, CodecConfig, Mp4Writer, SampleEntry, TrackConfig, WriteSample, WriterOptions,
 };
 
 use crate::compress::{Temporary, check_cancel};
@@ -245,13 +245,7 @@ fn normalize_inner(
         cancel,
     )?;
     check_cancel(cancel)?;
-    fs::hard_link(&temporary.0, &request.output).map_err(|e| match e.kind() {
-        std::io::ErrorKind::AlreadyExists => ExportError::AlreadyExists,
-        std::io::ErrorKind::Unsupported => ExportError::Unsupported(
-            "choose an output folder on a filesystem supporting hard links",
-        ),
-        _ => io_error(&e),
-    })?;
+    crate::compress::publish_new(&temporary.0, &request.output)?;
     let bytes = fs::metadata(&request.output).map_or(0, |meta| meta.len());
     let video_span = plans
         .iter()
@@ -327,11 +321,11 @@ fn write_file(
             )
         };
         let mut config = TrackConfig::new(entry, scale);
-        config.edits = vec![Edit {
-            segment_duration: p.segment,
-            media_time,
-            media_rate: 0x0001_0000,
-        }];
+        let mut edits = p.edits();
+        if let Some(media) = edits.last_mut() {
+            media.media_time = media_time;
+        }
+        config.edits = edits;
         ids.push(
             mp4.add_track(config)
                 .map_err(|_| ExportError::Unsupported("the codec cannot be stored in an MP4"))?,

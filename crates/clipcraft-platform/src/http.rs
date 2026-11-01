@@ -34,7 +34,16 @@ enum Answer {
 /// Only GitHub serves releases, so only GitHub is ever contacted.
 #[cfg(any(windows, target_os = "macos"))]
 fn allowed_host(host: &str) -> bool {
-    host == "github.com" || host == "api.github.com" || host.ends_with(".githubusercontent.com")
+    // Release assets are served from these; other `githubusercontent.com` hosts hold files
+    // anyone can upload.
+    matches!(
+        host,
+        "github.com"
+            | "api.github.com"
+            | "objects.githubusercontent.com"
+            | "release-assets.githubusercontent.com"
+            | "github-releases.githubusercontent.com"
+    )
 }
 
 /// `https://host/path` into its host, port and path.
@@ -167,7 +176,7 @@ fn unchunk(mut data: &[u8]) -> Result<Vec<u8>, String> {
         if size == 0 {
             return Ok(out);
         }
-        if data.len() < size + 2 {
+        if size.checked_add(2).is_none_or(|needed| data.len() < needed) {
             return Err("a chunked answer was cut short".into());
         }
         out.extend_from_slice(&data[..size]);

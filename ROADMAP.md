@@ -25,6 +25,17 @@ ClipCraft-hosted storage or account. The complete direction and constraints are 
 
 ## Milestones
 
+M5.B1 adds reviewable local bug-report preparation and a separately opened GitHub form. The
+report is never submitted automatically; physical Windows/macOS UI evidence remains open.
+
+M2.R1 adds capture-bar replay availability and notices when source/stream changes clear buffered
+video. Simulated reset checks and an X11 virtual-desktop visual/keyboard check cover the first
+slice; real GPU, Windows, Wayland and game-transition evidence remain open.
+
+M6.S2 tries the Wayland GlobalShortcuts portal first, shows actual assignments and offers manual
+retry; direct keyboard-device fallback is explicitly opt-in. Fake-bus integration passes; real
+Wayland desktop and physical-device checks remain open.
+
 M5.1a adds up to five bindings per shortcut action, first-run setup and an offline per-user Rust
 Windows installer alongside the portable zip. Signing and clean-machine release checks remain open.
 

@@ -398,6 +398,9 @@ fn frame_bytes(width: u32, height: u32) -> Result<usize, PlayerError> {
         .ok_or(PlayerError::Unsupported)
 }
 
+/// Most pictures in a row that playback steps over before it reports the failure.
+const MAX_SKIPPED_PICTURES: u32 = 30;
+
 fn frame_period(rate: FrameRate) -> Duration {
     let seconds = rate.frame_duration().seconds();
     if seconds.is_finite() && seconds > 0.0 {
@@ -485,6 +488,8 @@ fn run(
     };
 
     let mut revision = 0;
+    // Undecodable pictures stepped over in a row while playing.
+    let mut skipped = 0_u32;
     loop {
         // Opening or a slow decode can accumulate seeks. Apply their final state before the
         // next decode; publication below rejects an in-flight result invalidated meanwhile.
@@ -529,6 +534,7 @@ fn run(
             };
             match decoded {
                 Ok(frame) => {
+                    skipped = 0;
                     state.position = frame.pts;
                     if !send(PlayerEvent::Frame(frame), revision) {
                         return;
@@ -548,6 +554,18 @@ fn run(
                 Err(PlayerError::RenderFailed) if !events.current(revision) && !events.closed() => {
                     // Edits can invalidate a recipe while its renderer is running. A stale
                     // render failure must not reject the newer, valid edit request.
+                    continue;
+                }
+                // One picture the decoder rejects must not end playback of a long clip: while
+                // playing, step past it. A seek or step to it, or a long run of them, still fails.
+                Err(PlayerError::DecodeFailed)
+                    if state.playing
+                        && skipped < MAX_SKIPPED_PICTURES
+                        && state.position + info.frame_rate.frame_duration() < info.duration =>
+                {
+                    skipped += 1;
+                    state.position += info.frame_rate.frame_duration();
+                    state.show = true;
                     continue;
                 }
                 Err(error) => {

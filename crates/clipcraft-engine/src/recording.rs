@@ -372,6 +372,8 @@ pub struct RecordingSettings {
     pub capture_microphone: bool,
     /// Keyboard shortcuts.
     pub hotkeys: Hotkeys,
+    /// Explicitly allow raw keyboard-device access as a Wayland shortcut fallback.
+    pub wayland_raw_hotkeys: bool,
     /// Microphone to record; empty means the system default.
     pub microphone_device: String,
     /// Output device whose sound is recorded; empty means the system default.
@@ -473,6 +475,7 @@ impl Default for RecordingSettings {
             capture_game_audio: true,
             capture_microphone: false,
             hotkeys: Hotkeys::default(),
+            wayland_raw_hotkeys: false,
             microphone_device: String::new(),
             output_device: String::new(),
             separate_audio_tracks: false,
@@ -734,9 +737,20 @@ pub(crate) fn load_settings(path: &Path) -> Result<RecordingSettings, EngineErro
 /// defaults afterwards does not destroy it (it may be from a newer version, or recoverable by
 /// hand). Best effort.
 pub(crate) fn set_aside(path: &Path) {
-    let mut aside = path.as_os_str().to_owned();
-    aside.push(".damaged");
-    let _ = fs::rename(path, PathBuf::from(aside));
+    // An earlier damaged file is kept too: the first free `.damaged`, `.damaged.1`, ...
+    for number in 0..100_u32 {
+        let mut aside = path.as_os_str().to_owned();
+        aside.push(if number == 0 {
+            ".damaged".to_owned()
+        } else {
+            format!(".damaged.{number}")
+        });
+        let aside = PathBuf::from(aside);
+        if fs::symlink_metadata(&aside).is_err() {
+            let _ = fs::rename(path, aside);
+            return;
+        }
+    }
 }
 
 /// Saves settings with a temp file and rename; returns what was stored.
@@ -787,6 +801,19 @@ mod tests {
 
     use super::*;
     use clipcraft_capture::reframe::PixelRect;
+
+    #[test]
+    fn raw_wayland_keyboard_fallback_is_opt_in_and_persists() {
+        let old: RecordingSettings = serde_json::from_str("{}").unwrap();
+        assert!(!old.wayland_raw_hotkeys);
+        let selected = RecordingSettings {
+            wayland_raw_hotkeys: true,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&selected).unwrap();
+        let restored: RecordingSettings = serde_json::from_str(&json).unwrap();
+        assert!(restored.sanitized().wayland_raw_hotkeys);
+    }
 
     fn rect(x: u32, y: u32, width: u32, height: u32) -> PixelRect {
         PixelRect {
@@ -1139,11 +1166,11 @@ mod tests {
         );
         save_settings(&path, RecordingSettings::default()).expect("saved");
         assert!(dir.join("recording-settings.json.damaged").exists());
-        // A settings file from a newer version is kept too.
+        // A settings file from a newer version is kept too, without replacing the first.
         fs::write(&path, br#"{"version":999,"settings":{}}"#).expect("fixture");
         assert_eq!(load_settings(&path), Err(EngineError::SettingsInvalid));
         assert!(
-            fs::read(dir.join("recording-settings.json.damaged"))
+            fs::read(dir.join("recording-settings.json.damaged.1"))
                 .expect("kept")
                 .starts_with(b"{\"version\":999")
         );

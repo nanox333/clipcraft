@@ -62,8 +62,12 @@ pub(crate) fn scan(
         if path.to_str().is_none_or(|path| path.len() > 4096) {
             return Err(EngineError::LibraryPathInvalid);
         }
-        let metadata =
-            fs::symlink_metadata(&path).map_err(|_| EngineError::DirectoryUnavailable)?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            // Gone since it was listed (a clip being renamed into place, say): not an error.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return Err(EngineError::DirectoryUnavailable),
+        };
         if metadata.is_symlink() {
             continue;
         }
