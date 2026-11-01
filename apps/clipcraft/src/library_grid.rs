@@ -51,7 +51,7 @@ impl GridState {
         let columns = columns(ui.available_width());
         let width =
             ((ui.available_width() - (columns - 1) as f32 * 16.0) / columns as f32).max(180.0);
-        let height = (width * 0.5625).clamp(120.0, 240.0) + 66.0 + 42.0;
+        let height = (width * 0.5625).clamp(120.0, 240.0) + crate::CARD_TEXT_HEIGHT;
         if self.layout != Some((columns, width.to_bits())) {
             if let Some(focus) = ui.memory(|m| m.focused()) {
                 self.target = view

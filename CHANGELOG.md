@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Cleaner clip cards:** the Clips page shows the picture with the name and details under it; Send to editor, Show in folder and Favorite appear as round buttons on the picture when you point at a clip.
 - **Consistent layout:** spacing, corner radii, text sizes and control heights now come from one
   shared scale, so buttons, search boxes, folder fields, pills and settings rows line up across the
   Clips, Editor, Settings and setup screens.

@@ -39,9 +39,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc;
 
-use kit::{
-    BORDER, CANVAS, CARD, CARD_HOVER, DANGER, FAINT, Icon, LIME, MUTED, PANEL, SIDEBAR, TEXT,
-};
+use kit::{BORDER, CANVAS, CARD, CARD_HOVER, DANGER, FAINT, Icon, LIME, MUTED, SIDEBAR, TEXT};
 use organize::{CollectionEdit, LibraryFilter, RailAction};
 use settings::{card, setting_row};
 
@@ -1387,7 +1385,7 @@ impl ClipCraftApp {
                     .family(kit::semibold()),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if kit::labelled_button(ui, Icon::Folder, "Open folder", true, true)
+                if kit::labelled_button(ui, Icon::Folder, "Open folder", false, true)
                     .on_hover_text("Show your clips folder in the file manager")
                     .clicked()
                 {
@@ -1724,10 +1722,7 @@ impl ClipCraftApp {
         let mut favorite = None;
         let mut game_change = None;
         let mut collection_change = None;
-        egui::Frame::new()
-            .fill(PANEL)
-            .stroke(Stroke::new(1.0_f32, BORDER))
-            .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
+        kit::card_frame()
             .inner_margin(egui::Margin::same(20))
             .show(ui, |ui| {
                 ui.set_width((width - 42.0).max(0.0));
@@ -1861,10 +1856,7 @@ impl ClipCraftApp {
     }
 
     fn details_card(&mut self, ui: &mut egui::Ui, entry: &MediaEntry, width: f32) {
-        egui::Frame::new()
-            .fill(PANEL)
-            .stroke(Stroke::new(1.0_f32, BORDER))
-            .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
+        kit::card_frame()
             .inner_margin(egui::Margin::same(20))
             .show(ui, |ui| {
                 ui.set_width((width - 42.0).max(0.0));
@@ -2173,10 +2165,7 @@ impl ClipCraftApp {
             return;
         }
         let (mut cancel, mut keep) = (false, false);
-        egui::Frame::new()
-            .fill(CARD)
-            .stroke(Stroke::new(1.0_f32, BORDER))
-            .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
+        kit::card_frame()
             .inner_margin(egui::Margin::symmetric(16, 12))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -2884,6 +2873,9 @@ fn format_duration(probe: Option<&MediaProbe>) -> String {
     }
 }
 
+/// Height of the title and details under a clip's picture.
+pub(crate) const CARD_TEXT_HEIGHT: f32 = 58.0;
+
 fn clip_card(
     ui: &mut egui::Ui,
     entry: &MediaEntry,
@@ -2892,20 +2884,23 @@ fn clip_card(
     game: Option<&str>,
     collections: &[String],
 ) -> Option<ClipCardAction> {
-    const RADIUS: u8 = 12;
-    const BODY_HEIGHT: f32 = 66.0;
-    const FOOTER_HEIGHT: f32 = 42.0;
+    const RADIUS: u8 = crate::kit::radius::LG;
     let thumb_height = (width * 0.5625).clamp(120.0, 240.0);
-    let (_, card) = ui.allocate_space(Vec2::new(width, thumb_height + BODY_HEIGHT + FOOTER_HEIGHT));
+    let (_, card) = ui.allocate_space(Vec2::new(width, thumb_height + CARD_TEXT_HEIGHT));
     let response = ui.interact(card, library_grid::card_id(entry), egui::Sense::click());
     let thumbnail = egui::Rect::from_min_size(card.min, Vec2::new(width, thumb_height));
-    let footer = egui::Rect::from_min_max(
-        egui::pos2(card.left(), card.bottom() - FOOTER_HEIGHT),
-        card.max,
-    );
-    let middle = footer.center().x;
-    let copy_area = egui::Rect::from_min_max(footer.min, egui::pos2(middle, footer.bottom()));
-    let reveal_area = egui::Rect::from_min_max(egui::pos2(middle, footer.top()), footer.max);
+    // Quick actions sit on the picture, from the right edge: favorite, folder, editor.
+    let button_area = |slot: f32| {
+        egui::Rect::from_center_size(
+            egui::pos2(
+                thumbnail.right() - 22.0 - slot * 40.0,
+                thumbnail.top() + 22.0,
+            ),
+            Vec2::splat(36.0),
+        )
+    };
+    let copy_area = button_area(2.0);
+    let reveal_area = button_area(1.0);
     // Added after the card so they sit on top of it and take their own clicks.
     let copy = ui.interact(copy_area, response.id.with("copy"), egui::Sense::click());
     response.widget_info(|| {
@@ -2942,10 +2937,7 @@ fn clip_card(
             },
         )
     });
-    let heart_area = egui::Rect::from_center_size(
-        egui::pos2(thumbnail.right() - 24.0, thumbnail.top() + 24.0),
-        Vec2::splat(36.0),
-    );
+    let heart_area = button_area(0.0);
     let heart = ui.interact(heart_area, response.id.with("heart"), egui::Sense::click());
     heart.widget_info(|| {
         egui::WidgetInfo::selected(
@@ -2966,25 +2958,24 @@ fn clip_card(
     }
 
     let painter = ui.painter().clone();
-    painter.rect(
-        card,
+
+    // Picture, then the hover play button over it.
+    let visible = ui.is_rect_visible(thumbnail);
+    let texture = thumbs.texture(ui.ctx(), &entry.path, visible);
+    paint_video_placeholder(ui, thumbnail, entry, texture, RADIUS);
+    painter.rect_stroke(
+        thumbnail,
         egui::CornerRadius::same(RADIUS),
-        if hovered { CARD_HOVER } else { CARD },
         Stroke::new(
-            if hovered { 1.5_f32 } else { 1.0_f32 },
+            if hovered { 2.0_f32 } else { 1.0_f32 },
             if hovered {
-                Color32::from_rgba_unmultiplied(190, 255, 43, 150)
+                Color32::from_rgba_unmultiplied(190, 255, 43, 190)
             } else {
                 BORDER
             },
         ),
         egui::StrokeKind::Inside,
     );
-
-    // Picture, then the hover play button over it.
-    let visible = ui.is_rect_visible(thumbnail);
-    let texture = thumbs.texture(ui.ctx(), &entry.path, visible);
-    paint_video_placeholder(ui, thumbnail.shrink(1.0), entry, texture, RADIUS - 1);
     if hovered && !entry.offline {
         painter.circle_filled(thumbnail.center(), 26.0, Color32::from_black_alpha(165));
         kit::draw_icon(
@@ -3048,19 +3039,19 @@ fn clip_card(
     }
 
     // Title (one line, ellipsized) and details.
-    let text_left = card.left() + 14.0;
+    let text_left = card.left() + 4.0;
     let mut title = egui::text::LayoutJob::simple_singleline(
         entry.title.clone(),
-        egui::FontId::new(crate::kit::text_size::LEAD, kit::medium()),
+        egui::FontId::new(crate::kit::text_size::BODY, kit::semibold()),
         TEXT,
     );
-    title.wrap.max_width = width - 28.0;
+    title.wrap.max_width = width - 8.0;
     title.wrap.max_rows = 1;
     title.wrap.break_anywhere = true;
     title.wrap.overflow_character = Some('…');
     let title = painter.layout_job(title);
     painter.galley(
-        egui::pos2(text_left, thumbnail.bottom() + 12.0),
+        egui::pos2(text_left, thumbnail.bottom() + 10.0),
         title,
         TEXT,
     );
@@ -3073,32 +3064,16 @@ fn clip_card(
         details = format!("File not found  \u{00b7}  {details}");
     }
     painter.text(
-        egui::pos2(text_left, thumbnail.bottom() + 38.0),
+        egui::pos2(text_left, thumbnail.bottom() + 32.0),
         egui::Align2::LEFT_TOP,
         details,
         egui::FontId::proportional(crate::kit::text_size::CAPTION),
         if entry.offline { DANGER } else { MUTED },
     );
 
-    // Footer actions.
-    painter.line_segment(
-        [footer.left_top(), footer.right_top()],
-        Stroke::new(1.0_f32, BORDER),
-    );
-    let bottom_left = egui::CornerRadius {
-        nw: 0,
-        ne: 0,
-        sw: RADIUS,
-        se: 0,
-    };
-    let bottom_right = egui::CornerRadius {
-        nw: 0,
-        ne: 0,
-        sw: 0,
-        se: RADIUS,
-    };
+    // Round quick actions on the picture, shown while the card is hovered or focused.
     // A clip whose file is gone cannot be shown in the file manager; it can be forgotten.
-    let ((first_icon, first_label), (second_icon, second_label)) = if entry.offline {
+    let ((first_icon, _), (second_icon, _)) = if entry.offline {
         ((Icon::Search, "Find file"), (Icon::Trash, "Remove"))
     } else {
         (
@@ -3106,60 +3081,49 @@ fn clip_card(
             (Icon::Folder, open_in_file_manager_label()),
         )
     };
-    for (area, rounding, response, icon, label) in [
-        (copy_area, bottom_left, &copy, first_icon, first_label),
-        (
-            reveal_area,
-            bottom_right,
-            &reveal,
-            second_icon,
-            second_label,
-        ),
-    ] {
-        let hot = response.hovered();
-        if hot {
-            painter.rect_filled(
-                area.shrink2(Vec2::new(1.0, 1.0)),
-                rounding,
-                Color32::from_white_alpha(14),
+    let focused =
+        response.has_focus() || copy.has_focus() || reveal.has_focus() || heart.has_focus();
+    if hovered || focused {
+        for (area, response, icon) in [
+            (copy_area, &copy, first_icon),
+            (reveal_area, &reveal, second_icon),
+        ] {
+            let hot = response.hovered();
+            painter.circle_filled(
+                area.center(),
+                16.0,
+                if hot {
+                    Color32::from_black_alpha(215)
+                } else {
+                    Color32::from_black_alpha(150)
+                },
+            );
+            let danger = entry.offline && icon == Icon::Trash;
+            kit::draw_icon(
+                &painter,
+                area.center(),
+                icon,
+                if danger {
+                    DANGER
+                } else if hot {
+                    LIME
+                } else {
+                    TEXT
+                },
+                0.72,
             );
         }
-        let danger = entry.offline && icon == Icon::Trash;
-        let color = if danger {
-            DANGER
-        } else if hot {
-            LIME
+        copy.clone().on_hover_text(if entry.offline {
+            "Find the file"
         } else {
-            MUTED
-        };
-        kit::draw_icon(
-            &painter,
-            egui::pos2(area.left() + 24.0, area.center().y),
-            icon,
-            color,
-            0.72,
-        );
-        painter.text(
-            egui::pos2(area.left() + 42.0, area.center().y),
-            egui::Align2::LEFT_CENTER,
-            label,
-            egui::FontId::proportional(crate::kit::text_size::SMALL),
-            if danger {
-                DANGER
-            } else if hot {
-                TEXT
-            } else {
-                MUTED
-            },
-        );
+            "Send to editor"
+        });
+        reveal.clone().on_hover_text(if entry.offline {
+            "Remove from the library"
+        } else {
+            open_in_file_manager_label()
+        });
     }
-    painter.line_segment(
-        [
-            egui::pos2(middle, footer.top() + 10.0),
-            egui::pos2(middle, footer.bottom() - 10.0),
-        ],
-        Stroke::new(1.0_f32, BORDER),
-    );
 
     let mut menu_action = None;
     response.context_menu(|ui| {
@@ -3285,12 +3249,7 @@ fn paint_video_placeholder(
         hash.wrapping_mul(31).wrapping_add(u32::from(byte))
     });
     let (background, accent) = palette[(seed as usize) % palette.len()];
-    let top_corners = egui::CornerRadius {
-        nw: radius,
-        ne: radius,
-        sw: 0,
-        se: 0,
-    };
+    let top_corners = egui::CornerRadius::same(radius);
     let painter = ui.painter();
     if let Some(texture) = texture {
         // A real thumbnail, cropped to fill the card without stretching.

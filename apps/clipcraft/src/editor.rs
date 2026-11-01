@@ -3262,13 +3262,7 @@ impl EditorState {
         let mut browse = false;
         let mut add = false;
         let modal = egui::Modal::new(egui::Id::new("editor-clip-picker"))
-            .frame(
-                egui::Frame::new()
-                    .fill(PANEL)
-                    .stroke(Stroke::new(1.0_f32, BORDER))
-                    .corner_radius(crate::kit::radius::LG)
-                    .inner_margin(egui::Margin::same(20)),
-            )
+            .frame(crate::kit::card_frame().inner_margin(egui::Margin::same(20)))
             .show(context, |ui| {
                 ui.set_width(520.0);
                 ui.label(

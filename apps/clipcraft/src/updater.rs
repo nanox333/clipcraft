@@ -10,7 +10,7 @@ use clipcraft_engine::update::{UpdateInfo, UpdateStatus};
 use clipcraft_engine::{Command, CommandOutput, EngineError, execute};
 use eframe::egui::{self, Align, Layout, RichText, Stroke};
 
-use crate::kit::{self, BORDER, CARD, MUTED, TEXT};
+use crate::kit::{self, MUTED, TEXT};
 use crate::{ClipCraftApp, Icon};
 
 /// This build's version, compared with the latest published one.
@@ -200,10 +200,7 @@ impl ClipCraftApp {
     pub(crate) fn updates_card(&mut self, ui: &mut egui::Ui) {
         let mut check = false;
         let mut install = None;
-        egui::Frame::new()
-            .fill(CARD)
-            .stroke(Stroke::new(1.0_f32, BORDER))
-            .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
+        crate::kit::card_frame()
             .inner_margin(egui::Margin::symmetric(20, 16))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
