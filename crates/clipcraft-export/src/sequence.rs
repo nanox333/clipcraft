@@ -998,7 +998,7 @@ fn downmix(channels: &[Vec<f32>]) -> Option<Vec<Vec<f32>>> {
     }
     let length = channels.iter().map(Vec::len).min().unwrap_or(0);
     let sample = |channel: usize, at: usize| channels.get(channel).map_or(0.0, |c| c[at]);
-    let scale = 1.0 / (1.0 + 2.0 * std::f32::consts::FRAC_1_SQRT_2);
+    let scale = 1.0 / (1.0 + std::f32::consts::FRAC_1_SQRT_2);
     let (mut left, mut right) = (Vec::with_capacity(length), Vec::with_capacity(length));
     for at in 0..length {
         let centre = sample(2, at) * std::f32::consts::FRAC_1_SQRT_2;

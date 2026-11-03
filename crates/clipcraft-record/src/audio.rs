@@ -298,12 +298,16 @@ pub struct AudioInputStatus {
 struct Lane {
     from: AudioFormat,
     channels: usize,
-    /// Input frames consumed per output frame.
-    step: f64,
-    /// Position in the stream `[previous frame, input...]`.
-    position: f64,
-    previous: Vec<f32>,
-    started: bool,
+    /// The clip's sample rate.
+    rate: u32,
+    /// Windowed-sinc filter for rate conversion, built when the rates differ.
+    sinc: Option<Sinc>,
+    /// Converted input frames (interleaved) still needed by the filter, and the absolute index of
+    /// the first of them.
+    history: Vec<f32>,
+    history_base: u64,
+    /// Output frames produced so far; each one's source position is exact: `n * from / to`.
+    produced: u64,
     /// Interleaved samples at the clip's format, waiting for the clock.
     fifo: VecDeque<f32>,
     mono_mix: bool,
@@ -317,10 +321,11 @@ impl Lane {
         Self {
             from,
             channels,
-            step: f64::from(from.sample_rate) / f64::from(rate),
-            position: 0.0,
-            previous: vec![0.0; channels],
-            started: false,
+            rate,
+            sinc: (from.sample_rate != rate).then(|| Sinc::new(from.sample_rate, rate)),
+            history: Vec::new(),
+            history_base: 0,
+            produced: 0,
             fifo: VecDeque::new(),
             mono_mix: false,
             partial: Vec::new(),
@@ -363,7 +368,7 @@ impl Lane {
                 // Surround: fold the centre and the surrounds in, so dialogue is not lost.
                 let at = |i: usize| clean(frame.get(i).copied().unwrap_or(0.0));
                 let root = std::f32::consts::FRAC_1_SQRT_2;
-                let scale = 1.0 / (1.0 + 2.0 * root);
+                let scale = 1.0 / (1.0 + root);
                 let centre = at(2) * root;
                 (
                     (at(0) + centre + (at(4) + at(6)) * root) * scale,
@@ -383,36 +388,104 @@ impl Lane {
                 converted.push(right);
             }
         }
-        if !self.started {
-            self.previous.copy_from_slice(&converted[..self.channels]);
-            self.started = true;
-        }
-        if (self.step - 1.0).abs() < f64::EPSILON {
+        let Some(sinc) = self.sinc.as_ref() else {
             self.fifo.extend(converted);
             return;
-        }
-        let count = frames as f64;
-        let channels = self.channels;
-        let frame_at = |this: &Self, index: usize, channel: usize| -> f32 {
-            if index == 0 {
-                this.previous[channel]
-            } else {
-                converted[(index - 1) * channels + channel]
-            }
         };
-        while self.position < count {
-            let index = self.position.floor() as usize;
-            let fraction = (self.position - index as f64) as f32;
-            for channel in 0..channels {
-                let a = frame_at(self, index, channel);
-                let b = frame_at(self, index + 1, channel);
-                self.fifo.push_back(a + (b - a) * fraction);
+        let channels = self.channels;
+        self.history.extend_from_slice(&converted);
+        let available = self.history_base + (self.history.len() / channels) as u64;
+        let (from, to) = (u128::from(self.from.sample_rate), u128::from(self.rate));
+        loop {
+            let numerator = u128::from(self.produced) * from;
+            let index = (numerator / to) as u64;
+            // The filter reads `reach` frames either side; wait until the later ones have arrived.
+            if index + sinc.reach as u64 >= available {
+                break;
             }
-            self.position += self.step;
+            let fraction = (numerator % to) as f64 / to as f64;
+            let taps = sinc.taps(fraction);
+            for channel in 0..channels {
+                let mut sum = 0.0_f32;
+                for (tap, weight) in taps.iter().enumerate() {
+                    // Frames before the start of the stream repeat the first one.
+                    let at = (index + tap as u64).saturating_sub(sinc.reach as u64 - 1);
+                    let at = at.max(self.history_base);
+                    let row = (at - self.history_base) as usize;
+                    sum += weight * self.history[row * channels + channel];
+                }
+                self.fifo.push_back(sum);
+            }
+            self.produced += 1;
         }
-        self.position -= count;
-        let last = &converted[(frames - 1) * channels..];
-        self.previous.copy_from_slice(last);
+        // Keep only the frames the next output still reads.
+        let next = (u128::from(self.produced) * from / to) as u64;
+        let keep_from = next
+            .saturating_sub(sinc.reach as u64)
+            .max(self.history_base);
+        let drop = (keep_from - self.history_base) as usize * channels;
+        if drop > 0 {
+            self.history.drain(..drop);
+            self.history_base = keep_from;
+        }
+    }
+}
+
+/// How many input frames either side of a position the sinc filter reads (at least).
+const SINC_REACH: usize = 8;
+/// Fractional positions the filter is tabulated at.
+const SINC_PHASES: usize = 512;
+
+/// A windowed-sinc low-pass interpolator for one pair of rates. When the rate goes down the
+/// cutoff drops with it and the filter widens, so frequencies above the new Nyquist rate are
+/// removed instead of folding back as noise.
+struct Sinc {
+    /// Frames read before and after the position (the filter is `2 * reach` taps).
+    reach: usize,
+    /// `SINC_PHASES + 1` rows of `2 * reach` weights, each row summing to one.
+    table: Vec<f32>,
+}
+
+impl Sinc {
+    fn new(from: u32, to: u32) -> Self {
+        let cutoff = (f64::from(to) / f64::from(from)).min(1.0);
+        let reach = ((SINC_REACH as f64 / cutoff).ceil() as usize).clamp(SINC_REACH, 64);
+        let width = 2 * reach;
+        let mut table = Vec::with_capacity((SINC_PHASES + 1) * width);
+        for phase in 0..=SINC_PHASES {
+            let fraction = phase as f64 / SINC_PHASES as f64;
+            let mut row: Vec<f64> = (0..width)
+                .map(|tap| {
+                    // Tap `t` is the input frame `index - reach + 1 + t`.
+                    let distance = tap as f64 - (reach as f64 - 1.0) - fraction;
+                    let x = distance * cutoff;
+                    let sinc = if x.abs() < 1e-12 {
+                        1.0
+                    } else {
+                        (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x)
+                    };
+                    // Blackman window across the whole filter.
+                    let t = (distance / reach as f64).clamp(-1.0, 1.0);
+                    let window = 0.42
+                        + 0.5 * (std::f64::consts::PI * t).cos()
+                        + 0.08 * (2.0 * std::f64::consts::PI * t).cos();
+                    sinc * window
+                })
+                .collect();
+            let total: f64 = row.iter().sum();
+            if total.abs() > 1e-9 {
+                row.iter_mut().for_each(|weight| *weight /= total);
+            }
+            table.extend(row.into_iter().map(|weight| weight as f32));
+        }
+        Self { reach, table }
+    }
+
+    /// The weights for a position `fraction` (0 up to 1) past an input frame.
+    fn taps(&self, fraction: f64) -> &[f32] {
+        let phase = ((fraction * SINC_PHASES as f64).round() as usize).min(SINC_PHASES);
+        let width = 2 * self.reach;
+        &self.table[phase * width..(phase + 1) * width]
     }
 }
 
@@ -495,6 +568,78 @@ struct TrackState {
     config: Vec<u8>,
     /// Access units produced so far.
     units: i64,
+    /// Keeps a loud mix below full scale without hard clipping.
+    limiter: Limiter,
+}
+
+/// Where the limiter holds the peaks, a little below full scale.
+const LIMIT_CEILING: f32 = 0.98;
+
+/// A look-ahead peak limiter for the mixed track. The sound is delayed by about a millisecond;
+/// in that time the gain eases down so that every peak is under the ceiling when it arrives, and
+/// it returns to one over about a tenth of a second. Hard clipping would flatten the peaks into
+/// harsh distortion; this changes the level of a loud moment instead.
+struct Limiter {
+    /// Frames of look-ahead.
+    window: usize,
+    /// The gain each recent frame needs, newest last (the minimum over it is the target).
+    needed: std::collections::VecDeque<f32>,
+    /// The target gain of each recent frame; their mean is the smooth gain.
+    targets: std::collections::VecDeque<f32>,
+    /// Interleaved frames waiting out the delay.
+    delayed: std::collections::VecDeque<f32>,
+    /// The gain applied last, which can only rise slowly.
+    gain: f32,
+    release: f32,
+}
+
+impl Limiter {
+    fn new(sample_rate: u32) -> Self {
+        let release_frames = (f64::from(sample_rate) * 0.1).max(1.0);
+        Self {
+            window: ((sample_rate / 1_000) as usize).clamp(8, 256),
+            needed: std::collections::VecDeque::new(),
+            targets: std::collections::VecDeque::new(),
+            delayed: std::collections::VecDeque::new(),
+            gain: 1.0,
+            release: (-1.0 / release_frames).exp() as f32,
+        }
+    }
+
+    /// Limits interleaved samples of `channels` channels in place.
+    fn process(&mut self, samples: &mut [f32], channels: usize) {
+        let channels = channels.max(1);
+        let delay = (self.window - 1) * channels;
+        for frame in samples.chunks_exact_mut(channels) {
+            let peak = frame.iter().fold(0.0_f32, |m, v| m.max(v.abs()));
+            let need = if peak > LIMIT_CEILING {
+                LIMIT_CEILING / peak
+            } else {
+                1.0
+            };
+            self.needed.push_back(need);
+            if self.needed.len() > self.window {
+                self.needed.pop_front();
+            }
+            let target = self.needed.iter().copied().fold(1.0_f32, f32::min);
+            self.targets.push_back(target);
+            if self.targets.len() > self.window {
+                self.targets.pop_front();
+            }
+            let smooth = self.targets.iter().sum::<f32>() / self.targets.len() as f32;
+            // Never above the smooth gain (so peaks are met), rising only at the release rate.
+            let released = self.gain + (1.0 - self.gain) * (1.0 - self.release);
+            self.gain = smooth.min(released);
+            self.delayed.extend(frame.iter().copied());
+            if self.delayed.len() > delay {
+                for sample in frame.iter_mut() {
+                    *sample = self.delayed.pop_front().unwrap_or(0.0) * self.gain;
+                }
+            } else {
+                frame.fill(0.0);
+            }
+        }
+    }
 }
 
 /// Reads the sources, keeps them in step with the clock, mixes them into tracks, and encodes.
@@ -536,6 +681,7 @@ impl AudioEngine {
                 config: encoder.audio_specific_config(),
                 encoder,
                 units: 0,
+                limiter: Limiter::new(config.sample_rate),
             });
         }
         let lanes = inputs
@@ -680,7 +826,8 @@ impl AudioEngine {
                 lane.lane.fifo.drain(..take * channels);
             }
         }
-        for (index, (track, mix)) in self.tracks.iter_mut().zip(mixes).enumerate() {
+        for (index, (track, mut mix)) in self.tracks.iter_mut().zip(mixes).enumerate() {
+            track.limiter.process(&mut mix, channels);
             let planar: Vec<Vec<f32>> = (0..channels)
                 .map(|channel| {
                     mix.chunks_exact(channels)
@@ -1129,7 +1276,9 @@ mod tests {
             }
             let frames = lane.frames();
             assert!(
-                (47_990..=48_010).contains(&frames),
+                // The filter reads a few input frames ahead, so the newest few output frames wait
+                // for the next read (well under a millisecond).
+                (47_950..=48_010).contains(&frames),
                 "{rate}/{channels}: {frames}"
             );
             let left: Vec<f32> = lane.fifo.iter().step_by(2).copied().collect();
@@ -1163,7 +1312,8 @@ mod tests {
             to_stereo.fifo.iter().copied().collect::<Vec<_>>(),
             vec![0.25, 0.25, -0.5, -0.5]
         );
-        // Surround keeps its front pair.
+        // Surround folds the centre and surrounds into the front pair (ITU weights, scaled so
+        // the loudest case stays near full scale); silent extra channels leave the pair as it is.
         let mut surround = Lane::new(
             AudioFormat {
                 sample_rate: 48_000,
@@ -1172,11 +1322,21 @@ mod tests {
             48_000,
             2,
         );
-        surround.push(&[0.1, 0.2, 9.0, 9.0, 9.0, 9.0]);
-        assert_eq!(
-            surround.fifo.iter().copied().collect::<Vec<_>>(),
-            vec![0.1, 0.2]
+        surround.push(&[0.1, 0.2, 0.0, 0.0, 0.0, 0.0]);
+        let scale = 1.0 / (1.0 + std::f32::consts::FRAC_1_SQRT_2);
+        let pair: Vec<f32> = surround.fifo.iter().copied().collect();
+        assert!((pair[0] - 0.1 * scale).abs() < 1e-6 && (pair[1] - 0.2 * scale).abs() < 1e-6);
+        // Hostile loud channels stay bounded.
+        let mut loud = Lane::new(
+            AudioFormat {
+                sample_rate: 48_000,
+                channels: 6,
+            },
+            48_000,
+            2,
         );
+        loud.push(&[0.1, 0.2, 9.0, 9.0, 9.0, 9.0]);
+        assert!(loud.fifo.iter().all(|v| v.is_finite() && v.abs() <= 4.0));
     }
 
     #[test]
@@ -1451,5 +1611,55 @@ mod tests {
         // Only the centre speaker carries sound.
         lane.push(&[0.0, 0.0, 0.8, 0.0, 0.0, 0.0]);
         assert!(lane.fifo.iter().all(|sample| *sample > 0.1));
+    }
+
+    /// Energy of a sine of `hertz` at `rate` after conversion to 48 kHz mono, as RMS.
+    fn converted_rms(rate: u32, hertz: f32) -> f32 {
+        let mut lane = Lane::new(
+            AudioFormat {
+                sample_rate: rate,
+                channels: 1,
+            },
+            48_000,
+            1,
+        );
+        lane.push(&sine(rate, 1, 1.0, hertz));
+        let body: Vec<f32> = lane.fifo.iter().skip(2_000).copied().collect();
+        (body.iter().map(|v| v * v).sum::<f32>() / body.len() as f32).sqrt()
+    }
+
+    #[test]
+    fn converting_down_removes_what_would_fold_back_and_keeps_the_band() {
+        // 96 kHz to 48 kHz: 30 kHz is above the new Nyquist rate (24 kHz) and must not alias to
+        // 18 kHz; 1 kHz must pass at full level (a 0.5 sine has an RMS of about 0.354).
+        assert!(converted_rms(96_000, 30_000.0) < 0.02);
+        assert!((converted_rms(96_000, 1_000.0) - 0.354).abs() < 0.01);
+        // Up-conversion also keeps level.
+        assert!((converted_rms(44_100, 5_000.0) - 0.354).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_limiter_turns_a_loud_mix_down_instead_of_clipping_it() {
+        let mut limiter = Limiter::new(48_000);
+        // A 2x over-range sine, stereo.
+        let mut mix: Vec<f32> = (0..9_600)
+            .flat_map(|n| {
+                let v = 2.0 * (std::f32::consts::TAU * 440.0 * n as f32 / 48_000.0).sin();
+                [v, v]
+            })
+            .collect();
+        limiter.process(&mut mix, 2);
+        assert!(mix.iter().all(|v| v.abs() <= LIMIT_CEILING + 1e-4));
+        // The wave keeps its shape: no flat tops from clipping.
+        // (The first millisecond is the limiter's delay, silent.)
+        let flat = mix[200..]
+            .windows(3)
+            .filter(|w| w[0] == w[1] && w[1] == w[2])
+            .count();
+        assert!(flat < 10, "{flat} flat samples");
+        // Quiet material passes untouched once the gain has recovered.
+        let mut quiet = vec![0.1_f32; 48_000 * 2];
+        limiter.process(&mut quiet, 2);
+        assert!((quiet[quiet.len() - 1] - 0.1).abs() < 0.001);
     }
 }

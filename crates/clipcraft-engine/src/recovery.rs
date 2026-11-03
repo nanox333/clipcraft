@@ -134,6 +134,11 @@ fn recover_in(folder: &Path, settle: Duration, recovery: &mut Recovery) {
         if age.is_none_or(|age| age < settle) {
             continue;
         }
+        // Old enough, but another ClipCraft may still be growing it (a long save that went quiet
+        // for a while): a file whose size is changing right now is not abandoned.
+        if !settle.is_zero() && is_growing(&path, metadata.len()) {
+            continue;
+        }
         if recovery_copy {
             remake_from_recovery_copy(folder, base, &path, recovery);
             continue;
@@ -156,6 +161,12 @@ fn recover_in(folder: &Path, settle: Duration, recovery: &mut Recovery) {
             recovery.removed.push(path);
         }
     }
+}
+
+/// True when `path` is longer than `known_len` a moment later (or cannot be looked at).
+fn is_growing(path: &Path, known_len: u64) -> bool {
+    std::thread::sleep(Duration::from_millis(250));
+    fs::metadata(path).map_or(true, |later| later.len() != known_len)
 }
 
 /// Turns the crash-safe copy of a clip (a fragmented MP4, playable up to its last complete
@@ -662,5 +673,31 @@ mod tests {
             fs::read(scratch.0.join(name)).expect("clip"),
             b"the real clip"
         );
+    }
+
+    #[test]
+    fn a_file_that_is_still_growing_is_not_abandoned() {
+        let scratch = Scratch::new("growing");
+        let path = scratch.0.join("ClipCraft 2026-10-20 07-15-36.mp4.partial");
+        fs::write(&path, b"first bytes").expect("fixture");
+        let old = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        old.set_modified(SystemTime::now() - Duration::from_secs(120))
+            .unwrap();
+        drop(old);
+        let writer = path.clone();
+        let handle = std::thread::spawn(move || {
+            // After recovery has looked at the file's age, while it checks the size.
+            std::thread::sleep(Duration::from_millis(100));
+            for _ in 0..8 {
+                let mut file = fs::OpenOptions::new().append(true).open(&writer).unwrap();
+                std::io::Write::write_all(&mut file, b"more").unwrap();
+                std::thread::sleep(Duration::from_millis(60));
+            }
+        });
+        // Settle of one minute: the file is two minutes old, but it grows during the check.
+        let recovery = recover_interrupted_after(&scratch.0, Duration::from_secs(60));
+        handle.join().unwrap();
+        assert!(recovery.is_empty(), "{recovery:?}");
+        assert!(path.exists());
     }
 }

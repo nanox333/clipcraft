@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Better sound:** converting a microphone or system-sound rate (44.1 kHz and others) now uses a
+  windowed-sinc filter, so frequencies above the new limit no longer fold back as noise; loud mixes
+  are turned down by a look-ahead limiter instead of hard-clipped.
+- **Fixed:** start-up recovery leaves alone a file that is still growing, even when it looks old.
 - **Fixed:** playback steps over a picture the decoder cannot read (up to 30 in a row) instead of
   stopping the whole clip.
 - **Fixed:** a cut no longer moves sound that starts late earlier than the picture; sound that ends
