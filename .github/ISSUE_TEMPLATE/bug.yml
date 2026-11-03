@@ -11,7 +11,7 @@ body:
     id: problem
     attributes:
       label: Expected and actual behavior
-      description: State the user impact and whether data loss, capture, editing, or export is affected.
+      description: Paste your report from ClipCraft here, or describe the impact in your own words.
       placeholder: Expected … / Actual …
     validations:
       required: true
@@ -24,7 +24,7 @@ body:
         1. …
         2. …
     validations:
-      required: true
+      required: false
   - type: input
     id: task_id
     attributes:
@@ -32,28 +32,28 @@ body:
       description: For example M2.3 or G1; use TBD only if triage must assign it.
       placeholder: Mx.y / Gx / TBD
     validations:
-      required: true
+      required: false
   - type: textarea
     id: environment
     attributes:
       label: Environment
       description: App commit/version, OS version, GPU/encoder, audio devices, and capture source type. Do not include serial numbers or private paths.
     validations:
-      required: true
+      required: false
   - type: textarea
     id: limitations
     attributes:
       label: Known limitations and workaround
       description: State unsupported cases, impact, and any workaround. Write “unknown” if not yet investigated.
     validations:
-      required: true
+      required: false
   - type: textarea
     id: evidence
     attributes:
       label: Evidence
       description: Redacted logs, screenshot using non-private media, measurements, or test case.
     validations:
-      required: true
+      required: false
   - type: textarea
     id: acceptance
     attributes:
@@ -63,7 +63,7 @@ body:
         - [ ] …
         - [ ] …
     validations:
-      required: true
+      required: false
   - type: textarea
     id: docs_impact
     attributes:
@@ -71,4 +71,4 @@ body:
       description: State which status, limitation, setup, or troubleshooting docs need updating if this bug changes documented behavior. Implementation PRs must update README.md and docs/gaps.md.
       placeholder: README.md, docs/gaps.md, docs/backlog.md — or explain why the documented behavior does not change.
     validations:
-      required: true
+      required: false

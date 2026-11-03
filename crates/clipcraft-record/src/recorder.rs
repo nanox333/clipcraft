@@ -162,6 +162,8 @@ pub struct RecordStatus {
     pub buffered_bytes: u64,
     /// Seconds of play in the replay buffer.
     pub buffered_seconds: f32,
+    /// Complete replay resets that discarded buffered video during this recording.
+    pub buffer_resets: u64,
     /// The clip frame size, once the first picture arrived.
     pub output: Option<(u32, u32)>,
     /// Average time to convert and encode one picture, in milliseconds.
@@ -376,12 +378,13 @@ impl Recorder {
     /// How recording is going.
     pub fn status(&self) -> RecordStatus {
         let stats = lock(&self.shared.stats);
-        let (buffered_frames, buffered_bytes, span) = {
+        let (buffered_frames, buffered_bytes, span, buffer_resets) = {
             let buffer = lock(&self.shared.buffer);
             (
                 buffer.len() as u64,
                 buffer.bytes() as u64,
                 buffer.span_frames(),
+                buffer.resets(),
             )
         };
         let output = lock(&self.shared.video)
@@ -402,6 +405,7 @@ impl Recorder {
             buffered_frames,
             buffered_bytes,
             buffered_seconds: span as f32 / self.shared.fps.max(1) as f32,
+            buffer_resets,
             output,
             average_encode_ms,
             target_fps: self.shared.fps,

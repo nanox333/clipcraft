@@ -5,16 +5,19 @@ with a hotkey, then play, search, trim and export your clips.** It works fully o
 account, server, telemetry, upload or share-link service, and everything you record stays on your
 computer.
 
-> **Status: early release (0.2.0).** Windows (tested on AMD) and Linux/X11 are supported; macOS is
-> not. See [`docs/gaps.md`](docs/gaps.md) for current evidence and limits.
+> **Status: early release.** Version 0.2.0 is the latest published release.
+> The current source has Windows/AMD and Linux/X11 generated-capture evidence, while real games,
+> other devices and Wayland remain incompletely tested. macOS capture is not implemented. See
+> [`docs/gaps.md`](docs/gaps.md) for current evidence and limits.
+
+Automated checks run on Linux and Windows; they do not replace testing on real capture hardware.
 
 ## Download
 
-On Windows, download **ClipCraft-Setup** from the
-[latest release](https://github.com/nanox333/clipcraft/releases), run it, and ClipCraft is installed
-for your user with a Start menu shortcut and an uninstaller (Windows Settings → Apps). No
-administrator rights or account are needed. Linux gets a tarball with the app. The command line tool
-`clipcraft-cli` is a separate download for people who want it; the app does not need it.
+Download [ClipCraft 0.2.0](https://github.com/nanox333/clipcraft/releases/tag/v0.2.0) as a Windows
+**ClipCraft-Setup** installer or a Linux x86_64 tarball. The command-line tool is available as a
+separate download. The Windows installer works for the current user and needs no administrator
+rights or account.
 
 Check a download against `SHA256SUMS.txt` if you like. Downloads are not code-signed, so Windows
 SmartScreen may warn: choose *More info*, then *Run anyway*. ClipCraft can tell you when a newer
@@ -23,11 +26,17 @@ Settings → General and it never goes online. See [`CHANGELOG.md`](CHANGELOG.md
 
 New profiles get a short setup for storage, capture, audio and shortcuts. Each hotkey action
 supports up to five shortcuts: use **+** in Settings → Hotkeys.
+On Wayland, ClipCraft asks the desktop's Global Shortcuts portal to register keys. Settings →
+Hotkeys shows the desktop's assigned keys and offers an explicit, default-off keyboard-device
+fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
 
 ## What it does
 
 - **Record and replay:** capture a screen or game window into a bounded replay buffer and save the
   last moments with a global hotkey. Game-only mode waits until a recognized game is running.
+  The capture bar shows the available replay against the requested clip length and reports when
+  buffered footage is cleared by a source or recording-stream change. Hover over it for the
+  encoder, frame counts, output size, and audio-source status.
 - **Encoding:** hardware H.264 and H.265 on supported GPUs (Windows), or a built-in software H.264
   encoder tuned for screen recording (desktop clips are about a third smaller than before). If the graphics-card encoder fails or is busy, recording
   continues on the processor and the card is tried again every 20 s or longer.
@@ -39,9 +48,31 @@ supports up to five shortcuts: use **+** in Settings → Hotkeys.
   evening, and a small sequence editor with text, fades and colour effects.
 - **Desktop:** searchable, categorized Settings; system tray (Windows); a "clip saved" pop-up that
   never takes focus from your game; optional Discord Rich Presence.
+- **Bug reports:** Settings → About lets you prepare and review a report locally, optionally add
+  basic recording settings, and copy it. Open the GitHub form separately if you choose to share it.
 - **Command line:** `clipcraft-cli` runs the same commands as the app.
 
+For a bug report without the desktop UI, pass JSON such as
+`{"observed":"Clipping stopped","steps":"Press F8","include_settings":false}` to
+`clipcraft-cli bug-report` on standard input. It prints the report locally and does not submit it.
+
 Details and known limits for every feature are in [`docs/features.md`](docs/features.md).
+
+## Screenshots
+
+ClipCraft 0.2.0 on Linux, shown with generated sample clips.
+
+**Clip library** — browse, search, and send a clip to the editor.
+
+![ClipCraft's local clip library with three sample clips](docs/screenshots/library.png)
+
+**Editor** — arrange clips, split them on the timeline, and export the result.
+
+![ClipCraft's editor showing sample clips and a split timeline](docs/screenshots/editor.png)
+
+**Capture settings** — choose a game or desktop source and configure recording.
+
+![ClipCraft's capture settings showing desktop recording options](docs/screenshots/capture-settings.png)
 
 ## Planned, not built
 

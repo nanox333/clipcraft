@@ -587,6 +587,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("dir");
         let new_home = dir.join("Clutch.mp4");
+        let missing_home = dir.join("missing.mp4");
         std::fs::write(&new_home, b"12345").expect("file");
         let new_path = new_home.to_string_lossy().into_owned();
         let mut old = entry("/definitely/not/here/Clutch.mp4");
@@ -605,7 +606,10 @@ mod tests {
             apply_edit(
                 &mut entries,
                 &mut collections,
-                &relink("/definitely/not/here/Clutch.mp4", "/nope/x.mp4")
+                &relink(
+                    "/definitely/not/here/Clutch.mp4",
+                    &missing_home.to_string_lossy()
+                )
             ),
             Err(EngineError::FileUnavailable)
         );

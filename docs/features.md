@@ -4,10 +4,16 @@ The full, detailed feature list and known limits. The [README](../README.md) has
 
 ## What works now
 
+- **Bug reports:** Settings › About offers a local draft and preview, with optional basic recording
+  settings and explicit copy. A separate button opens the blank GitHub bug form. No report or media
+  is uploaded automatically; review user-entered text before sharing.
+
 - **Settings:** a categorized, searchable Settings window with sliders, per-row reset and an Overview
-  page of suggested profiles. New profiles have a four-step setup. Each shortcut action supports
+  page of suggested profiles. New profiles have a seven-step setup. Each shortcut action supports
   up to five bindings with +/remove controls; overlapping push-to-talk keys stay active until all
-  are released.
+  are released. On Wayland, the desktop GlobalShortcuts portal is tried first and its actual
+  assignments are shown. Keyboard-device fallback is explicitly opt-in; XWayland fallback is
+  limited. Fake-bus tests pass, but real compositor and physical-keyboard behavior remains open.
 - **Windows installation:** Rust packaging builds an offline per-user setup executable alongside
   the portable zip, with Start menu links, an optional desktop shortcut and an uninstaller that
   keeps clips and preferences. Downloads remain unsigned.
@@ -27,6 +33,9 @@ The full, detailed feature list and known limits. The [README](../README.md) has
   after a game closes (15 seconds–1 hour), or continuous desktop replay that automatically switches
   to game windows and back. Reopening a game cancels the timer; its next exit starts a fresh timer.
   Automatic source changes in the desktop modes never save a clip by themselves (a game closing or crashing does not make one); buffers remain bounded.
+  The capture bar shows buffered whole seconds against the active clip length and reports when
+  a source or recording-stream reset clears buffered footage. Normal keyframe eviction is not a
+  reset. In-flight saves are unaffected; saving and error messages take priority over notices.
   Manual capture is also available.
 - **Audio:** synchronized system audio and microphone recording, mixed or on separate AAC tracks,
   with levels, mute, push-to-talk, device-loss handling and optional offline microphone noise

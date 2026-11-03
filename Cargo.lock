@@ -818,6 +818,7 @@ dependencies = [
 name = "clipcraft-platform"
 version = "0.2.0"
 dependencies = [
+ "async-io",
  "clipcraft-capture",
  "clipcraft-engine",
  "clipcraft-record",
@@ -829,6 +830,7 @@ dependencies = [
  "filmcraft-isobmff",
  "filmcraft-platform",
  "filmcraft-time",
+ "futures-lite",
  "global-hotkey",
  "interprocess",
  "libloading",

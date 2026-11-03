@@ -671,12 +671,15 @@ mod tests {
         arming.capture_started(game.clone());
         arming.capture_stopped_by_user();
         let mode = DesktopCaptureMode::AfterGame;
-        assert_eq!(arming.observe_automatic(&[game.clone()], mode, false), None);
+        assert_eq!(
+            arming.observe_automatic(std::slice::from_ref(&game), mode, false),
+            None
+        );
         assert!(arming.is_paused());
         assert_eq!(arming.observe_automatic(&[], mode, true), None);
         assert!(!arming.is_paused());
         assert_eq!(
-            arming.observe_automatic(&[game.clone()], mode, false),
+            arming.observe_automatic(std::slice::from_ref(&game), mode, false),
             Some(GameArmingDecision::Start(game))
         );
     }

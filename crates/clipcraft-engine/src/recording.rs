@@ -372,6 +372,8 @@ pub struct RecordingSettings {
     pub capture_microphone: bool,
     /// Keyboard shortcuts.
     pub hotkeys: Hotkeys,
+    /// Explicitly allow raw keyboard-device access as a Wayland shortcut fallback.
+    pub wayland_raw_hotkeys: bool,
     /// Microphone to record; empty means the system default.
     pub microphone_device: String,
     /// Output device whose sound is recorded; empty means the system default.
@@ -473,6 +475,7 @@ impl Default for RecordingSettings {
             capture_game_audio: true,
             capture_microphone: false,
             hotkeys: Hotkeys::default(),
+            wayland_raw_hotkeys: false,
             microphone_device: String::new(),
             output_device: String::new(),
             separate_audio_tracks: false,
@@ -798,6 +801,19 @@ mod tests {
 
     use super::*;
     use clipcraft_capture::reframe::PixelRect;
+
+    #[test]
+    fn raw_wayland_keyboard_fallback_is_opt_in_and_persists() {
+        let old: RecordingSettings = serde_json::from_str("{}").unwrap();
+        assert!(!old.wayland_raw_hotkeys);
+        let selected = RecordingSettings {
+            wayland_raw_hotkeys: true,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&selected).unwrap();
+        let restored: RecordingSettings = serde_json::from_str(&json).unwrap();
+        assert!(restored.sanitized().wayland_raw_hotkeys);
+    }
 
     fn rect(x: u32, y: u32, width: u32, height: u32) -> PixelRect {
         PixelRect {

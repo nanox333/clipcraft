@@ -79,6 +79,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -87,14 +88,34 @@ jobs:
       - name: Write checksums
         working-directory: dist
         run: sha256sum clipcraft-* ClipCraft-* > SHA256SUMS.txt && cat SHA256SUMS.txt
-      - name: Create the draft release
+      - name: Create or refresh the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          gh release create "v${VERSION}" dist/* \
-            --repo "${GITHUB_REPOSITORY}" \
-            --target "${GITHUB_SHA}" \
-            --title "ClipCraft ${VERSION}" \
-            --notes "Downloads for Linux (x86_64) and Windows (x86_64). They are not code-signed: on Windows, choose More info, then Run anyway; check each file against SHA256SUMS.txt. Everything ClipCraft records stays on your computer." \
-            --draft
+          tag="v${VERSION}"
+          notes="docs/releases/${tag}.md"
+          if [ ! -f "$notes" ]; then
+            echo "::error::missing release notes: $notes"
+            exit 1
+          fi
+          if draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$draft" != true ]; then
+              echo "::error::refusing to overwrite a published release"
+              exit 1
+            fi
+            tagged_commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${tag}" --jq .sha)
+            if [ "$tagged_commit" != "$GITHUB_SHA" ]; then
+              echo "::error::release tag points to $tagged_commit, but packages were built from $GITHUB_SHA"
+              exit 1
+            fi
+            gh release upload "$tag" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "ClipCraft ${VERSION}" --notes-file "$notes"
+          else
+            gh release create "$tag" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "ClipCraft ${VERSION}" \
+              --notes-file "$notes" \
+              --draft
+          fi

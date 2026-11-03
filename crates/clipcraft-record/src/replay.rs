@@ -34,6 +34,7 @@ pub struct ReplayBuffer {
     window_frames: i64,
     max_bytes: usize,
     evicted_frames: u64,
+    resets: u64,
 }
 
 impl ReplayBuffer {
@@ -47,6 +48,7 @@ impl ReplayBuffer {
             window_frames: window_frames.max(1),
             max_bytes: max_bytes.max(1),
             evicted_frames: 0,
+            resets: 0,
         }
     }
 
@@ -122,6 +124,9 @@ impl ReplayBuffer {
     /// Drops everything, for example when the picture size changes and old video no longer
     /// matches the stream's parameters.
     pub fn clear(&mut self) {
+        if !self.samples.is_empty() {
+            self.resets = self.resets.saturating_add(1);
+        }
         self.samples.clear();
         self.next_group = None;
         self.bytes = 0;
@@ -153,6 +158,11 @@ impl ReplayBuffer {
     /// Pictures dropped from the front so far.
     pub fn evicted_frames(&self) -> u64 {
         self.evicted_frames
+    }
+
+    /// Times buffered video was discarded by a complete reset, excluding normal GOP eviction.
+    pub fn resets(&self) -> u64 {
+        self.resets
     }
 }
 
@@ -232,6 +242,32 @@ mod tests {
         let buffer = ReplayBuffer::new(10, 100);
         assert!(buffer.snapshot(10).is_empty() && buffer.is_empty());
         assert_eq!(buffer.span_frames(), 0);
+    }
+
+    #[test]
+    fn resets_count_discarded_replays_but_not_empty_clears_or_normal_eviction() {
+        let mut buffer = ReplayBuffer::new(5, usize::MAX);
+        buffer.clear();
+        fill(&mut buffer, 20, 5);
+        assert!(buffer.evicted_frames() > 0);
+        assert_eq!(buffer.resets(), 0);
+        buffer.clear();
+        assert_eq!(buffer.resets(), 1);
+        buffer.clear();
+        assert_eq!(buffer.resets(), 1);
+        buffer.push(sample(25, true)).unwrap();
+        buffer.clear();
+        assert_eq!(buffer.resets(), 2);
+    }
+
+    #[test]
+    fn exceeding_the_hard_byte_limit_reports_a_reset() {
+        let mut buffer = ReplayBuffer::new(10, 10);
+        buffer.push(sample(0, true)).unwrap();
+        buffer.push(sample(1, false)).unwrap();
+        buffer.push(sample(2, false)).unwrap();
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.resets(), 1);
     }
 
     #[test]

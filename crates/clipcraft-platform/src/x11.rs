@@ -735,7 +735,7 @@ pub fn start_hotkeys(
     let (sender, receiver) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = stop.clone();
-    std::thread::Builder::new()
+    let worker = std::thread::Builder::new()
         .name("clipcraft-hotkeys".to_owned())
         .spawn(move || {
             while !thread_stop.load(Ordering::SeqCst) {
@@ -767,7 +767,9 @@ pub fn start_hotkeys(
             }
         })
         .map_err(|_| CaptureError::Failed)?;
-    Ok(HotkeyListener::from_channel(receiver, stop, skipped))
+    Ok(HotkeyListener::from_channel(
+        receiver, stop, skipped, worker,
+    ))
 }
 
 /// The window the window manager says has the focus, if there is one and it can be captured.
