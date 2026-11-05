@@ -67,7 +67,9 @@ pub fn start_wayland_hotkeys_on(
 pub use http::https_get;
 pub use installation::{register_installation, unregister_installation};
 pub use priority::set_background_priority;
-pub use process::{ProcessObserver, RunningProcess, running_processes, steam_installation_roots};
+pub use process::{
+    ProcessObserver, RunningProcess, process_family, running_processes, steam_installation_roots,
+};
 pub use screen::{make_window_passive, set_taskbar_button, window_minimized, work_area};
 pub use timer::set_fine_timer;
 pub use trash::move_to_trash;
@@ -266,22 +268,28 @@ pub fn active_window() -> Result<Option<CaptureTarget>, CaptureError> {
 /// Finds a capturable window owned by this process. Returns `None` where the desktop does not
 /// expose window ownership (for example, a Wayland session using the screen-capture portal).
 pub fn window_for_process(process_id: u32) -> Result<Option<CaptureTarget>, CaptureError> {
+    window_for_processes(&[process_id])
+}
+
+/// The largest capturable window owned by any of these processes (a game and the processes it
+/// started), or `None` as for [`window_for_process`].
+pub fn window_for_processes(process_ids: &[u32]) -> Result<Option<CaptureTarget>, CaptureError> {
     #[cfg(target_os = "linux")]
     if wayland::available() {
-        let _ = process_id;
+        let _ = process_ids;
         return Ok(None);
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        x11::window_for_process(None, process_id)
+        x11::window_for_processes(None, process_ids)
     }
     #[cfg(windows)]
     {
-        windows::window_for_process(process_id)
+        windows::window_for_processes(process_ids)
     }
     #[cfg(not(any(all(unix, not(target_os = "macos")), windows)))]
     {
-        let _ = process_id;
+        let _ = process_ids;
         Ok(None)
     }
 }
@@ -298,7 +306,7 @@ pub fn window_for_process_on(
     display: &str,
     process_id: u32,
 ) -> Result<Option<CaptureTarget>, CaptureError> {
-    x11::window_for_process(Some(display), process_id)
+    x11::window_for_processes(Some(display), &[process_id])
 }
 
 /// One line of a diagnostics report: what was checked, whether it is fine, and the details.

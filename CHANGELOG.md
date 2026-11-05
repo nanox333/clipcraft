@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed:** games whose window belongs to a process they start (FiveM, Rockstar titles, Unreal
+  games with a bootstrap executable) are captured instead of reporting that the desktop did not
+  expose a game window; when a launcher or loading window closes and the game opens its own,
+  clipping restarts on the game window instead of stopping.
 - **Better sound:** converting a microphone or system-sound rate (44.1 kHz and others) now uses a
   windowed-sinc filter, so frequencies above the new limit no longer fold back as noise; loud mixes
   are turned down by a look-ahead limiter instead of hard-clipped.

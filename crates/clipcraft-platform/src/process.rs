@@ -14,6 +14,44 @@ pub struct RunningProcess {
     pub executable: String,
     /// Exact Steam ID from Linux process metadata or a verified local installation path.
     pub steam_app_id: Option<String>,
+    /// The process that started this one, when the system says.
+    pub parent_id: Option<u32>,
+}
+
+/// Most generations below a game process searched for the process that owns its window.
+const MAX_FAMILY_DEPTH: usize = 8;
+/// Most processes in one family.
+const MAX_FAMILY: usize = 64;
+
+/// `root` and the processes it started, their children, and so on (bounded). Many games show
+/// their window from a process other than the one recognized: a launcher or bootstrap executable
+/// starts the real game (FiveM's `FiveM.exe` starts `FiveM_..._GTAProcess.exe`; Unreal games'
+/// `Game.exe` starts `Game-Win64-Shipping.exe`).
+pub fn process_family(processes: &[RunningProcess], root: u32) -> Vec<u32> {
+    let mut family = vec![root];
+    let mut generation = vec![root];
+    for _ in 0..MAX_FAMILY_DEPTH {
+        let next: Vec<u32> = processes
+            .iter()
+            .filter(|process| {
+                process
+                    .parent_id
+                    .is_some_and(|parent| generation.contains(&parent))
+                    && !family.contains(&process.process_id)
+            })
+            .map(|process| process.process_id)
+            .collect();
+        if next.is_empty() {
+            break;
+        }
+        family.extend(next.iter().copied());
+        if family.len() >= MAX_FAMILY {
+            family.truncate(MAX_FAMILY);
+            break;
+        }
+        generation = next;
+    }
+    family
 }
 
 /// Reuses the process table between scans so repeated game checks do not rebuild system state.
@@ -116,6 +154,7 @@ impl ProcessObserver {
                 process_id,
                 executable,
                 steam_app_id,
+                parent_id: process.parent().map(|parent| parent.as_u32()),
             });
         }
         self.steam_app_ids
@@ -345,5 +384,27 @@ mod installation_tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn a_family_reaches_the_child_that_owns_the_window_and_stays_bounded() {
+        let process = |process_id, parent_id| RunningProcess {
+            process_id,
+            executable: format!("p{process_id}"),
+            steam_app_id: None,
+            parent_id,
+        };
+        let processes = [
+            process(10, Some(1)),  // the recognized launcher
+            process(11, Some(10)), // the game it started
+            process(12, Some(11)), // a helper the game started
+            process(20, Some(1)),  // unrelated
+            process(30, Some(30)), // a loop of its own
+        ];
+        let mut family = process_family(&processes, 10);
+        family.sort_unstable();
+        assert_eq!(family, [10, 11, 12]);
+        assert_eq!(process_family(&processes, 30), [30]);
+        assert_eq!(process_family(&[], 99), [99]);
     }
 }

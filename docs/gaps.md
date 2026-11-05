@@ -691,6 +691,10 @@ remain open. No upload, Discord account, link, or network path is added. See
 
 - **Force window capture** records the window with the focus (found through `_NET_ACTIVE_WINDOW`
   on X11, `GetForegroundWindow` on Windows) instead of a screen, unless a game window was chosen.
+- Game windows are found across the recognized process, its child processes and same-game
+  processes (largest visible window), and capture restarts when a launcher window gives way to the
+  game's; verified by unit tests and a Windows build only, not yet with FiveM or the Unity/Unreal
+  titles reported on Windows.
   ClipCraft's own window is never picked. Verified on X11 with a published focus hint; on Windows
   it is compiled only. Because clicking Record puts ClipCraft in front, it only finds the game
   when recording is started with its hotkey while the game has the focus; the app says so.

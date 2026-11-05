@@ -81,29 +81,46 @@ pub fn list_targets() -> Result<Vec<CaptureTarget>, CaptureError> {
     Ok(targets)
 }
 
-/// Finds a capturable top-level window owned by `process_id`.
-pub fn window_for_process(process_id: u32) -> Result<Option<CaptureTarget>, CaptureError> {
+/// The largest capturable top-level window owned by any of `process_ids`. A game may own a small
+/// splash or launcher window besides the game itself, and its window may belong to a process the
+/// recognized one started, so every window of the family is considered and the biggest wins.
+pub fn window_for_processes(process_ids: &[u32]) -> Result<Option<CaptureTarget>, CaptureError> {
     let windows = Window::enumerate().map_err(|_| CaptureError::Failed)?;
+    let mut best: Option<(i64, CaptureTarget)> = None;
     for window in windows.into_iter().take(MAX_WINDOWS) {
-        if window.process_id().ok() != Some(process_id) {
+        if !window
+            .process_id()
+            .is_ok_and(|owner| process_ids.contains(&owner))
+        {
             continue;
         }
-        let (Ok(title), Ok(width), Ok(height)) = (window.title(), window.width(), window.height())
-        else {
+        let (Ok(width), Ok(height)) = (window.width(), window.height()) else {
             continue;
         };
-        if title.is_empty() || width <= 0 || height <= 0 || !window.is_valid() {
+        if width <= 0 || height <= 0 || !window.is_valid() {
             continue;
         }
-        return Ok(Some(CaptureTarget {
-            id: format!("window:{:x}", window.as_raw_hwnd() as usize),
-            name: title,
-            kind: TargetKind::Window,
-            width: width as u32,
-            height: height as u32,
-        }));
+        // Some games leave their window title empty; the window is still the game.
+        let name = window
+            .title()
+            .ok()
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| "Game window".to_owned());
+        let area = i64::from(width) * i64::from(height);
+        if best.as_ref().is_none_or(|(largest, _)| area > *largest) {
+            best = Some((
+                area,
+                CaptureTarget {
+                    id: format!("window:{:x}", window.as_raw_hwnd() as usize),
+                    name,
+                    kind: TargetKind::Window,
+                    width: width as u32,
+                    height: height as u32,
+                },
+            ));
+        }
     }
-    Ok(None)
+    Ok(best.map(|(_, target)| target))
 }
 
 /// The newest picture the capture thread produced.

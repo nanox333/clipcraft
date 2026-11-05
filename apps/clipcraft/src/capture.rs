@@ -205,6 +205,9 @@ pub struct CaptureState {
     game_scan_due: Option<Instant>,
     game_retry_after: Option<Instant>,
     game_only_was_enabled: bool,
+    /// For each recognized game process in the latest scan, every process whose window may be
+    /// the game's: the processes it started, and the other processes recognized as the same game.
+    game_families: std::collections::HashMap<u32, Vec<u32>>,
 }
 
 impl CaptureState {
@@ -284,6 +287,31 @@ impl CaptureState {
     pub fn targets_loaded(&self) -> bool {
         self.targets_loaded
     }
+}
+
+/// For each recognized game process, the processes that may own its window: the ones it started
+/// (and theirs), plus every other process recognized as the same game and their children.
+fn game_families(found: &crate::game_scan::ResultSet) -> std::collections::HashMap<u32, Vec<u32>> {
+    let mut families = std::collections::HashMap::new();
+    for game in &found.matches {
+        let mut family = Vec::new();
+        for same in found
+            .matches
+            .iter()
+            .filter(|other| other.game_name == game.game_name)
+        {
+            for id in clipcraft_platform::process_family(&found.processes, same.process_id) {
+                if !family.contains(&id) {
+                    family.push(id);
+                }
+            }
+        }
+        // The recognized process itself is looked at first.
+        family.retain(|id| *id != game.process_id);
+        family.insert(0, game.process_id);
+        families.insert(game.process_id, family);
+    }
+    families
 }
 
 fn automatic_desktop_target(target: &CaptureTarget) -> bool {
@@ -830,11 +858,31 @@ impl ClipCraftApp {
         {
             self.capture.notice = None;
         }
+        self.capture.game_families = game_families(&found);
         self.settings_state.steam_games = found.steam;
         self.settings_state.steam_warning = found.steam_warning;
         self.settings_state.set_game_processes(Ok(found.processes));
         if !self.recording.game_only_capture {
             return;
+        }
+        // The game's window closed while the game kept running: a launcher or loading window was
+        // replaced by the game's own (FiveM, Rockstar titles, Unreal bootstraps), or the game
+        // recreated its window when switching display mode. Start again on the new window
+        // instead of staying stopped.
+        if let Some(game) = self.capture.game_session.clone()
+            && found.matches.contains(&game)
+            && matches!(
+                self.capture.session.status().map(|status| status.state),
+                Some(RecordState::Failed(clipcraft_record::RecordError::Capture(
+                    _
+                )))
+            )
+            && self
+                .capture
+                .game_retry_after
+                .is_none_or(|at| Instant::now() >= at)
+        {
+            self.capture.game_arming.capture_stopped_automatically();
         }
         let decision = self.capture.game_arming.observe_automatic(
             &found.matches,
@@ -1014,14 +1062,24 @@ impl ClipCraftApp {
         &self,
         process_id: u32,
     ) -> Result<Option<CaptureTarget>, clipcraft_capture::CaptureError> {
+        let family = self
+            .capture
+            .game_families
+            .get(&process_id)
+            .cloned()
+            .unwrap_or_else(|| vec![process_id]);
         #[cfg(test)]
         if let Some(targets) = &self.capture.test_targets {
             return Ok(targets
                 .iter()
-                .find(|target| target.id == format!("test-game:{process_id}"))
+                .find(|target| {
+                    family
+                        .iter()
+                        .any(|id| target.id == format!("test-game:{id}"))
+                })
                 .cloned());
         }
-        clipcraft_platform::window_for_process(process_id)
+        clipcraft_platform::window_for_processes(&family)
     }
 
     /// Picks what to record from the settings.
@@ -1996,6 +2054,36 @@ mod tests {
         }));
     }
 
+    #[test]
+    fn a_games_window_is_looked_for_in_the_processes_it_started_and_its_namesakes() {
+        let process = |process_id, parent_id| clipcraft_platform::RunningProcess {
+            process_id,
+            executable: format!("p{process_id}"),
+            steam_app_id: None,
+            parent_id,
+        };
+        let game = |process_id, name: &str| GameProcessMatch {
+            process_id,
+            game_name: name.into(),
+        };
+        let mut found = observation(None);
+        // FiveM.exe (10) starts the game process (11); another FiveM process (20) was recognized
+        // by name too; 30 is a different game.
+        found.processes = vec![
+            process(10, Some(1)),
+            process(11, Some(10)),
+            process(20, Some(1)),
+            process(30, Some(1)),
+        ];
+        found.matches = vec![game(10, "FiveM"), game(20, "FiveM"), game(30, "Other")];
+        let families = game_families(&found);
+        let mut fivem = families[&10].clone();
+        assert_eq!(fivem[0], 10, "the recognized process is looked at first");
+        fivem.sort_unstable();
+        assert_eq!(fivem, [10, 11, 20]);
+        assert_eq!(families[&30], [30]);
+    }
+
     fn observation(game: Option<u32>) -> crate::game_scan::ResultSet {
         crate::game_scan::ResultSet {
             processes: game
@@ -2003,6 +2091,7 @@ mod tests {
                     process_id: id,
                     executable: "test-game".into(),
                     steam_app_id: None,
+                    parent_id: None,
                 })
                 .into_iter()
                 .collect(),

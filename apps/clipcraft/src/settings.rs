@@ -2144,6 +2144,7 @@ mod preset_tests {
             process_id: 1,
             executable: "first-game.exe".to_owned(),
             steam_app_id: Some("730".to_owned()),
+            parent_id: None,
         };
         state.select_game_process(&process);
         assert_eq!(state.game_steam_id_draft, "730");

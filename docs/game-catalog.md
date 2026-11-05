@@ -405,7 +405,12 @@ These are identification candidates, not a tested capture compatibility list.
 - Game versions/storefronts can change executables. Add a custom override when needed. Custom
   rules remain unchanged by catalog updates, and exclusions use stable game IDs. A catalog update
   may add identification variants for an enabled known game; excluded entries remain excluded.
-- Detection still needs a capturable game window. Wayland process-to-window matching, macOS
+- Detection still needs a capturable game window. It is looked for in the recognized process, the
+  processes it started (FiveM's game process, Unreal `-Shipping` executables started by a
+  bootstrap) and other processes recognized as the same game; the largest visible window wins,
+  even with an empty title. When that window closes while the game keeps running (a launcher or
+  loading window replaced by the game's own), capture restarts on the new window. Wayland
+  process-to-window matching, macOS
   capture, protected games and real-game evidence remain subject to the existing platform gaps.
 - Recognition does not retroactively tag existing videos. Newly saved game-managed clips use
   the matched custom or built-in name through the captured-game metadata path.

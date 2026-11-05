@@ -111,12 +111,13 @@ fn window_pid(conn: &RustConnection, window: Window) -> Option<u32> {
         .next()
 }
 
-/// Finds an X11 client window owned by `process_id`.
-pub fn window_for_process(
+/// Finds the largest X11 client window owned by any of `process_ids`.
+pub fn window_for_processes(
     display: Option<&str>,
-    process_id: u32,
+    process_ids: &[u32],
 ) -> Result<Option<CaptureTarget>, CaptureError> {
-    if process_id == 0 {
+    let process_ids: Vec<u32> = process_ids.iter().copied().filter(|id| *id != 0).collect();
+    if process_ids.is_empty() {
         return Ok(None);
     }
     let (conn, screen_number) = connect(display)?;
@@ -147,7 +148,7 @@ pub fn window_for_process(
     // is the game.
     let mut best: Option<(u64, CaptureTarget)> = None;
     for window in windows.take(MAX_WINDOWS) {
-        if window_pid(&conn, window) != Some(process_id) {
+        if !window_pid(&conn, window).is_some_and(|owner| process_ids.contains(&owner)) {
             continue;
         }
         let viewable = conn
