@@ -211,6 +211,14 @@ pub struct CaptureState {
     /// For each recognized game process in the latest scan, every process whose window may be
     /// the game's: the processes it started, and the other processes recognized as the same game.
     game_families: std::collections::HashMap<u32, Vec<u32>>,
+    /// Executable name of each process in the latest scan, for matching windows to games.
+    process_names: std::collections::HashMap<u32, String>,
+    /// The game session is recording the screen because no window of the game was found; capture
+    /// moves to the game's window as soon as one appears.
+    game_on_screen: bool,
+    /// Windows the tests pretend the desktop lists.
+    #[cfg(test)]
+    test_owned_windows: Vec<clipcraft_platform::OwnedWindow>,
 }
 
 impl CaptureState {
@@ -862,6 +870,11 @@ impl ClipCraftApp {
             self.capture.notice = None;
         }
         self.capture.game_families = game_families(&found);
+        self.capture.process_names = found
+            .processes
+            .iter()
+            .map(|process| (process.process_id, process.executable.clone()))
+            .collect();
         self.settings_state.steam_games = found.steam;
         self.settings_state.steam_warning = found.steam_warning;
         self.settings_state.set_game_processes(Ok(found.processes));
@@ -890,6 +903,15 @@ impl ClipCraftApp {
             // A window that keeps failing (protected content, say) is retried every ten seconds,
             // not on every scan.
             restart_after_loss = true;
+        }
+        // Recording the screen for want of the game's window: move to the window once one shows.
+        if self.capture.game_on_screen
+            && let Some(game) = self.capture.game_session.clone()
+            && found.matches.contains(&game)
+            && self.capture.pending_transition.is_none()
+            && matches!(self.game_window_for_process(game.process_id), Ok(Some(_)))
+        {
+            self.capture.game_arming.capture_stopped_automatically();
         }
         let decision = self.capture.game_arming.observe_automatic(
             &found.matches,
@@ -1086,16 +1108,58 @@ impl ClipCraftApp {
             .unwrap_or_else(|| vec![process_id]);
         #[cfg(test)]
         if let Some(targets) = &self.capture.test_targets {
-            return Ok(targets
+            let by_family = targets
                 .iter()
                 .find(|target| {
                     family
                         .iter()
                         .any(|id| target.id == format!("test-game:{id}"))
                 })
-                .cloned());
+                .cloned();
+            return Ok(by_family.or_else(|| {
+                self.game_window_by_class(process_id, &self.capture.test_owned_windows)
+            }));
         }
-        clipcraft_platform::window_for_processes(&family)
+        if let Some(window) = clipcraft_platform::window_for_processes(&family)? {
+            return Ok(Some(window));
+        }
+        let windows = clipcraft_platform::owned_windows()?;
+        Ok(self.game_window_by_class(process_id, &windows))
+    }
+
+    /// A second chance, as Vice does: a window whose own process name or window class (a Proton
+    /// game's `steam_app_<id>`, say) is recognized as the same game, even though its process is
+    /// not part of the recognized one's family. The largest such window wins.
+    fn game_window_by_class(
+        &self,
+        process_id: u32,
+        windows: &[clipcraft_platform::OwnedWindow],
+    ) -> Option<CaptureTarget> {
+        let game = self
+            .capture
+            .game_arming
+            .observed()
+            .filter(|game| game.process_id == process_id)
+            .or(self.capture.game_session.as_ref())
+            .map(|game| game.game_name.clone())?;
+        let steam = &self.settings_state.steam_games.games;
+        windows
+            .iter()
+            .filter(|window| {
+                let app_id = clipcraft_engine::steam_app_id_in_window_class(&window.class);
+                let executable = self.capture.process_names.get(&window.process_id);
+                let by_process = executable.and_then(|name| {
+                    self.recording
+                        .match_game_with_steam(name, app_id.as_deref(), steam)
+                });
+                let by_class = window.class.split_whitespace().find_map(|part| {
+                    self.recording
+                        .match_game_with_steam(part, app_id.as_deref(), steam)
+                });
+                by_process.or(by_class) == Some(game.as_str())
+            })
+            .max_by_key(|window| u64::from(window.target.width) * u64::from(window.target.height))
+            .map(|window| window.target.clone())
     }
 
     /// Picks what to record from the settings.
@@ -1107,6 +1171,37 @@ impl ClipCraftApp {
             match self.game_window_for_process(game.process_id) {
                 Ok(Some(window)) => Some(window),
                 Ok(None) => {
+                    if self.recording.record_screen_when_game_window_missing {
+                        if !self.capture.targets_loaded() {
+                            self.capture.refresh_targets();
+                        }
+                        let chosen = &self.recording.capture_target;
+                        let screen = self
+                            .capture
+                            .targets
+                            .iter()
+                            .filter(|target| automatic_desktop_target(target))
+                            .find(|target| target.id == *chosen)
+                            .or_else(|| {
+                                self.capture
+                                    .targets
+                                    .iter()
+                                    .find(|target| automatic_desktop_target(target))
+                            })
+                            .map(|target| target.id.clone());
+                        if let Some(screen) = screen {
+                            self.capture.game_on_screen = true;
+                            self.capture.notice = notice(
+                                format!(
+                                    "ClipCraft found {} running but not its window, so it is recording the screen. It switches to the game's window when one appears.",
+                                    game.game_name
+                                ),
+                                false,
+                                None,
+                            );
+                            return Ok(screen);
+                        }
+                    }
                     return Err(format!(
                         "ClipCraft found {} running, but this desktop did not expose its game window. Capture is still idle.",
                         game.game_name
@@ -1225,6 +1320,7 @@ impl ClipCraftApp {
             return;
         }
         self.capture.notice = None;
+        self.capture.game_on_screen = false;
         if game.is_none() || self.recording.source != clipcraft_engine::CaptureSource::Game {
             self.capture.refresh_targets();
         }
@@ -1370,6 +1466,7 @@ impl ClipCraftApp {
         self.capture.opening = None;
         self.capture.opening_game = None;
         let was_clipping = self.capture.session.is_active();
+        self.capture.game_on_screen = false;
         self.capture.session.stop();
         if was_clipping {
             self.cue(Cue::ClippingStopped);
@@ -2211,6 +2308,131 @@ mod tests {
         remove_scratch(root);
     }
 
+    /// A recognized game whose window cannot be found is recorded on the screen (as Vice falls
+    /// back to the display), and capture moves to the game's window as soon as one appears.
+    #[test]
+    fn a_game_without_a_findable_window_is_recorded_on_the_screen_until_its_window_appears() {
+        let (mut app, root) = automatic_app(DesktopCaptureMode::Never);
+        let game_window = app
+            .capture
+            .test_targets
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|target| target.id == "test-game:42")
+            .cloned()
+            .unwrap();
+        app.capture
+            .test_targets
+            .as_mut()
+            .unwrap()
+            .retain(|target| !target.id.starts_with("test-game:"));
+        app.capture.refresh_targets();
+        app.apply_game_observation(observation(Some(42)));
+        assert!(app.capture.is_active());
+        assert!(app.capture.game_on_screen);
+        assert!(
+            app.capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| !notice.error && notice.text.contains("recording the screen")),
+            "{:?}",
+            app.capture.notice.as_ref().map(|notice| notice.text.clone())
+        );
+        assert_eq!(
+            app.capture
+                .game_session
+                .as_ref()
+                .map(|game| game.process_id),
+            Some(42)
+        );
+        wait_for_frames(&app);
+        // Still no window: nothing changes.
+        app.apply_game_observation(observation(Some(42)));
+        assert!(app.capture.game_on_screen);
+        // The window appears: capture moves to it.
+        app.capture.test_targets.as_mut().unwrap().push(game_window);
+        app.capture.game_retry_after = None;
+        app.apply_game_observation(observation(Some(42)));
+        assert!(app.capture.is_active());
+        assert!(!app.capture.game_on_screen);
+        wait_for_frames(&app);
+        drop(app);
+        remove_scratch(root);
+    }
+
+    #[test]
+    fn with_the_screen_fallback_off_a_game_without_a_window_stays_idle_and_says_why() {
+        let (mut app, root) = automatic_app(DesktopCaptureMode::Never);
+        app.recording.record_screen_when_game_window_missing = false;
+        app.capture
+            .test_targets
+            .as_mut()
+            .unwrap()
+            .retain(|target| !target.id.starts_with("test-game:"));
+        app.apply_game_observation(observation(Some(42)));
+        assert!(!app.capture.is_active());
+        assert!(app.capture.notice.as_ref().is_some_and(
+            |notice| notice.error && notice.text.contains("did not expose its game window")
+        ));
+        drop(app);
+        remove_scratch(root);
+    }
+
+    /// Vice's second chance: a window whose class names the game is used even when its process
+    /// is unrelated to the recognized one.
+    #[test]
+    fn a_window_whose_class_names_the_game_is_found_when_its_process_is_unrelated() {
+        let (mut app, root) = automatic_app(DesktopCaptureMode::Never);
+        app.recording.record_screen_when_game_window_missing = false;
+        app.recording
+            .game_rules
+            .push(clipcraft_engine::GameMatchRule::new(
+                "Test game",
+                ["mygameclass"],
+            ));
+        let targets = app.capture.test_targets.as_mut().unwrap();
+        targets.retain(|target| !target.id.starts_with("test-game:"));
+        let window = CaptureTarget {
+            id: "test-class-window".into(),
+            name: "Game".into(),
+            kind: TargetKind::Window,
+            width: 160,
+            height: 90,
+        };
+        targets.push(window.clone());
+        app.capture.test_owned_windows = vec![
+            clipcraft_platform::OwnedWindow {
+                target: CaptureTarget {
+                    id: "test-other".into(),
+                    width: 1920,
+                    height: 1080,
+                    ..window.clone()
+                },
+                process_id: 7,
+                class: "Chrome_WidgetWin_1".into(),
+            },
+            clipcraft_platform::OwnedWindow {
+                target: window,
+                process_id: 99,
+                class: "MyGameClass".into(),
+            },
+        ];
+        app.apply_game_observation(observation(Some(42)));
+        assert!(
+            app.capture.is_active(),
+            "{:?}",
+            app.capture
+                .notice
+                .as_ref()
+                .map(|notice| notice.text.clone())
+        );
+        assert!(!app.capture.game_on_screen);
+        wait_for_frames(&app);
+        drop(app);
+        remove_scratch(root);
+    }
+
     fn observation(game: Option<u32>) -> crate::game_scan::ResultSet {
         crate::game_scan::ResultSet {
             processes: game
@@ -2497,6 +2719,8 @@ mod tests {
     #[test]
     fn failed_game_open_and_rule_removal_cannot_start_temporary_desktop() {
         let (mut app, root) = automatic_app(DesktopCaptureMode::AfterGame);
+        // A start that finds no window must fail here, not fall back to the screen.
+        app.recording.record_screen_when_game_window_missing = false;
         app.apply_game_observation(observation(Some(99)));
         assert!(!app.capture.is_active());
         app.apply_game_observation(observation(None));

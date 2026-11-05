@@ -148,6 +148,40 @@ pub fn window_for_processes(process_ids: &[u32]) -> Result<Option<CaptureTarget>
     Ok(best.map(|(_, target)| target))
 }
 
+/// Every visible top-level window with its owner process and window class.
+pub fn owned_windows() -> Result<Vec<crate::OwnedWindow>, CaptureError> {
+    let mut found = Vec::new();
+    for window in Window::enumerate()
+        .map_err(|_| CaptureError::Failed)?
+        .into_iter()
+        .take(MAX_WINDOWS)
+    {
+        let (Ok(width), Ok(height)) = (window.width(), window.height()) else {
+            continue;
+        };
+        if width <= 0 || height <= 0 {
+            continue;
+        }
+        let raw = window.as_raw_hwnd() as usize;
+        found.push(crate::OwnedWindow {
+            target: CaptureTarget {
+                id: format!("window:{raw:x}"),
+                name: window
+                    .title()
+                    .ok()
+                    .filter(|title| !title.is_empty())
+                    .unwrap_or_else(|| "Game window".to_owned()),
+                kind: TargetKind::Window,
+                width: width as u32,
+                height: height as u32,
+            },
+            process_id: window.process_id().unwrap_or(0),
+            class: crate::screen::window_class(raw).unwrap_or_default(),
+        });
+    }
+    Ok(found)
+}
+
 /// The newest picture the capture thread produced.
 #[derive(Default)]
 struct Latest {

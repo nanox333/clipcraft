@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Games without a findable window are recorded on the screen** (new setting, on by default)
+  instead of leaving capture idle; clipping moves to the game's window once it appears. Windows
+  are also matched by their own process name and window class, as Vice does.
 - **Fixed:** games whose window belongs to a process they start (FiveM, Rockstar titles, Unreal
   games with a bootstrap executable) are captured instead of reporting that the desktop did not
   expose a game window; when a launcher or loading window closes and the game opens its own,

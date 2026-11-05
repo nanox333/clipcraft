@@ -696,8 +696,10 @@ remain open. No upload, Discord account, link, or network path is added. See
   when recording is started with its hotkey while the game has the focus; the app says so.
 - Game windows are found across the recognized process, its child processes and same-game
   processes (largest visible window), and capture restarts when a launcher window gives way to the
-  game's; verified by unit tests and a Windows build only, not yet with FiveM or the Unity/Unreal
-  titles reported on Windows.
+  game's. A window whose process or class names the game is a second chance (Vice-style), and
+  with neither the chosen screen is recorded until the game's window appears (on by default).
+  Verified by app tests, X11 process-tree/`WM_CLASS` tests and a Windows build only, not yet with
+  FiveM or the Unity/Unreal titles reported on Windows.
 - **HDR compatibility** tone maps linear scRGB half floats (Windows' HDR format) to standard
   range: reference white 203 nits, a smooth highlight roll-off, sRGB encoding. The maths is unit
   tested. Windows capture asks for half floats when the setting is on. **Not run on an HDR

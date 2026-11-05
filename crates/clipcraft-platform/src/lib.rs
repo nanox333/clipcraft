@@ -309,6 +309,46 @@ pub fn window_for_process_on(
     x11::window_for_processes(Some(display), &[process_id])
 }
 
+/// A visible top-level window with the process that owns it and its window class, for finding a
+/// game by its window when its process is not recognized (Vice and OBS also look at the class).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnedWindow {
+    /// The window, ready to capture.
+    pub target: CaptureTarget,
+    /// The process that owns it, or 0 when the desktop does not say.
+    pub process_id: u32,
+    /// The window class (`WM_CLASS` on X11, the registered class name on Windows), such as
+    /// `steam_app_1091500` for a Proton game; empty when unknown.
+    pub class: String,
+}
+
+/// Every visible top-level window with its owner and class (bounded). Empty where the desktop
+/// does not expose windows (a Wayland session using the screen-capture portal).
+pub fn owned_windows() -> Result<Vec<OwnedWindow>, CaptureError> {
+    #[cfg(target_os = "linux")]
+    if wayland::available() {
+        return Ok(Vec::new());
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        x11::owned_windows(None)
+    }
+    #[cfg(windows)]
+    {
+        windows::owned_windows()
+    }
+    #[cfg(not(any(all(unix, not(target_os = "macos")), windows)))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+/// Like [`owned_windows`], on an explicit X display. For tests.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn owned_windows_on(display: &str) -> Result<Vec<OwnedWindow>, CaptureError> {
+    x11::owned_windows(Some(display))
+}
+
 /// Like [`window_for_processes`], on an explicit X display. For tests.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn window_for_processes_on(

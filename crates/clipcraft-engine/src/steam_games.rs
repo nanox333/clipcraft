@@ -217,6 +217,18 @@ fn read_vdf(path: &Path, limit: u64) -> Result<Value, EngineError> {
     .object(0, false)
 }
 
+/// The Steam application ID a window class names, as Steam's runtime and Proton set it on X11
+/// (`steam_app_1091500`, in either half of `WM_CLASS`), or `None`.
+pub fn steam_app_id_in_window_class(class: &str) -> Option<String> {
+    class.split_whitespace().find_map(|part| {
+        let id = part
+            .to_ascii_lowercase()
+            .strip_prefix("steam_app_")?
+            .to_owned();
+        valid_app_id(&id).then_some(id)
+    })
+}
+
 pub(crate) fn valid_app_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 20 && id != "0" && id.bytes().all(|byte| byte.is_ascii_digit())
 }
@@ -568,5 +580,26 @@ mod tests {
         .sanitized();
         assert_eq!(bounded.desktop_after_game_seconds, 3600);
         assert_eq!(bounded.disabled_steam_app_ids, ["730"]);
+    }
+
+    #[test]
+    fn a_steam_window_class_names_its_app() {
+        assert_eq!(
+            steam_app_id_in_window_class("steam_app_1091500 steam_app_1091500").as_deref(),
+            Some("1091500")
+        );
+        assert_eq!(
+            steam_app_id_in_window_class("Steam_App_730").as_deref(),
+            Some("730")
+        );
+        for class in [
+            "",
+            "UnityWndClass",
+            "steam_app_",
+            "steam_app_0",
+            "steam_app_12x",
+        ] {
+            assert_eq!(steam_app_id_in_window_class(class), None, "{class}");
+        }
     }
 }

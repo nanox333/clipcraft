@@ -137,6 +137,14 @@ one minute. The timer is cancelled when a game opens; closing that game starts a
 top bar shows desktop capture and time remaining. Stop pauses either desktop mode until Start.
 Turning automatic switching off returns to manual source selection; it stops any managed session.
 
+A game's window is looked for in its process, the processes it started and other processes
+recognized as the same game; failing that, in any window whose own process or window class (a
+Proton game's `steam_app_<id>`) is recognized as that game. **Record the screen when a game's
+window can't be found** (on by default) then records the chosen monitor, still as that game's
+session, and moves to the game's window as soon as one appears; turned off, such a game leaves
+capture idle with an error. When the window being recorded closes while the game keeps running
+(a launcher handing over to the game), capture restarts on the new window.
+
 These are bounded replay buffers, not unlimited recordings of an entire session. Automatic source
 changes and timer expiry do not save anything: a clip is saved only by the save shortcut or button.
 Game clips retain their game name; desktop clips do not inherit it.

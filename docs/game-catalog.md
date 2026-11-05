@@ -409,7 +409,9 @@ These are identification candidates, not a tested capture compatibility list.
   processes it started (FiveM's game process, Unreal `-Shipping` executables started by a
   bootstrap) and other processes recognized as the same game; the largest visible window wins,
   even with an empty title. When that window closes while the game keeps running (a launcher or
-  loading window replaced by the game's own), capture restarts on the new window. Wayland
+  loading window replaced by the game's own), capture restarts on the new window. A window whose
+  own process or class (`steam_app_<id>` on X11) names the game is a second chance, and with no
+  window at all the screen is recorded until one appears (Settings › Games). Wayland
   process-to-window matching, macOS
   capture, protected games and real-game evidence remain subject to the existing platform gaps.
 - Recognition does not retroactively tag existing videos. Newly saved game-managed clips use

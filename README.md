@@ -34,7 +34,8 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
 
 - **Record and replay:** capture a screen or game window into a bounded replay buffer and save the
   last moments with a global hotkey. Game-only mode waits until a recognized game is running and
-  follows it to the window it actually draws in, even when a launcher starts the game process.
+  follows it to the window it actually draws in, even when a launcher starts the game process;
+  if no window can be found it records the screen until one appears.
   The capture bar shows the available replay against the requested clip length and reports when
   buffered footage is cleared by a source or recording-stream change. Hover over it for the
   encoder, frame counts, output size, and audio-source status.

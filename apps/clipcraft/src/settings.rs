@@ -760,6 +760,13 @@ pub fn games_tab(
                     },
                 );
             }
+            toggle_row(
+                ui,
+                "Record the screen when a game's window can't be found",
+                "Some games draw in a window ClipCraft cannot pick out. Record the screen instead and switch to the game's window when one appears. The screen can include other apps.",
+                &mut settings.record_screen_when_game_window_missing,
+                true,
+            );
             if settings.desktop_capture_mode != DesktopCaptureMode::Never {
                 ui.add_space(8.0);
                 ui.label(RichText::new("Desktop capture can include other apps. These modes keep a bounded replay buffer. Nothing is saved when a game closes or the desktop timer ends; clips are saved only when you press the save shortcut. Stop pauses automatic recording until you press Start again.").color(MUTED).size(12.5));

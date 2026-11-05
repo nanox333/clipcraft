@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use clipcraft_capture::{CaptureError, TargetKind};
 use clipcraft_platform::{HotkeyBinding, HotkeyListener, list_targets_on, open_on};
 use clipcraft_platform::{
-    ProcessObserver, process_family, window_for_process_on, window_for_processes_on,
+    ProcessObserver, owned_windows_on, process_family, window_for_process_on,
+    window_for_processes_on,
 };
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConnectionExt, CreateWindowAux, WindowClass};
@@ -511,4 +512,32 @@ fn a_window_owned_by_a_process_the_recognized_one_started_is_found() {
     let _ = launcher.kill();
     let _ = launcher.wait();
     let _ = Command::new("kill").arg(game_process.to_string()).status();
+}
+
+#[test]
+fn listed_windows_carry_their_owner_and_window_class() {
+    let Some(server) = Server::start(69) else {
+        return;
+    };
+    let game = make_window(&server.display, 300, 200, 0x445566);
+    let (conn, _) = RustConnection::connect(Some(&server.display)).unwrap();
+    // As Steam and Proton set it: WM_CLASS is "instance\0class\0".
+    conn.change_property8(
+        x11rb::protocol::xproto::PropMode::REPLACE,
+        game,
+        x11rb::protocol::xproto::AtomEnum::WM_CLASS,
+        x11rb::protocol::xproto::AtomEnum::STRING,
+        b"steam_app_1091500\0steam_app_1091500\0",
+    )
+    .unwrap();
+    conn.flush().unwrap();
+    publish_clients(&server.display, &[(game, 61_234)]);
+    let windows = owned_windows_on(&server.display).unwrap();
+    let found = windows
+        .iter()
+        .find(|window| window.target.id == format!("window:{game:x}"))
+        .unwrap();
+    assert_eq!(found.process_id, 61_234);
+    assert_eq!(found.class, "steam_app_1091500 steam_app_1091500");
+    assert_eq!((found.target.width, found.target.height), (300, 200));
 }
