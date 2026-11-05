@@ -81,10 +81,35 @@ pub fn list_targets() -> Result<Vec<CaptureTarget>, CaptureError> {
     Ok(targets)
 }
 
-/// The largest capturable top-level window owned by any of `process_ids`. A game may own a small
+/// The focused window when it belongs to one of `process_ids`, otherwise the largest capturable
+/// top-level window owned by any of them. A game may own a small
 /// splash or launcher window besides the game itself, and its window may belong to a process the
 /// recognized one started, so every window of the family is considered and the biggest wins.
 pub fn window_for_processes(process_ids: &[u32]) -> Result<Option<CaptureTarget>, CaptureError> {
+    // The window the person is looking at wins when it belongs to the game: a game may keep a
+    // large launcher or companion window open behind the one it draws in.
+    if let Ok(window) = Window::foreground()
+        && window
+            .process_id()
+            .is_ok_and(|owner| process_ids.contains(&owner))
+        && window.is_valid()
+        && let (Ok(width), Ok(height)) = (window.width(), window.height())
+        && width > 0
+        && height > 0
+    {
+        let name = window
+            .title()
+            .ok()
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| "Game window".to_owned());
+        return Ok(Some(CaptureTarget {
+            id: format!("window:{:x}", window.as_raw_hwnd() as usize),
+            name,
+            kind: TargetKind::Window,
+            width: width as u32,
+            height: height as u32,
+        }));
+    }
     let windows = Window::enumerate().map_err(|_| CaptureError::Failed)?;
     let mut best: Option<(i64, CaptureTarget)> = None;
     for window in windows.into_iter().take(MAX_WINDOWS) {

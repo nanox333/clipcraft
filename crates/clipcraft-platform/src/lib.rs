@@ -309,6 +309,15 @@ pub fn window_for_process_on(
     x11::window_for_processes(Some(display), &[process_id])
 }
 
+/// Like [`window_for_processes`], on an explicit X display. For tests.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn window_for_processes_on(
+    display: &str,
+    process_ids: &[u32],
+) -> Result<Option<CaptureTarget>, CaptureError> {
+    x11::window_for_processes(Some(display), process_ids)
+}
+
 /// One line of a diagnostics report: what was checked, whether it is fine, and the details.
 pub type Finding = (String, bool, String);
 

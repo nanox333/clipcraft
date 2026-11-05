@@ -5,8 +5,10 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use clipcraft_capture::{CaptureError, TargetKind};
-use clipcraft_platform::window_for_process_on;
 use clipcraft_platform::{HotkeyBinding, HotkeyListener, list_targets_on, open_on};
+use clipcraft_platform::{
+    ProcessObserver, process_family, window_for_process_on, window_for_processes_on,
+};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConnectionExt, CreateWindowAux, WindowClass};
 use x11rb::rust_connection::RustConnection;
@@ -416,4 +418,97 @@ fn a_game_window_is_selected_by_its_exact_process_id() {
             .unwrap()
             .is_none()
     );
+}
+
+/// Lists `windows` as the window manager's clients and marks each with its owner's process id,
+/// as a window manager and the client library would.
+fn publish_clients(display: &str, windows: &[(u32, u32)]) {
+    let (conn, screen) = RustConnection::connect(Some(display)).unwrap();
+    let root = conn.setup().roots[screen].root;
+    let atom = |name: &[u8]| conn.intern_atom(false, name).unwrap().reply().unwrap().atom;
+    let (clients, pid) = (atom(b"_NET_CLIENT_LIST"), atom(b"_NET_WM_PID"));
+    let ids: Vec<u32> = windows.iter().map(|(window, _)| *window).collect();
+    conn.change_property32(
+        x11rb::protocol::xproto::PropMode::REPLACE,
+        root,
+        clients,
+        x11rb::protocol::xproto::AtomEnum::WINDOW,
+        &ids,
+    )
+    .unwrap();
+    for (window, owner) in windows {
+        conn.change_property32(
+            x11rb::protocol::xproto::PropMode::REPLACE,
+            *window,
+            pid,
+            x11rb::protocol::xproto::AtomEnum::CARDINAL,
+            &[*owner],
+        )
+        .unwrap();
+    }
+    conn.flush().unwrap();
+    conn.get_input_focus().unwrap().reply().unwrap();
+}
+
+#[test]
+fn a_launchers_splash_loses_to_the_bigger_game_window_of_the_same_family() {
+    let Some(server) = Server::start(67) else {
+        return;
+    };
+    let splash = make_window_at(&server.display, 0, 0, 120, 60, 0x222222);
+    let game = make_window_at(&server.display, 0, 0, 400, 300, 0x993333);
+    let (launcher, child) = (51_001, 51_002);
+    publish_clients(&server.display, &[(splash, launcher), (game, child)]);
+    // The recognized launcher alone only has its splash; the family finds the game.
+    let alone = window_for_process_on(&server.display, launcher)
+        .unwrap()
+        .unwrap();
+    assert_eq!(alone.id, format!("window:{splash:x}"));
+    let family = window_for_processes_on(&server.display, &[launcher, child])
+        .unwrap()
+        .unwrap();
+    assert_eq!(family.id, format!("window:{game:x}"));
+    assert_eq!((family.width, family.height), (400, 300));
+}
+
+/// The FiveM case end to end, with real processes: a launcher that has no window starts the game
+/// process, which owns the window. Recognizing the launcher must still find the game's window.
+#[test]
+fn a_window_owned_by_a_process_the_recognized_one_started_is_found() {
+    let Some(server) = Server::start(68) else {
+        return;
+    };
+    // The "launcher" is a shell; the "game" is a child it starts and keeps running.
+    let mut launcher = Command::new("sh")
+        .args(["-c", "sleep 30 & echo $!; wait"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    std::io::BufRead::read_line(
+        &mut std::io::BufReader::new(launcher.stdout.take().unwrap()),
+        &mut line,
+    )
+    .unwrap();
+    let game_process: u32 = line.trim().parse().unwrap();
+    let launcher_process = launcher.id();
+    let window = make_window(&server.display, 320, 200, 0x336633);
+    publish_clients(&server.display, &[(window, game_process)]);
+
+    let processes = ProcessObserver::default().refresh(false);
+    let family = process_family(&processes, launcher_process);
+    assert!(family.contains(&game_process), "{family:?}");
+    // Before: only the recognized process was searched, and it has no window.
+    assert!(
+        window_for_process_on(&server.display, launcher_process)
+            .unwrap()
+            .is_none()
+    );
+    let found = window_for_processes_on(&server.display, &family)
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.id, format!("window:{window:x}"));
+    let _ = launcher.kill();
+    let _ = launcher.wait();
+    let _ = Command::new("kill").arg(game_process.to_string()).status();
 }

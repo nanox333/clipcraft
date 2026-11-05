@@ -200,6 +200,9 @@ pub struct CaptureState {
     automatic_epoch: Option<Instant>,
     #[cfg(test)]
     test_targets: Option<Vec<CaptureTarget>>,
+    /// Test targets whose picture stops after a few frames, as a closing window's does.
+    #[cfg(test)]
+    test_closing: Vec<String>,
     game_arming: GameArmingState,
     game_session: Option<GameProcessMatch>,
     game_scan_due: Option<Instant>,
@@ -865,6 +868,7 @@ impl ClipCraftApp {
         if !self.recording.game_only_capture {
             return;
         }
+        let mut restart_after_loss = false;
         // The game's window closed while the game kept running: a launcher or loading window was
         // replaced by the game's own (FiveM, Rockstar titles, Unreal bootstraps), or the game
         // recreated its window when switching display mode. Start again on the new window
@@ -883,6 +887,9 @@ impl ClipCraftApp {
                 .is_none_or(|at| Instant::now() >= at)
         {
             self.capture.game_arming.capture_stopped_automatically();
+            // A window that keeps failing (protected content, say) is retried every ten seconds,
+            // not on every scan.
+            restart_after_loss = true;
         }
         let decision = self.capture.game_arming.observe_automatic(
             &found.matches,
@@ -900,6 +907,10 @@ impl ClipCraftApp {
                     .is_none_or(|at| Instant::now() >= at) =>
             {
                 if self.capture.is_active() {
+                    if restart_after_loss {
+                        self.capture.game_retry_after =
+                            Some(Instant::now() + Duration::from_secs(10));
+                    }
                     self.capture.pending_transition = Some(GameArmingDecision::Start(game));
                 } else {
                     self.capture.game_retry_after = Some(Instant::now() + Duration::from_secs(10));
@@ -1051,9 +1062,14 @@ impl ClipCraftApp {
             .as_ref()
             .is_some_and(|targets| targets.iter().any(|target| target.id == id))
         {
-            return Ok(Box::new(clipcraft_capture::SyntheticSource::new(
-                160, 90, 30,
-            )));
+            let source = clipcraft_capture::SyntheticSource::new(160, 90, 30);
+            return Ok(Box::new(
+                if self.capture.test_closing.iter().any(|t| t == id) {
+                    source.failing_after(10)
+                } else {
+                    source
+                },
+            ));
         }
         clipcraft_platform::open(id, options)
     }
@@ -2082,6 +2098,117 @@ mod tests {
         fivem.sort_unstable();
         assert_eq!(fivem, [10, 11, 20]);
         assert_eq!(families[&30], [30]);
+    }
+
+    /// FiveM's sequence: the recognized launcher shows a loading window, which closes; the game
+    /// process it started then opens the real window. Clipping must follow to the new window
+    /// instead of stopping with "the window went away".
+    #[test]
+    fn when_the_launchers_window_closes_capture_moves_to_the_games_window() {
+        let (mut app, root) = automatic_app(DesktopCaptureMode::Never);
+        let process = |process_id, parent_id| clipcraft_platform::RunningProcess {
+            process_id,
+            executable: format!("p{process_id}"),
+            steam_app_id: None,
+            parent_id,
+        };
+        let launcher_only = || {
+            let mut found = observation(Some(42));
+            found.processes = vec![process(42, Some(1)), process(43, Some(42))];
+            found
+        };
+        // Only the launcher's loading window exists at first, and it will close.
+        let targets = app.capture.test_targets.as_mut().unwrap();
+        targets.retain(|target| !target.id.starts_with("test-game:"));
+        targets.push(CaptureTarget {
+            id: "test-game:42".into(),
+            name: "Loading".into(),
+            kind: TargetKind::Window,
+            width: 160,
+            height: 90,
+        });
+        app.capture.test_closing = vec!["test-game:42".into()];
+        app.apply_game_observation(launcher_only());
+        assert!(app.capture.is_active());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !matches!(
+            app.capture.session.status().map(|status| status.state),
+            Some(RecordState::Failed(_))
+        ) {
+            assert!(
+                Instant::now() < deadline,
+                "the closing window never failed: {:?} {:?}",
+                app.capture.session.status().map(|status| status.state),
+                app.capture
+                    .notice
+                    .as_ref()
+                    .map(|notice| notice.text.clone())
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // The loading window is gone and the game process (43) now owns the game window.
+        let targets = app.capture.test_targets.as_mut().unwrap();
+        targets.retain(|target| target.id != "test-game:42");
+        targets.push(CaptureTarget {
+            id: "test-game:43".into(),
+            name: "Game".into(),
+            kind: TargetKind::Window,
+            width: 160,
+            height: 90,
+        });
+        app.capture.game_retry_after = None;
+        app.apply_game_observation(launcher_only());
+        assert!(app.capture.is_active());
+        assert_eq!(
+            app.capture.session.status().map(|status| status.state),
+            Some(RecordState::Running)
+        );
+        assert_eq!(
+            app.capture
+                .game_session
+                .as_ref()
+                .map(|game| game.process_id),
+            Some(42)
+        );
+        wait_for_frames(&app);
+        drop(app);
+        remove_scratch(root);
+    }
+
+    /// A launcher with no window of its own whose child owns the game window (FiveM after its
+    /// loading screen, Unreal bootstraps): capture starts on the child's window instead of
+    /// reporting that the desktop exposed no game window.
+    #[test]
+    fn a_recognized_launcher_without_a_window_records_its_childs_window() {
+        let (mut app, root) = automatic_app(DesktopCaptureMode::Never);
+        let targets = app.capture.test_targets.as_mut().unwrap();
+        targets.retain(|target| !target.id.starts_with("test-game:"));
+        targets.push(CaptureTarget {
+            id: "test-game:43".into(),
+            name: "Game".into(),
+            kind: TargetKind::Window,
+            width: 160,
+            height: 90,
+        });
+        let mut found = observation(Some(42));
+        found.processes.push(clipcraft_platform::RunningProcess {
+            process_id: 43,
+            executable: "game-process".into(),
+            steam_app_id: None,
+            parent_id: Some(42),
+        });
+        app.apply_game_observation(found);
+        assert!(
+            app.capture.is_active(),
+            "{:?}",
+            app.capture
+                .notice
+                .as_ref()
+                .map(|notice| notice.text.clone())
+        );
+        wait_for_frames(&app);
+        drop(app);
+        remove_scratch(root);
     }
 
     fn observation(game: Option<u32>) -> crate::game_scan::ResultSet {
