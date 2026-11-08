@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.1 — 2026-11-08
+
 - **Games without a findable window are recorded on the screen** (new setting, on by default)
   instead of leaving capture idle; clipping moves to the game's window once it appears. Windows
   are also matched by their own process name and window class, as Vice does.
