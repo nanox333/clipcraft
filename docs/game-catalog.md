@@ -416,8 +416,7 @@ These are identification candidates, not a tested capture compatibility list.
   capture, protected games and real-game evidence remain subject to the existing platform gaps.
 - Recognition does not retroactively tag existing videos. Newly saved game-managed clips use
   the matched custom or built-in name through the captured-game metadata path.
-- Local Steam manifests now supply names and exact IDs beyond the bundled list. Vice-style
-  window-class/compositor matching remains unavailable; Steam metadata does not bypass the need
+- Local Steam manifests now supply names and exact IDs beyond the bundled list. Steam metadata does not bypass the need
   for a capturable window. Exited zombie processes are ignored when deciding whether a game runs.
 
 ## Local CLI
@@ -459,8 +458,11 @@ Steam adapter below resolves installed IDs and names without this database.
 ## Installed Steam discovery and automatic switching
 
 **Recognize installed Steam games** is enabled under automatic recognition. One background worker
-reads local `steamapps/libraryfolders.vdf` and `appmanifest_*.acf` files, caches the catalog for
-30 seconds and refreshes it on request. It also runs process matching and the running-app picker;
+reads local `steamapps/libraryfolders.vdf` and `appmanifest_*.acf` files once, then reads them
+again only on request, when the modification time of the library list or of a library's
+`steamapps` folder changes (checked every 30 seconds without opening any file; installing or
+removing a game changes it), and at least every 30 minutes. Security tools that log file reads
+(ESET HIPS, for example) therefore see the manifests read rarely instead of every 30 seconds. It also runs process matching and the running-app picker;
 UI rendering does not enumerate processes or parse manifests. One pending request replaces older
 requests, and results from obsolete settings cannot start recording.
 

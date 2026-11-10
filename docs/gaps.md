@@ -700,6 +700,9 @@ remain open. No upload, Discord account, link, or network path is added. See
   with neither the chosen screen is recorded until the game's window appears (on by default).
   Verified by app tests, X11 process-tree/`WM_CLASS` tests and a Windows build only, not yet with
   FiveM or the Unity/Unreal titles reported on Windows.
+- Installed Steam games are re-read only when a library's file times change (or on request, or
+  every 30 minutes), not every 30 seconds; a user's ESET HIPS log showed the repeated reads. The
+  change check is unit-tested; the HIPS log itself has not been re-checked.
 - **HDR compatibility** tone maps linear scRGB half floats (Windows' HDR format) to standard
   range: reference white 203 nits, a smooth highlight roll-off, sRGB encoding. The maths is unit
   tested. Windows capture asks for half floats when the setting is on. **Not run on an HDR

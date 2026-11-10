@@ -41,7 +41,10 @@ mod session;
 mod startup;
 mod steam_games;
 pub mod update;
-pub use steam_games::{MAX_STEAM_GAMES, SteamGame, SteamGames, steam_app_id_in_window_class};
+pub use steam_games::{
+    MAX_STEAM_GAMES, SteamFingerprint, SteamGame, SteamGames, steam_app_id_in_window_class,
+    steam_fingerprint,
+};
 mod storage;
 
 pub use clipcraft_export::compositor::{PreviewRecipe, PreviewRenderer};

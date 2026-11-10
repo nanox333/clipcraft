@@ -233,6 +233,42 @@ pub(crate) fn valid_app_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 20 && id != "0" && id.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+/// What a Steam library looked like on disk, from file and folder times only: the library list
+/// (`libraryfolders.vdf`) of each root and the `steamapps` folder of each root and of each library
+/// a found game lives in. Installing or removing a game adds or removes a manifest, which changes
+/// its folder's time, so comparing two fingerprints says whether a full scan could find anything
+/// new. Taking one only looks up times (no file is opened), which security tools that report every
+/// file read, such as ESET HIPS, do not flag the way repeated scans of every manifest are.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SteamFingerprint(Vec<(PathBuf, Option<std::time::SystemTime>)>);
+
+/// The fingerprint of `roots` and of the libraries the `games` of the last scan live in.
+pub fn steam_fingerprint(roots: &[PathBuf], games: &[SteamGame]) -> SteamFingerprint {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for root in roots.iter().take(MAX_LIBRARIES) {
+        paths.push(root.join("steamapps/libraryfolders.vdf"));
+        paths.push(root.join("steamapps"));
+    }
+    // A game lives in `<library>/steamapps/common/<folder>`.
+    for game in games.iter().take(MAX_STEAM_GAMES) {
+        if let Some(steamapps) = game.install_directory.parent().and_then(Path::parent)
+            && !paths.iter().any(|known| known == steamapps)
+            && paths.len() < MAX_LIBRARIES * 3
+        {
+            paths.push(steamapps.to_path_buf());
+        }
+    }
+    SteamFingerprint(
+        paths
+            .into_iter()
+            .map(|path| {
+                let modified = fs::metadata(&path).and_then(|meta| meta.modified()).ok();
+                (path, modified)
+            })
+            .collect(),
+    )
+}
+
 /// Scan selected Steam installation roots, including libraries listed in libraryfolders.vdf.
 /// Invalid individual manifests are counted and skipped; invalid library indexes or exceeded
 /// whole-scan budgets return an error so the caller can retain its previous catalog.
@@ -601,5 +637,41 @@ mod tests {
         ] {
             assert_eq!(steam_app_id_in_window_class(class), None, "{class}");
         }
+    }
+
+    #[test]
+    fn the_fingerprint_changes_when_a_game_is_installed_or_the_library_list_changes() {
+        let root = temp();
+        let before = steam_fingerprint(std::slice::from_ref(&root), &[]);
+        assert_eq!(before, steam_fingerprint(std::slice::from_ref(&root), &[]));
+        // Folder times have whole-second precision on some filesystems.
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
+        manifest(&root, "999333", "Newly installed");
+        let after = steam_fingerprint(std::slice::from_ref(&root), &[]);
+        assert_ne!(
+            before, after,
+            "a new manifest changes the steamapps folder time"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
+        fs::write(
+            root.join("steamapps/libraryfolders.vdf"),
+            "\"libraryfolders\" {}",
+        )
+        .unwrap();
+        assert_ne!(after, steam_fingerprint(std::slice::from_ref(&root), &[]));
+        // A game's own library is watched too, even when it is not under a root.
+        let other = temp();
+        let game = SteamGame {
+            app_id: "1".into(),
+            name: "Elsewhere".into(),
+            install_directory: other.join("steamapps/common/Elsewhere"),
+        };
+        let with_game = steam_fingerprint(std::slice::from_ref(&root), std::slice::from_ref(&game));
+        assert!(
+            with_game
+                .0
+                .iter()
+                .any(|(path, _)| *path == other.join("steamapps"))
+        );
     }
 }

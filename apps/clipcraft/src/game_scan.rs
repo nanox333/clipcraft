@@ -73,22 +73,48 @@ impl Worker {
     pub fn start() -> Result<Self, String> {
         let mut observer = ProcessObserver::default();
         let mut steam = SteamGames::default();
-        let mut steam_checked = None::<Instant>;
+        // When Steam's files were last looked at (times only) and last read in full.
+        let mut steam_looked = None::<Instant>;
+        let mut steam_scanned = None::<Instant>;
+        let mut steam_roots = None::<Vec<std::path::PathBuf>>;
+        let mut steam_seen = None::<clipcraft_engine::SteamFingerprint>;
         let mut steam_warning = None;
         Self::with_scanner(move |config, force| {
             let settings = config.settings();
             let include_steam =
                 settings.detect_built_in_games && settings.detect_installed_steam_games;
-            if include_steam
-                && (force || steam_checked.is_none_or(|at| at.elapsed() >= Duration::from_secs(30)))
-            {
-                steam_checked = Some(Instant::now());
+            // Steam's library is read in full only when it may have changed: at the first scan, on
+            // a manual refresh, when a library folder or the library list changed on disk (checked
+            // every 30 seconds from file times alone), and at least every 30 minutes. Reading every
+            // manifest each time showed up as constant file activity in security tools.
+            let look = include_steam
+                && (force || steam_looked.is_none_or(|at| at.elapsed() >= Duration::from_secs(30)));
+            let mut rescan = false;
+            if look {
+                steam_looked = Some(Instant::now());
+                if force || steam_roots.is_none() {
+                    steam_roots = Some(clipcraft_platform::steam_installation_roots());
+                }
+                let roots = steam_roots.clone().unwrap_or_default();
+                let now = clipcraft_engine::steam_fingerprint(&roots, &steam.games);
+                rescan = force
+                    || steam_seen.as_ref() != Some(&now)
+                    || steam_scanned.is_none_or(|at| at.elapsed() >= Duration::from_secs(30 * 60));
+                steam_seen = Some(now);
+            }
+            if rescan {
+                steam_scanned = Some(Instant::now());
                 match execute(Command::ScanSteamGames {
-                    roots: clipcraft_platform::steam_installation_roots(),
+                    roots: steam_roots.clone().unwrap_or_default(),
                 }) {
                     Ok(CommandOutput::SteamGames(found)) => {
                         steam = found;
                         steam_warning = None;
+                        // Libraries found by this scan are watched from now on.
+                        steam_seen = Some(clipcraft_engine::steam_fingerprint(
+                            &steam_roots.clone().unwrap_or_default(),
+                            &steam.games,
+                        ));
                     }
                     Ok(_) => {
                         steam_warning =
