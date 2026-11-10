@@ -46,8 +46,9 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
   continues on the processor and the card is tried again every 20 s or longer.
 - **Audio:** system sound and microphone, mixed or on separate tracks, with optional offline
   microphone noise suppression and a mic test.
-- **Library:** a searchable local clip library with favorites, collections and game labels. Delete
-  clips to the Recycle Bin from a right-click menu.
+- **Library:** a searchable local clip library with favorites, collections and game labels.
+  Rename a clip (F2) without losing its favorite, collections or game, and delete clips to the
+  Recycle Bin from a right-click menu. A focused card opens with Enter and favorites with F.
 - **Playback and editing:** smooth playback, quick trims, small-file and GIF export, loudness
   evening, and a small sequence editor with text, fades and colour effects.
 - **Desktop:** searchable, categorized Settings; system tray (Windows); a "clip saved" pop-up that
@@ -122,6 +123,7 @@ cargo run --package clipcraft-cli -- capture targets
 cargo run --package clipcraft-cli -- capture record --seconds 30
 cargo run --package clipcraft-cli -- library scan /path/to/clips
 cargo run --package clipcraft-cli -- library probe /path/to/clip.mp4
+cargo run --package clipcraft-cli -- library rename /path/to/clip.mp4 "Ace clutch"
 cargo run --package clipcraft-cli -- clip trim input.mp4 output.mp4 2 8
 cargo run --package clipcraft-cli -- clip export input.mp4 smaller.mp4 2 8 10
 cargo run --package clipcraft-cli -- clip gif input.mp4 clip.gif 2 8

@@ -10,6 +10,7 @@ use clipcraft_engine::{
 mod bug_report;
 mod capture;
 mod clip_delete;
+mod clip_rename;
 mod editor;
 mod editor_media;
 mod editor_recovery;
@@ -169,6 +170,10 @@ struct ClipCraftApp {
     confirm_delete: Option<MediaEntry>,
     /// A clip being moved to the Recycle Bin.
     trashing: Option<clip_delete::Trashing>,
+    /// The rename box, while it is open.
+    rename_draft: Option<clip_rename::RenameDraft>,
+    /// A clip being renamed.
+    renaming: Option<clip_rename::Renaming>,
     settings_state: settings::SettingsState,
     game_data: game_data::State,
     presence: presence::State,
@@ -633,6 +638,7 @@ impl ClipCraftApp {
         self.navigation(context);
         self.notice_toast(context);
         self.poll_trash(context);
+        self.poll_rename(context);
 
         egui::CentralPanel::default()
             .frame(
@@ -655,11 +661,15 @@ impl ClipCraftApp {
                         self.selected = None;
                     }
                 } else if let Some(selected) = self.selected.clone() {
-                    // Delete asks first, unless the person is typing somewhere.
-                    if ui.input(|input| input.key_pressed(egui::Key::Delete))
-                        && !ui.ctx().wants_keyboard_input()
-                    {
+                    // Delete asks first and F2 renames, unless the person is typing somewhere.
+                    let typing = ui.ctx().wants_keyboard_input()
+                        || self.rename_draft.is_some()
+                        || self.confirm_delete.is_some();
+                    if !typing && ui.input(|input| input.key_pressed(egui::Key::Delete)) {
                         self.ask_to_delete(selected.clone());
+                    }
+                    if !typing && ui.input(|input| input.key_pressed(egui::Key::F2)) {
+                        self.ask_to_rename(selected.clone());
                     }
                     self.clip_details(ui, &selected);
                 } else if self.page == Page::Settings {
@@ -669,6 +679,7 @@ impl ClipCraftApp {
                 }
             });
         self.delete_dialog(context);
+        self.rename_dialog(context);
         self.bug_report_dialog(context);
         self.thumbs.end_frame();
         self.settings_state.end_frame(&self.recording);
@@ -1538,6 +1549,7 @@ impl ClipCraftApp {
                     self.edit_library(MetaEdit::RemoveFromLibrary { path });
                 }
                 ClipCardAction::Delete(entry) => self.ask_to_delete(*entry),
+                ClipCardAction::Rename(entry) => self.ask_to_rename(*entry),
                 ClipCardAction::SetCollection { path, name, add } => {
                     self.edit_library(if add {
                         MetaEdit::AddToCollection { path, name }
@@ -1928,6 +1940,19 @@ impl ClipCraftApp {
                 .clicked()
                 {
                     self.reveal_media(PathBuf::from(&entry.path));
+                }
+                if kit::labelled_button_sized(
+                    ui,
+                    Icon::Pencil,
+                    "Rename clip",
+                    false,
+                    !entry.offline,
+                    full,
+                )
+                .on_hover_text("F2")
+                .clicked()
+                {
+                    self.ask_to_rename(entry.clone());
                 }
                 if kit::labelled_button_sized(ui, Icon::Trash, "Delete clip", false, true, full)
                     .clicked()
@@ -2589,6 +2614,8 @@ enum ClipCardAction {
     RemoveFromLibrary(String),
     /// Ask about moving the clip's file to the Recycle Bin.
     Delete(Box<MediaEntry>),
+    /// Open the rename box for the clip.
+    Rename(Box<MediaEntry>),
     /// Look for a clip whose file moved: its path, name and size.
     FindFile(String, String, u64),
 }
@@ -3197,6 +3224,10 @@ fn clip_card(
             menu_action = Some(ClipCardAction::RemoveFromLibrary(entry.path.clone()));
             ui.close();
         }
+        if !entry.offline && ui.button("Rename\u{2026}").clicked() {
+            menu_action = Some(ClipCardAction::Rename(Box::new(entry.clone())));
+            ui.close();
+        }
         if !entry.offline {
             ui.separator();
             if ui
@@ -3224,9 +3255,15 @@ fn clip_card(
             }
         });
     });
+    // Keys on a focused card: Enter opens (as a click), F2 renames, F favorites, Delete asks.
+    let key = |key| response.has_focus() && ui.input(|input| input.key_pressed(key));
     if menu_action.is_some() {
         menu_action
-    } else if heart.clicked() {
+    } else if key(egui::Key::F2) && !entry.offline {
+        Some(ClipCardAction::Rename(Box::new(entry.clone())))
+    } else if key(egui::Key::Delete) && !entry.offline {
+        Some(ClipCardAction::Delete(Box::new(entry.clone())))
+    } else if heart.clicked() || key(egui::Key::F) {
         Some(ClipCardAction::SetFavorite {
             path: entry.path.clone(),
             favorite: !entry.favorite,

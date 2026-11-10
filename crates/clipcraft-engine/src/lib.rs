@@ -33,6 +33,7 @@ mod library_meta;
 mod recording;
 mod recovery;
 mod relink;
+mod rename;
 mod scan;
 mod screenshot;
 pub use scan::MAX_SCAN_DEPTH;
@@ -87,6 +88,7 @@ pub use recording::{
 };
 pub use recovery::{Recovery, recover_interrupted};
 pub use relink::{SearchResult, find_moved_file};
+pub use rename::{MAX_CLIP_NAME_CHARS, RenamedClip, clean_clip_name};
 pub use screenshot::{ScreenshotJob, screenshot_name};
 pub use session::{
     CLIP_PREFIX, CaptureSession, MicrophoneTestPlan, SaveJob, SavedClipReport, clip_format,
@@ -256,6 +258,14 @@ pub enum Command {
     TrashClip {
         path: PathBuf,
     },
+    /// Renames a clip in its folder (keeping its extension); with an index, its favorite,
+    /// collections and game label follow it.
+    RenameClip {
+        path: PathBuf,
+        name: String,
+        index_path: Option<PathBuf>,
+        directory: Option<String>,
+    },
     /// Asks whether a version newer than `current_version` has been published.
     CheckForUpdate {
         current_version: String,
@@ -328,6 +338,7 @@ impl Command {
             Self::LocalMediaPath { .. } => "library.path",
             Self::RevealInFileManager { .. } => "library.reveal",
             Self::TrashClip { .. } => "library.trash",
+            Self::RenameClip { .. } => "library.rename",
             Self::CheckForUpdate { .. } => "app.check_for_update",
             Self::DownloadUpdate { .. } => "app.download_update",
             Self::RefreshLibrary { .. } => "library.refresh",
@@ -815,6 +826,8 @@ pub enum CommandOutput {
     Trashed {
         path: String,
     },
+    /// A clip was renamed.
+    Renamed(Box<rename::RenamedClip>),
     /// Whether a newer version exists.
     Update(update::UpdateStatus),
     /// A setup program was downloaded and matched its checksum.
@@ -937,6 +950,12 @@ pub enum EngineError {
     NameTaken,
     /// There are too many collections.
     CollectionLimit,
+    /// A new clip name is empty, too long, or not usable as a file name.
+    ClipNameInvalid,
+    /// Another file in the folder already has that name.
+    ClipNameTaken,
+    /// The clip is open in another program, so it could not be renamed.
+    ClipInUse,
 }
 
 impl fmt::Display for EngineError {
@@ -967,6 +986,15 @@ impl fmt::Display for EngineError {
             Self::EmptyMediaPath => formatter.write_str("Choose a local media file first."),
             Self::FileUnavailable => formatter.write_str(
                 "This file could not be found. It may have been moved or deleted.",
+            ),
+            Self::ClipNameInvalid => formatter.write_str(
+                "Use a name of up to 120 characters without / \\ : * ? \" < > |, not ending in a dot.",
+            ),
+            Self::ClipNameTaken => {
+                formatter.write_str("Another file in this folder already has that name.")
+            }
+            Self::ClipInUse => formatter.write_str(
+                "The clip is open in another program. Close it there, then rename it again.",
             ),
             Self::NotAClip => {
                 formatter.write_str("Only video clips can be moved to the Recycle Bin from here.")
@@ -1305,6 +1333,16 @@ pub fn execute_cancellable(
         Command::TrashClip { path } => {
             trash_clip(&path).map(|path| CommandOutput::Trashed { path })
         }
+        Command::RenameClip {
+            path,
+            name,
+            index_path,
+            directory,
+        } => {
+            let index = index_path.as_deref().zip(directory.as_deref());
+            rename::rename_clip(index, &path, &name)
+                .map(|renamed| CommandOutput::Renamed(Box::new(renamed)))
+        }
         Command::LocalMediaPath { path } => {
             if path.as_os_str().is_empty() {
                 return Err(EngineError::EmptyMediaPath);
@@ -1476,6 +1514,7 @@ pub const fn command_ids() -> &'static [&'static str] {
         "library.path",
         "library.reveal",
         "library.trash",
+        "library.rename",
         "app.check_for_update",
         "app.download_update",
         "library.refresh",

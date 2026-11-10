@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Rename clips:** give a clip a real name from the clip page (F2), a card's right-click menu or
+  `clipcraft-cli library rename`; it keeps its favorite, collections and game label, and never
+  replaces another file. On a focused library card, Enter opens, F favorites and Delete asks to
+  delete.
 - **Exports that fit:** a size-targeted export (quick export or the editor) that comes out bigger
   than the target is encoded once more, smaller, before anything is saved, so a "10 MB" export
   stays under 10 MB in normal cases; the result line says when this happened.

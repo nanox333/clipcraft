@@ -37,6 +37,7 @@ See [ADR 0022](docs/adr/0022-local-game-state.md) for the narrowly scoped trust 
 | `assets/icons/library.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/loop.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/pause.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/pencil.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/play.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/plus.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/record.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |

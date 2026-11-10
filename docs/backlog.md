@@ -436,6 +436,24 @@ cancellation and collisions leave no partial file and do not touch the sources.
 [testing.md](testing.md)); WebM/AV1 output. The separate editor's supported joins/fades are tracked
 under M11.1a/M11.1b.
 
+### M4.5 — Rename clips and library keyboard actions (issue #21)
+
+**Status:** implemented and tested on Linux with generated files. Engine command `library.rename`,
+the CLI (`library rename <file> <new name>`), the clip page, the card menu and F2 on a focused card
+share one implementation.
+
+**Requirements:** rename a clip in its folder, keeping its extension, favorite, collections and
+game label; refuse unusable or taken names without touching any file; keyboard-only flow (select,
+F2, type, Enter); Enter opens, F favorites and Delete asks on a focused card.
+
+**Limitations:** no batch rename or moving to another folder; a clip held by another program is
+refused; the thumbnail is made again for the new name.
+
+**Acceptance:** engine tests for validation, metadata and game kept, no overwrite, case-only and
+unchanged names; an app keyboard test; `cargo xtask ci`; Windows clippy.
+
+**Open:** Windows/macOS file-system evidence (case-only renames, a clip held by another program).
+
 ### M4.3 — Local export size and quality presets
 
 **Status:** initial software implementation built — `clip.export` and the player trim panel offer

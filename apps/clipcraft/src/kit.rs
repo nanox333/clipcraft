@@ -187,11 +187,12 @@ pub enum Icon {
     Scissors,
     Trash,
     Restart,
+    Pencil,
 }
 
 impl Icon {
     /// Every icon, in declaration order (the cache below is indexed by it).
-    pub const ALL: [Icon; 26] = [
+    pub const ALL: [Icon; 27] = [
         Icon::Play,
         Icon::Pause,
         Icon::StepBack,
@@ -218,6 +219,7 @@ impl Icon {
         Icon::Scissors,
         Icon::Trash,
         Icon::Restart,
+        Icon::Pencil,
     ];
 
     /// The icon's file under `assets/icons`, a plain SVG that any vector editor can open.
@@ -249,6 +251,7 @@ impl Icon {
             Icon::Scissors => include_str!("../../../assets/icons/scissors.svg"),
             Icon::Trash => include_str!("../../../assets/icons/trash.svg"),
             Icon::Restart => include_str!("../../../assets/icons/restart.svg"),
+            Icon::Pencil => include_str!("../../../assets/icons/pencil.svg"),
         }
     }
 }
