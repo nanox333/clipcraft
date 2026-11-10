@@ -430,7 +430,11 @@ cross-dissolves and arbitrary rendering controls remain unsupported. Editing/ste
 Export video offers standard output or estimated 10 MB, 25 MB and custom 1–500 MB targets. Targets
 reserve AAC and container overhead before choosing video bitrate and may lower canvas resolution;
 an impossible budget is refused. Actual size, target status, dimensions, selected FPS, target video bitrate and encoder are reported.
-These are estimates, not guarantees of a service's upload limit. When enabled by the recording
+A file over its target is not published: it is encoded once more at the overshoot-scaled bitrate
+(92% margin, minimum 100 kbps) and, below 80% of the first bitrate, a proportionally smaller
+picture (never below 256x144); only that second file is kept, and `retried` reports it. Generated
+noise clips that overshoot (40 s, 1 MB trim export and 2 MB edit export) end inside the target
+after one retry. Still not a guarantee of a service's upload limit. When enabled by the recording
 encoder preference, sequence export tries the registered GPU encoder and restarts in software on
 encoder failure. Sequence decoding stays in software; real-GPU export speed/quality remain
 unverified. M11.1d adds 720p/1080p/source (up to 4K), 30/60 FPS and recovery of those

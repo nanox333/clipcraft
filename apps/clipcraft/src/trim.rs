@@ -30,6 +30,8 @@ struct Job {
 struct Finished {
     clip: TrimmedClip,
     target: Option<u64>,
+    /// The export was encoded once more because the first file was over its size target.
+    retried: bool,
     /// Extra words for the result line, such as how the loudness changed.
     note: Option<String>,
 }
@@ -183,6 +185,7 @@ impl TrimState {
                         note: Some(loudness_note(&done)),
                         clip: done.clip,
                         target: None,
+                        retried: false,
                     })
                 } else if gif {
                     clipcraft_engine::export_gif_clip(
@@ -197,6 +200,7 @@ impl TrimState {
                     .map(|clip| Finished {
                         clip,
                         target: None,
+                        retried: false,
                         note: None,
                     })
                 } else if let Some(preset) = preset {
@@ -216,6 +220,7 @@ impl TrimState {
                         .map(|report| Finished {
                             clip: report.clip,
                             target: Some(report.target_bytes),
+                            retried: report.retried,
                             note: gpu_note(&report.encoder, report.hardware_decode),
                         })
                 } else {
@@ -230,6 +235,7 @@ impl TrimState {
                     .map(|clip| Finished {
                         clip,
                         target: None,
+                        retried: false,
                         note: None,
                     })
                 }
@@ -262,7 +268,12 @@ impl TrimState {
         };
         self.job = None;
         match result {
-            Ok(Finished { clip, target, note }) => {
+            Ok(Finished {
+                clip,
+                target,
+                retried,
+                note,
+            }) => {
                 let name = std::path::Path::new(&clip.path)
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
@@ -271,7 +282,9 @@ impl TrimState {
                 let detail = target.map(|target| {
                     let target_size = format_bytes(target);
                     if clip.bytes > target {
-                        format!(" · above the {target_size} estimate; choose a smaller target to reduce it further")
+                        format!(" · still above {target_size} after re-encoding; choose a smaller target")
+                    } else if retried {
+                        format!(" · fits {target_size} (re-encoded once to fit)")
                     } else { format!(" · target {target_size}") }
                 }).unwrap_or_default();
                 let note = note.map(|note| format!(" · {note}")).unwrap_or_default();

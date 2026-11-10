@@ -132,8 +132,10 @@ cargo run --package clipcraft-cli -- diagnose
 The desktop app needs a graphical session and an available capture provider for recording. See
 [`docs/testing.md`](docs/testing.md) for focused test commands and platform evidence requirements.
 For compression, the last CLI argument is the estimated target in decimal MB. In the player, open
-Trim (T), choose an Export option, and save the new file beside the original. Output can be smaller
-or larger than the estimate; the completion message and CLI JSON report its actual bytes.
+Trim (T), choose an Export option, and save the new file beside the original. If the first encode
+comes out bigger than the target, it is encoded once more at a lower bitrate (and, for a big
+overshoot, a smaller picture) before anything is saved; the completion message and CLI JSON report
+the actual bytes and whether it was re-encoded (`retried`).
 
 ## Project docs
 

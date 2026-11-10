@@ -272,6 +272,15 @@ pub struct SequenceReport {
     pub resolution_limited: bool,
     pub encoder: String,
     pub hardware_decode: bool,
+    /// The first render came out bigger than the size target, so it was rendered once more at a
+    /// lower bitrate (and, for a big overshoot, a smaller picture); only that file was kept.
+    pub retried: bool,
+}
+
+/// How one render ended: published, or over the size target and discarded unpublished.
+enum Rendered {
+    Done(SequenceReport),
+    Over(u64),
 }
 
 /// Legacy 720p/30 canvas helper. New callers use `sequence_settings` for explicit quality.
@@ -408,9 +417,60 @@ pub fn sequence_to_mp4_with(
         highest = highest.max(value);
         progress(highest);
     };
+    let target = request.preset.map(ExportPreset::target_bytes).transpose()?;
+    let mut scale = 1.0;
+    for attempt in 0..2 {
+        // A size target gets one more render when the first is over it; the second is kept.
+        let retry_allowed = target.is_some() && attempt == 0;
+        let rendered = render_once(
+            request,
+            duration,
+            hardware,
+            scale,
+            retry_allowed,
+            &mut report,
+            cancel,
+        )?;
+        match rendered {
+            Rendered::Done(done) => {
+                return Ok(SequenceReport {
+                    retried: attempt > 0,
+                    ..done
+                });
+            }
+            Rendered::Over(bytes) => {
+                check_cancel(cancel)?;
+                let target = target.unwrap_or(bytes);
+                scale = (target as f64 / bytes.max(1) as f64) * crate::compress::RETRY_MARGIN;
+            }
+        }
+    }
+    Err(ExportError::EncodeFailed)
+}
+
+/// One render, on the hardware encoder first when given (falling back to software on an encoder
+/// failure), at `scale` of the size target's bitrate.
+#[allow(clippy::too_many_arguments)]
+fn render_once(
+    request: &SequenceRequest,
+    duration: Tick,
+    hardware: Option<&FastOpener>,
+    scale: f64,
+    retry_allowed: bool,
+    report: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+) -> Result<Rendered, ExportError> {
     if let Some(opener) = hardware {
         let result = catch_unwind(AssertUnwindSafe(|| {
-            render(request, duration, Some(opener), &mut report, cancel)
+            render(
+                request,
+                duration,
+                Some(opener),
+                scale,
+                retry_allowed,
+                report,
+                cancel,
+            )
         }))
         .unwrap_or(Err(ExportError::EncodeFailed));
         match result {
@@ -421,7 +481,15 @@ pub fn sequence_to_mp4_with(
     }
     check_cancel(cancel)?;
     catch_unwind(AssertUnwindSafe(|| {
-        render(request, duration, None, &mut report, cancel)
+        render(
+            request,
+            duration,
+            None,
+            scale,
+            retry_allowed,
+            report,
+            cancel,
+        )
     }))
     .unwrap_or(Err(ExportError::EncodeFailed))
 }
@@ -666,13 +734,16 @@ fn fit_picture(mut image: image::RgbaImage, size: (u32, u32), effect: Effect) ->
     canvas
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render(
     request: &SequenceRequest,
     duration: Tick,
     hardware: Option<&FastOpener>,
+    scale: f64,
+    retry_allowed: bool,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
-) -> Result<SequenceReport, ExportError> {
+) -> Result<Rendered, ExportError> {
     let mut settings = sequence_settings(1280, 720, request.preset, duration, request.quality)?;
     // Validate every source before creating output. Keep one decoder/cache open at a time.
     for (index, segment) in request.segments.iter().enumerate() {
@@ -688,6 +759,13 @@ fn render(
                 request.quality,
             )?;
         }
+    }
+    if scale < 1.0 {
+        // After an overshoot: fewer bits, and for a big overshoot fewer pixels too.
+        settings.video_kbps = ((f64::from(settings.video_kbps) * scale.max(0.0)) as u32)
+            .max(100.min(settings.video_kbps));
+        (settings.width, settings.height) =
+            crate::compress::shrink_for_retry((settings.width, settings.height), scale);
     }
     let size = (settings.width, settings.height);
     let (width, height) = size;
@@ -894,10 +972,14 @@ fn render(
         .len();
     drop(out);
     check_cancel(cancel)?;
+    let target_bytes = request.preset.map(ExportPreset::target_bytes).transpose()?;
+    if retry_allowed && target_bytes.is_some_and(|target| bytes > target) {
+        // Not published: the temporary file goes when `temporary` is dropped.
+        return Ok(Rendered::Over(bytes));
+    }
     crate::compress::publish_new(&temporary.0, &request.output)?;
     progress(1.0);
-    let target_bytes = request.preset.map(ExportPreset::target_bytes).transpose()?;
-    Ok(SequenceReport {
+    Ok(Rendered::Done(SequenceReport {
         clip: ExportReport {
             path: request.output.clone(),
             duration,
@@ -914,7 +996,8 @@ fn render(
         resolution_limited: settings.resolution_limited,
         encoder: name,
         hardware_decode: false,
-    })
+        retried: false,
+    }))
 }
 
 fn ceil_units(time: Tick, scale: i64) -> i64 {

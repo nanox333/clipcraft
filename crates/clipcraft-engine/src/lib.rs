@@ -437,6 +437,8 @@ pub struct ExportedClip {
     pub encoder: String,
     /// Whether a hardware decoder read the source.
     pub hardware_decode: bool,
+    /// The first encode was over the size target, so the clip was encoded once more to fit.
+    pub retried: bool,
 }
 
 /// A rendered editor sequence, with the selected size target and actual output settings.
@@ -453,6 +455,8 @@ pub struct ExportedSequence {
     pub resolution_limited: bool,
     pub encoder: String,
     pub hardware_decode: bool,
+    /// The first render was over the size target, so the edit was rendered once more to fit.
+    pub retried: bool,
 }
 
 /// A clip saved with its loudness evened out. Loudness values are in tenths, so they compare
@@ -617,6 +621,7 @@ pub fn export_sequence(
         resolution_limited: report.resolution_limited,
         encoder: report.encoder,
         hardware_decode: report.hardware_decode,
+        retried: report.retried,
     })
 }
 
@@ -653,6 +658,7 @@ pub fn export_clip(
         height: report.height,
         encoder: report.encoder,
         hardware_decode: report.hardware_decode,
+        retried: report.retried,
     })
 }
 
@@ -1601,6 +1607,7 @@ mod tests {
             video_kbps: 4000,
             resolution_limited: false,
             encoder: "Software".into(),
+            retried: false,
             hardware_decode: false,
         };
         let json = serde_json::to_value(report).unwrap();

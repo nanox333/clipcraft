@@ -115,6 +115,7 @@ fn compressed_mp4_and_mkv_ranges_decode_with_correct_audio_and_frame_rate() {
         assert_eq!(report.clip.bytes, std::fs::metadata(&output).unwrap().len());
         assert!(report.clip.bytes <= 1_100_000, "{report:?}");
         assert_eq!(report.within_target, report.clip.bytes <= 1_000_000);
+        assert!(!report.retried, "a clip that fits is encoded once");
         assert!(progress.windows(2).all(|p| p[0] <= p[1]));
         assert_eq!(progress.last(), Some(&1.0));
         assert_eq!(std::fs::read(&input).unwrap(), original);
@@ -684,4 +685,74 @@ fn sequence_effects_recolour_the_picture_and_leave_the_source_alone() {
     let mut short = [1, 2, 3];
     Effect::Sepia.apply_rgba(&mut short);
     assert_eq!(short, [1, 2, 3]);
+}
+
+/// A clip too busy for its size target on the first encode (moving noise at a low bitrate) is
+/// encoded once more, smaller, and only the second file is published.
+#[test]
+fn an_export_over_its_size_target_is_encoded_again_to_fit() {
+    let dir = Scratch::new("overshoot");
+    let input = dir.file("input.mp4");
+    support::fixture_sized(&input, ClipFormat::Mp4, false, (640, 360, 30), 40);
+    let output = dir.file("out.mp4");
+    let report = compress_to_mp4(
+        &TrimRequest {
+            input,
+            output: output.clone(),
+            start: Tick::ZERO,
+            end: Tick::from_units(40, 1),
+        },
+        ExportPreset::Custom { megabytes: 1 },
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(report.retried, "{report:?}");
+    assert!(report.within_target, "{report:?}");
+    assert!(report.clip.bytes <= 1_000_000, "{report:?}");
+    assert_eq!(report.clip.bytes, std::fs::metadata(&output).unwrap().len());
+    assert!(report.width < 640 && report.height < 360, "{report:?}");
+    // Only the published clip and its source remain: the first encode and the partials are gone.
+    let mut names: Vec<_> = std::fs::read_dir(&dir.0)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["input.mp4", "out.mp4"]);
+}
+
+/// The editor's export with a size preset gets the same second render when it overshoots.
+#[test]
+fn an_edit_over_its_size_target_is_rendered_again_to_fit() {
+    use clipcraft_export::{SequenceRequest, SequenceSegment, sequence_to_mp4_with};
+    let dir = Scratch::new("sequence-overshoot");
+    let input = dir.file("input.mp4");
+    support::fixture_sized(&input, ClipFormat::Mp4, false, (640, 360, 30), 40);
+    let output = dir.file("edit.mp4");
+    let request = SequenceRequest {
+        quality: Default::default(),
+        // The edit always carries 160 kbps stereo sound, so the target leaves room for it.
+        preset: Some(ExportPreset::Custom { megabytes: 2 }),
+        texts: Vec::new(),
+        output: output.clone(),
+        segments: vec![SequenceSegment {
+            input,
+            start: Tick::ZERO,
+            end: Tick::from_units(40, 1),
+            volume_percent: 100,
+            look: Default::default(),
+        }],
+    };
+    let report =
+        sequence_to_mp4_with(&request, None, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    println!("{report:?}");
+    assert!(report.retried, "{report:?}");
+    assert!(report.within_target, "{report:?}");
+    assert_eq!(report.clip.bytes, std::fs::metadata(&output).unwrap().len());
+    let mut names: Vec<_> = std::fs::read_dir(&dir.0)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["edit.mp4", "input.mp4"]);
 }

@@ -720,10 +720,10 @@ impl EditorState {
                         format!(
                             " · target {}{}",
                             clipcraft_engine::format_bytes(target),
-                            if report.within_target {
-                                ""
-                            } else {
-                                " (over estimate)"
+                            match (report.within_target, report.retried) {
+                                (true, false) => "",
+                                (true, true) => " (re-encoded once to fit)",
+                                (false, _) => " (still over after re-encoding)",
                             }
                         )
                     });

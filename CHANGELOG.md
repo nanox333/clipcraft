@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Exports that fit:** a size-targeted export (quick export or the editor) that comes out bigger
+  than the target is encoded once more, smaller, before anything is saved, so a "10 MB" export
+  stays under 10 MB in normal cases; the result line says when this happened.
 - **Clip-length shortcuts:** give up to four keys their own clip length, such as Shift + F8 for
   the last 2 minutes alongside F8 for the whole replay (Settings → Hotkeys).
 - **Fixed:** installed Steam games are recognized when Steam is installed outside Program Files

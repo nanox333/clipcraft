@@ -72,7 +72,23 @@ pub struct CompressReport {
     pub encoder: String,
     /// Whether a hardware decoder read at least some of the source's pictures.
     pub hardware_decode: bool,
+    /// The first encode came out bigger than the target, so it was encoded once more at a lower
+    /// bitrate; only the second file was kept.
+    pub retried: bool,
 }
+
+/// How one encode ended: published, or over the target and discarded before publishing so it can
+/// be encoded again.
+enum Attempt {
+    Done(CompressReport),
+    Over(u64),
+}
+
+/// The lowest video bitrate a size target may ask for, as [`video_budget`] enforces.
+const MIN_VIDEO_KBPS: u32 = 100;
+
+/// Spare room left when encoding again after an overshoot, since sizes vary between encodes.
+pub(crate) const RETRY_MARGIN: f64 = 0.92;
 
 /// Re-encodes a selected range as H.264 MP4, preserving its AAC audio tracks.
 ///
@@ -107,10 +123,42 @@ pub fn compress_to_mp4_with(
     }
     check_cancel(cancel)?;
     // Open and validate before creating any output. Decoder panics become a fallible job result.
-    catch_unwind(AssertUnwindSafe(|| {
-        export_inner(request, target, hardware, progress, cancel)
-    }))
-    .unwrap_or(Err(ExportError::EncodeFailed))
+    // Progress never runs backwards, even when a second encode starts over.
+    let mut highest = 0.0_f32;
+    let mut report = |value: f32| {
+        highest = highest.max(value);
+        progress(highest);
+    };
+    let mut attempt = |scale: f64, retry_allowed: bool| {
+        catch_unwind(AssertUnwindSafe(|| {
+            export_inner(
+                request,
+                target,
+                hardware,
+                scale,
+                retry_allowed,
+                &mut report,
+                cancel,
+            )
+        }))
+        .unwrap_or(Err(ExportError::EncodeFailed))
+    };
+    match attempt(1.0, true)? {
+        Attempt::Done(report) => Ok(report),
+        // Too big: encode once more with the bitrate scaled down by the overshoot. The second
+        // file is kept whatever its size, and the report says whether it fits.
+        Attempt::Over(bytes) => {
+            check_cancel(cancel)?;
+            let scale = (target as f64 / bytes.max(1) as f64) * RETRY_MARGIN;
+            match attempt(scale, false)? {
+                Attempt::Done(report) => Ok(CompressReport {
+                    retried: true,
+                    ..report
+                }),
+                Attempt::Over(_) => Err(ExportError::EncodeFailed),
+            }
+        }
+    }
 }
 
 /// Publishes `from` as `to` without replacing anything. A hard link is atomic; on filesystems
@@ -319,13 +367,17 @@ pub(crate) fn source_size(width: u32, height: u32) -> Result<(), ExportError> {
     Ok(())
 }
 
+/// One encode at the bitrate the target allows times `scale`. With `retry_allowed`, a file over
+/// the target is discarded before publishing and reported as [`Attempt::Over`].
 fn export_inner(
     request: &TrimRequest,
     target: u64,
     hardware: Option<&FastOpener>,
+    scale: f64,
+    retry_allowed: bool,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
-) -> Result<CompressReport, ExportError> {
+) -> Result<Attempt, ExportError> {
     let source = Source::open(&request.input)?;
     let plans = plan(&source, request.start, request.end)?;
     let video = plans
@@ -424,8 +476,18 @@ fn export_inner(
         .sum();
     let source_kbps = source_bytes.saturating_mul(8) / duration.to_units_floor(1_000).max(1) as u64;
     let budget_kbps = video_budget(target, audio_bytes, duration)?;
+    // A second encode after an overshoot asks for less, but never below the smallest bitrate
+    // that still gives a watchable picture.
+    let budget_kbps = if scale < 1.0 {
+        ((f64::from(budget_kbps) * scale.max(0.0)) as u32).max(MIN_VIDEO_KBPS.min(budget_kbps))
+    } else {
+        budget_kbps
+    };
     let kbps = budget_kbps.min(source_kbps.clamp(100, 12_000) as u32);
     let (width, height) = output_size(info.width, info.height, budget_kbps);
+    // After an overshoot, fewer pixels as well as fewer bits: at low bitrates the encoder cannot
+    // always reach the bitrate it is given, but a smaller picture costs fewer bits per frame.
+    let (width, height) = shrink_for_retry((width, height), scale);
     let fps_num = u32::try_from(rate.num).map_err(|_| ExportError::BadPreset)?;
     let fps_den = u32::try_from(rate.den).map_err(|_| ExportError::BadPreset)?;
     let mut config = EncoderConfig::new(width, height, fps_num, fps_den);
@@ -457,10 +519,11 @@ fn export_inner(
         kbps,
         target,
         hw_frames_before: frames_before,
+        retry_allowed,
     };
     if let Some(opener) = hardware {
         match hardware_export(&job, opener, progress, cancel) {
-            Ok(report) => return Ok(report),
+            Ok(attempt) => return Ok(attempt),
             Err(ExportError::Cancelled) => return Err(ExportError::Cancelled),
             // Anything else: fall back to the software encoder below.
             Err(_) => {}
@@ -550,6 +613,8 @@ struct Job<'a> {
     target: u64,
     /// The hardware-decoded picture count when the export began.
     hw_frames_before: u64,
+    /// A file over the target is discarded unpublished, to be encoded again.
+    retry_allowed: bool,
 }
 
 /// The file being written: its cleanup guard, the MP4 writer, and the tracks in it.
@@ -617,7 +682,7 @@ fn finish_output(
     encoder: String,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
-) -> Result<CompressReport, ExportError> {
+) -> Result<Attempt, ExportError> {
     let Output { temporary, mp4, .. } = output;
     let mut out = mp4.finish().map_err(mp4_error)?;
     out.flush().map_err(|e| io_error(&e))?;
@@ -625,10 +690,14 @@ fn finish_output(
     let bytes = out.get_ref().metadata().map_err(|e| io_error(&e))?.len();
     drop(out);
     check_cancel(cancel)?;
+    if job.retry_allowed && bytes > job.target {
+        // Not published: the temporary file is removed when `temporary` goes out of scope.
+        return Ok(Attempt::Over(bytes));
+    }
     // Publish without replacement, including an output created after the preflight check.
     crate::compress::publish_new(&temporary.0, &job.request.output)?;
     progress(1.0);
-    Ok(CompressReport {
+    Ok(Attempt::Done(CompressReport {
         clip: ExportReport {
             path: job.request.output.clone(),
             duration: job.duration,
@@ -642,7 +711,8 @@ fn finish_output(
         height: job.size.1,
         encoder,
         hardware_decode: filmcraft_codecs::hw::hw_stats().frames > job.hw_frames_before,
-    })
+        retried: false,
+    }))
 }
 
 /// Runs `make(0..frames)` on `lanes` threads (lane `n` takes pictures `n`, `n + lanes`, …) and
@@ -792,7 +862,7 @@ fn hardware_export(
     opener: &FastOpener,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
-) -> Result<CompressReport, ExportError> {
+) -> Result<Attempt, ExportError> {
     let (width, height) = job.size;
     let fps = u32::try_from((job.rate.num + job.rate.den / 2) / job.rate.den.max(1))
         .ok()
@@ -915,10 +985,23 @@ pub(crate) fn video_budget_with_limit(
         return Err(ExportError::BadRange);
     }
     let kbps = room.saturating_mul(8) / millis as u64;
-    if kbps < 100 {
+    if kbps < u64::from(MIN_VIDEO_KBPS) {
         return Err(ExportError::TargetTooSmall);
     }
     Ok(kbps.min(u64::from(max_kbps)) as u32)
+}
+
+/// The picture size for an encode at `scale` of the first one's bitrate: the area shrinks in
+/// proportion (each side by the square root), never below 256x144, keeping even sizes.
+pub(crate) fn shrink_for_retry((width, height): (u32, u32), scale: f64) -> (u32, u32) {
+    if !(scale > 0.0 && scale < 0.8) {
+        return (width, height);
+    }
+    let factor = scale.sqrt();
+    let floor = (256.0 / f64::from(width.max(1))).max(144.0 / f64::from(height.max(1)));
+    let factor = factor.max(floor).min(1.0);
+    let side = |value: u32| (((f64::from(value) * factor) as u32) / 2 * 2).max(2);
+    (side(width), side(height))
 }
 
 fn output_size(width: u32, height: u32, kbps: u32) -> (u32, u32) {
@@ -1093,5 +1176,15 @@ mod tests {
         assert_eq!(output_size(160, 90, 2_000), (160, 90));
         assert_eq!(output_size(1920, 1080, 200), (640, 360));
         assert!(source_size(u32::MAX, 100).is_err());
+    }
+
+    #[test]
+    fn a_retry_after_a_big_overshoot_also_shrinks_the_picture_but_not_below_144p() {
+        assert_eq!(shrink_for_retry((1280, 720), 1.0), (1280, 720));
+        assert_eq!(shrink_for_retry((1280, 720), 0.9), (1280, 720));
+        assert_eq!(shrink_for_retry((1280, 720), 0.25), (640, 360));
+        assert_eq!(shrink_for_retry((640, 360), 0.01), (256, 144));
+        assert_eq!(shrink_for_retry((200, 100), 0.1), (200, 100));
+        assert_eq!(shrink_for_retry((640, 360), f64::NAN), (640, 360));
     }
 }

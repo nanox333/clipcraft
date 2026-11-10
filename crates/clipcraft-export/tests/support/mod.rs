@@ -150,7 +150,7 @@ pub fn fixture_sized(
         for (pixel, y) in luma.iter_mut().enumerate() {
             noise = noise.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             *y = if pixel % (width as usize) < width as usize / 2 {
-                40 + (i / fps) as u8 * 45
+                40_u8.wrapping_add(((i / fps) as u8).wrapping_mul(45))
             } else {
                 (noise >> 24) as u8
             };
