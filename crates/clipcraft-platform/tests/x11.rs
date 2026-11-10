@@ -453,7 +453,7 @@ fn publish_clients(display: &str, windows: &[(u32, u32)]) {
 
 #[test]
 fn a_launchers_splash_loses_to_the_bigger_game_window_of_the_same_family() {
-    let Some(server) = Server::start(67) else {
+    let Some(server) = Server::start(70) else {
         return;
     };
     let splash = make_window_at(&server.display, 0, 0, 120, 60, 0x222222);
@@ -476,7 +476,7 @@ fn a_launchers_splash_loses_to_the_bigger_game_window_of_the_same_family() {
 /// process, which owns the window. Recognizing the launcher must still find the game's window.
 #[test]
 fn a_window_owned_by_a_process_the_recognized_one_started_is_found() {
-    let Some(server) = Server::start(68) else {
+    let Some(server) = Server::start(71) else {
         return;
     };
     // The "launcher" is a shell; the "game" is a child it starts and keeps running.
@@ -516,7 +516,7 @@ fn a_window_owned_by_a_process_the_recognized_one_started_is_found() {
 
 #[test]
 fn listed_windows_carry_their_owner_and_window_class() {
-    let Some(server) = Server::start(69) else {
+    let Some(server) = Server::start(72) else {
         return;
     };
     let game = make_window(&server.display, 300, 200, 0x445566);
