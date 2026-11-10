@@ -703,6 +703,9 @@ remain open. No upload, Discord account, link, or network path is added. See
 - Installed Steam games are re-read only when a library's file times change (or on request, or
   every 30 minutes), not every 30 seconds; a user's ESET HIPS log showed the repeated reads. The
   change check is unit-tested; the HIPS log itself has not been re-checked.
+- Windows finds Steam wherever it is installed through its registry entries (previously only the
+  standard Program Files folders). The path rules are unit-tested and the Windows build passes;
+  it has not been run on a Windows machine with Steam on another drive.
 - **HDR compatibility** tone maps linear scRGB half floats (Windows' HDR format) to standard
   range: reference white 203 nits, a smooth highlight roll-off, sRGB encoding. The maths is unit
   tested. Windows capture asks for half floats when the setting is on. **Not run on an HDR

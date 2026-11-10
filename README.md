@@ -92,7 +92,8 @@ in [`docs/upstream-ports.md`](docs/upstream-ports.md).
 
 To recognize games, ClipCraft reads the list of running programs and Steam's local game-list
 files on your computer; nothing from them leaves the device. Steam's files are re-read only when
-a game is installed or removed (or on Refresh, or every 30 minutes). Turn off **Switch recording
+a game is installed or removed (or on Refresh, or every 30 minutes). On Windows it finds Steam's
+folder from the registry, so Steam installed on another drive works too. Turn off **Switch recording
 automatically** in Settings → Games to stop both.
 
 ## Build, run, and test

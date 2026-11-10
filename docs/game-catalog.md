@@ -471,8 +471,10 @@ global recognition switch and both bundled and installed-ID exclusions remain ef
 executable paths beneath installed game directories can supply Steam IDs locally; full process
 paths are not returned or stored. Generic launchers/crash helpers are excluded from this inference.
 Linux Steam process IDs take precedence over path inference. Discovery checks standard Windows
-Steam roots, Linux native/Flatpak roots and the macOS default root; custom Windows installations
-are not located through the registry. macOS capture itself remains unavailable.
+Steam roots, Linux native/Flatpak roots and the macOS default root. On Windows the folder Steam
+records in the registry (`SteamPath` for the user, `InstallPath` for the machine) is checked first,
+so Steam installed on another drive is found; values that are not plain absolute drive paths are
+ignored. Additional libraries come from `libraryfolders.vdf` as before. macOS capture itself remains unavailable.
 
 Parsing is bounded to 64 roots/libraries, 4,096 entries, 1,024 games, 12 nesting levels and 100,000
 tokens per metadata file. Library indexes are at most 1 MiB; manifests at most 64 KiB. Install

@@ -7,10 +7,28 @@ const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Cli
 
 #[cfg(windows)]
 fn read_registry(key: &str, name: &str) -> Result<Option<std::ffi::OsString>, String> {
+    read_registry_string(false, key, name)
+}
+
+/// A bounded `REG_SZ` value from the current user's hive, or the machine's with `machine`.
+/// `Ok(None)` when the key or value does not exist.
+#[cfg(windows)]
+pub(crate) fn read_registry_string(
+    machine: bool,
+    key: &str,
+    name: &str,
+) -> Result<Option<std::ffi::OsString>, String> {
     use std::os::windows::ffi::OsStringExt;
     use windows::{
-        Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW},
+        Win32::System::Registry::{
+            HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW,
+        },
         core::HSTRING,
+    };
+    let hive = if machine {
+        HKEY_LOCAL_MACHINE
+    } else {
+        HKEY_CURRENT_USER
     };
     let key = HSTRING::from(key);
     let name = HSTRING::from(name);
@@ -20,7 +38,7 @@ fn read_registry(key: &str, name: &str) -> Result<Option<std::ffi::OsString>, St
     // and the API receives a valid count pointer. Only bounded REG_SZ bytes are decoded below.
     let status = unsafe {
         RegGetValueW(
-            HKEY_CURRENT_USER,
+            hive,
             &key,
             &name,
             RRF_RT_REG_SZ,

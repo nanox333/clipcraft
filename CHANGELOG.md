@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed:** installed Steam games are recognized when Steam is installed outside Program Files
+  (another drive or folder); ClipCraft now reads where Steam is from the Windows registry.
 - **Less file activity:** installed Steam games are re-read only when a game is installed or
   removed (or on Refresh, or every 30 minutes) instead of every 30 seconds, so security tools such
   as ESET HIPS no longer log Steam's manifests being read constantly.
