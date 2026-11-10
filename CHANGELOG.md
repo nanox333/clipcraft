@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Clearer game-without-window message:** when a recognized game has no window, ClipCraft reads the
+  list of screens again before giving up, and the message now says what to change (turn on
+  "Record the screen when the game window is missing", or choose a screen on Wayland).
 - **Rename clips:** give a clip a real name from the clip page (F2), a card's right-click menu or
   `clipcraft-cli library rename`; it keeps its favorite, collections and game label, and never
   replaces another file. On a focused library card, Enter opens, F favorites and Delete asks to

@@ -1191,6 +1191,35 @@ impl ClipCraftApp {
             .map(|window| window.target.clone())
     }
 
+    /// The screen to record while a recognized game has no window: the chosen one, else the first.
+    /// The target list is read again when it is empty or has no screen, since it may have been
+    /// read before a display was ready.
+    fn fallback_screen(&mut self) -> Option<String> {
+        for attempt in 0..2 {
+            if attempt == 1 || !self.capture.targets_loaded() {
+                self.capture.refresh_targets();
+            }
+            let chosen = &self.recording.capture_target;
+            let screen = self
+                .capture
+                .targets
+                .iter()
+                .filter(|target| automatic_desktop_target(target))
+                .find(|target| target.id == *chosen)
+                .or_else(|| {
+                    self.capture
+                        .targets
+                        .iter()
+                        .find(|target| automatic_desktop_target(target))
+                })
+                .map(|target| target.id.clone());
+            if screen.is_some() {
+                return screen;
+            }
+        }
+        None
+    }
+
     /// Picks what to record from the settings.
     pub(crate) fn capture_target_id(
         &mut self,
@@ -1200,39 +1229,26 @@ impl ClipCraftApp {
             match self.game_window_for_process(game.process_id) {
                 Ok(Some(window)) => Some(window),
                 Ok(None) => {
-                    if self.recording.record_screen_when_game_window_missing {
-                        if !self.capture.targets_loaded() {
-                            self.capture.refresh_targets();
-                        }
-                        let chosen = &self.recording.capture_target;
-                        let screen = self
-                            .capture
-                            .targets
-                            .iter()
-                            .filter(|target| automatic_desktop_target(target))
-                            .find(|target| target.id == *chosen)
-                            .or_else(|| {
-                                self.capture
-                                    .targets
-                                    .iter()
-                                    .find(|target| automatic_desktop_target(target))
-                            })
-                            .map(|target| target.id.clone());
-                        if let Some(screen) = screen {
-                            self.capture.game_on_screen = true;
-                            self.capture.notice = notice(
-                                format!(
-                                    "ClipCraft found {} running but not its window, so it is recording the screen. It switches to the game's window when one appears.",
-                                    game.game_name
-                                ),
-                                false,
-                                None,
-                            );
-                            return Ok(screen);
-                        }
+                    let fallback = self.recording.record_screen_when_game_window_missing;
+                    if fallback && let Some(screen) = self.fallback_screen() {
+                        self.capture.game_on_screen = true;
+                        self.capture.notice = notice(
+                            format!(
+                                "ClipCraft found {} running but not its window, so it is recording the screen. It switches to the game's window when one appears.",
+                                game.game_name
+                            ),
+                            false,
+                            None,
+                        );
+                        return Ok(screen);
                     }
+                    let advice = if fallback {
+                        "No screen was available to record instead (on Wayland, choose the screen yourself in Settings \u{2192} Capture)."
+                    } else {
+                        "Turn on \u{201c}Record the screen when the game window is missing\u{201d} in Settings \u{2192} Games to record the screen until it appears."
+                    };
                     return Err(format!(
-                        "ClipCraft found {} running, but this desktop did not expose its game window. Capture is still idle.",
+                        "ClipCraft found {} running, but this desktop did not expose its game window. Capture is still idle. {advice}",
                         game.game_name
                     ));
                 }
@@ -2429,6 +2445,12 @@ mod tests {
         assert!(app.capture.notice.as_ref().is_some_and(
             |notice| notice.error && notice.text.contains("did not expose its game window")
         ));
+        assert!(
+            app.capture.notice.as_ref().is_some_and(|notice| notice
+                .text
+                .contains("Record the screen when the game window is missing")),
+            "the message says which setting to turn on"
+        );
         drop(app);
         remove_scratch(root);
     }

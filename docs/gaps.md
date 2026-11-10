@@ -57,6 +57,13 @@ shortcut saves about one second while the normal save keeps the buffer, and a ke
 settings test. Global registration on Windows and Wayland is the same mechanism as the other
 shortcuts and has not been run on those desktops for these keys.
 
+## Game without a window: screen fallback (follow-up)
+
+The screen fallback now re-reads the screen list once when it is empty or stale before reporting
+failure, and the idle message names the fix: turn on the fallback setting, or on Wayland choose a
+screen yourself (the portal picker is never started automatically). Verified by the capture
+tests; not run on a real Silksong/Proton session.
+
 ## Renaming clips and library keys (M4.5, issue #21)
 
 The clip page (Rename clip, or F2), a card's right-click menu (Rename…) and a focused card (F2)
