@@ -5,7 +5,7 @@ with a hotkey, then play, search, trim and export your clips.** It works fully o
 account, server, telemetry, upload or share-link service, and everything you record stays on your
 computer.
 
-> **Status: early release.** Version 0.2.0 is the latest published release.
+> **Status: early release.** Version 0.2.1 is the latest published release.
 > The current source has Windows/AMD and Linux/X11 generated-capture evidence, while real games,
 > other devices and Wayland remain incompletely tested. macOS capture is not implemented. See
 > [`docs/gaps.md`](docs/gaps.md) for current evidence and limits.
@@ -14,7 +14,7 @@ Automated checks run on Linux and Windows; they do not replace testing on real c
 
 ## Download
 
-Download [ClipCraft 0.2.0](https://github.com/nanox333/clipcraft/releases/tag/v0.2.0) as a Windows
+Download [ClipCraft 0.2.1](https://github.com/nanox333/clipcraft/releases/tag/v0.2.1) as a Windows
 **ClipCraft-Setup** installer or a Linux x86_64 tarball. The command-line tool is available as a
 separate download. The Windows installer works for the current user and needs no administrator
 rights or account.
