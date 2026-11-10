@@ -25,7 +25,9 @@ version is published and install it for you (Settings → About); turn the autom
 Settings → General and it never goes online. See [`CHANGELOG.md`](CHANGELOG.md) for each release.
 
 New profiles get a short setup for storage, capture, audio and shortcuts. Each hotkey action
-supports up to five shortcuts: use **+** in Settings → Hotkeys.
+supports up to five shortcuts: use **+** in Settings → Hotkeys. **Clip-length shortcuts** give
+keys their own clip length, for example Shift + F8 for the last 2 minutes next to F8 for the
+whole replay.
 On Wayland, ClipCraft asks the desktop's Global Shortcuts portal to register keys. Settings →
 Hotkeys shows the desktop's assigned keys and offers an explicit, default-off keyboard-device
 fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.

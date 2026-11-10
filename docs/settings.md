@@ -8,6 +8,12 @@
 
 ## First launch and shortcut alternatives
 
+**Clip-length shortcuts** (Settings → Hotkeys, below the actions) give up to four keys their own
+clip length: 15 s, 30 s, 1, 2, 5 or 10 minutes. Add one, press its keys, pick the length. A key can
+belong to only one action or clip-length shortcut; a taken key is refused with its owner named. A
+length longer than the replay buffer saves everything buffered, which the setting and the saving
+notice say. The post-roll still applies, and saves still run one at a time. None are set by default.
+
 Fresh profiles open setup for local storage, replay length, capture/audio and hotkeys. Use Back
 and Continue, then Finish setup, or keep the current draft with Skip. Closing before finishing
 leaves setup pending. Nothing records during setup. Existing preference files bypass it. All

@@ -49,6 +49,14 @@ recovery remain unverified. An X11 virtual-desktop check with a simulated Waylan
 checked the fallback controls and an F9 capture after changing the fallback setting. Desktop-assigned
 keys may differ from requested keys.
 
+## Clip-length shortcuts (M2.L, issue #19)
+
+Up to four keys each save their own length of the replay (5 s–10 min) through the same save path
+and post-roll. Verified: engine IDs/conflict/sanitising tests, a real recording where a 1 s
+shortcut saves about one second while the normal save keeps the buffer, and a keyboard-only
+settings test. Global registration on Windows and Wayland is the same mechanism as the other
+shortcuts and has not been run on those desktops for these keys.
+
 ## Multiple shortcuts, first-run setup and Windows installer (M5.1a)
 
 Each action accepts five keyboard bindings with a + button, individual removal, collision feedback

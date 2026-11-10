@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Clip-length shortcuts:** give up to four keys their own clip length, such as Shift + F8 for
+  the last 2 minutes alongside F8 for the whole replay (Settings → Hotkeys).
 - **Fixed:** installed Steam games are recognized when Steam is installed outside Program Files
   (another drive or folder); ClipCraft now reads where Steam is from the Windows registry.
 - **Less file activity:** installed Steam games are re-read only when a game is installed or

@@ -46,6 +46,8 @@ pub struct SettingsState {
     mic_error: Option<String>,
     mic_shown: f32,
     pub(crate) capturing: Option<(HotkeyAction, usize)>,
+    /// The clip-length shortcut waiting for its keys.
+    pub(crate) capturing_clip_length: Option<usize>,
     pub(crate) hotkey_error: Option<String>,
     usage: Option<StorageUsage>,
     usage_for: Option<PathBuf>,
@@ -146,7 +148,13 @@ impl SettingsState {
         }
         if !keep_capture {
             self.capturing = None;
+            self.capturing_clip_length = None;
         }
+    }
+
+    /// True while a shortcut button waits for keys: shortcuts must not fire then.
+    pub fn assigning_keys(&self) -> bool {
+        self.capturing.is_some() || self.capturing_clip_length.is_some()
     }
 }
 
@@ -1413,6 +1421,14 @@ pub fn hotkeys_tab(
             state.capturing = None;
         }
     }
+    if let Some(index) = state.capturing_clip_length {
+        if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+            state.capturing_clip_length = None;
+        } else if let Some(shortcut) = pressed_shortcut(ui) {
+            state.hotkey_error = settings.hotkeys.set_clip_length_key(index, &shortcut).err();
+            state.capturing_clip_length = None;
+        }
+    }
     card(ui, "Shortcuts", |ui| {
         #[cfg(target_os = "linux")]
         if wayland_session(
@@ -1624,6 +1640,7 @@ pub fn hotkeys_tab(
             }
         }
     });
+    clip_length_card(ui, settings, state);
     if let Some(error) = state.hotkey_error.as_ref() {
         ui.colored_label(DANGER, error);
     }
@@ -1636,10 +1653,134 @@ pub fn hotkeys_tab(
     if kit::labelled_button(ui, kit::Icon::Loop, "Reset to defaults", false, true).clicked() {
         settings.hotkeys = clipcraft_engine::Hotkeys::default();
         state.capturing = None;
+        state.capturing_clip_length = None;
         state.hotkey_error = None;
     }
     ui.add_space(8.0);
     retry
+}
+
+/// Shortcuts that each save their own length of the replay, such as the last 2 minutes.
+fn clip_length_card(
+    ui: &mut egui::Ui,
+    settings: &mut RecordingSettings,
+    state: &mut SettingsState,
+) {
+    use clipcraft_engine::{CLIP_LENGTH_CHOICES, MAX_CLIP_LENGTH_SHORTCUTS, describe_seconds};
+    card(ui, "Clip-length shortcuts", |ui| {
+        ui.label(
+            RichText::new("Give a key its own clip length, for example Shift + F8 for the last 2 minutes. Save clip keeps the replay length.")
+                .color(MUTED)
+                .size(12.5),
+        );
+        let replay = settings.replay_seconds;
+        let mut remove = None;
+        let shortcuts = settings.hotkeys.clip_lengths.clone();
+        for (index, shortcut) in shortcuts.iter().enumerate() {
+            ui.add_space(10.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let waiting = state.capturing_clip_length == Some(index);
+                let text = if waiting {
+                    "Press a key…".to_owned()
+                } else if shortcut.key.is_empty() {
+                    "Choose a key".to_owned()
+                } else {
+                    shortcut.key.replace('+', " + ")
+                };
+                let response = ui.add(
+                    egui::Button::new(RichText::new(&text).color(if waiting {
+                        LIME
+                    } else {
+                        TEXT
+                    }))
+                    .fill(Color32::from_rgb(13, 13, 15))
+                    .stroke(Stroke::new(1.0_f32, if waiting { LIME } else { BORDER }))
+                    .min_size(Vec2::new(150.0, 34.0)),
+                );
+                let length = describe_seconds(shortcut.seconds);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        true,
+                        format!("Shortcut for saving the last {length}: {text}"),
+                    )
+                });
+                if response
+                    .on_hover_text("Click, then press the keys")
+                    .clicked()
+                {
+                    state.capturing_clip_length = if waiting { None } else { Some(index) };
+                    state.capturing = None;
+                    state.hotkey_error = None;
+                }
+                ui.label(RichText::new("saves the last").color(MUTED).size(12.5));
+                for seconds in CLIP_LENGTH_CHOICES {
+                    if choice(
+                        ui,
+                        &describe_seconds(seconds),
+                        shortcut.seconds == seconds,
+                        true,
+                        "Clip length",
+                    ) {
+                        settings.hotkeys.set_clip_length_seconds(index, seconds);
+                    }
+                }
+                let delete =
+                    ui.add(egui::Button::new(RichText::new("×").color(MUTED)).frame(false));
+                delete.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        true,
+                        format!("Remove the {length} clip shortcut"),
+                    )
+                });
+                if delete
+                    .on_hover_text(format!("Remove the {length} clip shortcut"))
+                    .clicked()
+                {
+                    remove = Some(index);
+                }
+            });
+            if shortcut.seconds > replay {
+                ui.label(
+                    RichText::new(format!(
+                        "The replay buffer holds {}, so this saves at most that. Raise the replay length in Video to keep more.",
+                        describe_seconds(replay)
+                    ))
+                    .color(MUTED)
+                    .size(12.0),
+                );
+            }
+        }
+        if let Some(index) = remove {
+            settings.hotkeys.remove_clip_length(index);
+            state.capturing_clip_length = None;
+        }
+        ui.add_space(10.0);
+        let count = settings.hotkeys.clip_lengths.len();
+        let add = ui.add_enabled(
+            count < MAX_CLIP_LENGTH_SHORTCUTS,
+            egui::Button::new("+ Add a clip-length shortcut").min_size(Vec2::new(34.0, 34.0)),
+        );
+        add.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                count < MAX_CLIP_LENGTH_SHORTCUTS,
+                "Add a clip-length shortcut",
+            )
+        });
+        if add
+            .on_hover_text(format!("{count}/{MAX_CLIP_LENGTH_SHORTCUTS}"))
+            .clicked()
+            && let Ok(index) = settings.hotkeys.add_clip_length(120)
+        {
+            // Ask for its keys straight away.
+            state.capturing_clip_length = Some(index);
+            state.capturing = None;
+            state.hotkey_error = None;
+        }
+    });
 }
 
 fn request_usage(state: &mut SettingsState, context: &egui::Context, folder: PathBuf, force: bool) {
@@ -2055,6 +2196,52 @@ mod preset_tests {
                 .collect::<Vec<_>>(),
             ["F8"]
         );
+    }
+
+    #[test]
+    fn a_clip_length_shortcut_is_added_assigned_and_removed_with_the_keyboard() {
+        let mut app = crate::ClipCraftApp {
+            page: crate::Page::Settings,
+            settings_tab: crate::SettingsTab::Hotkeys,
+            ..Default::default()
+        };
+        keyboard_activate(&mut app, "Add a clip-length shortcut");
+        assert_eq!(app.settings_state.capturing_clip_length, Some(0));
+        assert!(app.settings_state.assigning_keys());
+        let context = crate::kit::test_context();
+        let press = |key, modifiers| {
+            vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }]
+        };
+        // The Save clip key is taken: refused, with the reason, and nothing changes.
+        settings_frame(
+            &mut app,
+            &context,
+            press(egui::Key::F8, egui::Modifiers::NONE),
+        );
+        assert!(
+            app.settings_state
+                .hotkey_error
+                .as_deref()
+                .is_some_and(|error| error.contains("Save clip"))
+        );
+        assert_eq!(app.recording.hotkeys.clip_lengths[0].key, "");
+        keyboard_activate(&mut app, "Shortcut for saving the last 2 min: Choose a key");
+        // The test frame carries no held modifiers, so a free plain key stands in for Shift + F8.
+        settings_frame(
+            &mut app,
+            &context,
+            press(egui::Key::F2, egui::Modifiers::NONE),
+        );
+        assert_eq!(app.recording.hotkeys.clip_lengths[0].key, "F2");
+        assert_eq!(app.recording.hotkeys.clip_length_for_key("F2"), Some(120));
+        keyboard_activate(&mut app, "Remove the 2 min clip shortcut");
+        assert!(app.recording.hotkeys.clip_lengths.is_empty());
     }
 
     #[test]

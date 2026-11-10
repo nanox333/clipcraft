@@ -71,7 +71,10 @@ pub use game_detection::{
     GameArmingDecision, GameArmingState, GameMatchRule, GameProcessMatch, best_game_match,
     match_game_process, match_game_with_user_priority,
 };
-pub use hotkeys::{HotkeyAction, Hotkeys, normalize_hotkey};
+pub use hotkeys::{
+    CLIP_LENGTH_CHOICES, CLIP_LENGTH_RANGE, ClipLengthShortcut, HotkeyAction, Hotkeys,
+    MAX_CLIP_LENGTH_SHORTCUTS, describe_seconds, normalize_hotkey,
+};
 pub use library_meta::{
     GameGroup, MAX_COLLECTIONS, MAX_COLLECTIONS_PER_CLIP, MAX_NAME_CHARS, MetaEdit, apply_edit,
     clean_name, game_of, games, guess_game_from_file_name,

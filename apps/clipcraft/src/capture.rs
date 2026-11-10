@@ -189,6 +189,8 @@ pub struct CaptureState {
     /// Whether the program is running at the lower priority used while clipping.
     background_priority: bool,
     last_hotkey: Option<(HotkeyAction, Instant)>,
+    /// The clip-length shortcut last handled, so the window and the global listener count once.
+    last_clip_length: Option<(u32, Instant)>,
     /// Set after a clip was saved into the library folder, so the library is rescanned.
     pub saved_into: Option<PathBuf>,
     game_worker: Option<crate::game_scan::Worker>,
@@ -378,6 +380,8 @@ impl ClipCraftApp {
             context.request_repaint_after(Duration::from_millis(50));
         }
         let mut actions = Vec::new();
+        // Clip-length shortcuts pressed, as the length each asks for.
+        let mut clip_lengths = Vec::new();
         if let Some(listener) = self.capture.listener.as_ref() {
             let mut processed = 0;
             while processed < 64 {
@@ -385,11 +389,17 @@ impl ClipCraftApp {
                     break;
                 };
                 processed += 1;
+                if let Some(seconds) = self.recording.hotkeys.clip_length_for_id(event.id) {
+                    if event.pressed && !self.settings_state.assigning_keys() {
+                        clip_lengths.push(seconds);
+                    }
+                    continue;
+                }
                 if let Some(action) = receive_hotkey(
                     &mut self.capture.talk_keys,
                     &mut self.capture.suppressed_talk_keys,
                     event,
-                    self.settings_state.capturing.is_some(),
+                    self.settings_state.assigning_keys(),
                 ) {
                     actions.push(action);
                 }
@@ -421,7 +431,7 @@ impl ClipCraftApp {
             }
         }
         self.capture.session.set_talking(
-            !self.capture.talk_keys.is_empty() && self.settings_state.capturing.is_none(),
+            !self.capture.talk_keys.is_empty() && !self.settings_state.assigning_keys(),
         );
         if self.capture.is_active() {
             self.capture.session.set_levels(&self.recording);
@@ -429,10 +439,13 @@ impl ClipCraftApp {
         // Shortcuts pressed while ClipCraft has the focus, when no text box is being typed in.
         let typing = context.memory(|memory| memory.focused().is_some());
         if !typing
-            && self.settings_state.capturing.is_none()
+            && !self.settings_state.assigning_keys()
             && let Some(pressed) = context.input(crate::settings::pressed_shortcut_in)
             && local_shortcut_allowed(self.capture.shortcut_status().as_ref(), &pressed)
         {
+            if let Some(seconds) = self.recording.hotkeys.clip_length_for_key(&pressed) {
+                clip_lengths.push(seconds);
+            }
             for action in [
                 HotkeyAction::SaveClip,
                 HotkeyAction::ToggleRecording,
@@ -447,6 +460,16 @@ impl ClipCraftApp {
                 {
                     actions.push(action);
                 }
+            }
+        }
+        for seconds in clip_lengths {
+            // A key seen by both the global listener and the window counts once.
+            let repeated = self.capture.last_clip_length.is_some_and(|(last, at)| {
+                last == seconds && at.elapsed() < Duration::from_millis(300)
+            });
+            self.capture.last_clip_length = Some((seconds, Instant::now()));
+            if !repeated {
+                self.save_clip_lasting(Some(seconds));
             }
         }
         for action in actions {
@@ -626,6 +649,12 @@ impl ClipCraftApp {
             .hotkeys
             .registrations()
             .map(|(id, _, key)| (id, key.to_owned()))
+            .chain(
+                self.recording
+                    .hotkeys
+                    .clip_length_registrations()
+                    .map(|(id, _, key)| (id, key.to_owned())),
+            )
             .collect();
         self.capture.talk_keys.clear();
         self.capture.suppressed_talk_keys.clear();
@@ -1492,6 +1521,12 @@ impl ClipCraftApp {
 
     /// Saves the replay buffer as a clip on another thread.
     pub(crate) fn save_clip(&mut self) {
+        self.save_clip_lasting(None);
+    }
+
+    /// Saves the replay as a clip on another thread: its full length, or the last `seconds` for
+    /// a clip-length shortcut.
+    pub(crate) fn save_clip_lasting(&mut self, seconds: Option<u32>) {
         if self.capture.saving.is_some() {
             self.capture.notice = notice("A clip is already being saved.", false, None);
             return;
@@ -1510,7 +1545,10 @@ impl ClipCraftApp {
             .session
             .prepare_save(&self.recording, &folder)
             .map(|job| job.with_game(game))
-        {
+            .map(|job| match seconds {
+                Some(seconds) => job.lasting(seconds),
+                None => job,
+            }) {
             Ok(job) => job,
             Err(error) => {
                 self.capture.notice = notice(error.to_string(), true, None);
@@ -1518,6 +1556,22 @@ impl ClipCraftApp {
             }
         };
         self.launch_save(job, folder);
+        if let Some(seconds) = seconds {
+            let replay = self.recording.replay_seconds;
+            let text = if seconds > replay {
+                format!(
+                    "Saving the last {}\u{2026} The replay buffer holds {}, so the clip is at most that long.",
+                    clipcraft_engine::describe_seconds(seconds),
+                    clipcraft_engine::describe_seconds(replay)
+                )
+            } else {
+                format!(
+                    "Saving the last {}\u{2026}",
+                    clipcraft_engine::describe_seconds(seconds)
+                )
+            };
+            self.capture.notice = notice(text, false, None);
+        }
     }
 
     fn launch_save(&mut self, job: clipcraft_engine::SaveJob, folder: PathBuf) {
