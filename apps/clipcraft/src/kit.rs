@@ -659,6 +659,41 @@ pub fn app_icon() -> egui::IconData {
     }
 }
 
+/// The label of an export size choice. `original` names "no size target" ("Original quality" in
+/// the trim panel, "Standard quality" in the editor). Shared so the two screens cannot drift.
+pub fn export_size_label(
+    preset: Option<clipcraft_engine::ExportPreset>,
+    original: &'static str,
+) -> &'static str {
+    use clipcraft_engine::ExportPreset;
+    match preset {
+        None => original,
+        Some(ExportPreset::Small) => "Small file \u{b7} ~10 MB",
+        Some(ExportPreset::Medium) => "Medium file \u{b7} ~25 MB",
+        Some(ExportPreset::Custom { .. }) => "Custom size",
+    }
+}
+
+/// The export size choices in menu order. A custom size keeps its current megabytes when one is
+/// already chosen, and starts at 10 MB otherwise.
+pub fn export_size_choices(
+    current: Option<clipcraft_engine::ExportPreset>,
+    original: &'static str,
+) -> [(Option<clipcraft_engine::ExportPreset>, &'static str); 4] {
+    use clipcraft_engine::ExportPreset;
+    let custom = match current {
+        Some(value @ ExportPreset::Custom { .. }) => value,
+        _ => ExportPreset::Custom { megabytes: 10 },
+    };
+    [
+        None,
+        Some(ExportPreset::Small),
+        Some(ExportPreset::Medium),
+        Some(custom),
+    ]
+    .map(|value| (value, export_size_label(value, original)))
+}
+
 /// The icon for the native window. 128 pixels, not the full 256: X11 carries a window icon in a
 /// single request that a server with no big-request support caps at 256 KB, and a 256-pixel icon
 /// (262 KB) is refused, leaving the taskbar with no icon at all. 128 is plenty for a taskbar or

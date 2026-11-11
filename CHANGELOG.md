@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- **Easier to read:** the desktop app's largest files are split by screen (card, clip page, settings
+- **Easier to read:** the desktop app's largest files (including Settings, one file per tab group)
+  are split by screen (card, clip page, settings
   page, game-only recording, editor panels and timeline) with no change in behaviour, and repeated
   capture-option and session checks are one helper each.
 - **The ClipCraft icon everywhere:** the Windows program file (and so the Start menu and desktop

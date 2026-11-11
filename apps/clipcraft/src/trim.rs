@@ -373,28 +373,12 @@ impl TrimState {
                     .height(320.0)
                     .selected_text(preset_label(self.preset, self.gif, self.normalize))
                     .show_ui(ui, |ui| {
-                        let custom = match self.preset {
-                            Some(value @ ExportPreset::Custom { .. }) => value,
-                            _ => ExportPreset::Custom { megabytes: 10 },
-                        };
-                        let options = [
-                            (None, false, false, "Original quality"),
-                            (
-                                Some(ExportPreset::Small),
-                                false,
-                                false,
-                                "Small file · ~10 MB",
-                            ),
-                            (
-                                Some(ExportPreset::Medium),
-                                false,
-                                false,
-                                "Medium file · ~25 MB",
-                            ),
-                            (Some(custom), false, false, "Custom size"),
+                        let sizes = kit::export_size_choices(self.preset, "Original quality")
+                            .map(|(value, label)| (value, false, false, label));
+                        let options = sizes.into_iter().chain([
                             (None, true, false, "Animated GIF"),
                             (None, false, true, "Even out loudness"),
-                        ];
+                        ]);
                         for (value, gif, normalize, label) in options {
                             let selected = self.preset == value
                                 && self.gif == gif
@@ -578,12 +562,7 @@ fn preset_label(preset: Option<ExportPreset>, gif: bool, normalize: bool) -> &'s
     if gif {
         return "Animated GIF";
     }
-    match preset {
-        None => "Original quality",
-        Some(ExportPreset::Small) => "Small file · ~10 MB",
-        Some(ExportPreset::Medium) => "Medium file · ~25 MB",
-        Some(ExportPreset::Custom { .. }) => "Custom size",
-    }
+    kit::export_size_label(preset, "Original quality")
 }
 
 /// What dragging in the range bar changed.

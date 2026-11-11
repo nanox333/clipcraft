@@ -1232,25 +1232,16 @@ impl EditorState {
                 RichText::new("Choose quality and file size for the finished video.").color(MUTED),
             );
             ui.label(RichText::new("Export preset").family(kit::medium()));
-            let custom = match self.export_preset {
-                Some(value @ ExportPreset::Custom { .. }) => value,
-                _ => ExportPreset::Custom { megabytes: 10 },
-            };
             egui::ComboBox::from_id_salt("editor-export-preset")
                 .width(ui.available_width())
-                .selected_text(match self.export_preset {
-                    None => "Standard quality",
-                    Some(ExportPreset::Small) => "Small file · ~10 MB",
-                    Some(ExportPreset::Medium) => "Medium file · ~25 MB",
-                    Some(ExportPreset::Custom { .. }) => "Custom size",
-                })
+                .selected_text(kit::export_size_label(
+                    self.export_preset,
+                    "Standard quality",
+                ))
                 .show_ui(ui, |ui| {
-                    for (value, label) in [
-                        (None, "Standard quality"),
-                        (Some(ExportPreset::Small), "Small file · ~10 MB"),
-                        (Some(ExportPreset::Medium), "Medium file · ~25 MB"),
-                        (Some(custom), "Custom size"),
-                    ] {
+                    for (value, label) in
+                        kit::export_size_choices(self.export_preset, "Standard quality")
+                    {
                         ui.selectable_value(&mut self.export_preset, value, label);
                     }
                 });

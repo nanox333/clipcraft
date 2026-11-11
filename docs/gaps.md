@@ -62,7 +62,10 @@ shortcuts and has not been run on those desktops for these keys.
 `main.rs` 4,200 → 2,600 lines, `capture.rs` 2,970 → 2,280 and `editor.rs` 4,390 → 3,080 by moving
 whole methods into child modules (see `docs/architecture.md`); no logic changed, all existing
 tests unchanged. Not done: the engine's `lib.rs` (command registry) and the large tab files are
-unchanged, and no behaviour was simplified, only relocated.
+unchanged. `settings.rs` then went from 2,457 to 660 lines (tabs in `settings/{games,hotkeys,
+storage,capture,widgets}.rs`). The export size menu (labels, the 10 MB custom start) was written twice, in the
+trim panel and the editor's export dialog; both now use `kit::export_size_choices`. Otherwise code was
+relocated, not rewritten.
 
 ## Application icon (Windows file, Linux taskbar)
 
