@@ -324,6 +324,26 @@ impl CaptureSession {
         }
     }
 
+    /// When on, a source that goes away (a game window closing) does not end the recording: the
+    /// replay buffer is kept and [`CaptureSession::replace_source`] carries on from it.
+    pub fn keep_through_source_loss(&self, on: bool) {
+        if let Some(recorder) = &self.recorder {
+            recorder.keep_through_source_loss(on);
+        }
+    }
+
+    /// Switches the running recording to `source` without clearing the replay buffer or the
+    /// sound. Returns false when nothing is recording.
+    pub fn replace_source(&self, source: Box<dyn CaptureSource>) -> bool {
+        match &self.recorder {
+            Some(recorder) => {
+                recorder.replace_source(source);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Stops recording and drops the buffer. Command id `capture.stop`.
     pub fn stop(&mut self) -> Option<RecordStatus> {
         let recorder = self.recorder.take()?;

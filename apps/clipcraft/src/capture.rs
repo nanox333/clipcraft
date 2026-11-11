@@ -874,7 +874,6 @@ impl ClipCraftApp {
             self.recording.desktop_capture_mode,
             self.recording.desktop_after_game_seconds,
         ) {
-            self.capture.session.halt_for_transition();
             self.capture.pending_transition = Some(decision);
             self.advance_game_transition();
         }
@@ -917,12 +916,13 @@ impl ClipCraftApp {
         // instead of staying stopped.
         if let Some(game) = self.capture.game_session.clone()
             && found.matches.contains(&game)
-            && matches!(
-                self.capture.session.status().map(|status| status.state),
-                Some(RecordState::Failed(clipcraft_record::RecordError::Capture(
-                    _
-                )))
-            )
+            && self.capture.session.status().is_some_and(|status| {
+                status.source_lost
+                    || matches!(
+                        status.state,
+                        RecordState::Failed(clipcraft_record::RecordError::Capture(_))
+                    )
+            })
             && self
                 .capture
                 .game_retry_after
@@ -1031,6 +1031,10 @@ impl ClipCraftApp {
             }
             other => other,
         };
+        // Between two sources the same recording carries on, so the replay buffer is not lost.
+        if self.switch_source_in_place(&transition) {
+            return;
+        }
         let had_replay = self
             .capture
             .session
@@ -1060,11 +1064,75 @@ impl ClipCraftApp {
         }
     }
 
-    fn start_desktop_fallback(&mut self) {
+    /// Moves a running recording to its next source (the desktop when a game window closes, a
+    /// game's window when one opens) inside the same recording, so the replay buffer and the sound
+    /// carry on and a clip saved afterwards covers the switch. Returns false when that is not
+    /// possible (nothing recording, a stopped recorder, the desktop's chooser, a source that will
+    /// not open), and the caller restarts as before.
+    fn switch_source_in_place(&mut self, transition: &GameArmingDecision) -> bool {
+        let healthy = self.capture.session.status().is_some_and(|status| {
+            status.source_lost || matches!(status.state, RecordState::Running)
+        });
+        if !healthy || self.capture.opening.is_some() {
+            return false;
+        }
+        let options = CaptureOptions {
+            show_cursor: self.recording.capture_cursor,
+            hdr_to_sdr: self.recording.hdr_compatibility,
+            requested_fps: self.recording.frames_per_second,
+        };
+        let id = match transition {
+            GameArmingDecision::Start(game) => {
+                self.capture.game_on_screen = false;
+                match self.capture_target_id(Some(game)) {
+                    Ok(id) => id,
+                    Err(_) => return false,
+                }
+            }
+            GameArmingDecision::StartDesktop => match self.desktop_target_id() {
+                Some(id) => id,
+                None => return false,
+            },
+            GameArmingDecision::Stop => return false,
+        };
+        #[cfg(target_os = "linux")]
+        if id == clipcraft_platform::PORTAL_TARGET {
+            return false;
+        }
+        let Ok(source) = self.open_capture_source(&id, &options) else {
+            return false;
+        };
+        if !self.capture.session.replace_source(source) {
+            return false;
+        }
+        self.capture.game_retry_after = None;
+        match transition {
+            GameArmingDecision::Start(game) => {
+                self.capture.desktop_fallback = false;
+                self.capture.game_arming.capture_started(game.clone());
+                self.capture.game_session = Some(game.clone());
+            }
+            _ => {
+                self.capture.game_session = None;
+                self.capture.game_on_screen = false;
+                self.capture.desktop_fallback = true;
+                let now = self.automatic_now();
+                self.capture.game_arming.desktop_started_at(now);
+                self.capture.notice = notice(
+                    "Recording the desktop. A recognized game will switch capture to its window.",
+                    false,
+                    None,
+                );
+            }
+        }
+        true
+    }
+
+    /// The screen to record when no game is on: the chosen one, else the first.
+    fn desktop_target_id(&mut self) -> Option<String> {
         self.capture.refresh_targets();
         let chosen = &self.recording.capture_target;
-        let target = self
-            .capture
+        self.capture
             .targets
             .iter()
             .filter(|target| automatic_desktop_target(target))
@@ -1074,13 +1142,16 @@ impl ClipCraftApp {
                     .targets
                     .iter()
                     .find(|target| automatic_desktop_target(target))
-            });
+            })
+            .map(|target| target.id.clone())
+    }
+
+    fn start_desktop_fallback(&mut self) {
         // This start is automatic, so a failure is retried quietly (see `game_retry_after`)
         // instead of announcing an error the person did not cause.
-        let Some(target) = target else {
+        let Some(id) = self.desktop_target_id() else {
             return;
         };
-        let id = target.id.clone();
         let options = CaptureOptions {
             show_cursor: self.recording.capture_cursor,
             hdr_to_sdr: self.recording.hdr_compatibility,
@@ -1435,6 +1506,11 @@ impl ClipCraftApp {
             Some(audio_provider()),
         ) {
             Ok(()) => {
+                // In game-only mode a closing game window does not end the recording: the buffer
+                // is kept and capture moves to the desktop or the game's next window.
+                self.capture
+                    .session
+                    .keep_through_source_loss(self.recording.game_only_capture);
                 self.cue(Cue::ClippingStarted);
                 self.capture.started_with = Some(self.recording.clone());
                 self.capture.status = self.capture.session.status();
@@ -2298,10 +2374,9 @@ mod tests {
         app.apply_game_observation(launcher_only());
         assert!(app.capture.is_active());
         let deadline = Instant::now() + Duration::from_secs(10);
-        while !matches!(
-            app.capture.session.status().map(|status| status.state),
-            Some(RecordState::Failed(_))
-        ) {
+        while !app.capture.session.status().is_some_and(|status| {
+            status.source_lost || matches!(status.state, RecordState::Failed(_))
+        }) {
             assert!(
                 Instant::now() < deadline,
                 "the closing window never failed: {:?} {:?}",
@@ -2727,10 +2802,15 @@ mod tests {
         app.apply_game_observation(observation(Some(42)));
         wait_for_frames(&app);
         assert_eq!(app.capture.game_session.as_ref().unwrap().process_id, 42);
+        let before = app.capture.session.status().unwrap();
         app.apply_game_observation(observation(None));
         assert!(app.capture.desktop_fallback);
-        assert!(app.capture.notice.as_ref().is_some_and(|notice| {
-            notice
+        // The same recording carries on, so what was buffered while the game ran is still there.
+        let after = app.capture.session.status().unwrap();
+        assert_eq!(after.buffer_resets, 0, "{after:?}");
+        assert!(after.buffered_frames >= before.buffered_frames);
+        assert!(app.capture.notice.as_ref().is_none_or(|notice| {
+            !notice
                 .text
                 .contains("Previous buffered footage was cleared")
         }));

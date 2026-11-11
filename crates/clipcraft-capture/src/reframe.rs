@@ -123,6 +123,53 @@ fn even(value: u32) -> u32 {
     (value & !1).max(2)
 }
 
+/// Fits a `width` x `height` capture inside an output frame that already exists, keeping its
+/// shape and filling the rest with black. Used when the source changes (a game window closes and
+/// the desktop takes over) and the stream, with everything buffered so far, must carry on.
+pub fn reframe_into(
+    width: u32,
+    height: u32,
+    output_width: u32,
+    output_height: u32,
+) -> Option<Reframe> {
+    if width == 0 || height == 0 || width > 65_535 || height > 65_535 {
+        return None;
+    }
+    let (output_width, output_height) = (even(output_width), even(output_height));
+    let wide_source =
+        u64::from(width) * u64::from(output_height) >= u64::from(height) * u64::from(output_width);
+    let destination = if wide_source {
+        let fitted = even((u64::from(output_width) * u64::from(height) / u64::from(width)) as u32)
+            .min(output_height);
+        PixelRect {
+            x: 0,
+            y: ((output_height - fitted) / 2) & !1,
+            width: output_width,
+            height: fitted,
+        }
+    } else {
+        let fitted = even((u64::from(output_height) * u64::from(width) / u64::from(height)) as u32)
+            .min(output_width);
+        PixelRect {
+            x: ((output_width - fitted) / 2) & !1,
+            y: 0,
+            width: fitted,
+            height: output_height,
+        }
+    };
+    Some(Reframe {
+        output_width,
+        output_height,
+        source: PixelRect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        },
+        destination,
+    })
+}
+
 /// Computes how a `width` x `height` capture is fitted into the output frame.
 ///
 /// Output sizes are even, because H.264 4:2:0 needs even dimensions.

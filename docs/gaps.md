@@ -57,6 +57,22 @@ shortcut saves about one second while the normal save keeps the buffer, and a ke
 settings test. Global registration on Windows and Wayland is the same mechanism as the other
 shortcuts and has not been run on those desktops for these keys.
 
+## Keeping the buffer when the capture source changes (follow-up)
+
+In game-only mode the recorder is told to wait when its source goes away (a game window closing,
+`RecordStatus.source_lost`) instead of failing, and capture moves to the next source inside the
+same recording (`Recorder::replace_source`): the replay buffer, encoder and sound carry on, with a
+picture of another size fitted inside the existing clip frame with black bars (never mixing sizes in
+one stream). Game to desktop, desktop to game and a launcher window replaced by the game's own all
+use it; a source that cannot be opened in place, the Wayland chooser, or a stopped recorder still
+restart as before and clear the buffer. A source lost for longer than the gap setting (10 s) still
+starts the buffer over. Verified with a recorder test (no reset, no restart, same output size,
+valid clip) and the app's capture tests; not run on a real game on Windows.
+
+The sound effects are rendered from soft notes (a fundamental with two quiet overtones, a rounded
+attack, overlapping rings and a low-pass) at a lower peak; tests check range, silence at the ends
+and little sharp high-frequency content. Not judged by ear on real speakers.
+
 ## Game without a window: screen fallback (follow-up)
 
 The screen fallback now re-reads the screen list once when it is empty or stale before reporting
