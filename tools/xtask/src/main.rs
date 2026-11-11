@@ -352,9 +352,29 @@ fn package() -> TaskResult<()> {
         fs::create_dir_all(folder.join("share").join("applications")).map_err(fail)?;
         fs::write(
             folder.join("share").join("applications").join("clipcraft.desktop"),
-            "[Desktop Entry]\nType=Application\nName=ClipCraft\nComment=Local clip recorder and editor\nExec=clipcraft\nTerminal=false\nCategories=AudioVideo;Video;Recorder;\n",
+            "[Desktop Entry]\nType=Application\nName=ClipCraft\nComment=Local clip recorder and editor\nExec=clipcraft\nIcon=clipcraft\nStartupWMClass=clipcraft\nTerminal=false\nCategories=AudioVideo;Video;Recorder;\n",
         )
         .map_err(fail)?;
+    }
+    if !windows {
+        // The icon the desktop entry names, in the sizes launchers and docks look for.
+        for size in [48, 128, 256] {
+            let icons = folder
+                .join("share")
+                .join("icons")
+                .join("hicolor")
+                .join(format!("{size}x{size}"))
+                .join("apps");
+            fs::create_dir_all(&icons).map_err(fail)?;
+            fs::copy(
+                workspace
+                    .join("assets")
+                    .join("brand")
+                    .join(format!("clipcraft-{size}.png")),
+                icons.join("clipcraft.png"),
+            )
+            .map_err(fail)?;
+        }
     }
     for document in ["README.md", "ATTRIBUTION.md", "LICENSE-MIT"] {
         fs::copy(workspace.join(document), folder.join(document)).map_err(fail)?;
@@ -373,8 +393,9 @@ This download is not signed, so Windows SmartScreen may say the publisher is unk
 More info, then Run anyway. Check the file against SHA256SUMS.txt from the release page first.\n"
     } else {
         "ClipCraft runs from any folder: start bin/clipcraft.\n\
-To install for your user, copy bin/clipcraft to ~/.local/bin and share/applications/clipcraft.desktop to\n\
-~/.local/share/applications. Everything ClipCraft saves stays on this computer.\n\
+To install for your user, copy bin/clipcraft to ~/.local/bin, share/applications/clipcraft.desktop to\n\
+~/.local/share/applications and share/icons to ~/.local/share/icons so the taskbar shows the ClipCraft\n\
+icon. Everything ClipCraft saves stays on this computer.\n\
 This package is not signed. Check it against SHA256SUMS before running it.\n"
     };
     fs::write(folder.join("INSTALL.txt"), install).map_err(fail)?;

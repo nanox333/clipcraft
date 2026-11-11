@@ -659,6 +659,21 @@ pub fn app_icon() -> egui::IconData {
     }
 }
 
+/// The icon for the native window. 128 pixels, not the full 256: X11 carries a window icon in a
+/// single request that a server with no big-request support caps at 256 KB, and a 256-pixel icon
+/// (262 KB) is refused, leaving the taskbar with no icon at all. 128 is plenty for a taskbar or
+/// dock; the .exe resource and the desktop entry carry the 256 version.
+pub fn window_icon_data() -> egui::IconData {
+    match clipcraft_engine::brand::icon(128, clipcraft_engine::brand::LIME) {
+        Ok(image) => egui::IconData {
+            width: image.width(),
+            height: image.height(),
+            rgba: image.into_raw(),
+        },
+        Err(_) => app_icon(),
+    }
+}
+
 /// Cached GPU texture; no rasterization or image allocation during subsequent frames.
 pub fn brand_mark(ui: &egui::Ui, rect: Rect) {
     let id = egui::Id::new("clipcraft-cut-brand-texture");
@@ -689,6 +704,17 @@ pub fn brand_mark(ui: &egui::Ui, rect: Rect) {
 #[cfg(test)]
 mod icon_tests {
     use super::*;
+
+    #[test]
+    fn the_window_icon_fits_in_one_x11_request() {
+        let icon = window_icon_data();
+        // The pixels travel as 32-bit values after a two-value header.
+        assert!((icon.rgba.len() + 8) < 262_140, "{} bytes", icon.rgba.len());
+        assert!(
+            icon.rgba.chunks_exact(4).any(|pixel| pixel[3] > 200),
+            "the mark is visible"
+        );
+    }
 
     #[test]
     fn every_icon_file_reads_and_stays_inside_its_square() {

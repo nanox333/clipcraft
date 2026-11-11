@@ -20,6 +20,7 @@ See [ADR 0022](docs/adr/0022-local-game-state.md) for the narrowly scoped trust 
 | `assets/brand/mark-lime.svg` | Original ClipCraft CUT geometry, developed from the maintainer-selected AI-assisted concept A; ClipCraft contributors | MIT; no third-party artwork or embedded font |
 | `assets/brand/mark-black.svg` | Same original CUT geometry, charcoal variant | MIT |
 | `assets/brand/mark-white.svg` | Same original CUT geometry, paper variant | MIT |
+| `assets/brand/clipcraft.ico`, `clipcraft-48.png`, `clipcraft-128.png`, `clipcraft-256.png` | The same CUT geometry, lime, rendered by Rust (`app_icon` example) for the Windows executable icon and the Linux desktop entry | MIT |
 | CUT raster exports (`brand_assets`, `presence_art` product key `clipcraft`) | Original ClipCraft C/play geometry; generated in Rust. Wordmark lockups use Inter SemiBold | MIT (ClipCraft); Inter glyphs remain SIL OFL 1.1, included in exporter output |
 | egui default UI fonts (transitive `epaint_default_fonts` dependency) | egui project | OFL-1.1 and Ubuntu Font Licence 1.0; redistributed under the package's included license files |
 | `assets/fonts/Inter-Regular.ttf` | Inter 4.1, The Inter Project Authors, <https://github.com/rsms/inter/releases/tag/v4.1> | SIL OFL 1.1, unmodified; text in `assets/fonts/OFL-Inter.md` |

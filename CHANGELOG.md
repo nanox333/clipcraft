@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **The ClipCraft icon everywhere:** the Windows program file (and so the Start menu and desktop
+  shortcuts, Explorer, the uninstall list and a taskbar button pinned from them) now has the
+  ClipCraft icon built in instead of the generic one, and so does the setup program. On Linux the
+  taskbar icon was blank on some desktops (the 256-pixel window icon was too big for one X11
+  request); it is now 128 pixels, the window announces itself as `clipcraft`, and the download
+  includes the icon and a desktop entry that names it.
 - **One buffer through a window loss:** in game-only mode, when the game's window closes and
   capture moves to the desktop (or from the desktop to the game's window), the same recording
   carries on: the replay buffer and the sound are kept, so a clip saved afterwards covers the switch.

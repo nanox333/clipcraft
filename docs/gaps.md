@@ -57,6 +57,23 @@ shortcut saves about one second while the normal save keeps the buffer, and a ke
 settings test. Global registration on Windows and Wayland is the same mechanism as the other
 shortcuts and has not been run on those desktops for these keys.
 
+## Application icon (Windows file, Linux taskbar)
+
+Windows: `apps/clipcraft/build.rs` and the installer's turn `assets/brand/clipcraft.ico` into a
+compiled resource (`build_support/windows_icon.rs`, plain Rust, no resource compiler) and pass it
+to the MSVC linker, so the .exe carries icon group 1 with 16–256 px pictures. Verified: the
+generated resource converts with `llvm-cvtres` and is structurally identical to `llvm-rc`'s output
+for the same .ico (only the language id differs), and the Windows build script runs in the
+cross-compile lint. Not verified: an actual MSVC link and Explorer/taskbar rendering on Windows;
+the GNU toolchain gets no embedded icon. The running window already had its icon from eframe.
+
+Linux: under X11 (Xvfb) the window had an empty `_NET_WM_ICON`, because the 256 px icon is larger
+than one X request allows without big requests; the window icon is now 128 px (checked with
+`xprop`: icon 128x128, class `clipcraft`) and the window sets app id `clipcraft`. The tarball adds
+`share/icons/hicolor/{48,128,256}x…/apps/clipcraft.png` and the desktop entry has `Icon=` and
+`StartupWMClass=`. Not verified: GNOME/KDE/Wayland dock rendering; the icon only appears for a
+desktop entry that is installed (INSTALL.txt says where to copy it).
+
 ## Keeping the buffer when the capture source changes (follow-up)
 
 In game-only mode the recorder is told to wait when its source goes away (a game window closing,

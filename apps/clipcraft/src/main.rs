@@ -64,9 +64,12 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("ClipCraft")
+            // Names the window to the desktop (X11 class, Wayland app id), which matches it to
+            // clipcraft.desktop and its icon in the taskbar or dock.
+            .with_app_id("clipcraft")
             // The title bar is drawn by the app itself (see `top_bar`).
             .with_decorations(false)
-            .with_icon(kit::app_icon())
+            .with_icon(kit::window_icon_data())
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([960.0, 640.0]),
         ..Default::default()
@@ -96,6 +99,8 @@ fn main() -> eframe::Result<()> {
 
 #[derive(Default)]
 struct ClipCraftApp {
+    /// The window icon was set again after the window opened.
+    icon_sent: bool,
     directory_text: String,
     library: Option<LibraryScanResult>,
     library_view: library_view::ViewCache,
@@ -364,6 +369,14 @@ impl eframe::App for ClipCraftApp {
     }
 
     fn update(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
+        // Some desktops end up with an empty icon from the window's first creation (the taskbar
+        // then shows a blank or generic icon), so the icon is set again once the window exists.
+        if !self.icon_sent {
+            self.icon_sent = true;
+            context.send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(
+                kit::window_icon_data(),
+            ))));
+        }
         if self.setup.is_some() {
             self.show_setup(context);
             resize_from_the_edges(context);
