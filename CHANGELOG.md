@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Hear the sound effects:** `cargo run -p clipcraft-audio-out --example cues` plays each one;
+  add `-- --wav NEW_FOLDER` to save them as WAV files instead.
 - **Docs:** a new `docs/how-it-works.md` explains how recording, saving, game detection, the
   library, export and the editor work, and where to look when something breaks.
 - **Easier to read:** the desktop app's largest files (including Settings, one file per tab group)

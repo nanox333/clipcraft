@@ -105,7 +105,8 @@ valid clip) and the app's capture tests; not run on a real game on Windows.
 
 The sound effects are rendered from soft notes (a fundamental with two quiet overtones, a rounded
 attack, overlapping rings and a low-pass) at a lower peak; tests check range, silence at the ends
-and little sharp high-frequency content. Not judged by ear on real speakers.
+and little sharp high-frequency content. Not judged by ear on real speakers. `cargo run -p clipcraft-audio-out --example cues` plays them
+(`-- --wav NEW_FOLDER` saves WAV files).
 
 ## Game without a window: screen fallback (follow-up)
 
