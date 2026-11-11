@@ -15,6 +15,21 @@ system, or server process. Capture, library, edit, and export must work offline.
 client-side-encrypted backup is planned but not implemented; its provider adapter must remain
 separate from the offline core.
 
+## Desktop app layout (`apps/clipcraft/src`)
+
+The app is one `ClipCraftApp` whose behaviour is spread over files by screen, so each file reads
+on its own. Behaviour lives in the engine; these files draw it and call engine commands.
+
+| File | What it holds |
+| --- | --- |
+| `main.rs` | startup, the frame loop, library page, scan/probe/thumbnail polling, tests |
+| `clip_card.rs`, `clip_page.rs` | a library card and its menu; the page for one clip |
+| `clip_delete.rs`, `clip_rename.rs` | the delete and rename boxes and their background work |
+| `settings.rs`, `settings_page.rs`, `settings/` | the Settings tabs; the page shell and General tab |
+| `capture.rs`, `capture/games.rs` | recording, saving, hotkeys; game-only automation and source switching |
+| `editor.rs`, `editor/inspector.rs`, `editor/timeline.rs` | the editor, its side panels and its timeline |
+| `window_chrome.rs`, `kit.rs` | title bar and edge resizing; shared widgets, colours, icons |
+
 ## Dependency layers
 
 `app.prepare_bug_report` is a bounded, pure engine command shared by the desktop and CLI. It

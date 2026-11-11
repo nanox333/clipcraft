@@ -57,6 +57,13 @@ shortcut saves about one second while the normal save keeps the buffer, and a ke
 settings test. Global registration on Windows and Wayland is the same mechanism as the other
 shortcuts and has not been run on those desktops for these keys.
 
+## Code layout (follow-up)
+
+`main.rs` 4,200 → 2,600 lines, `capture.rs` 2,970 → 2,280 and `editor.rs` 4,390 → 3,080 by moving
+whole methods into child modules (see `docs/architecture.md`); no logic changed, all existing
+tests unchanged. Not done: the engine's `lib.rs` (command registry) and the large tab files are
+unchanged, and no behaviour was simplified, only relocated.
+
 ## Application icon (Windows file, Linux taskbar)
 
 Windows: `apps/clipcraft/build.rs` and the installer's turn `assets/brand/clipcraft.ico` into a

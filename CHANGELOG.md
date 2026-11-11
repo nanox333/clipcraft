@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Easier to read:** the desktop app's largest files are split by screen (card, clip page, settings
+  page, game-only recording, editor panels and timeline) with no change in behaviour, and repeated
+  capture-option and session checks are one helper each.
 - **The ClipCraft icon everywhere:** the Windows program file (and so the Start menu and desktop
   shortcuts, Explorer, the uninstall list and a taskbar button pinned from them) now has the
   ClipCraft icon built in instead of the generic one, and so does the setup program. On Linux the
