@@ -42,7 +42,8 @@ The data folder is `%APPDATA%` on Windows, `~/Library/Application Support` on ma
 1. **Pick a source.** `clipcraft-platform` lists screens and windows and opens one as a
    `CaptureSource` (the trait lives in `clipcraft-capture`, which has no operating-system code):
    Windows Graphics Capture on Windows, the X11 core protocol on Linux, and the desktop's
-   ScreenCast portal with PipeWire on Wayland, where the desktop shows its own chooser.
+   ScreenCast portal with PipeWire on Wayland, where the desktop shows its own chooser. macOS has no capture
+   provider yet.
 2. **Start the recorder** (`clipcraft-record`). `CaptureSession::start_with_audio` (engine) turns
    the settings into a `RecordConfig` and starts three kinds of thread:
    - a *capture loop* that asks the source for a picture on a fixed schedule, always keeping only

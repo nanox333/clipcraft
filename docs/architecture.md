@@ -15,6 +15,9 @@ system, or server process. Capture, library, edit, and export must work offline.
 client-side-encrypted backup is planned but not implemented; its provider adapter must remain
 separate from the offline core.
 
+For a start-to-finish walkthrough of how the pieces cooperate, read
+[how-it-works.md](how-it-works.md) first.
+
 ## Desktop app layout (`apps/clipcraft/src`)
 
 The app is one `ClipCraftApp` whose behaviour is spread over files by screen, so each file reads

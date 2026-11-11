@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Docs:** a new `docs/how-it-works.md` explains how recording, saving, game detection, the
+  library, export and the editor work, and where to look when something breaks.
 - **Easier to read:** the desktop app's largest files (including Settings, one file per tab group)
   are split by screen (card, clip page, settings
   page, game-only recording, editor panels and timeline) with no change in behaviour, and repeated

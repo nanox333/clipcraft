@@ -142,6 +142,8 @@ the actual bytes and whether it was re-encoded (`retried`).
 ## Project docs
 
 - [`CHANGELOG.md`](CHANGELOG.md) — what each release contains.
+- [`docs/how-it-works.md`](docs/how-it-works.md) — how recording, saving, game detection, the
+  library, export and the editor work, start to finish.
 - [`docs/features.md`](docs/features.md) — detailed features and platform limits.
 - [`ROADMAP.md`](ROADMAP.md) — milestone status and release gates.
 - [`PLAN.md`](PLAN.md) — product direction, architecture choices, and intended MVP.

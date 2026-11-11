@@ -57,6 +57,13 @@ shortcut saves about one second while the normal save keeps the buffer, and a ke
 settings test. Global registration on Windows and Wayland is the same mechanism as the other
 shortcuts and has not been run on those desktops for these keys.
 
+## Documentation (follow-up)
+
+`docs/how-it-works.md` is a start-to-finish walkthrough (recording, saving, hotkeys, game-only
+switching, library, export, editor, settings, where to look when something breaks). It was written
+from reading the code, not from a separate spec: if a section disagrees with the code, the code
+wins and the section should be fixed.
+
 ## Code layout (follow-up)
 
 `main.rs` 4,200 → 2,600 lines, `capture.rs` 2,970 → 2,280 and `editor.rs` 4,390 → 3,080 by moving
