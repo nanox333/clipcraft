@@ -44,49 +44,94 @@ impl Cue {
 
 /// Most cues playing at once; more are skipped rather than piled up.
 const MAX_PLAYING: usize = 3;
-/// Peak level of a cue at 100 %. Kept low on purpose: the cues are a quiet confirmation, not an
-/// alert, and must sit under a game's own sound.
-const FULL_LEVEL: f32 = 0.32;
-/// The top of the cues' tone, in hertz: everything above is rolled off, which is what makes them
-/// soft instead of sharp.
-const WARMTH_HERTZ: f32 = 4_200.0;
+/// Peak level of a cue at 100 %. Low on purpose: the cues are a quiet confirmation, not an alert,
+/// and must sit under a game's own sound.
+const FULL_LEVEL: f32 = 0.30;
 
-/// One soft note or tick, placed `at_millis` after the start. Notes overlap, so each one rings
-/// into the next like a small chime.
+/// What makes the sound of one voice.
+#[derive(Clone, Copy)]
+enum Voice {
+    /// A struck glass or soft bell: the pitch plus a few quieter, faster-fading overtones that are
+    /// not whole multiples of it, which is what makes a tone sound struck instead of electronic.
+    Bell,
+    /// A rounder, woodier tone for the low "problem" and microphone-off notes: mostly the pitch,
+    /// one soft octave overtone, a faster fade.
+    Wood,
+    /// A short filtered-noise tap for the screenshot.
+    Tap,
+}
+
+/// One sound in a cue: when it starts, how long it rings, how loud, and how its pitch moves.
 struct Note {
-    /// Pitch in hertz; 0 is a short filtered-noise tick.
+    voice: Voice,
     hertz: f32,
+    /// Pitch the note starts from; it slides to `hertz` over its first moments (0 = no slide).
+    from_hertz: f32,
     at_millis: u32,
     millis: u32,
     gain: f32,
 }
 
 fn notes(cue: Cue) -> Vec<Note> {
-    let tone = |hertz, at_millis, millis, gain| Note {
+    let note = |voice, hertz, at_millis, millis, gain| Note {
+        voice,
         hertz,
+        from_hertz: 0.0,
         at_millis,
         millis,
         gain,
     };
+    let bell = |hertz, at, millis, gain| note(Voice::Bell, hertz, at, millis, gain);
+    let wood = |hertz, at, millis, gain| note(Voice::Wood, hertz, at, millis, gain);
     match cue {
-        // E5 up to A5: a rising fourth, open and friendly.
-        Cue::ClippingStarted => vec![tone(659.3, 0, 170, 0.8), tone(880.0, 85, 230, 1.0)],
-        // The same two notes falling, a little quieter and shorter.
-        Cue::ClippingStopped => vec![tone(880.0, 0, 150, 0.75), tone(659.3, 80, 210, 0.9)],
-        // C6 and E6, a bright major third that rings a moment longer.
-        Cue::ClipSaved => vec![tone(1046.5, 0, 200, 0.75), tone(1318.5, 75, 300, 1.0)],
-        // Two soft ticks, like a shutter heard through a wall.
-        Cue::Screenshot => vec![
-            tone(0.0, 0, 26, 1.0),
-            tone(720.0, 0, 40, 0.35),
-            tone(0.0, 62, 22, 0.7),
-            tone(540.0, 62, 36, 0.25),
+        // G5 then D6, a rising fifth: open and confident, like something switching on.
+        Cue::ClippingStarted => vec![bell(784.0, 0, 190, 0.8), bell(1174.7, 95, 280, 1.0)],
+        // The same fifth falling and a little softer: something settling to rest.
+        Cue::ClippingStopped => vec![bell(1174.7, 0, 170, 0.7), bell(784.0, 90, 260, 0.85)],
+        // C6, E6, G6: a quick rising major arpeggio that rings out. The reward sound.
+        Cue::ClipSaved => vec![
+            bell(1046.5, 0, 200, 0.7),
+            bell(1318.5, 70, 220, 0.85),
+            bell(1568.0, 140, 330, 1.0),
         ],
-        Cue::MicrophoneOn => vec![tone(784.0, 0, 130, 1.0)],
-        Cue::MicrophoneOff => vec![tone(523.3, 0, 140, 1.0)],
-        // Two low, gentle notes falling: noticeable without being a buzz.
-        Cue::Problem => vec![tone(329.6, 0, 170, 0.85), tone(246.9, 100, 260, 1.0)],
+        // A soft shutter: two taps with a low body under each.
+        Cue::Screenshot => vec![
+            note(Voice::Tap, 2000.0, 0, 30, 1.0),
+            wood(170.0, 0, 45, 0.4),
+            note(Voice::Tap, 1600.0, 70, 26, 0.7),
+            wood(130.0, 70, 40, 0.3),
+        ],
+        // A small upward blip and a small downward one.
+        Cue::MicrophoneOn => vec![Note {
+            from_hertz: 698.5,
+            ..bell(1046.5, 0, 150, 1.0)
+        }],
+        Cue::MicrophoneOff => vec![Note {
+            from_hertz: 698.5,
+            ..wood(523.3, 0, 160, 1.0)
+        }],
+        // Two low, round notes falling: clear, but nothing like an alarm.
+        Cue::Problem => vec![wood(329.6, 0, 190, 0.9), wood(220.0, 110, 300, 1.0)],
     }
+}
+
+/// A very small room: a few decaying echoes, mixed in quietly, so the notes have a little space
+/// around them instead of sounding like bare computer tones.
+fn add_room(dry: &[f32], rate: u32) -> Vec<f32> {
+    let per_millisecond = rate as f32 / 1000.0;
+    let tail = (90.0 * per_millisecond) as usize;
+    let mut wet = vec![0.0_f32; dry.len() + tail];
+    wet[..dry.len()].copy_from_slice(dry);
+    // (delay in ms, gain): unrelated delays so the echoes do not ring at one pitch.
+    for (milliseconds, gain) in [(23.0, 0.22), (37.0, 0.16), (53.0, 0.11), (71.0, 0.07)] {
+        let delay = (milliseconds * per_millisecond) as usize;
+        for (index, sample) in dry.iter().enumerate() {
+            if let Some(slot) = wet.get_mut(index + delay) {
+                *slot += sample * gain;
+            }
+        }
+    }
+    wet
 }
 
 /// The cue as mono samples at `rate` hertz, peaking at `level` (0 to 1) of [`FULL_LEVEL`].
@@ -99,61 +144,95 @@ pub fn render(cue: Cue, rate: u32, level: f32) -> Vec<f32> {
         .map(|note| ((note.at_millis + note.millis) as f32 * per_millisecond) as usize)
         .max()
         .unwrap_or(0);
-    let mut mix = vec![0.0_f32; total];
-    // A small deterministic generator for the noise in the ticks.
+    let mut dry = vec![0.0_f32; total];
+    // A small deterministic generator for the taps.
     let mut seed = 0x2545_F491_u32;
+    let two_pi = 2.0 * std::f32::consts::PI;
     for note in &notes {
         let start = (note.at_millis as f32 * per_millisecond) as usize;
         let length = (note.millis as f32 * per_millisecond) as usize;
-        let attack = (rate as f32 * 0.010).max(1.0);
-        let release = (length as f32 * 0.35).max(1.0);
-        // A pitched note rings (a slow decay); a tick dies almost at once.
-        let ring = if note.hertz > 0.0 && note.hertz < 600.0 && length > 0 {
-            length as f32 / 3.0
-        } else if note.hertz > 0.0 {
-            length as f32 / 3.4
-        } else {
-            length as f32 / 5.0
+        let attack = (rate as f32 * 0.004).max(1.0);
+        let release = (length as f32 * 0.3).max(1.0);
+        let seconds = note.millis as f32 / 1000.0;
+        // (frequency ratio, loudness, how fast it fades compared with the pitch).
+        let partials: &[(f32, f32, f32)] = match note.voice {
+            Voice::Bell => &[
+                (1.0, 1.0, 1.0),
+                (2.0, 0.28, 2.2),
+                (2.76, 0.16, 3.4),
+                (5.4, 0.06, 6.0),
+            ],
+            Voice::Wood => &[(1.0, 1.0, 1.0), (2.0, 0.18, 2.5), (3.0, 0.05, 4.0)],
+            Voice::Tap => &[],
         };
-        let mut smooth = 0.0_f32;
+        let base_decay = match note.voice {
+            Voice::Bell => seconds / 3.2,
+            Voice::Wood => seconds / 4.0,
+            Voice::Tap => seconds / 5.0,
+        };
+        let mut phase = 0.0_f32;
+        let mut tap = 0.0_f32;
+        let mut previous = 0.0_f32;
         for index in 0..length {
             let at = index as f32;
-            let rise = if at < attack {
-                0.5 - 0.5 * (std::f32::consts::PI * at / attack).cos()
-            } else {
-                1.0
-            };
+            let time = at / rate as f32;
+            let rise = 0.5 - 0.5 * (std::f32::consts::PI * (at / attack).min(1.0)).cos();
             let fall_start = length as f32 - release;
             let fall = if at > fall_start {
                 0.5 + 0.5 * (std::f32::consts::PI * (at - fall_start) / release).cos()
             } else {
                 1.0
             };
-            let decay = (-at / ring.max(1.0)).exp();
-            let wave = if note.hertz <= 0.0 {
-                seed ^= seed << 13;
-                seed ^= seed >> 17;
-                seed ^= seed << 5;
-                let noise = (seed as f32 / u32::MAX as f32) * 2.0 - 1.0;
-                // Rounded off, so a tick is a soft pat and not a hiss.
-                smooth += 0.18 * (noise - smooth);
-                smooth * 2.4
-            } else {
-                let phase = 2.0 * std::f32::consts::PI * note.hertz * at / rate as f32;
-                // The note and two quiet overtones: warmer than a bare sine, never buzzy.
-                (phase.sin() + 0.2 * (2.0 * phase).sin() + 0.06 * (3.0 * phase).sin()) / 1.26
+            let wave = match note.voice {
+                Voice::Tap => {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    let noise = (seed as f32 / u32::MAX as f32) * 2.0 - 1.0;
+                    // Band-pass around the tap's pitch: a low-pass for the body, minus a slower
+                    // low-pass, leaves a papery click rather than a hiss.
+                    let fast = 1.0 - (-two_pi * note.hertz / rate as f32).exp();
+                    let slow = 1.0 - (-two_pi * note.hertz * 0.25 / rate as f32).exp();
+                    tap += fast * (noise - tap);
+                    previous += slow * (noise - previous);
+                    (tap - previous) * 2.2 * (-time / base_decay).exp()
+                }
+                _ => {
+                    // The pitch slides to its target over the first 40 ms when it has a start.
+                    let glide = if note.from_hertz > 0.0 {
+                        (time / 0.04).min(1.0)
+                    } else {
+                        1.0
+                    };
+                    let hertz = note.from_hertz + (note.hertz - note.from_hertz) * glide;
+                    let hertz = if note.from_hertz > 0.0 {
+                        hertz
+                    } else {
+                        note.hertz
+                    };
+                    phase += two_pi * hertz / rate as f32;
+                    let mut sum = 0.0;
+                    let mut weight = 0.0;
+                    for (ratio, loudness, fade) in partials {
+                        let envelope = (-time * fade / base_decay).exp();
+                        sum += (phase * ratio).sin() * loudness * envelope;
+                        weight += loudness;
+                    }
+                    sum / weight.max(1.0)
+                }
             };
-            if let Some(slot) = mix.get_mut(start + index) {
-                *slot += wave * rise * fall * decay * note.gain;
+            if let Some(slot) = dry.get_mut(start + index) {
+                *slot += wave * rise * fall * note.gain;
             }
         }
     }
-    // Roll off the top, then scale so every cue peaks at the same, quiet level.
-    let coefficient = 1.0 - (-2.0 * std::f32::consts::PI * WARMTH_HERTZ / rate as f32).exp();
-    let mut warm = 0.0_f32;
-    for sample in &mut mix {
-        warm += coefficient * (*sample - warm);
-        *sample = warm;
+    let mut mix = add_room(&dry, rate);
+    // End on silence, smoothly, whatever the echoes left.
+    let fade = ((25.0 * per_millisecond) as usize).min(mix.len());
+    let length = mix.len();
+    for (index, sample) in mix.iter_mut().enumerate().skip(length - fade) {
+        let position = (index - (length - fade)) as f32 / fade.max(1) as f32;
+        *sample *= 0.5 + 0.5 * (std::f32::consts::PI * position).cos();
     }
     let peak = mix
         .iter()

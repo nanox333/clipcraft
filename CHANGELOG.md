@@ -20,9 +20,10 @@
   capture moves to the desktop (or from the desktop to the game's window), the same recording
   carries on: the replay buffer and the sound are kept, so a clip saved afterwards covers the switch.
   A picture of another size is fitted inside the clip's frame with black bars.
-- **Softer sounds:** the clipping, saved, screenshot, microphone and problem sounds are quieter
-  (about a third lower), warmer and rounder, with notes that ring into each other instead of
-  sharp beeps.
+- **New sound effects:** the clipping, saved, screenshot, microphone and problem sounds are
+  redesigned: struck-glass notes with fading overtones, a rising fifth to start and a falling one
+  to stop, a three-note chime for a saved clip, a soft two-tap shutter, and a small room around
+  each so they do not sound like bare beeps. Quieter than before (about a third lower).
 - **Clearer game-without-window message:** when a recognized game has no window, ClipCraft reads the
   list of screens again before giving up, and the message now says what to change (turn on
   "Record the screen when the game window is missing", or choose a screen on Wayland).

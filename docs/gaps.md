@@ -103,9 +103,11 @@ restart as before and clear the buffer. A source lost for longer than the gap se
 starts the buffer over. Verified with a recorder test (no reset, no restart, same output size,
 valid clip) and the app's capture tests; not run on a real game on Windows.
 
-The sound effects are rendered from soft notes (a fundamental with two quiet overtones, a rounded
-attack, overlapping rings and a low-pass) at a lower peak; tests check range, silence at the ends
-and little sharp high-frequency content. Not judged by ear on real speakers. `cargo run -p clipcraft-audio-out --example cues` plays them
+The sound effects are synthesized in `clipcraft-audio-out/src/cue.rs`: struck-glass ("bell") notes
+with inharmonic overtones that fade faster than the pitch, rounder "wood" notes for the low cues,
+band-passed noise taps for the screenshot, a 4 ms attack, a short four-echo room, and a common
+low peak. Tests check range, silence at the ends and little sharp high-frequency content; the
+waveforms and spectrograms were inspected. Not judged by ear on real speakers. `cargo run -p clipcraft-audio-out --example cues` plays them
 (`-- --wav NEW_FOLDER` saves WAV files).
 
 ## Game without a window: screen fallback (follow-up)
