@@ -57,6 +57,18 @@ shortcut saves about one second while the normal save keeps the buffer, and a ke
 settings test. Global registration on Windows and Wayland is the same mechanism as the other
 shortcuts and has not been run on those desktops for these keys.
 
+## Considered: Vulkan Video encoding (`gpu-video`, 2026-11-12)
+
+Evaluated software-mansion/smelter's `gpu-video` 0.5 (MIT; H.264 and H.265 encode through Vulkan
+Video, NV12 bytes or wgpu textures in). Not adopted. It builds, but `vk-mem` compiles C++ at build
+time (against the Rust-only rule, so an ADR first), it adds about 90 crates (wgpu, naga, tokio),
+and it could not be run here (no Vulkan Video device: the software Vulkan driver reports
+`NoAdapterFound`). Its main benefit is NVIDIA encoding without the NVENC SDK and H.265 on Linux;
+the maintainer's machine has no NVIDIA GPU, and AMD already encodes through Media Foundation
+(H.264 and H.265). Revisit if NVIDIA or Linux H.265 becomes a real need; the plan would be an
+optional encoder behind the existing hardware-encoder interface, fed NV12 bytes, benchmarked
+against the software and Media Foundation encoders on the same frames.
+
 ## Documentation (follow-up)
 
 `docs/how-it-works.md` is a start-to-finish walkthrough (recording, saving, hotkeys, game-only
