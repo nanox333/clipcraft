@@ -5,6 +5,7 @@
 //! integer frame deadlines, isolating input pacing from capture. Independently decode the clip.
 
 use std::collections::VecDeque;
+use std::io::Read;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -135,6 +136,75 @@ impl Pictures {
     }
 }
 
+/// Real pictures instead of the test pattern, so an encoder is judged on footage. Everything is
+/// optional and read from the environment: `BENCH_RGBA` (a raw 1920x1080 RGBA file, for example
+/// `ffmpeg -i clip.mp4 -pix_fmt rgba -f rawvideo raw.rgba`), `BENCH_CODEC` (`h264` or `h265`),
+/// `BENCH_KBPS`, `BENCH_CBR` (`0` for variable bitrate), `BENCH_KEYFRAMES` (frames between
+/// keyframes) and `BENCH_EFFORT` (`fast`, `balanced` or `quality`).
+struct RealFrames {
+    path: Option<PathBuf>,
+    codec: clipcraft_record::StreamCodec,
+    kbps: u32,
+    constant_bitrate: bool,
+    keyframes: Option<u32>,
+    effort: clipcraft_record::EncoderSpeed,
+}
+
+impl RealFrames {
+    fn from_environment() -> Result<Self, String> {
+        let text = |name: &str| std::env::var(name).ok();
+        let number = |name: &str| -> Result<Option<u32>, String> {
+            text(name)
+                .map(|value| {
+                    value
+                        .parse::<u32>()
+                        .map_err(|_| format!("{name} must be a whole number"))
+                })
+                .transpose()
+        };
+        let codec = match text("BENCH_CODEC").as_deref() {
+            None | Some("h264") => clipcraft_record::StreamCodec::H264,
+            Some("h265") => clipcraft_record::StreamCodec::H265,
+            Some(_) => return Err("BENCH_CODEC must be h264 or h265".to_owned()),
+        };
+        let effort = match text("BENCH_EFFORT").as_deref() {
+            None | Some("balanced") => clipcraft_record::EncoderSpeed::Balanced,
+            Some("fast") => clipcraft_record::EncoderSpeed::Fast,
+            Some("quality") => clipcraft_record::EncoderSpeed::Quality,
+            Some(_) => return Err("BENCH_EFFORT must be fast, balanced or quality".to_owned()),
+        };
+        let kbps = number("BENCH_KBPS")?.unwrap_or(12_000);
+        if !(100..=200_000).contains(&kbps) {
+            return Err("BENCH_KBPS must be 100..=200000".to_owned());
+        }
+        Ok(Self {
+            path: text("BENCH_RGBA").map(PathBuf::from),
+            codec,
+            kbps,
+            constant_bitrate: text("BENCH_CBR").as_deref() != Some("0"),
+            keyframes: number("BENCH_KEYFRAMES")?.filter(|frames| *frames > 0),
+            effort,
+        })
+    }
+
+    /// The opened file, when real pictures were asked for.
+    fn open(&self) -> Result<Option<std::fs::File>, String> {
+        let Some(path) = &self.path else {
+            return Ok(None);
+        };
+        let file = std::fs::File::open(path).map_err(|why| format!("BENCH_RGBA: {why}"))?;
+        let picture = (WIDTH * HEIGHT * 4) as u64;
+        let length = file
+            .metadata()
+            .map_err(|why| format!("BENCH_RGBA: {why}"))?
+            .len();
+        if length < picture {
+            return Err("BENCH_RGBA holds less than one 1920x1080 RGBA picture".to_owned());
+        }
+        Ok(Some(file))
+    }
+}
+
 fn pattern() -> Vec<u8> {
     let mut rgba = vec![0; WIDTH * HEIGHT * 4];
     for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
@@ -155,19 +225,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if options.output.try_exists()? {
         return Err("output already exists; choose a new file".into());
     }
+    let real = RealFrames::from_environment()?;
+    let codec = real.codec;
     let provider = clipcraft_platform::hardware_provider().ok_or("no hardware encoder provider")?;
     let opened = Instant::now();
     let mut encoder = provider.open(&HardwareRequest {
-        codec: clipcraft_record::StreamCodec::H264,
+        codec,
         width: WIDTH as u32,
         height: HEIGHT as u32,
         fps: options.fps,
-        video_kbps: 12_000,
-        constant_bitrate: true,
-        keyframe_frames: options.fps * 2,
-        effort: clipcraft_record::EncoderSpeed::Balanced,
+        video_kbps: real.kbps,
+        constant_bitrate: real.constant_bitrate,
+        keyframe_frames: real.keyframes.unwrap_or(options.fps * 2),
+        effort: real.effort,
     })?;
     let open_ms = opened.elapsed().as_secs_f64() * 1000.0;
+    let mut real_file = real.open()?;
+    let mut read_time = Duration::ZERO;
     let mut rgba = pattern();
     let mut pictures = Pictures::default();
     let mut times = Vec::with_capacity(options.frames as usize);
@@ -188,10 +262,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if started.elapsed() >= FEED_LIMIT {
             return Err("encoder benchmark exceeded its 60-second feed budget".into());
         }
-        // Keep the full image allocation, changing only a small marker between inputs.
-        let marker = (index % 251) as u8;
-        for pixel in rgba.chunks_exact_mut(4).take(64) {
-            pixel.copy_from_slice(&[marker, 255 - marker, marker, 255]);
+        if let Some(file) = real_file.as_mut() {
+            // Reading the picture is not encoding: it is timed apart and left out of the throughput.
+            let read = Instant::now();
+            file.read_exact(&mut rgba)
+                .map_err(|why| format!("picture {index} of the BENCH_RGBA file: {why}"))?;
+            read_time += read.elapsed();
+        } else {
+            // Keep the full image allocation, changing only a small marker between inputs.
+            let marker = (index % 251) as u8;
+            for pixel in rgba.chunks_exact_mut(4).take(64) {
+                pixel.copy_from_slice(&[marker, 255 - marker, marker, 255]);
+            }
         }
         pictures.submit(index)?;
         let call = Instant::now();
@@ -212,7 +294,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         height: HEIGHT as u32,
         fps: options.fps,
         avcc: encoder.avcc(),
-        codec: clipcraft_record::StreamCodec::H264,
+        codec,
     };
     let saved = write_clip(
         &pictures.samples,
@@ -229,7 +311,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or(0.0)
     };
     let mean_ms = times.iter().sum::<f64>() / f64::from(options.frames);
-    let throughput = f64::from(options.frames) / elapsed.as_secs_f64().max(f64::EPSILON);
+    let encoding = elapsed.saturating_sub(read_time);
+    let throughput = f64::from(options.frames) / encoding.as_secs_f64().max(f64::EPSILON);
     let mode = if options.paced { "paced" } else { "unpaced" };
     println!(
         "encoder={} mode={mode} requested_fps={} submitted={} returned={} saved={} bytes={} open_ms={open_ms:.3} wall_ms={:.3} throughput_fps={throughput:.3} encode_ms_mean={mean_ms:.3} p50={:.3} p95={:.3} flush_ms={flush_ms:.3} pipeline={:?}",

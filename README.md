@@ -131,6 +131,10 @@ cargo run --package clipcraft-cli -- clip normalize input.mp4 even.mp4 0 30 -16
 cargo run --package clipcraft-cli -- diagnose
 ```
 
+To compare video encoders on real footage, `cargo run --release -p clipcraft-platform --example
+encoder_bench` can read raw pictures (`BENCH_RGBA`) and pick the codec and bitrate; the method and
+a first comparison on an AMD card are in [`docs/windows-performance.md`](docs/windows-performance.md).
+
 The desktop app needs a graphical session and an available capture provider for recording. See
 [`docs/testing.md`](docs/testing.md) for focused test commands and platform evidence requirements.
 For compression, the last CLI argument is the estimated target in decimal MB. In the player, open

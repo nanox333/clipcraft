@@ -79,6 +79,60 @@ Earlier archived runs without audio are retained locally but are not matched com
 One preliminary 30 fps run overlapped compilation and is excluded from performance comparisons.
 Raw logs and generated media are ignored under `target/windows-capture-evidence`.
 
+## Encoder comparison on real footage (2026-11-12)
+
+`encoder_bench` normally feeds a synthetic pattern, which says nothing about size or quality. With
+`BENCH_RGBA` (a raw 1920x1080 RGBA file) it encodes real pictures, and `BENCH_CODEC` (`h264`/`h265`),
+`BENCH_KBPS`, `BENCH_CBR` (`0` = variable), `BENCH_KEYFRAMES` and `BENCH_EFFORT` set the request.
+Reading a picture from the file is timed apart and left out of the throughput.
+
+Machine: AMD Radeon RX 7900 GRE (Adrenalin driver 26.10.1), Windows 11. Source: 300 pictures
+(5 s) of an existing 1080p60 game recording, decoded to raw frames; the same frames went to every
+encoder (I420 to the software encoder, NV12 to Vulkan Video, RGBA to Media Foundation, which
+converts on the card). Three runs each, nothing else running; the spread between runs was under
+5 % except where noted. Quality is VMAF, PSNR-Y and SSIM against the decoded source (`ffmpeg
+libvmaf`), all 300 pictures. Encoded bitrate is what the encoder produced, not what was asked for.
+
+| Encoder | Asked | Made | ms/picture | CPU s (5 s clip) | VMAF | PSNR-Y |
+|---|---|---|---|---|---|---|
+| Software H.264 (`encoder_profile`, 2 threads) | 12 Mbps | 10.6 Mbps | 42 | 17.9 | 99.07 (min 88) | 47.4 |
+| Media Foundation H.264 | 12 Mbps | 10.0 Mbps | 5.5 | 2.6–2.9 | 98.91 | 50.1 |
+| Media Foundation H.265 | 12 Mbps | 11.4 Mbps | 3.5 | 2.4–2.9 | 99.04 | 50.9 |
+| Vulkan Video H.264 (`gpu-video` 0.5, quality) | 12 Mbps | 7.3 Mbps | 3.1 | 0.9 | 98.17 | 54.8 |
+| Vulkan Video H.265 (quality) | 12 Mbps | 7.8 Mbps | 2.3 | 0.7–1.0 | 98.99 | 58.6 |
+| Media Foundation H.264 | 4 Mbps | 3.8 Mbps | 5.4 | 2.6 | 94.08 | 46.9 |
+| Media Foundation H.265 | 4 Mbps | 3.8 Mbps | 3.4 | 2.3–2.9 | 97.70 | 49.3 |
+| Vulkan Video H.264 (quality) | 4 Mbps | 2.8 Mbps | 3.2 | 0.7–1.0 | 93.53 | 48.5 |
+| Vulkan Video H.265 (quality) | 4 Mbps | 2.8 Mbps | 2.3 | 0.8 | 96.35 | 52.2 |
+
+(Vulkan "low-latency" preset: about 1.9 ms/picture and 0.1–0.5 VMAF lower at the same asked bitrate.)
+
+What this shows, and what it does not:
+
+- All hardware paths encode 1080p at several times real time on this card; Vulkan Video (quality
+  preset) is about 1.5–1.8x faster per picture than Media Foundation and uses about a third of the
+  processor time (the processor figures include starting the program and reading the file). Neither
+  is close to the 16.7 ms budget of 60 fps, so speed alone is not a reason to switch.
+- The software encoder is about 8–18x slower per picture than the hardware paths and, at 2 threads,
+  only just under real time for 1080p60 (24 fps here); its worst picture scored 88 VMAF.
+- The Vulkan encoders aim well below the asked bitrate on this easy footage (7.3–7.8 Mbps when
+  12 was asked, 2.8 when 4 was asked); Media Foundation lands near the ask. Because the sizes
+  differ, the table cannot rank the two on efficiency: Vulkan H.265 scored 96.4 VMAF at 2.8 Mbps and
+  Media Foundation H.265 97.7 at 3.8 Mbps, which only suggests similar efficiency. Size-targeted
+  exports depend on hitting a target, so the undershoot matters and was not tested on hard footage.
+- **Not like for like:** the inputs differ in format. Media Foundation's picture includes
+  RGBA to NV12 conversion and, here, the source went YUV to RGBA to YUV, which costs it some PSNR
+  (so its PSNR is understated against Vulkan's; VMAF is less affected). The benchmark feeds
+  pictures from memory. ClipCraft's Windows recorder hands a Direct3D 11 texture straight to
+  Media Foundation with no copy to the processor; `gpu-video` takes NV12 bytes or wgpu textures, so
+  using it on Windows would need a readback and upload or Direct3D/Vulkan sharing, neither
+  measured. One short clip of one game; no other card; no encoder-and-game contention measured.
+
+The Vulkan side was a throwaway harness outside the workspace (`gpu-video` builds C++ through
+`vk-mem`, which the Rust-only rule excludes from the product without an ADR); it is not in this
+repository. `vkbench caps` showed H.264 up to 4096 px and H.265 up to 8192 px, one reference
+picture, both rate-control modes.
+
 ## Reproduction and soak
 
 ```text

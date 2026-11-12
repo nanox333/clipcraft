@@ -69,6 +69,20 @@ the maintainer's machine has no NVIDIA GPU, and AMD already encodes through Medi
 optional encoder behind the existing hardware-encoder interface, fed NV12 bytes, benchmarked
 against the software and Media Foundation encoders on the same frames.
 
+**Benchmark run later the same day** on the maintainer's AMD Radeon RX 7900 GRE (Windows; the
+driver exposes Vulkan H.264, H.265 and AV1 encode, and `gpu-video` 0.5 encodes H.264 and H.265
+but not AV1). A throwaway harness outside the workspace worked first time: 1080p pictures
+encoded in about 2–3 ms (Media Foundation 3.5–5.5 ms, the software encoder 42 ms) at about a
+third of Media Foundation's processor time, with similar quality for its size. Full table, method
+and caveats are in [windows-performance.md](windows-performance.md#encoder-comparison-on-real-footage-2026-11-12).
+Conclusion: still not adopted. Media Foundation already encodes at several times real time, the
+Windows recorder passes Direct3D textures to it without a copy while `gpu-video` takes NV12 bytes
+or wgpu textures (a readback or Direct3D/Vulkan sharing would be needed, unmeasured), the Vulkan
+rate control undershot the requested bitrate (matters for size-targeted exports), and the C++
+build dependency still needs an ADR. The remaining case for it is Linux (replacing the VA-API
+path that has never run on a real driver) and NVIDIA without the NVENC SDK. Measured on one
+5-second clip from one game and one card; no NVIDIA, Intel or Linux Vulkan device was available.
+
 ## Documentation (follow-up)
 
 `docs/how-it-works.md` is a start-to-finish walkthrough (recording, saving, hotkeys, game-only

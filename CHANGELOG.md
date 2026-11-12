@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Encoder benchmark on real footage:** `encoder_bench` can read raw pictures (`BENCH_RGBA`) and
+  choose the codec, bitrate and effort, and `docs/windows-performance.md` compares the software
+  encoder, Media Foundation and Vulkan Video (`gpu-video`) on an AMD card. Developer tooling only;
+  nothing changes in the app.
 - **Cleaner clip cards:** the Clips page shows the picture with the name and details under it; Send to editor, Show in folder and Favorite appear as round buttons on the picture when you point at a clip.
 - **Consistent layout:** spacing, corner radii, text sizes and control heights now come from one
   shared scale, so buttons, search boxes, folder fields, pills and settings rows line up across the
