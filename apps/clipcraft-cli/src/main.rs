@@ -344,6 +344,29 @@ fn run_library(arguments: &[OsString]) -> Result<(), CliError> {
     let Some(operation) = arguments.first().and_then(|argument| argument.to_str()) else {
         return Err(CliError::Usage);
     };
+    if operation == "rename" {
+        let [_, path, name] = arguments else {
+            return Err(CliError::Usage);
+        };
+        let path = PathBuf::from(path);
+        let name = name.to_str().ok_or(CliError::Usage)?.to_owned();
+        // Keep favorites and collections when the clip's folder is a remembered library folder.
+        let directory = path
+            .parent()
+            .and_then(|folder| folder.to_str())
+            .map(str::to_owned);
+        let output = execute(Command::RenameClip {
+            path,
+            name,
+            index_path: clipcraft_engine::default_index_path(),
+            directory,
+        })
+        .map_err(CliError::Engine)?;
+        return match output {
+            CommandOutput::Renamed(renamed) => write_json(&renamed.path),
+            _ => Err(CliError::UnexpectedOutput),
+        };
+    }
     if arguments.len() != 2 {
         return Err(CliError::Usage);
     }
@@ -875,6 +898,7 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli library path <file>\n",
         "  clipcraft-cli library reveal <file>\n",
         "  clipcraft-cli library trash <file>  (moves the clip to the Recycle Bin)\n",
+        "  clipcraft-cli library rename <file> <new name>  (keeps the extension; never replaces a file)\n",
         "  clipcraft-cli library probe <file>\n",
         "  clipcraft-cli library thumbnail <file>\n",
         "  clipcraft-cli clip trim <input> <output.mp4> <start-seconds> <end-seconds>\n",

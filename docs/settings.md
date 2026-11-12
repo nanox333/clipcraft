@@ -8,6 +8,12 @@
 
 ## First launch and shortcut alternatives
 
+**Clip-length shortcuts** (Settings → Hotkeys, below the actions) give up to four keys their own
+clip length: 15 s, 30 s, 1, 2, 5 or 10 minutes. Add one, press its keys, pick the length. A key can
+belong to only one action or clip-length shortcut; a taken key is refused with its owner named. A
+length longer than the replay buffer saves everything buffered, which the setting and the saving
+notice say. The post-roll still applies, and saves still run one at a time. None are set by default.
+
 Fresh profiles open setup for local storage, replay length, capture/audio and hotkeys. Use Back
 and Continue, then Finish setup, or keep the current draft with Skip. Closing before finishing
 leaves setup pending. Nothing records during setup. Existing preference files bypass it. All
@@ -136,6 +142,14 @@ The temporary mode offers 30 seconds, 1/2/5/10 minutes or a custom 15–3,600 se
 one minute. The timer is cancelled when a game opens; closing that game starts a fresh timer. The
 top bar shows desktop capture and time remaining. Stop pauses either desktop mode until Start.
 Turning automatic switching off returns to manual source selection; it stops any managed session.
+
+A game's window is looked for in its process, the processes it started and other processes
+recognized as the same game; failing that, in any window whose own process or window class (a
+Proton game's `steam_app_<id>`) is recognized as that game. **Record the screen when a game's
+window can't be found** (on by default) then records the chosen monitor, still as that game's
+session, and moves to the game's window as soon as one appears; turned off, such a game leaves
+capture idle with an error. When the window being recorded closes while the game keeps running
+(a launcher handing over to the game), capture restarts on the new window.
 
 These are bounded replay buffers, not unlimited recordings of an entire session. Automatic source
 changes and timer expiry do not save anything: a clip is saved only by the save shortcut or button.

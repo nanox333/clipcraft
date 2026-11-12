@@ -244,6 +244,41 @@ fn losing_the_screen_keeps_what_was_recorded_and_says_why() {
 }
 
 #[test]
+fn a_lost_source_can_be_replaced_without_losing_the_buffer() {
+    let scratch = Scratch::new("swap");
+    // A 160x90 "game window" that closes after 45 frames, then a bigger "desktop".
+    let recorder = Recorder::start(
+        Box::new(SyntheticSource::new(160, 90, 30).failing_after(45)),
+        config(),
+    )
+    .unwrap();
+    recorder.keep_through_source_loss(true);
+    wait_for(&recorder, "the loss", |s| s.source_lost);
+    assert_eq!(recorder.status().state, RecordState::Running);
+    let before = recorder.status();
+    assert!(before.buffered_frames > 0);
+
+    recorder.replace_source(Box::new(SyntheticSource::new(320, 180, 30)));
+    wait_for(&recorder, "the new source", |s| {
+        !s.source_lost && s.frames_encoded > before.frames_encoded + 30
+    });
+    let after = recorder.status();
+    assert_eq!(after.state, RecordState::Running);
+    assert_eq!(after.buffer_resets, 0, "the buffer was kept: {after:?}");
+    assert_eq!(after.restarts, 0, "the stream carried on: {after:?}");
+    assert!(after.buffered_frames > before.buffered_frames);
+    assert_eq!(after.output, before.output, "the clip frame did not change");
+    let path = scratch.file("swapped.mkv");
+    recorder.save_clip(60, ClipFormat::Mkv, &path).unwrap();
+    if tool("ffprobe") && tool("ffmpeg") {
+        let probe = probe(&path);
+        let (width, height) = before.output.expect("output known");
+        assert_eq!((probe.width, probe.height), (width, height), "{probe:?}");
+        decodes_cleanly(&path);
+    }
+}
+
+#[test]
 fn a_changing_picture_size_restarts_the_stream_with_matching_clips() {
     let scratch = Scratch::new("resize");
     let source = SyntheticSource::new(160, 90, 30).resizing_after(30, 240, 120);

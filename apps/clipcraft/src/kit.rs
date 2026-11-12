@@ -229,11 +229,12 @@ pub enum Icon {
     Scissors,
     Trash,
     Restart,
+    Pencil,
 }
 
 impl Icon {
     /// Every icon, in declaration order (the cache below is indexed by it).
-    pub const ALL: [Icon; 26] = [
+    pub const ALL: [Icon; 27] = [
         Icon::Play,
         Icon::Pause,
         Icon::StepBack,
@@ -260,6 +261,7 @@ impl Icon {
         Icon::Scissors,
         Icon::Trash,
         Icon::Restart,
+        Icon::Pencil,
     ];
 
     /// The icon's file under `assets/icons`, a plain SVG that any vector editor can open.
@@ -291,6 +293,7 @@ impl Icon {
             Icon::Scissors => include_str!("../../../assets/icons/scissors.svg"),
             Icon::Trash => include_str!("../../../assets/icons/trash.svg"),
             Icon::Restart => include_str!("../../../assets/icons/restart.svg"),
+            Icon::Pencil => include_str!("../../../assets/icons/pencil.svg"),
         }
     }
 }
@@ -805,6 +808,56 @@ pub fn app_icon() -> egui::IconData {
     }
 }
 
+/// The label of an export size choice. `original` names "no size target" ("Original quality" in
+/// the trim panel, "Standard quality" in the editor). Shared so the two screens cannot drift.
+pub fn export_size_label(
+    preset: Option<clipcraft_engine::ExportPreset>,
+    original: &'static str,
+) -> &'static str {
+    use clipcraft_engine::ExportPreset;
+    match preset {
+        None => original,
+        Some(ExportPreset::Small) => "Small file \u{b7} ~10 MB",
+        Some(ExportPreset::Medium) => "Medium file \u{b7} ~25 MB",
+        Some(ExportPreset::Custom { .. }) => "Custom size",
+    }
+}
+
+/// The export size choices in menu order. A custom size keeps its current megabytes when one is
+/// already chosen, and starts at 10 MB otherwise.
+pub fn export_size_choices(
+    current: Option<clipcraft_engine::ExportPreset>,
+    original: &'static str,
+) -> [(Option<clipcraft_engine::ExportPreset>, &'static str); 4] {
+    use clipcraft_engine::ExportPreset;
+    let custom = match current {
+        Some(value @ ExportPreset::Custom { .. }) => value,
+        _ => ExportPreset::Custom { megabytes: 10 },
+    };
+    [
+        None,
+        Some(ExportPreset::Small),
+        Some(ExportPreset::Medium),
+        Some(custom),
+    ]
+    .map(|value| (value, export_size_label(value, original)))
+}
+
+/// The icon for the native window. 128 pixels, not the full 256: X11 carries a window icon in a
+/// single request that a server with no big-request support caps at 256 KB, and a 256-pixel icon
+/// (262 KB) is refused, leaving the taskbar with no icon at all. 128 is plenty for a taskbar or
+/// dock; the .exe resource and the desktop entry carry the 256 version.
+pub fn window_icon_data() -> egui::IconData {
+    match clipcraft_engine::brand::icon(128, clipcraft_engine::brand::LIME) {
+        Ok(image) => egui::IconData {
+            width: image.width(),
+            height: image.height(),
+            rgba: image.into_raw(),
+        },
+        Err(_) => app_icon(),
+    }
+}
+
 /// Cached GPU texture; no rasterization or image allocation during subsequent frames.
 pub fn brand_mark(ui: &egui::Ui, rect: Rect) {
     let id = egui::Id::new("clipcraft-cut-brand-texture");
@@ -835,6 +888,17 @@ pub fn brand_mark(ui: &egui::Ui, rect: Rect) {
 #[cfg(test)]
 mod icon_tests {
     use super::*;
+
+    #[test]
+    fn the_window_icon_fits_in_one_x11_request() {
+        let icon = window_icon_data();
+        // The pixels travel as 32-bit values after a two-value header.
+        assert!((icon.rgba.len() + 8) < 262_140, "{} bytes", icon.rgba.len());
+        assert!(
+            icon.rgba.chunks_exact(4).any(|pixel| pixel[3] > 200),
+            "the mark is visible"
+        );
+    }
 
     #[test]
     fn every_icon_file_reads_and_stays_inside_its_square() {

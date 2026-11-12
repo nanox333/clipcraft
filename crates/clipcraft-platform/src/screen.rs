@@ -106,6 +106,19 @@ fn own_window(title: &str) -> Option<windows::Win32::Foundation::HWND> {
     search.found
 }
 
+/// The registered class name of a top-level window (such as `UnityWndClass`), from its raw handle.
+#[cfg(windows)]
+pub(crate) fn window_class(window: usize) -> Option<String> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+    let mut buffer = [0_u16; 256];
+    // SAFETY: the handle came from the system's window list; a window that has since closed makes
+    // the call fail and return 0. The buffer is ours and its length is passed with it.
+    let length = unsafe { GetClassNameW(HWND(window as *mut std::ffi::c_void), &mut buffer) };
+    let length = usize::try_from(length).ok().filter(|n| *n > 0)?;
+    Some(String::from_utf16_lossy(buffer.get(..length)?))
+}
+
 /// Whether this process's window with this exact title is minimized.
 #[cfg(windows)]
 pub fn window_minimized(title: &str) -> bool {

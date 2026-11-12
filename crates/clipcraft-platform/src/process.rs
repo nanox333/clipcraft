@@ -14,6 +14,44 @@ pub struct RunningProcess {
     pub executable: String,
     /// Exact Steam ID from Linux process metadata or a verified local installation path.
     pub steam_app_id: Option<String>,
+    /// The process that started this one, when the system says.
+    pub parent_id: Option<u32>,
+}
+
+/// Most generations below a game process searched for the process that owns its window.
+const MAX_FAMILY_DEPTH: usize = 8;
+/// Most processes in one family.
+const MAX_FAMILY: usize = 64;
+
+/// `root` and the processes it started, their children, and so on (bounded). Many games show
+/// their window from a process other than the one recognized: a launcher or bootstrap executable
+/// starts the real game (FiveM's `FiveM.exe` starts `FiveM_..._GTAProcess.exe`; Unreal games'
+/// `Game.exe` starts `Game-Win64-Shipping.exe`).
+pub fn process_family(processes: &[RunningProcess], root: u32) -> Vec<u32> {
+    let mut family = vec![root];
+    let mut generation = vec![root];
+    for _ in 0..MAX_FAMILY_DEPTH {
+        let next: Vec<u32> = processes
+            .iter()
+            .filter(|process| {
+                process
+                    .parent_id
+                    .is_some_and(|parent| generation.contains(&parent))
+                    && !family.contains(&process.process_id)
+            })
+            .map(|process| process.process_id)
+            .collect();
+        if next.is_empty() {
+            break;
+        }
+        family.extend(next.iter().copied());
+        if family.len() >= MAX_FAMILY {
+            family.truncate(MAX_FAMILY);
+            break;
+        }
+        generation = next;
+    }
+    family
 }
 
 /// Reuses the process table between scans so repeated game checks do not rebuild system state.
@@ -116,6 +154,7 @@ impl ProcessObserver {
                 process_id,
                 executable,
                 steam_app_id,
+                parent_id: process.parent().map(|parent| parent.as_u32()),
             });
         }
         self.steam_app_ids
@@ -144,17 +183,58 @@ pub fn steam_installation_roots() -> Vec<PathBuf> {
             home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"),
         ]);
     }
+    // Where Steam says it is installed comes first: it may be on any drive. The usual folders
+    // follow for an installation that left no registry entry.
     #[cfg(windows)]
-    for variable in ["ProgramFiles(x86)", "ProgramFiles"] {
-        if let Some(path) = std::env::var_os(variable) {
-            roots.push(PathBuf::from(path).join("Steam"));
+    {
+        for (machine, key, name) in [
+            (false, r"Software\Valve\Steam", "SteamPath"),
+            (true, r"SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath"),
+            (true, r"SOFTWARE\Valve\Steam", "InstallPath"),
+        ] {
+            if let Ok(Some(value)) = crate::installation::read_registry_string(machine, key, name)
+                && let Some(root) = value.to_str().and_then(|text| usable_root(text, true))
+            {
+                roots.push(root);
+            }
+        }
+        for variable in ["ProgramFiles(x86)", "ProgramFiles"] {
+            if let Some(path) = std::env::var_os(variable) {
+                roots.push(PathBuf::from(path).join("Steam"));
+            }
         }
     }
     #[cfg(target_os = "macos")]
     if let Some(home) = std::env::var_os("HOME") {
         roots.push(PathBuf::from(home).join("Library/Application Support/Steam"));
     }
+    // The same folder may be named twice (registry and default, in different letter case).
+    let mut seen = HashSet::new();
+    roots.retain(|root| seen.insert(root.to_string_lossy().replace('\\', "/").to_lowercase()));
     roots
+}
+
+/// A Steam folder read from outside (the registry) when it is a plain absolute path, or `None`.
+/// A relative or odd value would make the whole Steam scan refuse to run, so it is dropped here.
+/// `windows` selects Windows path rules, so both can be tested anywhere.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn usable_root(text: &str, windows: bool) -> Option<PathBuf> {
+    let text = text.trim().trim_end_matches(['/', '\\']);
+    if text.is_empty() || text.len() > 1_024 || text.chars().any(char::is_control) {
+        return None;
+    }
+    let absolute = if windows {
+        let bytes = text.as_bytes();
+        // `C:/Program Files (x86)/Steam` (Steam writes forward slashes) or `C:\...`; not
+        // network shares or device paths.
+        bytes.len() > 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'/' | b'\\')
+    } else {
+        text.starts_with('/')
+    };
+    absolute.then(|| PathBuf::from(text))
 }
 
 fn steam_id_for_path<'a>(
@@ -345,5 +425,55 @@ mod installation_tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn a_family_reaches_the_child_that_owns_the_window_and_stays_bounded() {
+        let process = |process_id, parent_id| RunningProcess {
+            process_id,
+            executable: format!("p{process_id}"),
+            steam_app_id: None,
+            parent_id,
+        };
+        let processes = [
+            process(10, Some(1)),  // the recognized launcher
+            process(11, Some(10)), // the game it started
+            process(12, Some(11)), // a helper the game started
+            process(20, Some(1)),  // unrelated
+            process(30, Some(30)), // a loop of its own
+        ];
+        let mut family = process_family(&processes, 10);
+        family.sort_unstable();
+        assert_eq!(family, [10, 11, 12]);
+        assert_eq!(process_family(&processes, 30), [30]);
+        assert_eq!(process_family(&[], 99), [99]);
+    }
+
+    #[test]
+    fn steam_folders_from_the_registry_are_used_only_when_they_are_plain_absolute_paths() {
+        assert_eq!(
+            usable_root("d:/games/steam", true),
+            Some(PathBuf::from("d:/games/steam"))
+        );
+        assert_eq!(
+            usable_root("  E:\\SteamLibrary\\ ", true),
+            Some(PathBuf::from("E:\\SteamLibrary"))
+        );
+        for bad in [
+            "",
+            "steam",
+            "C:",
+            "C:steam",
+            "\\\\server\\share",
+            "\\\\?\\C:\\x",
+            "C:/a\u{0}b",
+        ] {
+            assert_eq!(usable_root(bad, true), None, "{bad:?}");
+        }
+        assert_eq!(
+            usable_root("/home/me/.steam", false),
+            Some(PathBuf::from("/home/me/.steam"))
+        );
+        assert_eq!(usable_root("C:/Steam", false), None);
     }
 }

@@ -154,7 +154,10 @@ pub fn apply_edit(
                 .ok()
                 .filter(|metadata| metadata.is_file())
                 .ok_or(EngineError::FileUnavailable)?;
-            if std::path::Path::new(from).exists() {
+            // A rename that only changes letter case still "finds" the old name on a
+            // case-insensitive disk.
+            if std::path::Path::new(from).exists() && (from == to || !from.eq_ignore_ascii_case(to))
+            {
                 return Err(EngineError::FileStillExists);
             }
             if entries.iter().any(|entry| entry.path == *to) {
@@ -163,6 +166,18 @@ pub fn apply_edit(
             let target = std::path::Path::new(to);
             let entry = entry_mut(entries, from)?;
             entry.path = to.clone();
+            // A game guessed from the old file name is kept when the new name no longer says it.
+            if let Some(name) = target.file_name()
+                && entry.game.is_none()
+                && entry.recorded_game.is_none()
+            {
+                let guessed = guess_game_from_file_name(&entry.title);
+                if guessed.is_some()
+                    && guessed != guess_game_from_file_name(&name.to_string_lossy())
+                {
+                    entry.recorded_game = guessed;
+                }
+            }
             if let Some(name) = target.file_name() {
                 entry.title = name.to_string_lossy().into_owned();
             }

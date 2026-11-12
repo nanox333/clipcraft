@@ -49,6 +49,103 @@ recovery remain unverified. An X11 virtual-desktop check with a simulated Waylan
 checked the fallback controls and an F9 capture after changing the fallback setting. Desktop-assigned
 keys may differ from requested keys.
 
+## Clip-length shortcuts (M2.L, issue #19)
+
+Up to four keys each save their own length of the replay (5 s–10 min) through the same save path
+and post-roll. Verified: engine IDs/conflict/sanitising tests, a real recording where a 1 s
+shortcut saves about one second while the normal save keeps the buffer, and a keyboard-only
+settings test. Global registration on Windows and Wayland is the same mechanism as the other
+shortcuts and has not been run on those desktops for these keys.
+
+## Considered: Vulkan Video encoding (`gpu-video`, 2026-11-12)
+
+Evaluated software-mansion/smelter's `gpu-video` 0.5 (MIT; H.264 and H.265 encode through Vulkan
+Video, NV12 bytes or wgpu textures in). Not adopted. It builds, but `vk-mem` compiles C++ at build
+time (against the Rust-only rule, so an ADR first), it adds about 90 crates (wgpu, naga, tokio),
+and it could not be run here (no Vulkan Video device: the software Vulkan driver reports
+`NoAdapterFound`). Its main benefit is NVIDIA encoding without the NVENC SDK and H.265 on Linux;
+the maintainer's machine has no NVIDIA GPU, and AMD already encodes through Media Foundation
+(H.264 and H.265). Revisit if NVIDIA or Linux H.265 becomes a real need; the plan would be an
+optional encoder behind the existing hardware-encoder interface, fed NV12 bytes, benchmarked
+against the software and Media Foundation encoders on the same frames.
+
+## Documentation (follow-up)
+
+`docs/how-it-works.md` is a start-to-finish walkthrough (recording, saving, hotkeys, game-only
+switching, library, export, editor, settings, where to look when something breaks). It was written
+from reading the code, not from a separate spec: if a section disagrees with the code, the code
+wins and the section should be fixed.
+
+## Code layout (follow-up)
+
+`main.rs` 4,200 → 2,600 lines, `capture.rs` 2,970 → 2,280 and `editor.rs` 4,390 → 3,080 by moving
+whole methods into child modules (see `docs/architecture.md`); no logic changed, all existing
+tests unchanged. Not done: the engine's `lib.rs` (command registry) and the large tab files are
+unchanged. `settings.rs` then went from 2,457 to 660 lines (tabs in `settings/{games,hotkeys,
+storage,capture,widgets}.rs`). The export size menu (labels, the 10 MB custom start) was written twice, in the
+trim panel and the editor's export dialog; both now use `kit::export_size_choices`. Otherwise code was
+relocated, not rewritten.
+
+## Application icon (Windows file, Linux taskbar)
+
+Windows: `apps/clipcraft/build.rs` and the installer's turn `assets/brand/clipcraft.ico` into a
+compiled resource (`build_support/windows_icon.rs`, plain Rust, no resource compiler) and pass it
+to the MSVC linker, so the .exe carries icon group 1 with 16–256 px pictures. Verified: the
+generated resource converts with `llvm-cvtres` and is structurally identical to `llvm-rc`'s output
+for the same .ico (only the language id differs), and the Windows build script runs in the
+cross-compile lint. Not verified: an actual MSVC link and Explorer/taskbar rendering on Windows;
+the GNU toolchain gets no embedded icon. The running window already had its icon from eframe.
+
+Linux: under X11 (Xvfb) the window had an empty `_NET_WM_ICON`, because the 256 px icon is larger
+than one X request allows without big requests; the window icon is now 128 px (checked with
+`xprop`: icon 128x128, class `clipcraft`) and the window sets app id `clipcraft`. The tarball adds
+`share/icons/hicolor/{48,128,256}x…/apps/clipcraft.png` and the desktop entry has `Icon=` and
+`StartupWMClass=`. Not verified: GNOME/KDE/Wayland dock rendering; the icon only appears for a
+desktop entry that is installed (INSTALL.txt says where to copy it).
+
+## Keeping the buffer when the capture source changes (follow-up)
+
+In game-only mode the recorder is told to wait when its source goes away (a game window closing,
+`RecordStatus.source_lost`) instead of failing, and capture moves to the next source inside the
+same recording (`Recorder::replace_source`): the replay buffer, encoder and sound carry on, with a
+picture of another size fitted inside the existing clip frame with black bars (never mixing sizes in
+one stream). Game to desktop, desktop to game and a launcher window replaced by the game's own all
+use it; a source that cannot be opened in place, the Wayland chooser, or a stopped recorder still
+restart as before and clear the buffer. A source lost for longer than the gap setting (10 s) still
+starts the buffer over. Verified with a recorder test (no reset, no restart, same output size,
+valid clip) and the app's capture tests; not run on a real game on Windows.
+
+The sound effects are synthesized in `clipcraft-audio-out/src/cue.rs`: struck-glass ("bell") notes
+with inharmonic overtones that fade faster than the pitch, rounder "wood" notes for the low cues,
+band-passed noise taps for the screenshot, a 4 ms attack, a short four-echo room, and a common
+low peak. Tests check range, silence at the ends and little sharp high-frequency content; the
+waveforms and spectrograms were inspected. Not judged by ear on real speakers. `cargo run -p clipcraft-audio-out --example cues` plays them
+(`-- --wav NEW_FOLDER` saves WAV files).
+
+## Game without a window: screen fallback (follow-up)
+
+The screen fallback now re-reads the screen list once when it is empty or stale before reporting
+failure, and the idle message names the fix: turn on the fallback setting, or on Wayland choose a
+screen yourself (the portal picker is never started automatically). Verified by the capture
+tests; not run on a real Silksong/Proton session.
+
+## Renaming clips and library keys (M4.5, issue #21)
+
+The clip page (Rename clip, or F2), a card's right-click menu (Rename…) and a focused card (F2)
+open a rename box: Enter renames, Escape keeps the name. The engine command `library.rename` (also
+`clipcraft-cli library rename <file> <new name>`) keeps the file in its folder with its extension,
+refuses empty or over-long names, path separators, characters Windows refuses, reserved Windows
+names and trailing dots, and never replaces another file (hard link then remove, or a checked
+rename on disks without hard links). Favorite, collections and the game label move with the
+clip, including a game that was only read from the old file name. A clip open in the player is
+closed first and retried for two seconds; if another program still holds it, the rename is
+refused with a message and nothing changes. On a focused library card, Enter opens, F favorites
+and Delete asks to move it to the Recycle Bin. Verified: engine tests (validation, metadata and
+game kept, no overwrite, case-only rename, unchanged name), a keyboard-only app test (Tab, F2,
+type, Enter) and the CLI. Not verified: renaming on Windows/macOS file systems, where a case-only
+change relies on the system's rename. The thumbnail is made again for the new name. Not done:
+batch rename, moving to another folder.
+
 ## Multiple shortcuts, first-run setup and Windows installer (M5.1a)
 
 Each action accepts five keyboard bindings with a + button, individual removal, collision feedback
@@ -424,7 +521,11 @@ cross-dissolves and arbitrary rendering controls remain unsupported. Editing/ste
 Export video offers standard output or estimated 10 MB, 25 MB and custom 1–500 MB targets. Targets
 reserve AAC and container overhead before choosing video bitrate and may lower canvas resolution;
 an impossible budget is refused. Actual size, target status, dimensions, selected FPS, target video bitrate and encoder are reported.
-These are estimates, not guarantees of a service's upload limit. When enabled by the recording
+A file over its target is not published: it is encoded once more at the overshoot-scaled bitrate
+(92% margin, minimum 100 kbps) and, below 80% of the first bitrate, a proportionally smaller
+picture (never below 256x144); only that second file is kept, and `retried` reports it. Generated
+noise clips that overshoot (40 s, 1 MB trim export and 2 MB edit export) end inside the target
+after one retry. Still not a guarantee of a service's upload limit. When enabled by the recording
 encoder preference, sequence export tries the registered GPU encoder and restarts in software on
 encoder failure. Sequence decoding stays in software; real-GPU export speed/quality remain
 unverified. M11.1d adds 720p/1080p/source (up to 4K), 30/60 FPS and recovery of those
@@ -519,7 +620,7 @@ See [the performance review](performance.md) for workloads, limitations and rank
 - Storage: capture folder, usage and free space, a storage limit, and a delete-oldest or stop policy. The limit applies only to ClipCraft's own clips; full-disk and cleanup paths have deterministic Linux tests.
 - Capture: cursor, force window capture, HDR compatibility; aspect ratio (game, stretch, black bars, crop to 16:9) appears in its bottom **Advanced settings** section.
 - Settings are rebuilt around rows (`apps/clipcraft/src/rows.rs`, pages in `settings/pages.rs`). An **Overview** page shows the current setup, live recording health (dropped frames, encode time), actionable suggestions (for example "use the graphics card") and three one-click profiles. Pages are grouped as Recording (Capture, Video, Audio, Replay, Games) and Settings (General, Storage, Hotkeys, About). Every row can show it differs from the default and be reset on its own; resolution, frame rate, bitrate, keyframe interval, replay length, post-roll, volumes, audio bitrate and the storage limit are sliders. The search box filters the actual rows in place, so a setting can be changed from the results, and links to the pages whose settings are lists or forms. Encoder, codec, effort, bitrate mode, file format, aspect ratio, sample rate and channels are always shown; the advanced toggle now only reveals custom-game forms.
-- **Deleting clips:** a clip's right-click menu has Open, Send to editor, Show in the file manager, Copy path, Favorite, **Delete clip…** (red) and Add to collection; the clip page has a Delete clip button and the Delete key asks too. Every route asks first and then moves the file to the Recycle Bin (Windows shell delete with undo; `gio trash` on Linux; Finder on macOS), so it can be put back; nothing is deleted for good. The engine command `library.trash` (also `clipcraft-cli library trash <file>`) only accepts an existing regular video file, and the move is retried for two seconds in case the player still holds the file. Not done: restoring from inside ClipCraft, multi-select delete.
+- **Deleting clips:** a clip's right-click menu has Open, Send to editor, Show in the file manager, Copy path, Favorite, **Delete clip…** (red) and Add to collection; the clip page has a Delete clip button and the Delete key asks too. Every route asks first and then moves the file to the Recycle Bin (Windows shell delete with undo; `gio trash` on Linux; Finder on macOS), so it can be put back; nothing is deleted for good. The engine command `library.trash` (also `clipcraft-cli library trash <file>`) only accepts an existing regular video file, and the move is retried for two seconds in case the player still holds the file. A focused library card also asks on Delete. Not done: restoring from inside ClipCraft, multi-select delete.
 - **Saved-clip notification:** when a clip is saved a card slides in at the bottom right of the free part of the screen (its own always-on-top window that never takes the keyboard focus, so it shows over a borderless game and while ClipCraft is in the tray) with the clip's picture, its game, length, size and picture size, and buttons to Play (opens it in ClipCraft), Show in the folder and Delete (asks again on the card). It stays seven seconds, pauses while the pointer is on it, and can be switched off in Settings › Replay. Not done: exclusive-fullscreen games, which hide every other window; other monitors.
 - General: launch at sign-in (Linux autostart entry, macOS launch agent, Windows Run key) and start minimized. On Windows a system-tray icon (left click opens; menu drawn by ClipCraft itself on right click, in the app's dark style: a status header, Open ClipCraft, Start/Stop recording, Save clip, Take screenshot, Open clips folder, Library, Settings, Quit ClipCraft; save and screenshot are enabled only while recording; folders open directly instead of being selected in their parent) and **Keep running in the tray** (default on) make the close button minimize instead of quit, so capture keeps running; the taskbar button stays because a hidden egui window stops receiving frames, which would stall capture. Hiding the taskbar button, and the tray on Linux/macOS, are not done. **Show advanced settings** is last, after Help; it appends labeled advanced controls to Games, Capture, Quality and Audio instead of adding a category. Custom-game add/edit controls use the same uniform card layout as every settings tab (verified on Linux/Xvfb only) with padded, responsive fields and appear only when advanced settings are on; hidden rules/encoder/audio values remain active. The local preference and 64-rule budget are unchanged. Keyboard disclosure/creation, category visibility, process-picker stale-ID recovery and layout/accessibility checks cover this behavior; see [settings.md](settings.md) and [testing.md](testing.md). Only the Linux startup path and native UI can be exercised in this container.
 
@@ -696,6 +797,18 @@ remain open. No upload, Discord account, link, or network path is added. See
   ClipCraft's own window is never picked. Verified on X11 with a published focus hint; on Windows
   it is compiled only. Because clicking Record puts ClipCraft in front, it only finds the game
   when recording is started with its hotkey while the game has the focus; the app says so.
+- Game windows are found across the recognized process, its child processes and same-game
+  processes (largest visible window), and capture restarts when a launcher window gives way to the
+  game's. A window whose process or class names the game is a second chance (Vice-style), and
+  with neither the chosen screen is recorded until the game's window appears (on by default).
+  Verified by app tests, X11 process-tree/`WM_CLASS` tests and a Windows build only, not yet with
+  FiveM or the Unity/Unreal titles reported on Windows.
+- Installed Steam games are re-read only when a library's file times change (or on request, or
+  every 30 minutes), not every 30 seconds; a user's ESET HIPS log showed the repeated reads. The
+  change check is unit-tested; the HIPS log itself has not been re-checked.
+- Windows finds Steam wherever it is installed through its registry entries (previously only the
+  standard Program Files folders). The path rules are unit-tested and the Windows build passes;
+  it has not been run on a Windows machine with Steam on another drive.
 - **HDR compatibility** tone maps linear scRGB half floats (Windows' HDR format) to standard
   range: reference white 203 nits, a smooth highlight roll-off, sRGB encoding. The maths is unit
   tested. Windows capture asks for half floats when the setting is on. **Not run on an HDR

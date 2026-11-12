@@ -14,7 +14,7 @@ mod monitor;
 
 pub use capture::{CaptureError, CaptureKind, DeviceCapture};
 pub use clipcraft_record::SampleQueue;
-pub use cue::{Cue, play_cue};
+pub use cue::{Cue, play_cue, render as render_cue};
 
 pub use input::{DeviceNames, MAX_DEVICES, list_devices, peak};
 pub use monitor::MicTest;

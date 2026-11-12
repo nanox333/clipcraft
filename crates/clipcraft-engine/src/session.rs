@@ -324,6 +324,26 @@ impl CaptureSession {
         }
     }
 
+    /// When on, a source that goes away (a game window closing) does not end the recording: the
+    /// replay buffer is kept and [`CaptureSession::replace_source`] carries on from it.
+    pub fn keep_through_source_loss(&self, on: bool) {
+        if let Some(recorder) = &self.recorder {
+            recorder.keep_through_source_loss(on);
+        }
+    }
+
+    /// Switches the running recording to `source` without clearing the replay buffer or the
+    /// sound. Returns false when nothing is recording.
+    pub fn replace_source(&self, source: Box<dyn CaptureSource>) -> bool {
+        match &self.recorder {
+            Some(recorder) => {
+                recorder.replace_source(source);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Stops recording and drops the buffer. Command id `capture.stop`.
     pub fn stop(&mut self) -> Option<RecordStatus> {
         let recorder = self.recorder.take()?;
@@ -485,6 +505,14 @@ impl SaveJob {
     /// The file that will be written.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Saves the last `seconds` (plus the post-roll) instead of the replay length, for a
+    /// clip-length shortcut. A length beyond what the buffer holds saves everything buffered.
+    pub fn lasting(mut self, seconds: u32) -> Self {
+        let post_roll = u32::try_from(self.post_roll.as_secs()).unwrap_or(0);
+        self.seconds = seconds.clamp(1, 3_600).saturating_add(post_roll);
+        self
     }
 
     /// How long [`SaveJob::run`] keeps recording before it writes the clip.
@@ -900,6 +928,70 @@ mod tests {
         assert_ne!(second.clip.path, report.clip.path);
         assert!(report.clip.path.exists() && second.clip.path.exists());
         assert!(session.stop().is_some() && !session.is_active());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_clip_length_shortcut_saves_only_its_own_length() {
+        let dir = std::env::temp_dir().join(format!("clipcraft-lasting-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let settings = RecordingSettings {
+            quality: crate::QualityMode::Custom,
+            height: 90,
+            frames_per_second: 30,
+            video_kbps: 500,
+            replay_seconds: 15,
+            keyframe_seconds: 1,
+            capture_game_audio: false,
+            capture_microphone: false,
+            ..RecordingSettings::default()
+        };
+        let mut session = CaptureSession::new();
+        session
+            .start(&settings, Box::new(SyntheticSource::new(160, 90, 30)), None)
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while session
+            .status()
+            .is_none_or(|status| status.buffered_seconds < 4.0)
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "recording did not fill"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let short = session
+            .prepare_save(&settings, &dir)
+            .unwrap()
+            .lasting(1)
+            .run()
+            .unwrap();
+        let full = session
+            .prepare_save(&settings, &dir)
+            .unwrap()
+            .run()
+            .unwrap();
+        // One second, rounded out to the keyframe before it: well under the buffered four.
+        assert!(
+            (30..=75).contains(&short.clip.duration_frames),
+            "{}",
+            short.clip.duration_frames
+        );
+        assert!(
+            full.clip.duration_frames >= 110,
+            "{}",
+            full.clip.duration_frames
+        );
+        // Asking for more than is buffered saves what there is.
+        let long = session
+            .prepare_save(&settings, &dir)
+            .unwrap()
+            .lasting(600)
+            .run()
+            .unwrap();
+        assert!(long.clip.duration_frames >= full.clip.duration_frames);
+        assert!(session.stop().is_some());
         let _ = fs::remove_dir_all(&dir);
     }
 

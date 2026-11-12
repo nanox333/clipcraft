@@ -7,7 +7,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use clipcraft_capture::reframe::{Framing, OutputShape, PixelRect, Reframe, reframe};
+use clipcraft_capture::reframe::{Framing, OutputShape, PixelRect, Reframe, reframe, reframe_into};
 use clipcraft_capture::{
     CaptureError, CaptureFrame, CaptureSource, MAX_CAPTURE_EDGE, NativeCaptureFrame,
 };
@@ -164,6 +164,10 @@ pub struct RecordStatus {
     pub buffered_seconds: f32,
     /// Complete replay resets that discarded buffered video during this recording.
     pub buffer_resets: u64,
+    /// The source stopped giving pictures (its window closed) and the recorder is waiting for
+    /// [`Recorder::replace_source`] with the buffered video kept. Always false unless
+    /// [`Recorder::keep_through_source_loss`] is on.
+    pub source_lost: bool,
     /// The clip frame size, once the first picture arrived.
     pub output: Option<(u32, u32)>,
     /// Average time to convert and encode one picture, in milliseconds.
@@ -188,6 +192,8 @@ struct Stats {
 struct Queued {
     frame: QueuedFrame,
     pts: i64,
+    /// The first picture from a replacement source.
+    swapped: bool,
 }
 
 enum QueuedFrame {
@@ -237,7 +243,12 @@ struct Mailbox {
 struct Shared {
     stop: AtomicBool,
     fps: u32,
-    source_name: String,
+    source_name: Mutex<String>,
+    /// A source to take over from the current one, and whether the capture loop should wait for
+    /// one when the current source is lost instead of failing.
+    replacement: Mutex<Option<Box<dyn CaptureSource>>>,
+    hold_on_loss: AtomicBool,
+    source_lost: AtomicBool,
     buffer: Mutex<ReplayBuffer>,
     video: Mutex<Option<VideoInfo>>,
     encoder: Mutex<String>,
@@ -317,7 +328,10 @@ impl Recorder {
         let shared = Arc::new(Shared {
             stop: AtomicBool::new(false),
             fps: config.fps,
-            source_name: source.target().name.clone(),
+            source_name: Mutex::new(source.target().name.clone()),
+            replacement: Mutex::new(None),
+            hold_on_loss: AtomicBool::new(false),
+            source_lost: AtomicBool::new(false),
             buffer: Mutex::new(ReplayBuffer::new(window_frames, config.max_buffer_bytes)),
             video: Mutex::new(None),
             encoder: Mutex::new(String::from("Starting")),
@@ -375,6 +389,19 @@ impl Recorder {
         })
     }
 
+    /// When on, losing the source (its window closed) does not end the recording: the recorder
+    /// keeps its buffer and waits for [`Recorder::replace_source`].
+    pub fn keep_through_source_loss(&self, on: bool) {
+        self.shared.hold_on_loss.store(on, Ordering::SeqCst);
+    }
+
+    /// Takes pictures from `source` from now on, in the same stream: the replay buffer, the
+    /// encoder and the sound carry on. A picture of another size is fitted inside the clip's
+    /// frame with black bars, so nothing mixes sizes.
+    pub fn replace_source(&self, source: Box<dyn CaptureSource>) {
+        *lock(&self.shared.replacement) = Some(source);
+    }
+
     /// How recording is going.
     pub fn status(&self) -> RecordStatus {
         let stats = lock(&self.shared.stats);
@@ -397,7 +424,7 @@ impl Recorder {
         };
         RecordStatus {
             state: *lock(&self.shared.state),
-            source: self.shared.source_name.clone(),
+            source: lock(&self.shared.source_name).clone(),
             frames_captured: stats.captured,
             frames_encoded: stats.encoded,
             frames_dropped: stats.dropped,
@@ -406,6 +433,7 @@ impl Recorder {
             buffered_bytes,
             buffered_seconds: span as f32 / self.shared.fps.max(1) as f32,
             buffer_resets,
+            source_lost: self.shared.source_lost.load(Ordering::SeqCst),
             output,
             average_encode_ms,
             target_fps: self.shared.fps,
@@ -572,7 +600,15 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
     let mut next: u64 = 0;
     // Consecutive picture failures that may pass (a mode switch, a window being resized).
     let mut failures = 0_u32;
+    let mut swapped = false;
     while !shared.stop.load(Ordering::SeqCst) {
+        if let Some(replacement) = lock(&shared.replacement).take() {
+            *lock(&shared.source_name) = replacement.target().name.clone();
+            source = replacement;
+            failures = 0;
+            swapped = true;
+            shared.source_lost.store(false, Ordering::SeqCst);
+        }
         let due = Duration::from_nanos(
             u64::try_from(u128::from(next) * nanos_per_second / u128::from(fps))
                 .unwrap_or(u64::MAX),
@@ -594,6 +630,7 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
         match captured {
             Ok(mut frame) => {
                 failures = 0;
+                shared.source_lost.store(false, Ordering::SeqCst);
                 let pts =
                     i64::try_from(start.elapsed().as_nanos() * u128::from(fps) / nanos_per_second)
                         .unwrap_or(i64::MAX);
@@ -606,7 +643,14 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
                     shared.screenshot_ready.notify_all();
                 }
                 let mut mailbox = lock(&shared.mailbox);
-                if mailbox.slot.replace(Queued { frame, pts }).is_some()
+                if mailbox
+                    .slot
+                    .replace(Queued {
+                        frame,
+                        pts,
+                        swapped: std::mem::take(&mut swapped),
+                    })
+                    .is_some()
                     && shared.encoder_ready.load(Ordering::SeqCst)
                 {
                     lock(&shared.stats).dropped += 1;
@@ -616,11 +660,24 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
                 // If the encoder or the capture call fell behind, skip the frames already missed.
                 next = (next + 1).max(u64::try_from(pts).unwrap_or(0) + 1);
             }
-            Err(error @ (CaptureError::Failed | CaptureError::BadFrame)) if failures < 50 => {
+            Err(error @ (CaptureError::Failed | CaptureError::BadFrame))
+                if failures
+                    < if shared.hold_on_loss.load(Ordering::SeqCst) {
+                        10
+                    } else {
+                        50
+                    } =>
+            {
                 // About five seconds of trying before giving up on something that may be a blip.
                 failures += 1;
                 let _ = error;
                 std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) if shared.hold_on_loss.load(Ordering::SeqCst) => {
+                // The source is gone for good (a closed window). Keep everything buffered and wait
+                // for a replacement.
+                shared.source_lost.store(true, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(50));
             }
             Err(error) => {
                 shared.fail(RecordError::Capture(error));
@@ -740,11 +797,24 @@ fn encode_loop(shared: &Shared, config: &RecordConfig) {
                     .0;
             }
         };
-        let Some(Queued { mut frame, pts }) = queued else {
+        let Some(Queued {
+            mut frame,
+            pts,
+            swapped,
+        }) = queued
+        else {
             break;
         };
         let started = Instant::now();
-        if let Err(error) = encode_one(shared, config, threads, &mut active, &mut frame, pts) {
+        if let Err(error) = encode_one(
+            shared,
+            config,
+            threads,
+            &mut active,
+            &mut frame,
+            pts,
+            swapped,
+        ) {
             shared.fail(error);
             break;
         }
@@ -977,9 +1047,26 @@ fn encode_one(
     active: &mut Option<Active>,
     frame: &mut QueuedFrame,
     pts: i64,
+    swapped: bool,
 ) -> Result<(), RecordError> {
     let size = frame.dimensions()?;
     let gap_frames = i64::from(config.gap_restart_seconds) * i64::from(shared.fps);
+    // A replacement source of another size is fitted into the frame the stream already has, so
+    // the buffer and the encoder carry on.
+    if swapped
+        && let Some(current) = active.as_mut()
+        && current.source_size != size
+        && !(current.last_pts >= 0 && pts - current.last_pts > gap_frames)
+        && let Some(plan) = reframe_into(
+            size.0,
+            size.1,
+            current.plan.output_width,
+            current.plan.output_height,
+        )
+    {
+        current.plan = plan;
+        current.source_size = size;
+    }
     if active.as_ref().is_none_or(|current| {
         current.source_size != size
             || (current.last_pts >= 0 && pts - current.last_pts > gap_frames)

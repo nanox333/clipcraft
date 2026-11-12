@@ -395,6 +395,10 @@ pub struct RecordingSettings {
     pub record_on_launch: bool,
     /// Switch replay sources automatically using game recognition and the chosen desktop policy.
     pub game_only_capture: bool,
+    /// When a recognized game is running but no window of it can be found (a protected or unusual
+    /// window), record the screen it is on instead of staying idle. Capture moves to the game's
+    /// window as soon as one appears.
+    pub record_screen_when_game_window_missing: bool,
     /// Legacy WIP setting migrated to AfterGame; new callers use desktop_capture_mode.
     pub record_desktop_after_game: bool,
     /// Desktop recording policy for automatic source switching.
@@ -486,6 +490,7 @@ impl Default for RecordingSettings {
             capture_target_name: String::new(),
             record_on_launch: false,
             game_only_capture: true,
+            record_screen_when_game_window_missing: true,
             record_desktop_after_game: false,
             desktop_capture_mode: DesktopCaptureMode::Never,
             desktop_after_game_seconds: 60,

@@ -81,29 +81,105 @@ pub fn list_targets() -> Result<Vec<CaptureTarget>, CaptureError> {
     Ok(targets)
 }
 
-/// Finds a capturable top-level window owned by `process_id`.
-pub fn window_for_process(process_id: u32) -> Result<Option<CaptureTarget>, CaptureError> {
-    let windows = Window::enumerate().map_err(|_| CaptureError::Failed)?;
-    for window in windows.into_iter().take(MAX_WINDOWS) {
-        if window.process_id().ok() != Some(process_id) {
-            continue;
-        }
-        let (Ok(title), Ok(width), Ok(height)) = (window.title(), window.width(), window.height())
-        else {
-            continue;
-        };
-        if title.is_empty() || width <= 0 || height <= 0 || !window.is_valid() {
-            continue;
-        }
+/// The focused window when it belongs to one of `process_ids`, otherwise the largest capturable
+/// top-level window owned by any of them. A game may own a small
+/// splash or launcher window besides the game itself, and its window may belong to a process the
+/// recognized one started, so every window of the family is considered and the biggest wins.
+pub fn window_for_processes(process_ids: &[u32]) -> Result<Option<CaptureTarget>, CaptureError> {
+    // The window the person is looking at wins when it belongs to the game: a game may keep a
+    // large launcher or companion window open behind the one it draws in.
+    if let Ok(window) = Window::foreground()
+        && window
+            .process_id()
+            .is_ok_and(|owner| process_ids.contains(&owner))
+        && window.is_valid()
+        && let (Ok(width), Ok(height)) = (window.width(), window.height())
+        && width > 0
+        && height > 0
+    {
+        let name = window
+            .title()
+            .ok()
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| "Game window".to_owned());
         return Ok(Some(CaptureTarget {
             id: format!("window:{:x}", window.as_raw_hwnd() as usize),
-            name: title,
+            name,
             kind: TargetKind::Window,
             width: width as u32,
             height: height as u32,
         }));
     }
-    Ok(None)
+    let windows = Window::enumerate().map_err(|_| CaptureError::Failed)?;
+    let mut best: Option<(i64, CaptureTarget)> = None;
+    for window in windows.into_iter().take(MAX_WINDOWS) {
+        if !window
+            .process_id()
+            .is_ok_and(|owner| process_ids.contains(&owner))
+        {
+            continue;
+        }
+        let (Ok(width), Ok(height)) = (window.width(), window.height()) else {
+            continue;
+        };
+        if width <= 0 || height <= 0 || !window.is_valid() {
+            continue;
+        }
+        // Some games leave their window title empty; the window is still the game.
+        let name = window
+            .title()
+            .ok()
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| "Game window".to_owned());
+        let area = i64::from(width) * i64::from(height);
+        if best.as_ref().is_none_or(|(largest, _)| area > *largest) {
+            best = Some((
+                area,
+                CaptureTarget {
+                    id: format!("window:{:x}", window.as_raw_hwnd() as usize),
+                    name,
+                    kind: TargetKind::Window,
+                    width: width as u32,
+                    height: height as u32,
+                },
+            ));
+        }
+    }
+    Ok(best.map(|(_, target)| target))
+}
+
+/// Every visible top-level window with its owner process and window class.
+pub fn owned_windows() -> Result<Vec<crate::OwnedWindow>, CaptureError> {
+    let mut found = Vec::new();
+    for window in Window::enumerate()
+        .map_err(|_| CaptureError::Failed)?
+        .into_iter()
+        .take(MAX_WINDOWS)
+    {
+        let (Ok(width), Ok(height)) = (window.width(), window.height()) else {
+            continue;
+        };
+        if width <= 0 || height <= 0 {
+            continue;
+        }
+        let raw = window.as_raw_hwnd() as usize;
+        found.push(crate::OwnedWindow {
+            target: CaptureTarget {
+                id: format!("window:{raw:x}"),
+                name: window
+                    .title()
+                    .ok()
+                    .filter(|title| !title.is_empty())
+                    .unwrap_or_else(|| "Game window".to_owned()),
+                kind: TargetKind::Window,
+                width: width as u32,
+                height: height as u32,
+            },
+            process_id: window.process_id().unwrap_or(0),
+            class: crate::screen::window_class(raw).unwrap_or_default(),
+        });
+    }
+    Ok(found)
 }
 
 /// The newest picture the capture thread produced.

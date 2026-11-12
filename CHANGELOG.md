@@ -9,6 +9,59 @@
 - **Smaller software-encoded desktop clips:** the built-in H.264 encoder now uses split-block motion
   prediction, making screen recordings about a third smaller at the same quality for roughly 1.5x
   the encoding time on desktop content (game footage is unchanged).
+- **Hear the sound effects:** `cargo run -p clipcraft-audio-out --example cues` plays each one;
+  add `-- --wav NEW_FOLDER` to save them as WAV files instead.
+- **Docs:** a new `docs/how-it-works.md` explains how recording, saving, game detection, the
+  library, export and the editor work, and where to look when something breaks.
+- **Easier to read:** the desktop app's largest files (including Settings, one file per tab group)
+  are split by screen (card, clip page, settings
+  page, game-only recording, editor panels and timeline) with no change in behaviour, and repeated
+  capture-option and session checks are one helper each.
+- **The ClipCraft icon everywhere:** the Windows program file (and so the Start menu and desktop
+  shortcuts, Explorer, the uninstall list and a taskbar button pinned from them) now has the
+  ClipCraft icon built in instead of the generic one, and so does the setup program. On Linux the
+  taskbar icon was blank on some desktops (the 256-pixel window icon was too big for one X11
+  request); it is now 128 pixels, the window announces itself as `clipcraft`, and the download
+  includes the icon and a desktop entry that names it.
+- **One buffer through a window loss:** in game-only mode, when the game's window closes and
+  capture moves to the desktop (or from the desktop to the game's window), the same recording
+  carries on: the replay buffer and the sound are kept, so a clip saved afterwards covers the switch.
+  A picture of another size is fitted inside the clip's frame with black bars.
+- **New sound effects:** the clipping, saved, screenshot, microphone and problem sounds are
+  redesigned: struck-glass notes with fading overtones, a rising fifth to start and a falling one
+  to stop, a three-note chime for a saved clip, a soft two-tap shutter, and a small room around
+  each so they do not sound like bare beeps. Quieter than before (about a third lower).
+- **Clearer game-without-window message:** when a recognized game has no window, ClipCraft reads the
+  list of screens again before giving up, and the message now says what to change (turn on
+  "Record the screen when the game window is missing", or choose a screen on Wayland).
+- **Rename clips:** give a clip a real name from the clip page (F2), a card's right-click menu or
+  `clipcraft-cli library rename`; it keeps its favorite, collections and game label, and never
+  replaces another file. On a focused library card, Enter opens, F favorites and Delete asks to
+  delete.
+- **Exports that fit:** a size-targeted export (quick export or the editor) that comes out bigger
+  than the target is encoded once more, smaller, before anything is saved, so a "10 MB" export
+  stays under 10 MB in normal cases; the result line says when this happened.
+- **Clip-length shortcuts:** give up to four keys their own clip length, such as Shift + F8 for
+  the last 2 minutes alongside F8 for the whole replay (Settings → Hotkeys).
+- **Fixed:** installed Steam games are recognized when Steam is installed outside Program Files
+  (another drive or folder); ClipCraft now reads where Steam is from the Windows registry.
+- **Less file activity:** installed Steam games are re-read only when a game is installed or
+  removed (or on Refresh, or every 30 minutes) instead of every 30 seconds, so security tools such
+  as ESET HIPS no longer log Steam's manifests being read constantly.
+
+## 0.2.1 — 2026-11-08
+
+- **Games without a findable window are recorded on the screen** (new setting, on by default)
+  instead of leaving capture idle; clipping moves to the game's window once it appears. Windows
+  are also matched by their own process name and window class, as Vice does.
+- **Fixed:** games whose window belongs to a process they start (FiveM, Rockstar titles, Unreal
+  games with a bootstrap executable) are captured instead of reporting that the desktop did not
+  expose a game window; when a launcher or loading window closes and the game opens its own,
+  clipping restarts on the game window instead of stopping.
+- **Better sound:** converting a microphone or system-sound rate (44.1 kHz and others) now uses a
+  windowed-sinc filter, so frequencies above the new limit no longer fold back as noise; loud mixes
+  are turned down by a look-ahead limiter instead of hard-clipped.
+- **Fixed:** start-up recovery leaves alone a file that is still growing, even when it looks old.
 
 ## 0.2.0 — 2026-10-29
 

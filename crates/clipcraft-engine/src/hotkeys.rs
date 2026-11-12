@@ -79,7 +79,28 @@ pub struct Hotkeys {
     pub screenshot: String,
     /// Extra bindings in action order; the original string fields remain compatible with older settings.
     pub alternatives: [Vec<String>; 5],
+    /// Shortcuts that save a clip of their own length, such as `Shift+F8` for the last two
+    /// minutes. Empty by default; the Save clip shortcut keeps the replay length.
+    pub clip_lengths: Vec<ClipLengthShortcut>,
 }
+
+/// A shortcut that saves the last `seconds` of the replay buffer.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ClipLengthShortcut {
+    /// The keys, such as `Shift+F8`; empty while the person has not chosen one yet.
+    pub key: String,
+    /// How much of the replay buffer the clip covers, in seconds.
+    pub seconds: u32,
+}
+
+/// Most clip-length shortcuts.
+pub const MAX_CLIP_LENGTH_SHORTCUTS: usize = 4;
+/// The lengths offered for a clip-length shortcut, in seconds.
+pub const CLIP_LENGTH_CHOICES: [u32; 6] = [15, 30, 60, 120, 300, 600];
+/// The shortest and longest clip a clip-length shortcut may ask for.
+pub const CLIP_LENGTH_RANGE: std::ops::RangeInclusive<u32> = 5..=600;
+/// Registration IDs of clip-length shortcuts start here, clear of the actions' IDs.
+const CLIP_LENGTH_ID_BASE: u32 = 1_000;
 
 impl Default for Hotkeys {
     fn default() -> Self {
@@ -90,6 +111,7 @@ impl Default for Hotkeys {
             push_to_talk: String::new(),
             screenshot: String::new(),
             alternatives: Default::default(),
+            clip_lengths: Vec::new(),
         };
         for action in HotkeyAction::ALL {
             *keys.slot(action) = action.default_key().to_owned();
@@ -146,6 +168,94 @@ impl Hotkeys {
             .take(Self::MAX_BINDINGS)
     }
 
+    /// The clip-length shortcuts that have a key, with their native registration ID and length.
+    pub fn clip_length_registrations(&self) -> impl Iterator<Item = (u32, u32, &str)> {
+        self.clip_lengths
+            .iter()
+            .take(MAX_CLIP_LENGTH_SHORTCUTS)
+            .enumerate()
+            .filter(|(_, shortcut)| !shortcut.key.is_empty())
+            .map(|(index, shortcut)| {
+                (
+                    CLIP_LENGTH_ID_BASE + index as u32,
+                    shortcut.seconds,
+                    shortcut.key.as_str(),
+                )
+            })
+    }
+
+    /// The clip length a native registration ID stands for, when it is a clip-length shortcut.
+    pub fn clip_length_for_id(&self, id: u32) -> Option<u32> {
+        self.clip_length_registrations()
+            .find(|(own, _, _)| *own == id)
+            .map(|(_, seconds, _)| seconds)
+    }
+
+    /// The clip length a pressed key saves, when it is a clip-length shortcut.
+    pub fn clip_length_for_key(&self, key: &str) -> Option<u32> {
+        self.clip_length_registrations()
+            .find(|(_, _, own)| *own == key)
+            .map(|(_, seconds, _)| seconds)
+    }
+
+    /// What already uses `key`, named for a message, or `None` when it is free. `except` is a
+    /// clip-length shortcut whose own key does not count.
+    fn key_owner(&self, key: &str, except: Option<usize>) -> Option<String> {
+        if let Some(action) = HotkeyAction::ALL
+            .into_iter()
+            .find(|action| self.bindings(*action).any(|own| own == key))
+        {
+            return Some(action.label().to_owned());
+        }
+        self.clip_lengths
+            .iter()
+            .enumerate()
+            .find(|(index, shortcut)| Some(*index) != except && shortcut.key == key)
+            .map(|(_, shortcut)| format!("Save last {}", describe_seconds(shortcut.seconds)))
+    }
+
+    /// Adds a clip-length shortcut with no key yet; it gets one with
+    /// [`Hotkeys::set_clip_length_key`]. Returns its index.
+    pub fn add_clip_length(&mut self, seconds: u32) -> Result<usize, String> {
+        if self.clip_lengths.len() >= MAX_CLIP_LENGTH_SHORTCUTS {
+            return Err(format!(
+                "Up to {MAX_CLIP_LENGTH_SHORTCUTS} clip-length shortcuts can be set."
+            ));
+        }
+        self.clip_lengths.push(ClipLengthShortcut {
+            key: String::new(),
+            seconds: seconds.clamp(*CLIP_LENGTH_RANGE.start(), *CLIP_LENGTH_RANGE.end()),
+        });
+        Ok(self.clip_lengths.len() - 1)
+    }
+
+    /// Gives clip-length shortcut `index` its keys. A key another shortcut uses is refused.
+    pub fn set_clip_length_key(&mut self, index: usize, key: &str) -> Result<(), String> {
+        let key = normalize_hotkey(key).ok_or("Choose a supported keyboard shortcut.")?;
+        if index >= self.clip_lengths.len() {
+            return Err("That clip-length shortcut no longer exists.".into());
+        }
+        if let Some(owner) = self.key_owner(&key, Some(index)) {
+            return Err(format!("That shortcut is already assigned to {owner}."));
+        }
+        self.clip_lengths[index].key = key;
+        Ok(())
+    }
+
+    /// Changes how long a clip-length shortcut's clip is.
+    pub fn set_clip_length_seconds(&mut self, index: usize, seconds: u32) {
+        if let Some(shortcut) = self.clip_lengths.get_mut(index) {
+            shortcut.seconds = seconds.clamp(*CLIP_LENGTH_RANGE.start(), *CLIP_LENGTH_RANGE.end());
+        }
+    }
+
+    /// Removes a clip-length shortcut.
+    pub fn remove_clip_length(&mut self, index: usize) {
+        if index < self.clip_lengths.len() {
+            self.clip_lengths.remove(index);
+        }
+    }
+
     /// Replaces a binding, or appends at the current count. Invalid and duplicate keys leave settings intact.
     pub fn set_binding(
         &mut self,
@@ -157,6 +267,16 @@ impl Hotkeys {
         let mut bindings: Vec<String> = self.bindings(action).map(str::to_owned).collect();
         if index > bindings.len() || index >= Self::MAX_BINDINGS {
             return Err("Each action can have up to five shortcuts.".into());
+        }
+        if let Some(shortcut) = self
+            .clip_lengths
+            .iter()
+            .find(|shortcut| shortcut.key == key)
+        {
+            return Err(format!(
+                "That shortcut is already assigned to Save last {}.",
+                describe_seconds(shortcut.seconds)
+            ));
         }
         for other in HotkeyAction::ALL {
             if self
@@ -258,6 +378,21 @@ impl Hotkeys {
             }
             self.replace_bindings(action, bindings);
         }
+        // Clip-length shortcuts: bounded, lengths in range, keys usable and not shared with an
+        // action or an earlier clip-length shortcut (such a key is cleared, the length kept).
+        self.clip_lengths.truncate(MAX_CLIP_LENGTH_SHORTCUTS);
+        for shortcut in &mut self.clip_lengths {
+            shortcut.seconds = shortcut
+                .seconds
+                .clamp(*CLIP_LENGTH_RANGE.start(), *CLIP_LENGTH_RANGE.end());
+            let key = normalize_hotkey(&shortcut.key).unwrap_or_default();
+            shortcut.key = if key.is_empty() || seen.contains(&key) {
+                String::new()
+            } else {
+                seen.push(key.clone());
+                key
+            };
+        }
         self
     }
 }
@@ -293,6 +428,15 @@ fn is_key_name(name: &str) -> bool {
             .parse::<u32>()
             .is_ok_and(|number| (1..=24).contains(&number) && !name[1..].starts_with('0')),
         _ => NAMED_KEYS.contains(&name),
+    }
+}
+
+/// `30 sec`, `2 min`, `1 min 30 sec`: a length as the settings and notices show it.
+pub fn describe_seconds(seconds: u32) -> String {
+    match (seconds / 60, seconds % 60) {
+        (0, seconds) => format!("{seconds} sec"),
+        (minutes, 0) => format!("{minutes} min"),
+        (minutes, seconds) => format!("{minutes} min {seconds} sec"),
     }
 }
 
@@ -467,5 +611,82 @@ mod tests {
         }
         .sanitized();
         assert_eq!(damaged.save_clip, "F8");
+    }
+
+    #[test]
+    fn clip_length_shortcuts_get_their_own_ids_and_never_share_a_key() {
+        let mut keys = Hotkeys::default();
+        let first = keys.add_clip_length(120).unwrap();
+        keys.set_clip_length_key(first, "shift+f8").unwrap();
+        let second = keys.add_clip_length(30).unwrap();
+        // The default Save clip key and an earlier clip-length key are both taken.
+        assert!(
+            keys.set_clip_length_key(second, "F8")
+                .unwrap_err()
+                .contains("Save clip")
+        );
+        assert!(
+            keys.set_clip_length_key(second, "Shift+F8")
+                .unwrap_err()
+                .contains("2 min")
+        );
+        keys.set_clip_length_key(second, "Ctrl+F8").unwrap();
+        // The same key cannot then be given to an action either.
+        assert!(
+            keys.set_binding(HotkeyAction::Screenshot, 1, "Ctrl+F8")
+                .unwrap_err()
+                .contains("30 sec")
+        );
+        let registered: Vec<_> = keys.clip_length_registrations().collect();
+        assert_eq!(
+            registered,
+            [(1_000, 120, "Shift+F8"), (1_001, 30, "Ctrl+F8")]
+        );
+        // Action IDs and clip-length IDs never overlap.
+        for (id, _, _) in keys.registrations() {
+            assert!(keys.clip_length_for_id(id).is_none());
+            assert!(Hotkeys::action_for_id(id).is_some());
+        }
+        assert_eq!(keys.clip_length_for_id(1_001), Some(30));
+        assert_eq!(Hotkeys::action_for_id(1_001), None);
+        assert_eq!(keys.clip_length_for_key("Shift+F8"), Some(120));
+        // Lengths are bounded and the list is capped.
+        keys.set_clip_length_seconds(0, 99_999);
+        assert_eq!(keys.clip_lengths[0].seconds, 600);
+        for _ in 0..MAX_CLIP_LENGTH_SHORTCUTS - 2 {
+            keys.add_clip_length(60).unwrap();
+        }
+        assert!(keys.add_clip_length(60).is_err());
+        keys.remove_clip_length(0);
+        assert_eq!(keys.clip_lengths.len(), MAX_CLIP_LENGTH_SHORTCUTS - 1);
+    }
+
+    #[test]
+    fn saved_clip_length_shortcuts_are_cleaned_when_loaded() {
+        let keys: Hotkeys = serde_json::from_value(serde_json::json!({
+            "clip_lengths": [
+                {"key": "f8", "seconds": 30},
+                {"key": "shift+f8", "seconds": 1},
+                {"key": "not a key", "seconds": 120},
+                {"key": "shift+f8", "seconds": 60},
+                {"key": "", "seconds": 300},
+                {"key": "Ctrl+F1", "seconds": 300}
+            ]
+        }))
+        .unwrap();
+        let keys = keys.sanitized();
+        let kept: Vec<_> = keys
+            .clip_lengths
+            .iter()
+            .map(|shortcut| (shortcut.key.as_str(), shortcut.seconds))
+            .collect();
+        // F8 belongs to Save clip; the second Shift+F8 is a duplicate; at most four are kept.
+        assert_eq!(kept, [("", 30), ("Shift+F8", 5), ("", 120), ("", 60)]);
+        // Older settings without the field load with none.
+        let old: Hotkeys = serde_json::from_value(serde_json::json!({"save_clip": "F8"})).unwrap();
+        assert!(old.clip_lengths.is_empty());
+        assert_eq!(describe_seconds(90), "1 min 30 sec");
+        assert_eq!(describe_seconds(120), "2 min");
+        assert_eq!(describe_seconds(15), "15 sec");
     }
 }

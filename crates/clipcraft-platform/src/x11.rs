@@ -111,12 +111,13 @@ fn window_pid(conn: &RustConnection, window: Window) -> Option<u32> {
         .next()
 }
 
-/// Finds an X11 client window owned by `process_id`.
-pub fn window_for_process(
+/// Finds the largest X11 client window owned by any of `process_ids`.
+pub fn window_for_processes(
     display: Option<&str>,
-    process_id: u32,
+    process_ids: &[u32],
 ) -> Result<Option<CaptureTarget>, CaptureError> {
-    if process_id == 0 {
+    let process_ids: Vec<u32> = process_ids.iter().copied().filter(|id| *id != 0).collect();
+    if process_ids.is_empty() {
         return Ok(None);
     }
     let (conn, screen_number) = connect(display)?;
@@ -147,7 +148,7 @@ pub fn window_for_process(
     // is the game.
     let mut best: Option<(u64, CaptureTarget)> = None;
     for window in windows.take(MAX_WINDOWS) {
-        if window_pid(&conn, window) != Some(process_id) {
+        if !window_pid(&conn, window).is_some_and(|owner| process_ids.contains(&owner)) {
             continue;
         }
         let viewable = conn
@@ -185,6 +186,81 @@ pub fn window_for_process(
         }
     }
     Ok(best.map(|(_, target)| target))
+}
+
+/// Every mapped client window the window manager lists, with its owner process and `WM_CLASS`.
+pub fn owned_windows(display: Option<&str>) -> Result<Vec<crate::OwnedWindow>, CaptureError> {
+    let (conn, screen_number) = connect(display)?;
+    let root = conn
+        .setup()
+        .roots
+        .get(screen_number)
+        .ok_or(CaptureError::NoProvider)?
+        .root;
+    let (Some(list), Some(net_name), Some(utf8)) = (
+        atom(&conn, b"_NET_CLIENT_LIST"),
+        atom(&conn, b"_NET_WM_NAME"),
+        atom(&conn, b"UTF8_STRING"),
+    ) else {
+        return Ok(Vec::new());
+    };
+    let Some(reply) = conn
+        .get_property(false, root, list, AtomEnum::WINDOW, 0, MAX_WINDOWS as u32)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+    else {
+        return Ok(Vec::new());
+    };
+    let Some(ids) = reply.value32() else {
+        return Ok(Vec::new());
+    };
+    let mut found = Vec::new();
+    for window in ids.take(MAX_WINDOWS) {
+        let viewable = conn
+            .get_window_attributes(window)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .is_some_and(|attributes| {
+                attributes.map_state == x11rb::protocol::xproto::MapState::VIEWABLE
+            });
+        let Some(geometry) = conn
+            .get_geometry(window)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+        else {
+            continue;
+        };
+        if !viewable || geometry.width == 0 || geometry.height == 0 {
+            continue;
+        }
+        // WM_CLASS is "instance\0class\0"; both halves are kept, separated by a space.
+        let class = conn
+            .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 64)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .map(|reply| {
+                reply
+                    .value
+                    .split(|byte| *byte == 0)
+                    .filter(|part| !part.is_empty())
+                    .map(|part| String::from_utf8_lossy(part).into_owned())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
+        found.push(crate::OwnedWindow {
+            target: CaptureTarget {
+                id: format!("window:{window:x}"),
+                name: window_name(&conn, window, net_name, utf8),
+                kind: TargetKind::Window,
+                width: u32::from(geometry.width),
+                height: u32::from(geometry.height),
+            },
+            process_id: window_pid(&conn, window).unwrap_or(0),
+            class,
+        });
+    }
+    Ok(found)
 }
 
 pub fn list_targets(display: Option<&str>) -> Result<Vec<CaptureTarget>, CaptureError> {

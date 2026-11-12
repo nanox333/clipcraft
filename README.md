@@ -5,7 +5,7 @@ with a hotkey, then play, search, trim and export your clips.** It works fully o
 account, server, telemetry, upload or share-link service, and everything you record stays on your
 computer.
 
-> **Status: early release.** Version 0.2.0 is the latest published release.
+> **Status: early release.** Version 0.2.1 is the latest published release.
 > The current source has Windows/AMD and Linux/X11 generated-capture evidence, while real games,
 > other devices and Wayland remain incompletely tested. macOS capture is not implemented. See
 > [`docs/gaps.md`](docs/gaps.md) for current evidence and limits.
@@ -14,7 +14,7 @@ Automated checks run on Linux and Windows; they do not replace testing on real c
 
 ## Download
 
-Download [ClipCraft 0.2.0](https://github.com/nanox333/clipcraft/releases/tag/v0.2.0) as a Windows
+Download [ClipCraft 0.2.1](https://github.com/nanox333/clipcraft/releases/tag/v0.2.1) as a Windows
 **ClipCraft-Setup** installer or a Linux x86_64 tarball. The command-line tool is available as a
 separate download. The Windows installer works for the current user and needs no administrator
 rights or account.
@@ -25,7 +25,9 @@ version is published and install it for you (Settings → About); turn the autom
 Settings → General and it never goes online. See [`CHANGELOG.md`](CHANGELOG.md) for each release.
 
 New profiles get a short setup for storage, capture, audio and shortcuts. Each hotkey action
-supports up to five shortcuts: use **+** in Settings → Hotkeys.
+supports up to five shortcuts: use **+** in Settings → Hotkeys. **Clip-length shortcuts** give
+keys their own clip length, for example Shift + F8 for the last 2 minutes next to F8 for the
+whole replay.
 On Wayland, ClipCraft asks the desktop's Global Shortcuts portal to register keys. Settings →
 Hotkeys shows the desktop's assigned keys and offers an explicit, default-off keyboard-device
 fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
@@ -33,7 +35,9 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
 ## What it does
 
 - **Record and replay:** capture a screen or game window into a bounded replay buffer and save the
-  last moments with a global hotkey. Game-only mode waits until a recognized game is running.
+  last moments with a global hotkey. Game-only mode waits until a recognized game is running and
+  follows it to the window it actually draws in, even when a launcher starts the game process;
+  if no window can be found it records the screen until one appears.
   The capture bar shows the available replay against the requested clip length and reports when
   buffered footage is cleared by a source or recording-stream change. Hover over it for the
   encoder, frame counts, output size, and audio-source status.
@@ -42,8 +46,9 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
   continues on the processor and the card is tried again every 20 s or longer.
 - **Audio:** system sound and microphone, mixed or on separate tracks, with optional offline
   microphone noise suppression and a mic test.
-- **Library:** a searchable local clip library with favorites, collections and game labels. Delete
-  clips to the Recycle Bin from a right-click menu.
+- **Library:** a searchable local clip library with favorites, collections and game labels.
+  Rename a clip (F2) without losing its favorite, collections or game, and delete clips to the
+  Recycle Bin from a right-click menu. A focused card opens with Enter and favorites with F.
 - **Playback and editing:** smooth playback, quick trims, small-file and GIF export, loudness
   evening, and a small sequence editor with text, fades and colour effects.
 - **Desktop:** one shared spacing, radius, type and control-height scale (`kit::space`, `kit::radius`, `kit::text_size`, `kit::control`) across every screen; searchable, categorized Settings; system tray (Windows); a "clip saved" pop-up that
@@ -88,6 +93,12 @@ settings, thumbnails and the library index stay on the device, and source clips 
 overwritten by trim or export. FFmpeg is used only as an external test tool. Source boundaries are
 in [`docs/upstream-ports.md`](docs/upstream-ports.md).
 
+To recognize games, ClipCraft reads the list of running programs and Steam's local game-list
+files on your computer; nothing from them leaves the device. Steam's files are re-read only when
+a game is installed or removed (or on Refresh, or every 30 minutes). On Windows it finds Steam's
+folder from the registry, so Steam installed on another drive works too. Turn off **Switch recording
+automatically** in Settings → Games to stop both.
+
 ## Build, run, and test
 
 Install the pinned Rust toolchain with `rustfmt` and `clippy`, then install the license checker:
@@ -112,6 +123,7 @@ cargo run --package clipcraft-cli -- capture targets
 cargo run --package clipcraft-cli -- capture record --seconds 30
 cargo run --package clipcraft-cli -- library scan /path/to/clips
 cargo run --package clipcraft-cli -- library probe /path/to/clip.mp4
+cargo run --package clipcraft-cli -- library rename /path/to/clip.mp4 "Ace clutch"
 cargo run --package clipcraft-cli -- clip trim input.mp4 output.mp4 2 8
 cargo run --package clipcraft-cli -- clip export input.mp4 smaller.mp4 2 8 10
 cargo run --package clipcraft-cli -- clip gif input.mp4 clip.gif 2 8
@@ -122,12 +134,16 @@ cargo run --package clipcraft-cli -- diagnose
 The desktop app needs a graphical session and an available capture provider for recording. See
 [`docs/testing.md`](docs/testing.md) for focused test commands and platform evidence requirements.
 For compression, the last CLI argument is the estimated target in decimal MB. In the player, open
-Trim (T), choose an Export option, and save the new file beside the original. Output can be smaller
-or larger than the estimate; the completion message and CLI JSON report its actual bytes.
+Trim (T), choose an Export option, and save the new file beside the original. If the first encode
+comes out bigger than the target, it is encoded once more at a lower bitrate (and, for a big
+overshoot, a smaller picture) before anything is saved; the completion message and CLI JSON report
+the actual bytes and whether it was re-encoded (`retried`).
 
 ## Project docs
 
 - [`CHANGELOG.md`](CHANGELOG.md) — what each release contains.
+- [`docs/how-it-works.md`](docs/how-it-works.md) — how recording, saving, game detection, the
+  library, export and the editor work, start to finish.
 - [`docs/features.md`](docs/features.md) — detailed features and platform limits.
 - [`ROADMAP.md`](ROADMAP.md) — milestone status and release gates.
 - [`PLAN.md`](PLAN.md) — product direction, architecture choices, and intended MVP.

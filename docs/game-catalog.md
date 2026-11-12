@@ -405,12 +405,18 @@ These are identification candidates, not a tested capture compatibility list.
 - Game versions/storefronts can change executables. Add a custom override when needed. Custom
   rules remain unchanged by catalog updates, and exclusions use stable game IDs. A catalog update
   may add identification variants for an enabled known game; excluded entries remain excluded.
-- Detection still needs a capturable game window. Wayland process-to-window matching, macOS
+- Detection still needs a capturable game window. It is looked for in the recognized process, the
+  processes it started (FiveM's game process, Unreal `-Shipping` executables started by a
+  bootstrap) and other processes recognized as the same game; the largest visible window wins,
+  even with an empty title. When that window closes while the game keeps running (a launcher or
+  loading window replaced by the game's own), capture restarts on the new window. A window whose
+  own process or class (`steam_app_<id>` on X11) names the game is a second chance, and with no
+  window at all the screen is recorded until one appears (Settings › Games). Wayland
+  process-to-window matching, macOS
   capture, protected games and real-game evidence remain subject to the existing platform gaps.
 - Recognition does not retroactively tag existing videos. Newly saved game-managed clips use
   the matched custom or built-in name through the captured-game metadata path.
-- Local Steam manifests now supply names and exact IDs beyond the bundled list. Vice-style
-  window-class/compositor matching remains unavailable; Steam metadata does not bypass the need
+- Local Steam manifests now supply names and exact IDs beyond the bundled list. Steam metadata does not bypass the need
   for a capturable window. Exited zombie processes are ignored when deciding whether a game runs.
 
 ## Local CLI
@@ -452,8 +458,11 @@ Steam adapter below resolves installed IDs and names without this database.
 ## Installed Steam discovery and automatic switching
 
 **Recognize installed Steam games** is enabled under automatic recognition. One background worker
-reads local `steamapps/libraryfolders.vdf` and `appmanifest_*.acf` files, caches the catalog for
-30 seconds and refreshes it on request. It also runs process matching and the running-app picker;
+reads local `steamapps/libraryfolders.vdf` and `appmanifest_*.acf` files once, then reads them
+again only on request, when the modification time of the library list or of a library's
+`steamapps` folder changes (checked every 30 seconds without opening any file; installing or
+removing a game changes it), and at least every 30 minutes. Security tools that log file reads
+(ESET HIPS, for example) therefore see the manifests read rarely instead of every 30 seconds. It also runs process matching and the running-app picker;
 UI rendering does not enumerate processes or parse manifests. One pending request replaces older
 requests, and results from obsolete settings cannot start recording.
 
@@ -462,8 +471,10 @@ global recognition switch and both bundled and installed-ID exclusions remain ef
 executable paths beneath installed game directories can supply Steam IDs locally; full process
 paths are not returned or stored. Generic launchers/crash helpers are excluded from this inference.
 Linux Steam process IDs take precedence over path inference. Discovery checks standard Windows
-Steam roots, Linux native/Flatpak roots and the macOS default root; custom Windows installations
-are not located through the registry. macOS capture itself remains unavailable.
+Steam roots, Linux native/Flatpak roots and the macOS default root. On Windows the folder Steam
+records in the registry (`SteamPath` for the user, `InstallPath` for the machine) is checked first,
+so Steam installed on another drive is found; values that are not plain absolute drive paths are
+ignored. Additional libraries come from `libraryfolders.vdf` as before. macOS capture itself remains unavailable.
 
 Parsing is bounded to 64 roots/libraries, 4,096 entries, 1,024 games, 12 nesting levels and 100,000
 tokens per metadata file. Library indexes are at most 1 MiB; manifests at most 64 KiB. Install
