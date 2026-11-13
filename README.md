@@ -109,7 +109,9 @@ in [`docs/upstream-ports.md`](docs/upstream-ports.md).
 ClipCraft guards the computer it runs on: it caps its own memory use and file growth, ends clipboard
 tools that hang, only ever contacts GitHub (for the optional update check), and a watchdog lightens
 and then stops clipping if ClipCraft itself would starve the processor. Dependencies are checked
-against the RustSec advisory list before each release (`cargo deny check advisories`).
+against the RustSec advisory list before each release (`cargo deny check advisories`). Updates
+are verified against a published checksum and, once a release key is configured, an ed25519
+signature (see `docs/release-checklist.md`).
 
 To recognize games, ClipCraft reads the list of running programs and Steam's local game-list
 files on your computer; nothing from them leaves the device. Steam's files are re-read only when

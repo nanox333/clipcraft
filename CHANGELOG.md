@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Signed updates (ready, switched on by a key):** an update can now be checked against an ed25519
+  signature of the release's checksum list, not only against the checksum published beside it, so a
+  compromised download page cannot push a changed installer. It needs a key: `cargo xtask
+  sign-keygen`, then the steps in `docs/release-checklist.md`. Until a key is set, nothing changes.
+- **Hostile-file test:** damaged and truncated MP4 and MKV files (176 variants of a real clip)
+  go through the header probe, thumbnail maker and player; none panics or hangs.
 - **Safety review:** updated two dependencies with known problems (`rustix`, which had a
   memory-safety advisory in functions ClipCraft does not call, and the yanked `clipboard-win`
   and `async-executor`); the clipboard tools used by Copy file can no longer hang the window (they

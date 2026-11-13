@@ -94,9 +94,27 @@ capped). `cargo deny check advisories` now passes (it needs network, so it is no
 reached through other crates (`paste`, `ttf-parser`, `zbus_names`, `zvariant`, `zvariant_derive`;
 fixing the last three means moving to zbus 6, which removed the blocking API the shortcut and
 portal code uses), listed with reasons in `deny.toml`; updates are authenticated only by HTTPS to
-GitHub and a checksum published beside the download (there is no signature, so a compromised
-release would be trusted); the OLE drag on Windows blocks the window until the drop. **Not done:** a
-fuzzing pass over the media parsers (they are FilmCraft's, with size caps on our side).
+GitHub and a checksum published beside the download until a release key is set (see below); the OLE
+drag on Windows blocks the window until the drop.
+
+**Follow-up (the above, worked through):**
+- *Signatures:* `update.rs` verifies an ed25519 signature of `SHA256SUMS.txt` (`SHA256SUMS.txt.sig`)
+  against `update_key::RELEASE_PUBLIC_KEY`; with a key set, no signature or a wrong one refuses the
+  update. `cargo xtask sign-keygen` / `sign` make and use the keys and the release workflow signs
+  when the secret exists. Tested: good, tampered, wrong-key, garbage and missing signatures. **The
+  key itself has not been made**: that is a maintainer step (the private half must never be in a
+  chat or a repository), so updates are still checksum-only until it is.
+- *Hostile files:* `tests/hostile_files.rs` runs 176 truncated, bit-flipped and zeroed variants of a
+  real MP4 and MKV through the probe, thumbnail maker and player (every third) with a panic counter:
+  none panicked, hung or ballooned. A fixed pass, not open-ended fuzzing; the parsers' unsafe-free
+  Rust and size caps are what it exercises.
+- *Unmaintained crates:* moving our own zbus use to 6 was tried and works (an adapter keeps the
+  blocking calls; all portal tests pass) but achieves nothing, because `zvariant` and `zbus_names`
+  also arrive through eframe's accessibility layer (accesskit, atspi) on zbus 5, so it only added a
+  second copy; reverted. eframe 0.37 would drop `ttf-parser` (checked: about 28 compile errors in the
+  app, not attempted: a UI toolkit upgrade across four versions cannot be judged by eye here). Both
+  stay in `deny.toml` with reasons.
+- *Windows drag blocking:* inherent to OLE's `DoDragDrop`; not changed.
 
 ## Safety watchdog (a report of 100% processor use and a near-crash)
 

@@ -78,6 +78,23 @@ that the release tag points to the intended commit and that both platform packag
 from it. Store release notes in `docs/releases/v<version>.md` before running the workflow. There is
 no macOS download (no macOS provider yet).
 
+## Signing releases (once, then automatic)
+
+Updates are checked against a signed checksum list once a release key is configured.
+
+1. Run `cargo xtask sign-keygen`. It prints a public key and a private key.
+2. Put the **public** key in `crates/clipcraft-engine/src/update_key.rs` (`RELEASE_PUBLIC_KEY`) and
+   commit it. From the first release built after that, ClipCraft installs an update only if
+   `SHA256SUMS.txt.sig` verifies against it. **Release that version unsigned-compatible first**:
+   people on older versions do not check signatures, and a version with the key set refuses
+   unsigned updates, so the first release carrying the key must itself be signed.
+3. Store the **private** key as the repository secret `CLIPCRAFT_SIGNING_KEY` and nowhere else. The
+   release workflow signs `SHA256SUMS.txt` with it (`cargo xtask sign`) and uploads
+   `SHA256SUMS.txt.sig`. If the secret is missing the workflow still works and the release is
+   unsigned, which a version with the key set will refuse to install.
+4. Losing the private key means shipping a new public key in a release signed by the old one, or
+   asking people to reinstall by hand.
+
 ## Dependency advisories
 
 Run `cargo deny check advisories` before publishing (it needs network, so it is not part of

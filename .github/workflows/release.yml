@@ -78,6 +78,10 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+    env:
+      # The private release key (see docs/release-checklist.md). Without it the release is built
+      # as before, unsigned.
+      CLIPCRAFT_SIGNING_KEY: ${{ secrets.CLIPCRAFT_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -88,6 +92,11 @@ jobs:
       - name: Write checksums
         working-directory: dist
         run: sha256sum clipcraft-* ClipCraft-* > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - uses: dtolnay/rust-toolchain@stable
+        if: env.CLIPCRAFT_SIGNING_KEY != ''
+      - name: Sign the checksums
+        if: env.CLIPCRAFT_SIGNING_KEY != ''
+        run: cargo xtask sign dist/SHA256SUMS.txt
       - name: Create or refresh the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

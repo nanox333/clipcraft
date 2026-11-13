@@ -44,6 +44,7 @@ mod session;
 mod startup;
 mod steam_games;
 pub mod update;
+mod update_key;
 pub use steam_games::{
     MAX_STEAM_GAMES, SteamFingerprint, SteamGame, SteamGames, steam_app_id_in_window_class,
     steam_fingerprint,

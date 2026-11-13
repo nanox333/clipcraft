@@ -41,14 +41,70 @@ fn run(arguments: Vec<OsString>) -> TaskResult<()> {
         "assets" => check_assets(),
         "licenses" => check_licenses(),
         "package" => package(),
+        "sign-keygen" => sign_keygen(),
+        "sign" => {
+            let file = arguments.get(1).ok_or(TaskError::Usage)?;
+            sign_file(Path::new(file))
+        }
         "help" | "--help" | "-h" => {
             println!(
-                "ClipCraft Rust tasks: ci, docs-check <base-ref>, layers, assets, licenses, package"
+                "ClipCraft Rust tasks: ci, docs-check <base-ref>, layers, assets, licenses, package, sign-keygen, sign <file>"
             );
             Ok(())
         }
         _ => Err(TaskError::Usage),
     }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Makes the key pair that signs releases. The public half goes in
+/// `crates/clipcraft-engine/src/update_key.rs`; the private half is stored as the repository
+/// secret `CLIPCRAFT_SIGNING_KEY` and nowhere else.
+fn sign_keygen() -> TaskResult<()> {
+    let mut seed = [0_u8; 32];
+    getrandom::fill(&mut seed).map_err(|_| TaskError::SigningFailed)?;
+    let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
+    println!("Public key (put this in crates/clipcraft-engine/src/update_key.rs):");
+    println!("{}", hex(signing.verifying_key().as_bytes()));
+    println!();
+    println!(
+        "Private key (store as the CLIPCRAFT_SIGNING_KEY repository secret; show it to no one):"
+    );
+    println!("{}", hex(&seed));
+    Ok(())
+}
+
+/// The hexadecimal signature of `data` made with the private key `secret_hex`.
+fn sign_bytes(secret_hex: &str, data: &[u8]) -> TaskResult<String> {
+    use ed25519_dalek::Signer;
+    let text = secret_hex.trim();
+    if text.len() != 64 || !text.is_ascii() {
+        return Err(TaskError::SigningFailed);
+    }
+    let mut seed = [0_u8; 32];
+    for (byte, pair) in seed.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+        *byte = std::str::from_utf8(pair)
+            .ok()
+            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+            .ok_or(TaskError::SigningFailed)?;
+    }
+    let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
+    Ok(hex(&signing.sign(data).to_bytes()))
+}
+
+/// Writes `<file>.sig`, the signature of `file` made with the key in `CLIPCRAFT_SIGNING_KEY`.
+fn sign_file(file: &Path) -> TaskResult<()> {
+    let secret = env::var("CLIPCRAFT_SIGNING_KEY").map_err(|_| TaskError::SigningFailed)?;
+    let data = fs::read(file).map_err(|_| TaskError::SigningFailed)?;
+    let signature = sign_bytes(&secret, &data)?;
+    let mut target = file.as_os_str().to_owned();
+    target.push(".sig");
+    fs::write(&target, format!("{signature}\n")).map_err(|_| TaskError::SigningFailed)?;
+    println!("Signed {}", file.display());
+    Ok(())
 }
 
 fn ci() -> TaskResult<()> {
@@ -521,12 +577,16 @@ enum TaskError {
     LicenseAuditFailed,
     WorkspacePath,
     PackageFailed,
+    SigningFailed,
 }
 
 impl fmt::Display for TaskError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
             Self::PackageFailed => "the release package could not be built",
+            Self::SigningFailed => {
+                "signing failed: CLIPCRAFT_SIGNING_KEY must be the 64-character private key and the file must be readable"
+            }
             Self::Usage => {
                 "usage: cargo xtask <ci|docs-check <base-ref>|layers|assets|licenses|package>"
             }
@@ -631,5 +691,31 @@ mod tests {
 
         assert!(missing_documentation(&implementation_and_docs).is_empty());
         assert!(missing_documentation(&docs_only).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod signing_tests {
+    use super::*;
+
+    #[test]
+    fn what_xtask_signs_is_what_the_engine_verifies() {
+        let secret = "07".repeat(32);
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
+        let public = hex(signing.verifying_key().as_bytes());
+        let signature = sign_bytes(&secret, b"the checksum list").unwrap();
+        assert!(clipcraft_engine::update::signature_is_valid(
+            &public,
+            b"the checksum list",
+            &signature
+        ));
+        assert!(!clipcraft_engine::update::signature_is_valid(
+            &public,
+            b"another list",
+            &signature
+        ));
+        // A private key that is not 64 hexadecimal characters is refused.
+        assert!(sign_bytes("short", b"x").is_err());
+        assert!(sign_bytes(&"zz".repeat(32), b"x").is_err());
     }
 }
