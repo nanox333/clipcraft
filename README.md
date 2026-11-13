@@ -76,6 +76,21 @@ For a bug report without the desktop UI, pass JSON such as
 
 Details and known limits for every feature are in [`docs/features.md`](docs/features.md).
 
+## Measured performance
+
+Numbers from real runs, with their limits, in [`docs/windows-performance.md`](docs/windows-performance.md)
+and [`docs/performance.md`](docs/performance.md). They use a generated workload (a moving window and a
+tone), not a real game, on one AMD Ryzen 7 5700X3D with an AMD graphics card, so read them as what
+ClipCraft itself costs, not as FPS in your game:
+
+| Run (Windows, graphics-card encoder) | Result |
+| --- | --- |
+| 1080p60, one minute | 31.5% of one logical core on average (including the generated workload), about 169 MiB of memory, 13 of 3,602 pictures dropped (0.36%), no frame copied back to the processor |
+| 1080p30, two hours | 8 of 216,000 pictures dropped (0.0037%), memory peak 178 MiB, 24 of 24 saved checkpoints decoded cleanly |
+
+On a processor-only Linux test machine the built-in encoder reached about 53 pictures a second at
+1440x900 on two threads. Not measured: a real game, other graphics cards, power use.
+
 ## Screenshots
 
 ClipCraft 0.2.0 on Linux, shown with generated sample clips.

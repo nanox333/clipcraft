@@ -1255,6 +1255,12 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                 settings::info_row(ui, "Sound", sound, false);
                 settings::info_row(
                     ui,
+                    "Pop-ups and sounds",
+                    "Off. Turn them on in Settings",
+                    false,
+                );
+                settings::info_row(
+                    ui,
                     "Clips go to",
                     &if setup.draft.capture_folder.is_empty() {
                         "The default folder".to_owned()

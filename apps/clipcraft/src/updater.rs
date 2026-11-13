@@ -13,6 +13,11 @@ use eframe::egui::{self, Align, Layout, RichText, Stroke};
 use crate::kit::{self, BORDER, CARD, MUTED, TEXT};
 use crate::{ClipCraftApp, Icon};
 
+/// Whether closing ClipCraft for an update now would cut off a recording or a clip being saved.
+fn installing_would_interrupt(clipping: bool, saving: bool) -> bool {
+    clipping || saving
+}
+
 /// This build's version, compared with the latest published one.
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
@@ -30,6 +35,9 @@ pub(crate) enum Updater {
     Available(UpdateInfo),
     /// Fetching and verifying the setup program.
     Downloading(UpdateInfo, mpsc::Receiver<Result<String, EngineError>>),
+    /// The setup program is downloaded and verified, and waits for a moment when nothing is being
+    /// recorded: an update never closes ClipCraft in the middle of clipping or saving a clip.
+    Ready(UpdateInfo, String),
     /// The check or download failed.
     Failed(String),
 }
@@ -45,12 +53,19 @@ impl Updater {
             Self::Downloading(update, _) => {
                 format!("Downloading version {}\u{2026}", update.version)
             }
+            Self::Ready(update, _) => format!(
+                "Version {} is downloaded. It installs as soon as you stop clipping.",
+                update.version
+            ),
             Self::Failed(why) => why.clone(),
         }
     }
 
     fn busy(&self) -> bool {
-        matches!(self, Self::Checking(_) | Self::Downloading(..))
+        matches!(
+            self,
+            Self::Checking(_) | Self::Downloading(..) | Self::Ready(..)
+        )
     }
 }
 
@@ -118,18 +133,8 @@ impl ClipCraftApp {
                 }
             },
             Updater::Downloading(update, receiver) => match receiver.try_recv() {
-                Ok(Ok(path)) => {
-                    // The setup program replaces this version; it needs ClipCraft closed.
-                    match std::process::Command::new(&path).spawn() {
-                        Ok(_) => {
-                            crate::tray::Tray::quit(context);
-                            Some(Updater::Available(update.clone()))
-                        }
-                        Err(_) => Some(Updater::Failed(format!(
-                            "The update was downloaded to {path} but could not be started. Run it yourself."
-                        ))),
-                    }
-                }
+                // Installing waits its turn (see `Updater::Ready`).
+                Ok(Ok(path)) => Some(Updater::Ready(update.clone(), path)),
                 Ok(Err(error)) => Some(Updater::Failed(error.to_string())),
                 Err(mpsc::TryRecvError::Empty) => {
                     context.request_repaint_after(Duration::from_millis(300));
@@ -139,6 +144,23 @@ impl ClipCraftApp {
                     Some(Updater::Failed(EngineError::UpdateUnavailable.to_string()))
                 }
             },
+            Updater::Ready(update, path) => {
+                if installing_would_interrupt(self.capture.is_active(), self.capture.is_saving()) {
+                    context.request_repaint_after(Duration::from_secs(2));
+                    None
+                } else {
+                    // The setup program replaces this version; it needs ClipCraft closed.
+                    match std::process::Command::new(path).spawn() {
+                        Ok(_) => {
+                            crate::tray::Tray::quit(context);
+                            Some(Updater::Available(update.clone()))
+                        }
+                        Err(_) => Some(Updater::Failed(format!(
+                            "The update was downloaded to {path} but could not be started. Run it yourself."
+                        ))),
+                    }
+                }
+            }
             _ => None,
         };
         if let Some(next) = next {
@@ -252,5 +274,38 @@ impl ClipCraftApp {
         if let Some(update) = install {
             self.download_update(update, ui.ctx());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_update_waits_while_clipping_or_saving_and_goes_ahead_when_idle() {
+        assert!(installing_would_interrupt(true, false));
+        assert!(installing_would_interrupt(false, true));
+        assert!(installing_would_interrupt(true, true));
+        assert!(!installing_would_interrupt(false, false));
+    }
+
+    #[test]
+    fn a_downloaded_update_is_described_as_waiting_and_blocks_a_second_check() {
+        let update = UpdateInfo {
+            version: "9.9.9".into(),
+            notes: String::new(),
+            page_url: String::new(),
+            setup_name: "ClipCraft-Setup-9.9.9.exe".into(),
+            setup_url: String::new(),
+            sums_url: String::new(),
+            sig_url: String::new(),
+        };
+        let waiting = Updater::Ready(update, "C:\\x.exe".into());
+        assert!(
+            waiting
+                .summary()
+                .contains("installs as soon as you stop clipping")
+        );
+        assert!(waiting.busy());
     }
 }

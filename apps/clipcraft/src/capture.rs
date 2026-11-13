@@ -317,6 +317,11 @@ impl CaptureState {
         self.game_session.is_some() || self.desktop_fallback
     }
 
+    /// A clip is being written (or waiting for its post-roll).
+    pub fn is_saving(&self) -> bool {
+        self.saving.is_some()
+    }
+
     /// Starts recording a synthetic picture, so tests can have a clipping session.
     #[cfg(test)]
     pub(crate) fn start_synthetic(&mut self, settings: &RecordingSettings) {
