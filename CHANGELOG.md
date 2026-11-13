@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-11-13
 
 - **Automatic quality notices a game taking the computer:** besides dropped pictures, it now lowers
   the rate when the encoder is busy more than 60% of the time and each picture takes at least 1.5

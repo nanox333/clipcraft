@@ -700,7 +700,7 @@ dependencies = [
 
 [[package]]
 name = "clipcraft"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "clipcraft-audio-out",
  "clipcraft-capture",
@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "clipcraft-audio-out"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "clipcraft-engine",
  "clipcraft-player",
@@ -731,7 +731,7 @@ dependencies = [
 
 [[package]]
 name = "clipcraft-capture"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "clipcraft-time",
  "serde",
@@ -739,7 +739,7 @@ dependencies = [
 
 [[package]]
 name = "clipcraft-cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "clipcraft-audio-out",
  "clipcraft-capture",
@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "clipcraft-engine"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "clipcraft-capture",
  "clipcraft-export",
@@ -773,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "clipcraft-export"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "clipcraft-capture",
  "clipcraft-media",
@@ -799,11 +799,11 @@ dependencies = [
 
 [[package]]
 name = "clipcraft-frame"
-version = "0.2.1"
+version = "0.3.0"
 
 [[package]]
 name = "clipcraft-installer"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "clipcraft-engine",
  "clipcraft-platform",
@@ -813,7 +813,7 @@ dependencies = [
 
 [[package]]
 name = "clipcraft-media"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "clipcraft-time",
  "filmcraft-isobmff",
@@ -823,7 +823,7 @@ dependencies = [
 
 [[package]]
 name = "clipcraft-platform"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-io",
  "clipcraft-capture",
@@ -855,7 +855,7 @@ dependencies = [
 
 [[package]]
 name = "clipcraft-player"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "clipcraft-frame",
  "clipcraft-time",
@@ -871,7 +871,7 @@ dependencies = [
 
 [[package]]
 name = "clipcraft-record"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "clipcraft-capture",
  "clipcraft-time",
@@ -884,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "clipcraft-time"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "filmcraft-time",
 ]
@@ -5888,7 +5888,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "clipcraft-engine",
  "ed25519-dalek",

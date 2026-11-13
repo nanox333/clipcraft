@@ -80,7 +80,7 @@ last**.
 
 The downloads are **not code-signed**, so Windows SmartScreen may show "unknown publisher" until a
 user chooses More info, then Run anyway; `INSTALL.txt` in each download says so. The workflow ran
-successfully for the published 0.1.0, 0.2.0 and 0.2.1 releases (0.2.1 was started by hand from the Actions tab). Before publishing, verify
+successfully for the published 0.1.0, 0.2.0 and 0.2.1 releases (0.2.1 was started by hand from the Actions tab; 0.3.0 was the first to build two releases, the app and the command line tool). Before publishing, verify
 that the release tag points to the intended commit and that both platform packages were rebuilt
 from it. Store release notes in `docs/releases/v<version>.md` before running the workflow. There is
 no macOS download (no macOS provider yet).
