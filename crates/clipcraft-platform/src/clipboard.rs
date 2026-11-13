@@ -103,6 +103,26 @@ fn file_uri(path: &Path) -> String {
     uri
 }
 
+/// Waits a few seconds for a clipboard tool to finish, and ends it if it does not, so a stuck tool
+/// can never freeze the window. True when it finished and succeeded.
+#[cfg(not(windows))]
+fn finished_in_time(child: &mut std::process::Child) -> bool {
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if start.elapsed() < std::time::Duration::from_secs(3) => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
 #[cfg(not(windows))]
 pub fn copy_file_to_clipboard(path: &Path) -> Result<(), String> {
     use std::io::Write;
@@ -156,7 +176,7 @@ pub fn copy_file_to_clipboard(path: &Path) -> Result<(), String> {
         if let Some(mut input) = child.stdin.take() {
             let _ = input.write_all(list.as_bytes());
         }
-        if child.wait().is_ok_and(|status| status.success()) {
+        if finished_in_time(&mut child) {
             return Ok(());
         }
     }
@@ -166,6 +186,18 @@ pub fn copy_file_to_clipboard(path: &Path) -> Result<(), String> {
 #[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tool_that_never_finishes_is_ended_instead_of_waited_for_forever() {
+        let Ok(mut child) = std::process::Command::new("sleep").arg("60").spawn() else {
+            return;
+        };
+        let start = std::time::Instant::now();
+        assert!(!finished_in_time(&mut child));
+        assert!(start.elapsed() < std::time::Duration::from_secs(10));
+        let mut quick = std::process::Command::new("true").spawn().unwrap();
+        assert!(finished_in_time(&mut quick));
+    }
 
     #[test]
     fn a_path_becomes_a_file_uri_with_the_unsafe_bytes_escaped() {

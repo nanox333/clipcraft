@@ -3,7 +3,7 @@
 #![cfg(all(unix, not(target_os = "macos")))]
 
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use x11rb::connection::Connection;
@@ -15,6 +15,9 @@ use x11rb::protocol::xtest::fake_input;
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
+
+/// Only one drag runs at a time in a process, so these tests take turns.
+static ONE_DRAG: Mutex<()> = Mutex::new(());
 
 struct Server {
     child: Child,
@@ -138,6 +141,9 @@ fn pointer(conn: &RustConnection, root: u32, kind: u8, detail: u8, x: i16, y: i1
 
 #[test]
 fn a_dragged_file_reaches_a_window_that_takes_drops_as_a_uri_list() {
+    let _turn = ONE_DRAG
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let Some(server) = Server::start(74) else {
         eprintln!("Xvfb is not installed; skipping");
         return;
@@ -180,6 +186,9 @@ fn a_dragged_file_reaches_a_window_that_takes_drops_as_a_uri_list() {
 
 #[test]
 fn letting_go_over_nothing_drops_nothing_and_ends_the_drag() {
+    let _turn = ONE_DRAG
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let Some(server) = Server::start(75) else {
         eprintln!("Xvfb is not installed; skipping");
         return;
@@ -197,6 +206,43 @@ fn letting_go_over_nothing_drops_nothing_and_ends_the_drag() {
     std::thread::sleep(Duration::from_millis(100));
     pointer(&ctl, root, 5, 1, 50, 50);
     // Nothing to assert beyond not hanging or panicking; give the drag thread time to end.
+    std::thread::sleep(Duration::from_millis(300));
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn a_second_drag_while_one_is_running_is_refused_and_the_next_can_start_after() {
+    let _turn = ONE_DRAG
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(server) = Server::start(76) else {
+        eprintln!("Xvfb is not installed; skipping");
+        return;
+    };
+    let folder = std::env::temp_dir().join(format!("clipcraft-xdnd-two-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    let file = folder.join("clip.mp4");
+    std::fs::write(&file, b"clip").unwrap();
+    let (ctl, screen) = RustConnection::connect(Some(&server.display)).unwrap();
+    let root = ctl.setup().roots[screen].root;
+    pointer(&ctl, root, 6, 0, 50, 50);
+    pointer(&ctl, root, 4, 1, 50, 50);
+    clipcraft_platform::start_file_drag_on(&server.display, vec![file.clone()]).unwrap();
+    assert!(clipcraft_platform::start_file_drag_on(&server.display, vec![file.clone()]).is_err());
+    pointer(&ctl, root, 5, 1, 50, 50);
+    // Once the button is up the first drag ends and a new one may start.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        pointer(&ctl, root, 4, 1, 50, 50);
+        if clipcraft_platform::start_file_drag_on(&server.display, vec![file.clone()]).is_ok() {
+            break;
+        }
+        pointer(&ctl, root, 5, 1, 50, 50);
+        assert!(Instant::now() < deadline, "the drag never ended");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    pointer(&ctl, root, 5, 1, 50, 50);
     std::thread::sleep(Duration::from_millis(300));
     let _ = std::fs::remove_dir_all(&folder);
 }

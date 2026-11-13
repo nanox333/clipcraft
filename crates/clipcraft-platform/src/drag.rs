@@ -20,14 +20,37 @@ use std::path::PathBuf;
 /// * Anywhere else: `Err` with the reason, and nothing happens.
 pub fn start_file_drag(files: Vec<PathBuf>) -> Result<(), String> {
     check(&files)?;
-    platform::start(files, None)
+    let turn = take_turn()?;
+    platform::start(files, None, turn)
 }
 
 /// As [`start_file_drag`], on the X11 display named `display` (for tests on a virtual display).
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn start_file_drag_on(display: &str, files: Vec<PathBuf>) -> Result<(), String> {
     check(&files)?;
-    platform::start(files, Some(display))
+    let turn = take_turn()?;
+    platform::start(files, Some(display), turn)
+}
+
+/// Only one drag at a time: the pointer is followed until the button comes up, so a second drag
+/// started on top of the first would only duplicate that work.
+static DRAGGING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Holds the right to drag; releasing it (on drop) lets the next drag start.
+pub(crate) struct Turn(());
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        DRAGGING.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn take_turn() -> Result<Turn, String> {
+    if DRAGGING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        Err("a drag is already in progress".to_owned())
+    } else {
+        Ok(Turn(()))
+    }
 }
 
 fn check(files: &[PathBuf]) -> Result<(), String> {
@@ -77,7 +100,11 @@ mod platform {
         }
     }
 
-    pub fn start(files: Vec<PathBuf>, _display: Option<&str>) -> Result<(), String> {
+    pub fn start(
+        files: Vec<PathBuf>,
+        _display: Option<&str>,
+        _turn: super::Turn,
+    ) -> Result<(), String> {
         use std::os::windows::ffi::OsStrExt;
         // One list entry per file, each parsed by the shell into the identifier it uses.
         let mut lists: Vec<*mut ITEMIDLIST> = Vec::new();
@@ -134,7 +161,11 @@ mod platform {
 mod platform {
     use std::path::PathBuf;
 
-    pub fn start(files: Vec<PathBuf>, display: Option<&str>) -> Result<(), String> {
+    pub fn start(
+        files: Vec<PathBuf>,
+        display: Option<&str>,
+        turn: super::Turn,
+    ) -> Result<(), String> {
         if display.is_none() && std::env::var_os("DISPLAY").is_none_or(|value| value.is_empty()) {
             return Err("dragging out of the window needs an X11 session".to_owned());
         }
@@ -143,6 +174,7 @@ mod platform {
         std::thread::Builder::new()
             .name("clipcraft-drag".to_owned())
             .spawn(move || {
+                let _turn = turn;
                 let _ = drag.run();
             })
             .map(|_| ())
@@ -154,7 +186,11 @@ mod platform {
 mod platform {
     use std::path::PathBuf;
 
-    pub fn start(_files: Vec<PathBuf>, _display: Option<&str>) -> Result<(), String> {
+    pub fn start(
+        _files: Vec<PathBuf>,
+        _display: Option<&str>,
+        _turn: super::Turn,
+    ) -> Result<(), String> {
         Err("dragging out of the window is not available on macOS yet".to_owned())
     }
 }
@@ -179,6 +215,9 @@ mod xdnd {
     const VERSION: u32 = 5;
     /// How long to wait for the target to finish reading after the drop.
     const FINISH_TIMEOUT: Duration = Duration::from_secs(10);
+    /// The longest a drag may last: a pointer that never reports the button coming up must not
+    /// keep the drag (and its polling) alive for ever.
+    const LONGEST_DRAG: Duration = Duration::from_secs(300);
     /// How often the pointer is looked at.
     const POLL: Duration = Duration::from_millis(8);
     /// The most windows to look through, from the root down, for one that takes drops.
@@ -382,7 +421,11 @@ mod xdnd {
             let mut last_position = Instant::now() - POLL;
             let mut waiting_since: Option<Instant> = None;
             let mut dropped = false;
+            let started = Instant::now();
             loop {
+                if started.elapsed() > LONGEST_DRAG {
+                    return Ok(());
+                }
                 while let Some(event) = self
                     .conn
                     .poll_for_event()
