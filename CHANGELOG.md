@@ -10,8 +10,8 @@
   sign in, in the tray on Windows, with no window, pop-ups or sounds. It is registered only when
   the setup is finished, and Settings → General still controls it.
 
-- **Releases:** Windows now has a portable zip next to the setup program (unzip anywhere, run
-  `bin\clipcraft.exe`), and the command line tool is its own release (`cli-v<version>`) instead of
+- **Releases:** Windows now has a portable zip (`clipcraft-<version>-windows-x86_64-portable.zip`) next to the
+  setup program (unzip anywhere, run `bin\clipcraft.exe`), and the command line tool is its own release (`cli-v<version>`) instead of
   files inside the app's release. Each release has its own checksum list.
 
 - **Sound mixer (Windows and Linux):** Settings → Audio → Applications records the game, Discord, a music

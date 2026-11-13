@@ -4,7 +4,7 @@
 
 Linux and Windows CI ran the full gate (`cargo xtask ci`) on the 0.3.0 release commit. Two releases
 are built from one run: the app (Windows setup and portable zip, Linux tarball) and the command line
-tool on its own (`cli-v0.3.0`). Not verified: installing the setup or running the portable zip on a
+tool on its own (`cli-v0.3.0`); the Windows portable zip has `-portable` in its file name. Not verified: installing the setup or running the portable zip on a
 clean Windows machine, and the Windows-only features (per-program sound, drag into Discord, Copy
 file) and the pause, black-window rescue and automatic-quality changes with real games. The
 signing key is not set, so the packages and update checks are unsigned. One CI check, "a light

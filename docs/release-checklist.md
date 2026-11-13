@@ -42,7 +42,7 @@ alone.
 ### Offline Windows installer (M5.1a)
 
 `cargo xtask package` builds `target/dist/ClipCraft-Setup-<version>.exe`, the portable
-`clipcraft-<version>-windows-<arch>.zip` (unzip anywhere and run `bin\clipcraft.exe`; nothing is
+`clipcraft-<version>-windows-<arch>-portable.zip` (unzip anywhere and run `bin\clipcraft.exe`; nothing is
 installed) and a separate `clipcraft-cli-<version>-windows-<arch>.zip` (the CLI is not part of the
 app download or installer). The setup executable contains all application files and notices, installs
 to `%LOCALAPPDATA%/Programs/ClipCraft` by default, and needs no administrator/account/network.

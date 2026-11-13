@@ -542,7 +542,17 @@ More info, then Run anyway. Check the file against SHA256SUMS.txt from the relea
         )
         .map_err(fail)?;
     }
-    let archives = vec![pack(&cli_name)?, pack(&name)?];
+    // On Windows the portable download says so in its name, next to the setup program's.
+    let app_archive_name = if windows {
+        let portable = format!("{name}-portable");
+        let portable_folder = dist.join(&portable);
+        let _ = fs::remove_dir_all(&portable_folder);
+        fs::rename(&folder, &portable_folder).map_err(fail)?;
+        portable
+    } else {
+        name.clone()
+    };
+    let archives = vec![pack(&cli_name)?, pack(&app_archive_name)?];
     // On Windows the release workflow writes the checksums for every file together.
     if !windows {
         let sums = Command::new("sha256sum")
