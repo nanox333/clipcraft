@@ -186,6 +186,9 @@ pub enum AudioKind {
     Microphone,
     /// What the computer is playing.
     SystemOutput,
+    /// What one application is playing. The device text says which: `game` for the game being
+    /// recorded, or `exe:<program name>`.
+    Application,
 }
 
 type OpenAudio = dyn Fn(AudioKind, &str) -> Result<Box<dyn AudioSource>, String> + Send + Sync;

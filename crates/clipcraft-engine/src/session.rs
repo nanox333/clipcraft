@@ -82,6 +82,9 @@ pub struct SavedClipReport {
 struct SoundControls {
     system: Option<AudioControl>,
     microphone: Option<AudioControl>,
+    /// One per row of the mixer, in the settings' order; `None` for a row that could not be
+    /// opened.
+    apps: Vec<Option<AudioControl>>,
 }
 
 /// Validated microphone settings shared by recording, native test monitoring and the CLI.
@@ -115,6 +118,16 @@ impl MicrophoneTestPlan {
     }
 }
 
+/// Where a source's sound goes in the clip.
+enum Place {
+    /// The main sound (or the "Game and system" track when the microphone is kept apart).
+    Main,
+    /// The microphone: its own track when kept apart, otherwise the main sound.
+    Microphone,
+    /// A track of its own, with this name.
+    Own(String),
+}
+
 /// The sound sources the settings ask for, opened through `provider`, and what went wrong with
 /// the ones that could not be.
 fn audio_setup(
@@ -123,14 +136,19 @@ fn audio_setup(
 ) -> (Option<AudioSetup>, SoundControls, Vec<String>) {
     let mut warnings = Vec::new();
     let mut controls = SoundControls::default();
-    let mut sources = Vec::new();
+    let mut sources: Vec<(
+        AudioKind,
+        Box<dyn clipcraft_record::AudioSource>,
+        AudioControl,
+        Place,
+    )> = Vec::new();
     if settings.capture_game_audio {
         match provider.open(AudioKind::SystemOutput, &settings.output_device) {
             Ok(source) => {
                 let control = AudioControl::default();
                 control.set_gain_percent(settings.game_audio_percent);
                 controls.system = Some(control.clone());
-                sources.push((AudioKind::SystemOutput, source, control));
+                sources.push((AudioKind::SystemOutput, source, control, Place::Main));
             }
             Err(why) => warnings.push(why),
         }
@@ -146,33 +164,82 @@ fn audio_setup(
             Ok(input) => {
                 let control = input.control;
                 controls.microphone = Some(control.clone());
-                sources.push((AudioKind::Microphone, input.source, control));
+                sources.push((
+                    AudioKind::Microphone,
+                    input.source,
+                    control,
+                    Place::Microphone,
+                ));
             }
             Err(why) => warnings.push(format!("The microphone could not be recorded: {why}")),
+        }
+    }
+    for row in &settings.audio_apps {
+        match provider.open(AudioKind::Application, &row.device()) {
+            Ok(source) => {
+                let control = AudioControl::default();
+                control.set_gain_percent(row.percent);
+                controls.apps.push(Some(control.clone()));
+                let place = if row.own_track {
+                    Place::Own(row.name.clone())
+                } else {
+                    Place::Main
+                };
+                sources.push((AudioKind::Application, source, control, place));
+            }
+            Err(why) => {
+                controls.apps.push(None);
+                warnings.push(format!("{} could not be recorded: {why}", row.name));
+            }
         }
     }
     if sources.is_empty() {
         return (None, controls, warnings);
     }
-    let separate = settings.separate_audio_tracks && sources.len() > 1;
-    let tracks: Vec<String> = if separate {
-        sources
+    // The microphone gets its own track only when asked for and when there is a system sound to
+    // keep it apart from.
+    let separate_main = settings.separate_audio_tracks
+        && sources
             .iter()
-            .map(|(kind, ..)| match kind {
-                AudioKind::SystemOutput => "Game and system".to_owned(),
-                AudioKind::Microphone => "Microphone".to_owned(),
+            .any(|(kind, ..)| *kind == AudioKind::SystemOutput)
+        && sources
+            .iter()
+            .any(|(kind, ..)| *kind == AudioKind::Microphone);
+    let mut tracks: Vec<String> = Vec::new();
+    let (mut main_track, mut microphone_track) = (None, None);
+    let mut place_of = |place: &Place| -> usize {
+        let mut main = |tracks: &mut Vec<String>| {
+            *main_track.get_or_insert_with(|| {
+                tracks.push(
+                    if separate_main {
+                        "Game and system"
+                    } else {
+                        "Audio"
+                    }
+                    .to_owned(),
+                );
+                tracks.len() - 1
             })
-            .collect()
-    } else {
-        vec!["Audio".to_owned()]
+        };
+        match place {
+            Place::Main => main(&mut tracks),
+            Place::Microphone if separate_main => *microphone_track.get_or_insert_with(|| {
+                tracks.push("Microphone".to_owned());
+                tracks.len() - 1
+            }),
+            Place::Microphone => main(&mut tracks),
+            Place::Own(name) => {
+                tracks.push(name.clone());
+                tracks.len() - 1
+            }
+        }
     };
     let channels = if settings.audio_channels == 1 { 1 } else { 2 };
     let sample_rate = settings.audio_sample_rate;
-    let inputs = sources
+    let inputs: Vec<AudioInput> = sources
         .into_iter()
-        .enumerate()
-        .map(|(index, (kind, source, control))| {
-            let mut input = AudioInput::new(source, control, if separate { index } else { 0 });
+        .map(|(kind, source, control, place)| {
+            let mut input = AudioInput::new(source, control, place_of(&place));
             input.mono = kind == AudioKind::Microphone && settings.microphone_mono;
             input
         })
@@ -315,6 +382,11 @@ impl CaptureSession {
         }
         if let Some(control) = self.sound.microphone.as_ref() {
             control.set_gain_percent(settings.microphone_percent);
+        }
+        for (row, control) in settings.audio_apps.iter().zip(&self.sound.apps) {
+            if let Some(control) = control {
+                control.set_gain_percent(row.percent);
+            }
         }
     }
 
@@ -1172,6 +1244,14 @@ mod tests {
                 0.3,
             ))),
             AudioKind::Microphone => Err("no microphone is plugged in".to_owned()),
+            AudioKind::Application => Ok(Box::new(ToneSource::new(
+                AudioFormat {
+                    sample_rate: 48_000,
+                    channels: 2,
+                },
+                660.0,
+                0.3,
+            ))),
         })
     }
 
@@ -1182,6 +1262,138 @@ mod tests {
             separate_audio_tracks: separate,
             ..RecordingSettings::default()
         }
+    }
+
+    #[test]
+    fn application_rows_get_their_own_tracks_or_join_the_main_sound() {
+        use crate::{AppAudioRow, AppAudioTarget};
+        let discord = AppAudioRow {
+            name: "Discord".into(),
+            target: AppAudioTarget::Executable("discord.exe".into()),
+            percent: 40,
+            own_track: true,
+        };
+        let music = AppAudioRow {
+            name: "Music".into(),
+            target: AppAudioTarget::Executable("spotify.exe".into()),
+            percent: 80,
+            own_track: false,
+        };
+        let game = AppAudioRow::for_game();
+        let opened = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = opened.clone();
+        let provider = AudioProvider::new(move |kind, device| {
+            record.lock().unwrap().push((kind, device.to_owned()));
+            tone_provider(true).open(kind, device)
+        });
+
+        // Everything on: system, microphone (kept apart), then the rows.
+        let settings = RecordingSettings {
+            audio_apps: vec![game.clone(), discord.clone(), music.clone()],
+            ..sound_settings(true)
+        };
+        let (setup, controls, warnings) = audio_setup(&settings, &provider);
+        let setup = setup.unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            setup.config.tracks,
+            ["Game and system", "Microphone", "Game", "Discord"]
+        );
+        let tracks: Vec<usize> = setup.inputs.iter().map(|input| input.track).collect();
+        // system, microphone, game (own), discord (own), music (mixed into the main sound).
+        assert_eq!(tracks, [0, 1, 2, 3, 0]);
+        assert_eq!(controls.apps.len(), 3);
+        let devices: Vec<String> = opened
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(kind, _)| *kind == AudioKind::Application)
+            .map(|(_, device)| device.clone())
+            .collect();
+        assert_eq!(devices, ["game", "exe:discord.exe", "exe:spotify.exe"]);
+
+        // Rows only: no system sound and no microphone, so no empty main track is made.
+        let rows_only = RecordingSettings {
+            capture_game_audio: false,
+            capture_microphone: false,
+            audio_apps: vec![discord.clone(), game.clone()],
+            ..RecordingSettings::default()
+        };
+        let (setup, _, _) = audio_setup(&rows_only, &provider);
+        let setup = setup.unwrap();
+        assert_eq!(setup.config.tracks, ["Discord", "Game"]);
+        assert_eq!(
+            setup
+                .inputs
+                .iter()
+                .map(|input| input.track)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
+
+        // Mixed rows with the plain layout: one track, everything in it.
+        let mixed = RecordingSettings {
+            audio_apps: vec![music.clone(), discord],
+            ..sound_settings(false)
+        };
+        let (setup, _, _) = audio_setup(&mixed, &provider);
+        let setup = setup.unwrap();
+        assert_eq!(setup.config.tracks, ["Audio", "Discord"]);
+
+        // A row that cannot be opened is reported, keeps its place in the controls, and the
+        // others carry on.
+        let picky = AudioProvider::new(|kind, device| {
+            if kind == AudioKind::Application && device == "exe:spotify.exe" {
+                Err("Spotify is not running".to_owned())
+            } else {
+                tone_provider(true).open(kind, device)
+            }
+        });
+        let settings = RecordingSettings {
+            audio_apps: vec![music, game],
+            ..sound_settings(false)
+        };
+        let (setup, controls, warnings) = audio_setup(&settings, &picky);
+        assert!(setup.is_some());
+        assert_eq!(
+            warnings,
+            ["Music could not be recorded: Spotify is not running"]
+        );
+        assert!(controls.apps[0].is_none() && controls.apps[1].is_some());
+    }
+
+    #[test]
+    fn mixer_rows_are_bounded_clean_and_path_free_when_settings_load() {
+        use crate::{AppAudioRow, AppAudioTarget, MAX_AUDIO_APPS};
+        let hostile = RecordingSettings {
+            audio_apps: (0..20)
+                .map(|number| AppAudioRow {
+                    name: format!("A\u{7}/../b{number}\\{}", "x".repeat(200)),
+                    target: AppAudioTarget::Executable(format!("C:\\bin\\app{number}.exe")),
+                    percent: 5_000,
+                    own_track: true,
+                })
+                .chain([AppAudioRow {
+                    name: "empty".into(),
+                    target: AppAudioTarget::Executable(String::new()),
+                    ..AppAudioRow::default()
+                }])
+                .collect(),
+            ..RecordingSettings::default()
+        }
+        .sanitized();
+        assert_eq!(hostile.audio_apps.len(), MAX_AUDIO_APPS);
+        for row in &hostile.audio_apps {
+            assert!(row.name.chars().count() <= 40 && !row.name.contains(['/', '\\']));
+            assert!(row.percent <= 100);
+            if let AppAudioTarget::Executable(name) = &row.target {
+                assert!(!name.contains(['/', '\\']) && name.len() <= 128);
+            }
+        }
+        // A program row is named after the file, without its path or `.exe`.
+        let row = AppAudioRow::for_program("C:\\Users\\me\\AppData\\Discord.exe");
+        assert_eq!(row.name, "Discord");
+        assert_eq!(row.device(), "exe:Discord.exe");
     }
 
     #[test]

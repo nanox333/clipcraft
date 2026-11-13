@@ -319,6 +319,116 @@ pub const MIN_VIDEO_KBPS: u32 = 100;
 /// Highest accepted video bitrate.
 pub const MAX_VIDEO_KBPS: u32 = 200_000;
 
+/// Most application rows in the sound mixer.
+pub const MAX_AUDIO_APPS: usize = 6;
+
+/// Which application a mixer row records.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "name", rename_all = "snake_case")]
+pub enum AppAudioTarget {
+    /// The game being recorded, whichever game that is.
+    Game,
+    /// A program, by the name of its file (`discord.exe`, `Spotify`).
+    Executable(String),
+}
+
+/// One row of the sound mixer: an application, how loud it is, and where its sound goes.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct AppAudioRow {
+    /// What the row is called, in the mixer and as the track's name.
+    pub name: String,
+    /// Which application it records.
+    pub target: AppAudioTarget,
+    /// Its level, 0 to 100 percent.
+    pub percent: u32,
+    /// Give it a track of its own in the clip (so it can be edited apart). When off it is mixed
+    /// into the main sound.
+    pub own_track: bool,
+}
+
+impl Default for AppAudioRow {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            target: AppAudioTarget::Game,
+            percent: 100,
+            own_track: true,
+        }
+    }
+}
+
+impl AppAudioRow {
+    /// A row for a program, named after it.
+    pub fn for_program(executable: &str) -> Self {
+        let stem = executable
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(executable)
+            .trim();
+        let name = stem
+            .strip_suffix(".exe")
+            .or_else(|| stem.strip_suffix(".EXE"))
+            .unwrap_or(stem);
+        Self {
+            name: name.to_owned(),
+            target: AppAudioTarget::Executable(stem.to_owned()),
+            ..Self::default()
+        }
+        .sanitized()
+    }
+
+    /// The row for the game being recorded.
+    pub fn for_game() -> Self {
+        Self {
+            name: "Game".to_owned(),
+            target: AppAudioTarget::Game,
+            ..Self::default()
+        }
+    }
+
+    /// What the sound provider is asked to open: `game` or `exe:<name>`.
+    pub fn device(&self) -> String {
+        match &self.target {
+            AppAudioTarget::Game => "game".to_owned(),
+            AppAudioTarget::Executable(name) => format!("exe:{name}"),
+        }
+    }
+
+    /// Bounded, printable and path-free.
+    pub fn sanitized(mut self) -> Self {
+        let clean = |text: &str, limit: usize| -> String {
+            text.chars()
+                .filter(|c| !c.is_control() && !matches!(c, '/' | '\\'))
+                .take(limit)
+                .collect::<String>()
+                .trim()
+                .to_owned()
+        };
+        self.name = clean(&self.name, 40);
+        if let AppAudioTarget::Executable(name) = &mut self.target {
+            *name = clean(name, 128);
+        }
+        if self.name.is_empty() {
+            self.name = match &self.target {
+                AppAudioTarget::Game => "Game".to_owned(),
+                AppAudioTarget::Executable(name) if !name.is_empty() => name.clone(),
+                AppAudioTarget::Executable(_) => "Application".to_owned(),
+            };
+        }
+        self.percent = self.percent.min(100);
+        self
+    }
+
+    /// Whether the row names something that can be recorded.
+    pub fn is_usable(&self) -> bool {
+        match &self.target {
+            AppAudioTarget::Game => true,
+            AppAudioTarget::Executable(name) => !name.is_empty(),
+        }
+    }
+}
+
 /// Everything the user chooses about recording.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
@@ -462,6 +572,8 @@ pub struct RecordingSettings {
     /// Lighten and finally stop recording if ClipCraft itself uses nearly all of the processor for
     /// a long time, or far too much memory, so it can never starve the computer.
     pub protect_computer: bool,
+    /// Applications recorded on their own (the sound mixer), each optionally on its own track.
+    pub audio_apps: Vec<AppAudioRow>,
 }
 
 impl Default for RecordingSettings {
@@ -531,6 +643,7 @@ impl Default for RecordingSettings {
             share_megabytes: 10,
             automatic_quality: true,
             protect_computer: true,
+            audio_apps: Vec::new(),
         }
     }
 }
@@ -681,6 +794,13 @@ impl RecordingSettings {
         self.replay_seconds = self.replay_seconds.clamp(5, 600);
         self.post_roll_seconds = self.post_roll_seconds.min(30);
         self.share_megabytes = self.share_megabytes.clamp(1, 500);
+        self.audio_apps = self
+            .audio_apps
+            .into_iter()
+            .map(AppAudioRow::sanitized)
+            .filter(AppAudioRow::is_usable)
+            .take(MAX_AUDIO_APPS)
+            .collect();
         if let Some((height, frames_per_second, video_kbps)) = self.quality.values() {
             self.height = height;
             self.frames_per_second = frames_per_second;
