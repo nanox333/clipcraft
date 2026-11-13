@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Drag a clip into Discord:** drag a card in the library (or the **Drag into Discord** button on
+  the clip page) into a chat. Clips over the size chosen in Settings → Replay → *Size for sharing*
+  (10, 25, 50 or 500 MB) are made into a smaller copy first, kept in a `Shared` folder beside the
+  clip and reused; the copy starts when the pointer rests on the clip, so the drag is instant
+  afterwards. Windows and Linux (X11). On Wayland and macOS, Copy file still works.
 - **Share-ready exports:** Large (50 MB) and Largest (500 MB) size presets next to 10 and 25 MB, so
   a clip fits Discord with or without Nitro, and **Copy file** (clip page and right-click menu,
   `clipcraft-cli library copy-file`) puts the clip itself on the clipboard to paste into a chat or

@@ -122,6 +122,15 @@ hand. Most of this lives in `apps/clipcraft/src/capture/games.rs`, with the deci
    old behaviour applies: stop, clear and start again.
 5. A game closing never saves a clip by itself; clips are only saved when asked.
 
+## Sharing
+
+Dragging a card out of the window into a chat goes through `share.rs` in the app. First
+`share_plan` (engine) decides what would be shared: the clip itself when it fits the chosen size, a
+copy already made in `Shared`, or a copy to make (the same size-fit export as Export). A copy is
+started when the pointer rests on the card (not while clipping) and takes a few seconds. The drag
+itself is `clipcraft_platform::start_file_drag`: OLE on Windows, the XDND protocol on X11. Where
+neither exists, the file is copied to the clipboard.
+
 ## The library
 
 The library is a view of a folder plus a small index.

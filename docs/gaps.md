@@ -79,6 +79,27 @@ shortcuts and has not been run on those desktops for these keys.
   thrown away so nothing from the pause is mixed in. Recorder test: nothing captured while paused,
   no reset, no restart, valid clip. Older settings files with five shortcut lists still load.
 
+## Dragging a clip into a chat (Windows OLE, X11 XDND)
+
+- **Share copies:** `clip.share_copy` (`make_share_copy`) plans one of: the clip fits (shared as it
+  is), a newer copy that fits already exists in `<clip folder>/Shared` (reused), or a copy is
+  needed (re-encoded with the size-fit export; a stale copy is never overwritten, the next name is
+  used). The library skips `Shared`. Tested with real recorded clips (a 6 s, 640x360 CBR clip made
+  to fit 2 MB, then reused).
+- **Drag out, X11:** the source side of XDND 5 in `clipcraft-platform/src/drag.rs`, following the
+  pointer by polling (the window keeps its own mouse grab, so it still sees the button come up).
+  Tested end to end under Xvfb with fake pointer input (XTest) against a stand-in target, and with the
+  real app window dragging a real card to that target: the file arrived as `text/uri-list`. **Not
+  tested against Discord or any real program**; Electron's handling of XDND is the main unknown.
+  Escape does not cancel; letting go anywhere without a taker drops nothing.
+- **Drag out, Windows:** OLE `DoDragDrop` with the shell's own file data object (what Explorer
+  uses). It is type-checked in the Windows cross-compile lint only and has **never been run**; it
+  runs on the window's thread and blocks it until the drop, which may interact with the window
+  library's event loop in ways only a Windows run shows.
+- **Elsewhere:** Wayland and macOS report that dragging out is unavailable and the file is copied
+  to the clipboard instead. The pointer resting on a card for 0.6 s starts the copy, never while
+  clipping (a game could suffer); the clip page button starts it on request.
+
 ## Considered: Vulkan Video encoding (`gpu-video`, 2026-11-12)
 
 Evaluated software-mansion/smelter's `gpu-video` 0.5 (MIT; H.264 and H.265 encode through Vulkan

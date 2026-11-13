@@ -49,8 +49,12 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
   continues on the processor and the card is tried again every 20 s or longer.
 - **Audio:** system sound and microphone, mixed or on separate tracks, with optional offline
   microphone noise suppression and a mic test.
-- **Share:** export sized for Discord (10, 50 or 500 MB), and copy a clip as a file to paste
-  straight into a chat or folder (Linux needs `wl-copy` or `xclip`).
+- **Share:** drag a clip from the library (or the **Drag into Discord** button on its page) straight
+  into a Discord chat or any program that takes files. A clip bigger than the size chosen in
+  Settings (10, 25, 50 or 500 MB) is first made into a smaller copy, which starts when the pointer
+  rests on the clip. Works on Windows and Linux under X11; elsewhere use **Copy file**, which
+  puts the clip on the clipboard to paste (Linux needs `wl-copy` or `xclip`). Exports can also be
+  sized for Discord (10, 50 or 500 MB).
 - **Library:** a searchable local clip library with favorites, collections and game labels.
   Rename a clip (F2) without losing its favorite, collections or game, and delete clips to the
   Recycle Bin from a right-click menu. A focused card opens with Enter and favorites with F.
