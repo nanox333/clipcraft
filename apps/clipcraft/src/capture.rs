@@ -207,6 +207,8 @@ pub struct CaptureState {
     /// Test targets whose picture stops after a few frames, as a closing window's does.
     #[cfg(test)]
     test_closing: Vec<String>,
+    #[cfg(test)]
+    test_black: Vec<String>,
     game_arming: GameArmingState,
     game_session: Option<GameProcessMatch>,
     game_scan_due: Option<Instant>,
@@ -220,6 +222,10 @@ pub struct CaptureState {
     /// The game session is recording the screen because no window of the game was found; capture
     /// moves to the game's window as soon as one appears.
     game_on_screen: bool,
+    /// The game window being recorded, when capture follows a window of a game.
+    game_window_id: Option<String>,
+    /// Game windows that delivered only black pictures, and when each may be tried again.
+    black_windows: std::collections::HashMap<String, Instant>,
     /// Windows the tests pretend the desktop lists.
     #[cfg(test)]
     test_owned_windows: Vec<clipcraft_platform::OwnedWindow>,
@@ -480,6 +486,7 @@ impl ClipCraftApp {
             .as_ref()
             .map(|status| status.buffer_resets);
         self.capture.status = self.capture.session.status();
+        self.rescue_black_window();
         if should_report_reset(
             previous_resets,
             self.capture
@@ -1865,6 +1872,55 @@ mod tests {
         assert!(app.capture.is_active());
         assert!(!app.capture.game_on_screen);
         wait_for_frames(&app);
+        drop(app);
+        remove_scratch(root);
+    }
+
+    #[test]
+    fn a_game_window_that_only_gives_black_is_swapped_for_the_screen_without_losing_the_buffer() {
+        let (mut app, root) = automatic_app(DesktopCaptureMode::Never);
+        app.capture.test_black = vec!["test-game:42".into()];
+        app.apply_game_observation(observation(Some(42)));
+        assert!(app.capture.is_active());
+        assert!(!app.capture.game_on_screen);
+        assert_eq!(app.capture.game_window_id.as_deref(), Some("test-game:42"));
+        // The window stays black long enough to be noticed.
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            app.capture.status = app.capture.session.status();
+            if app.capture.status.as_ref().is_some_and(|s| s.source_black) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the black window was not noticed"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        app.rescue_black_window();
+        assert!(app.capture.game_on_screen, "capture moved to the screen");
+        assert!(
+            app.capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.text.contains("black")),
+            "{:?}",
+            app.capture
+                .notice
+                .as_ref()
+                .map(|notice| notice.text.clone())
+        );
+        let after = app.capture.session.status().unwrap();
+        assert_eq!(after.buffer_resets, 0, "{after:?}");
+        wait_for_frames(&app);
+        // The window is not gone back to while it is on the black list.
+        app.apply_game_observation(observation(Some(42)));
+        assert!(app.capture.game_on_screen);
+        // After the wait it may be tried again.
+        app.capture.black_windows.clear();
+        app.capture.game_retry_after = None;
+        app.apply_game_observation(observation(Some(42)));
+        assert!(!app.capture.game_on_screen);
         drop(app);
         remove_scratch(root);
     }

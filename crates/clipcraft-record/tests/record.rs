@@ -279,6 +279,40 @@ fn a_lost_source_can_be_replaced_without_losing_the_buffer() {
 }
 
 #[test]
+fn a_window_that_only_gives_black_is_reported_and_a_monitor_or_live_window_is_not() {
+    // A window that turns black is reported once it has stayed black for a few seconds.
+    let black = Recorder::start(
+        Box::new(
+            SyntheticSource::new(160, 90, 30)
+                .as_window()
+                .black_after(15),
+        ),
+        config(),
+    )
+    .unwrap();
+    wait_for(&black, "the black window to be noticed", |s| s.source_black);
+    // A moving window is not.
+    let live = Recorder::start(
+        Box::new(SyntheticSource::new(160, 90, 30).as_window()),
+        config(),
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(4_500));
+    assert!(!live.status().source_black);
+    // A black monitor is not reported: only windows are watched, since a screen can be dark.
+    let monitor = Recorder::start(
+        Box::new(SyntheticSource::new(160, 90, 30).black_after(0)),
+        config(),
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(4_500));
+    assert!(!monitor.status().source_black);
+    // Replacing the black window clears the report.
+    black.replace_source(Box::new(SyntheticSource::new(160, 90, 30)));
+    wait_for(&black, "the report to clear", |s| !s.source_black);
+}
+
+#[test]
 fn pausing_keeps_the_buffer_adds_nothing_and_leaves_no_gap_in_the_clip() {
     let scratch = Scratch::new("pause");
     let recorder = Recorder::start(Box::new(SyntheticSource::new(160, 90, 30)), config()).unwrap();

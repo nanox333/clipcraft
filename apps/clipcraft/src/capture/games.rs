@@ -242,7 +242,7 @@ impl ClipCraftApp {
             && let Some(game) = self.capture.game_session.clone()
             && found.matches.contains(&game)
             && self.capture.pending_transition.is_none()
-            && matches!(self.game_window_for_process(game.process_id), Ok(Some(_)))
+            && matches!(self.usable_game_window(game.process_id), Ok(Some(_)))
         {
             self.capture.game_arming.capture_stopped_automatically();
         }
@@ -426,6 +426,65 @@ impl ClipCraftApp {
         true
     }
 
+    /// The game's window, unless it recently gave only black pictures (then it counts as missing
+    /// for a while, so capture does not keep going back to a window that shows nothing).
+    fn usable_game_window(
+        &self,
+        process_id: u32,
+    ) -> Result<Option<CaptureTarget>, clipcraft_capture::CaptureError> {
+        match self.game_window_for_process(process_id) {
+            Ok(Some(window))
+                if self
+                    .capture
+                    .black_windows
+                    .get(&window.id)
+                    .is_some_and(|until| Instant::now() < *until) =>
+            {
+                Ok(None)
+            }
+            other => other,
+        }
+    }
+
+    /// A game window that delivers only black pictures (some games and protected windows do) is
+    /// swapped for the screen, in the same recording, so the clip is not black. The window is
+    /// tried again after a minute, since a black loading screen passes.
+    pub(crate) fn rescue_black_window(&mut self) {
+        if !self.recording.game_only_capture
+            || !self.recording.record_screen_when_game_window_missing
+            || self.capture.game_on_screen
+            || self.capture.pending_transition.is_some()
+            || !self
+                .capture
+                .status
+                .as_ref()
+                .is_some_and(|status| status.source_black)
+        {
+            return;
+        }
+        let (Some(game), Some(window)) = (
+            self.capture.game_session.clone(),
+            self.capture.game_window_id.clone(),
+        ) else {
+            return;
+        };
+        self.capture
+            .black_windows
+            .insert(window, Instant::now() + Duration::from_secs(60));
+        self.capture.pending_transition = Some(GameArmingDecision::Start(game.clone()));
+        self.advance_game_transition();
+        if self.capture.game_on_screen {
+            self.capture.notice = notice(
+                format!(
+                    "{}'s window gave only a black picture, so ClipCraft is recording the screen instead. It tries the window again in a minute.",
+                    game.game_name
+                ),
+                false,
+                None,
+            );
+        }
+    }
+
     /// How the screen is read, from the settings.
     pub(crate) fn capture_options(&self) -> CaptureOptions {
         CaptureOptions {
@@ -488,6 +547,9 @@ impl ClipCraftApp {
             .is_some_and(|targets| targets.iter().any(|target| target.id == id))
         {
             let source = clipcraft_capture::SyntheticSource::new(160, 90, 30);
+            if self.capture.test_black.iter().any(|t| t == id) {
+                return Ok(Box::new(source.as_window().black_after(5)));
+            }
             return Ok(Box::new(
                 if self.capture.test_closing.iter().any(|t| t == id) {
                     source.failing_after(10)
@@ -600,7 +662,7 @@ impl ClipCraftApp {
         game_process: Option<&GameProcessMatch>,
     ) -> Result<String, String> {
         let game_window = if let Some(game) = game_process {
-            match self.game_window_for_process(game.process_id) {
+            match self.usable_game_window(game.process_id) {
                 Ok(Some(window)) => Some(window),
                 Ok(None) => {
                     let fallback = self.recording.record_screen_when_game_window_missing;
@@ -636,6 +698,7 @@ impl ClipCraftApp {
         } else {
             None
         };
+        self.capture.game_window_id = game_window.as_ref().map(|window| window.id.clone());
         if let Some(window) = game_window {
             return Ok(window.id);
         }

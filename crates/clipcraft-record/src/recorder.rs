@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use clipcraft_capture::reframe::{Framing, OutputShape, PixelRect, Reframe, reframe, reframe_into};
 use clipcraft_capture::{
-    CaptureError, CaptureFrame, CaptureSource, MAX_CAPTURE_EDGE, NativeCaptureFrame,
+    CaptureError, CaptureFrame, CaptureSource, MAX_CAPTURE_EDGE, NativeCaptureFrame, TargetKind,
 };
 use filmcraft_h264enc::{Encoder, EncoderConfig, PacketFormat, Preset, Profile, RateControl};
 
@@ -166,6 +166,9 @@ pub struct RecordStatus {
     pub buffer_resets: u64,
     /// Recording is paused: nothing is being added to the replay buffer.
     pub paused: bool,
+    /// A window being captured has given only black pictures for a few seconds (some games and
+    /// protected windows do), so the picture is probably not being delivered.
+    pub source_black: bool,
     /// The source stopped giving pictures (its window closed) and the recorder is waiting for
     /// [`Recorder::replace_source`] with the buffered video kept. Always false unless
     /// [`Recorder::keep_through_source_loss`] is on.
@@ -291,6 +294,8 @@ struct Shared {
     replacement: Mutex<Option<Box<dyn CaptureSource>>>,
     hold_on_loss: AtomicBool,
     source_lost: AtomicBool,
+    /// A window source has given only black pictures for a few seconds.
+    source_black: AtomicBool,
     buffer: Mutex<ReplayBuffer>,
     video: Mutex<Option<VideoInfo>>,
     encoder: Mutex<String>,
@@ -374,6 +379,7 @@ impl Recorder {
             replacement: Mutex::new(None),
             hold_on_loss: AtomicBool::new(false),
             source_lost: AtomicBool::new(false),
+            source_black: AtomicBool::new(false),
             buffer: Mutex::new(ReplayBuffer::new(window_frames, config.max_buffer_bytes)),
             video: Mutex::new(None),
             encoder: Mutex::new(String::from("Starting")),
@@ -483,6 +489,7 @@ impl Recorder {
             buffered_seconds: span as f32 / self.shared.fps.max(1) as f32,
             buffer_resets,
             paused: self.shared.clock.is_paused(),
+            source_black: self.shared.source_black.load(Ordering::SeqCst),
             source_lost: self.shared.source_lost.load(Ordering::SeqCst),
             output,
             average_encode_ms,
@@ -663,7 +670,83 @@ impl Drop for Recorder {
     }
 }
 
+/// How long a window must give only black before it is reported, and how often it is looked at.
+const BLACK_AFTER: Duration = Duration::from_secs(3);
+const BLACK_CHECK_EVERY: Duration = Duration::from_millis(500);
+/// A picture held on the graphics card has to be copied to be looked at, so it is looked at less.
+const BLACK_SURFACE_CHECK_EVERY: Duration = Duration::from_secs(2);
+
+/// True when a picture is black everywhere it is sampled (a few thousand points over the whole
+/// picture), allowing for a little noise.
+fn looks_black(frame: &CaptureFrame) -> bool {
+    let (width, height) = (frame.width as usize, frame.height as usize);
+    if width == 0 || height == 0 {
+        return false;
+    }
+    let step_x = (width / 64).max(1);
+    let step_y = (height / 64).max(1);
+    (0..height).step_by(step_y).all(|y| {
+        (0..width).step_by(step_x).all(|x| {
+            frame
+                .bgra
+                .get(y * frame.stride + x * 4..y * frame.stride + x * 4 + 3)
+                .is_some_and(|pixel| pixel.iter().all(|channel| *channel <= 6))
+        })
+    })
+}
+
+/// Watches a window source for pictures that are only black, and reports it in the status.
+struct BlackWatch {
+    window: bool,
+    last_check: Instant,
+    last_surface_check: Instant,
+    black_since: Option<Instant>,
+}
+
+impl BlackWatch {
+    fn new(source: &dyn CaptureSource) -> Self {
+        let now = Instant::now();
+        Self {
+            window: source.target().kind == TargetKind::Window,
+            last_check: now,
+            last_surface_check: now,
+            black_since: None,
+        }
+    }
+
+    fn look(&mut self, shared: &Shared, frame: &mut QueuedFrame) {
+        if !self.window || self.last_check.elapsed() < BLACK_CHECK_EVERY {
+            return;
+        }
+        self.last_check = Instant::now();
+        let verdict = match frame {
+            QueuedFrame::Cpu(picture) => Some(looks_black(picture)),
+            QueuedFrame::Surface { .. }
+                if self.last_surface_check.elapsed() >= BLACK_SURFACE_CHECK_EVERY =>
+            {
+                self.last_surface_check = Instant::now();
+                frame.readback().ok().map(looks_black)
+            }
+            QueuedFrame::Surface { .. } => None,
+        };
+        match verdict {
+            Some(true) => {
+                let since = *self.black_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= BLACK_AFTER {
+                    shared.source_black.store(true, Ordering::SeqCst);
+                }
+            }
+            Some(false) => {
+                self.black_since = None;
+                shared.source_black.store(false, Ordering::SeqCst);
+            }
+            None => {}
+        }
+    }
+}
+
 fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32) {
+    let mut black = BlackWatch::new(source.as_ref());
     let nanos_per_second = 1_000_000_000_u128;
     let mut next: u64 = 0;
     // Consecutive picture failures that may pass (a mode switch, a window being resized).
@@ -673,6 +756,8 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32) {
         if let Some(replacement) = lock(&shared.replacement).take() {
             *lock(&shared.source_name) = replacement.target().name.clone();
             source = replacement;
+            black = BlackWatch::new(source.as_ref());
+            shared.source_black.store(false, Ordering::SeqCst);
             failures = 0;
             swapped = true;
             shared.source_lost.store(false, Ordering::SeqCst);
@@ -709,6 +794,7 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32) {
                 )
                 .unwrap_or(i64::MAX);
                 lock(&shared.stats).captured += 1;
+                black.look(shared, &mut frame);
                 if shared.screenshot_wanted.swap(false, Ordering::SeqCst) {
                     match frame.readback().ok().cloned() {
                         Some(picture) => *lock(&shared.screenshot) = Some(picture),
