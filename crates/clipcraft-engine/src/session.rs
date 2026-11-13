@@ -258,6 +258,7 @@ impl CaptureSession {
         };
         let recorder =
             Recorder::start_with_audio(source, config, setup).map_err(EngineError::Record)?;
+        recorder.adapt_to_load(settings.automatic_quality);
         self.recorder = Some(Arc::new(recorder));
         self.sound = controls;
         self.warnings = warnings;

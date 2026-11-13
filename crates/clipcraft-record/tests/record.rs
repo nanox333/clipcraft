@@ -313,6 +313,38 @@ fn a_window_that_only_gives_black_is_reported_and_a_monitor_or_live_window_is_no
 }
 
 #[test]
+fn automatic_quality_lowers_the_picture_rate_when_the_encoder_cannot_keep_up_without_a_reset() {
+    // Full HD at 60 a second on one thread with the slowest encoder setting is more than any
+    // machine does in real time, so pictures are dropped.
+    let heavy = RecordConfig {
+        output_height: 1080,
+        fps: 60,
+        threads: 1,
+        speed: EncoderSpeed::Quality,
+        ..config()
+    };
+    let recorder = Recorder::start(Box::new(SyntheticSource::new(1920, 1080, 60)), heavy).unwrap();
+    recorder.adapt_to_load(true);
+    assert_eq!(recorder.status().effective_fps, 60);
+    wait_for(&recorder, "the rate to be lowered", |s| {
+        s.effective_fps < 60
+    });
+    let lowered = recorder.status();
+    assert_eq!(lowered.buffer_resets, 0, "{lowered:?}");
+    assert_eq!(lowered.restarts, 0, "{lowered:?}");
+    assert!(lowered.effective_fps == 30 || lowered.effective_fps == 20);
+    // Turning it off goes back to every picture.
+    recorder.adapt_to_load(false);
+    assert_eq!(recorder.status().effective_fps, 60);
+
+    // A light recording is left alone.
+    let calm = Recorder::start(Box::new(SyntheticSource::new(160, 90, 30)), config()).unwrap();
+    calm.adapt_to_load(true);
+    std::thread::sleep(Duration::from_secs(8));
+    assert_eq!(calm.status().effective_fps, 30);
+}
+
+#[test]
 fn pausing_keeps_the_buffer_adds_nothing_and_leaves_no_gap_in_the_clip() {
     let scratch = Scratch::new("pause");
     let recorder = Recorder::start(Box::new(SyntheticSource::new(160, 90, 30)), config()).unwrap();

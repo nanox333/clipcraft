@@ -456,6 +456,9 @@ pub struct RecordingSettings {
     /// The size, in megabytes, that a clip is made to fit when it is dragged into a chat:
     /// Discord takes 10, 50 (Nitro Basic) or 500 (Nitro).
     pub share_megabytes: u32,
+    /// When the computer cannot keep up, record fewer pictures a second instead of dropping them
+    /// at random, and go back when there is room. Never clears the replay.
+    pub automatic_quality: bool,
 }
 
 impl Default for RecordingSettings {
@@ -523,6 +526,7 @@ impl Default for RecordingSettings {
             post_roll_seconds: 0,
             restart_replay_after_save: false,
             share_megabytes: 10,
+            automatic_quality: true,
         }
     }
 }

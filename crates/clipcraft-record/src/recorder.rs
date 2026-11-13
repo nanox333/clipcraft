@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -16,6 +16,7 @@ use filmcraft_h264enc::{Encoder, EncoderConfig, PacketFormat, Preset, Profile, R
 use crate::RecordError;
 use crate::audio::{AudioBuffer, AudioEngine, AudioInputStatus, AudioSetup, AudioTrackInfo};
 use crate::convert::{convert, convert_rgba};
+use crate::governor::{Counters, Governor};
 use crate::hardware::{
     HardwareEncoder, HardwareProvider, HardwareRequest, StreamCodec, SurfaceFit,
 };
@@ -166,6 +167,9 @@ pub struct RecordStatus {
     pub buffer_resets: u64,
     /// Recording is paused: nothing is being added to the replay buffer.
     pub paused: bool,
+    /// Pictures per second actually being recorded. Below `target_fps` when automatic quality has
+    /// lowered the rate to keep up.
+    pub effective_fps: u32,
     /// A window being captured has given only black pictures for a few seconds (some games and
     /// protected windows do), so the picture is probably not being delivered.
     pub source_black: bool,
@@ -296,6 +300,10 @@ struct Shared {
     source_lost: AtomicBool,
     /// A window source has given only black pictures for a few seconds.
     source_black: AtomicBool,
+    /// Automatic quality is on: record fewer pictures a second when the computer cannot keep up.
+    adaptive: AtomicBool,
+    /// How many pictures in a row are skipped for each one taken (0 = every picture).
+    skip_level: AtomicU32,
     buffer: Mutex<ReplayBuffer>,
     video: Mutex<Option<VideoInfo>>,
     encoder: Mutex<String>,
@@ -380,6 +388,8 @@ impl Recorder {
             hold_on_loss: AtomicBool::new(false),
             source_lost: AtomicBool::new(false),
             source_black: AtomicBool::new(false),
+            adaptive: AtomicBool::new(false),
+            skip_level: AtomicU32::new(0),
             buffer: Mutex::new(ReplayBuffer::new(window_frames, config.max_buffer_bytes)),
             video: Mutex::new(None),
             encoder: Mutex::new(String::from("Starting")),
@@ -437,6 +447,16 @@ impl Recorder {
         })
     }
 
+    /// Turns automatic quality on or off: when on, the recorder takes every second or third picture
+    /// if the computer cannot keep up, and goes back when there is room. Nothing but the rate of
+    /// pictures changes, so the replay buffer is never cleared by it.
+    pub fn adapt_to_load(&self, on: bool) {
+        self.shared.adaptive.store(on, Ordering::SeqCst);
+        if !on {
+            self.shared.skip_level.store(0, Ordering::SeqCst);
+        }
+    }
+
     /// Pauses or resumes recording. While paused nothing is added to the replay buffer and the
     /// recording's clock stands still, so what was buffered before and what is recorded after
     /// follow each other in one clip without a frozen stretch between them.
@@ -489,6 +509,7 @@ impl Recorder {
             buffered_seconds: span as f32 / self.shared.fps.max(1) as f32,
             buffer_resets,
             paused: self.shared.clock.is_paused(),
+            effective_fps: self.shared.fps / (self.shared.skip_level.load(Ordering::SeqCst) + 1),
             source_black: self.shared.source_black.load(Ordering::SeqCst),
             source_lost: self.shared.source_lost.load(Ordering::SeqCst),
             output,
@@ -747,6 +768,8 @@ impl BlackWatch {
 
 fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32) {
     let mut black = BlackWatch::new(source.as_ref());
+    let mut governor = Governor::new(fps);
+    let mut governor_checked = Instant::now();
     let nanos_per_second = 1_000_000_000_u128;
     let mut next: u64 = 0;
     // Consecutive picture failures that may pass (a mode switch, a window being resized).
@@ -766,6 +789,26 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32) {
             u64::try_from(u128::from(next) * nanos_per_second / u128::from(fps))
                 .unwrap_or(u64::MAX),
         );
+        // Automatic quality: once a second, look at whether the encoder is keeping up.
+        if governor_checked.elapsed() >= Duration::from_secs(1) {
+            governor_checked = Instant::now();
+            if shared.adaptive.load(Ordering::SeqCst) && !shared.clock.is_paused() {
+                let counters = {
+                    let stats = lock(&shared.stats);
+                    Counters {
+                        captured: stats.captured,
+                        dropped: stats.dropped,
+                        encoded: stats.encoded,
+                        encode_nanos: stats.encode_nanos,
+                    }
+                };
+                if let Some(level) =
+                    governor.observe(shared.clock.epoch.elapsed().as_secs_f64(), counters)
+                {
+                    shared.skip_level.store(level, Ordering::SeqCst);
+                }
+            }
+        }
         // While paused nothing is captured, and the clock does not move.
         if shared.clock.is_paused() {
             std::thread::sleep(Duration::from_millis(20));
@@ -818,7 +861,8 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32) {
                 drop(mailbox);
                 shared.wake.notify_all();
                 // If the encoder or the capture call fell behind, skip the frames already missed.
-                next = (next + 1).max(u64::try_from(pts).unwrap_or(0) + 1);
+                let step = u64::from(shared.skip_level.load(Ordering::SeqCst)) + 1;
+                next = (next + step).max(u64::try_from(pts).unwrap_or(0) + 1);
             }
             Err(error @ (CaptureError::Failed | CaptureError::BadFrame))
                 if failures

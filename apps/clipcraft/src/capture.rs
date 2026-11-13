@@ -222,6 +222,8 @@ pub struct CaptureState {
     /// The game session is recording the screen because no window of the game was found; capture
     /// moves to the game's window as soon as one appears.
     game_on_screen: bool,
+    /// The picture rate last shown to the person, to say when automatic quality changes it.
+    last_effective_fps: Option<u32>,
     /// The game window being recorded, when capture follows a window of a game.
     game_window_id: Option<String>,
     /// Game windows that delivered only black pictures, and when each may be tried again.
@@ -494,6 +496,7 @@ impl ClipCraftApp {
             .map(|status| status.buffer_resets);
         self.capture.status = self.capture.session.status();
         self.rescue_black_window();
+        self.report_quality_change();
         if should_report_reset(
             previous_resets,
             self.capture
@@ -1281,8 +1284,13 @@ impl ClipCraftApp {
                     let tag = status
                         .output
                         .map(|(_, height)| {
+                            let lowered = if status.effective_fps < status.target_fps {
+                                format!("\u{2193}{}", status.effective_fps)
+                            } else {
+                                String::new()
+                            };
                             format!(
-                                " \u{00b7} {height}p{} \u{00b7} {encoder}",
+                                " \u{00b7} {height}p{}{lowered} \u{00b7} {encoder}",
                                 status.target_fps
                             )
                         })
@@ -1879,6 +1887,44 @@ mod tests {
         assert!(app.capture.is_active());
         assert!(!app.capture.game_on_screen);
         wait_for_frames(&app);
+        drop(app);
+        remove_scratch(root);
+    }
+
+    #[test]
+    fn a_change_of_picture_rate_by_automatic_quality_is_said_once_each_way() {
+        let (mut app, root) = automatic_app(DesktopCaptureMode::Never);
+        let settings = app.recording.clone();
+        app.capture.start_synthetic(&settings);
+        let mut status = app.capture.session.status().unwrap();
+        status.effective_fps = status.target_fps;
+        app.capture.status = Some(status.clone());
+        app.report_quality_change();
+        assert!(app.capture.notice.is_none(), "nothing changed yet");
+        status.effective_fps = status.target_fps / 2;
+        app.capture.status = Some(status.clone());
+        app.report_quality_change();
+        assert!(
+            app.capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.text.contains("struggling to keep up"))
+        );
+        app.capture.notice = None;
+        app.report_quality_change();
+        assert!(
+            app.capture.notice.is_none(),
+            "the same rate is not said again"
+        );
+        status.effective_fps = status.target_fps;
+        app.capture.status = Some(status);
+        app.report_quality_change();
+        assert!(
+            app.capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.text.contains("room again"))
+        );
         drop(app);
         remove_scratch(root);
     }

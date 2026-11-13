@@ -34,7 +34,9 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
 
 ## What it does
 
-- **Record and replay:** pause and resume clipping with a hotkey or the Pause button, and an optional
+- **Record and replay:** automatic quality (on by default) records half, then a third, of the
+  pictures per second when the computer cannot keep up, and goes back when there is room, without
+  clearing the replay. Pause and resume clipping with a hotkey or the Pause button, and an optional
   setting that starts the replay over after each save so clips never repeat footage. If a game
   window delivers only black, ClipCraft switches to recording the screen in the same recording.
   Capture a screen or game window into a bounded replay buffer and save the

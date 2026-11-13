@@ -14,6 +14,7 @@
 pub mod audio;
 pub mod convert;
 mod denoise;
+mod governor;
 pub mod hardware;
 pub mod mux;
 mod recorder;
@@ -27,6 +28,7 @@ pub use audio::{
     AudioProvider, AudioSetup, AudioSource, PcmMonitor, SampleQueue, ToneSource,
 };
 pub use denoise::NoiseSuppressedSource;
+pub use governor::{Counters, Governor};
 pub use hardware::{
     HardwareEncoder, HardwarePacket, HardwareProvider, HardwareRequest, StreamCodec, SurfaceFit,
 };

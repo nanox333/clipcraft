@@ -79,6 +79,20 @@ shortcuts and has not been run on those desktops for these keys.
   thrown away so nothing from the pause is mixed in. Recorder test: nothing captured while paused,
   no reset, no restart, valid clip. Older settings files with five shortcut lists still load.
 
+## Automatic quality (from Kairos' idea; written fresh)
+
+`Governor` (`clipcraft-record/src/governor.rs`) looks at counters once a second over a five-second
+window: more than 8% of pictures dropped lowers the rate one step (every 2nd picture, then every
+3rd; never below 15 a second), at most every 8 seconds; after 30 calm seconds with the encoder under
+60% full at the higher rate it goes back up. The capture loop then simply takes every Nth picture,
+so the stream, size, bitrate and replay buffer are untouched (no reset; clips of a lowered stretch
+have fewer pictures a second). Verified: arithmetic tests of the governor, and a recording of Full
+HD at 60 a second on one thread (overloaded here) that gets lowered with no reset or restart,
+while a light recording is left alone. **Not done:** lowering the picture *size* or bitrate
+(that needs a new stream and would clear the replay); capping at the monitor's refresh rate (the
+capture targets do not report it yet); recognising a game that takes the graphics card other than
+by the drops it causes. Not measured on a real game on Windows.
+
 ## Dragging a clip into a chat (Windows OLE, X11 XDND)
 
 - **Share copies:** `clip.share_copy` (`make_share_copy`) plans one of: the clip fits (shared as it

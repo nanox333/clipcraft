@@ -641,6 +641,16 @@ pub(crate) fn video_rows(
             ),
         ],
     );
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
+            "Adjust automatically",
+            "If the computer cannot keep up, record fewer pictures a second (half, then a third) instead of dropping them at random, and go back when there is room. The size and your replay are never touched.",
+            "automatic quality adapt lag dropped frames stutter fps lower lighter keep up",
+        ),
+        |s| &mut s.automatic_quality,
+    );
     rows.section(ui, "Bitrate and keyframes");
     let mode_note = s.rate_control.detail();
     rows.choose(

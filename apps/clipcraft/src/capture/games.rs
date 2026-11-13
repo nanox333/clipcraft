@@ -485,6 +485,41 @@ impl ClipCraftApp {
         }
     }
 
+    /// Says so when automatic quality changes the picture rate, and shows the rate in the bar.
+    pub(crate) fn report_quality_change(&mut self) {
+        let Some(status) = self.capture.status.as_ref() else {
+            self.capture.last_effective_fps = None;
+            return;
+        };
+        let (now, target) = (status.effective_fps, status.target_fps);
+        let before = self.capture.last_effective_fps.replace(now);
+        let Some(before) = before.filter(|before| *before != now) else {
+            return;
+        };
+        if self.capture.saving.is_some()
+            || self
+                .capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.error)
+        {
+            return;
+        }
+        self.capture.notice = notice(
+            if now < before {
+                format!(
+                    "Your computer is struggling to keep up, so ClipCraft is recording {now} pictures a second instead of {target}. Your replay is kept, and it goes back up when there is room."
+                )
+            } else if now == target {
+                format!("There is room again: back to {target} pictures a second.")
+            } else {
+                format!("Recording {now} pictures a second now.")
+            },
+            false,
+            None,
+        );
+    }
+
     /// How the screen is read, from the settings.
     pub(crate) fn capture_options(&self) -> CaptureOptions {
         CaptureOptions {

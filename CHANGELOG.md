@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Automatic quality:** when the computer cannot keep up (the encoder is dropping pictures), ClipCraft
+  now records every second picture, then every third, instead of dropping them at random, and goes
+  back after half a minute of calm with room to spare. The size, the bitrate and your replay are
+  never touched. It says so when it changes, and the bar shows the lowered rate (for example
+  `1080p60↓30`). On by default; Settings → Video → *Adjust automatically*.
 - **Drag a clip into Discord:** drag a card in the library (or the **Drag into Discord** button on
   the clip page) into a chat. Clips over the size chosen in Settings → Replay → *Size for sharing*
   (10, 25, 50 or 500 MB) are made into a smaller copy first, kept in a `Shared` folder beside the
