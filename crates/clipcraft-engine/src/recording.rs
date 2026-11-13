@@ -450,6 +450,9 @@ pub struct RecordingSettings {
     /// Seconds ClipCraft keeps recording after the save hotkey, so the clip includes what
     /// happens next. 0 saves immediately.
     pub post_roll_seconds: u32,
+    /// Start the replay over after each saved clip, so the next clip never contains footage that
+    /// is already in this one.
+    pub restart_replay_after_save: bool,
 }
 
 impl Default for RecordingSettings {
@@ -515,6 +518,7 @@ impl Default for RecordingSettings {
             sound_effects_percent: 60,
             replay_seconds: 30,
             post_roll_seconds: 0,
+            restart_replay_after_save: false,
         }
     }
 }

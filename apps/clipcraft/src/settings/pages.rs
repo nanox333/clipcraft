@@ -763,6 +763,16 @@ pub(crate) fn replay_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut RecordingS
         ),
         |s| &mut s.show_save_notification,
     );
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
+            "Start the replay over after each save",
+            "Forgets the saved footage once the clip is written, so the next clip never repeats what is already in this one. The replay fills up again from that moment.",
+            "restart reset clear buffer after save overlap duplicate",
+        ),
+        |s| &mut s.restart_replay_after_save,
+    );
     rows.finish(ui);
 }
 

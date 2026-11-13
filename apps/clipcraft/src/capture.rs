@@ -426,6 +426,7 @@ impl ClipCraftApp {
                 HotkeyAction::ToggleRecording,
                 HotkeyAction::ToggleMicrophone,
                 HotkeyAction::Screenshot,
+                HotkeyAction::TogglePause,
             ] {
                 if self
                     .recording
@@ -468,6 +469,7 @@ impl ClipCraftApp {
                     });
                 }
                 HotkeyAction::Screenshot => self.take_screenshot(),
+                HotkeyAction::TogglePause => self.toggle_pause(),
                 _ => {}
             }
         }
@@ -911,6 +913,32 @@ impl ClipCraftApp {
         self.capture.game_arming.capture_stopped_automatically();
     }
 
+    /// Pauses clipping, or resumes it where it stopped: the replay buffer is kept, nothing is
+    /// added while paused, and the clock stands still so a clip has no frozen gap.
+    pub(crate) fn toggle_pause(&mut self) {
+        let Some(status) = self.capture.session.status() else {
+            self.capture.notice = notice("Start clipping first, then pause it.", false, None);
+            return;
+        };
+        let pause = !status.paused;
+        self.capture.session.set_paused(pause);
+        self.capture.status = self.capture.session.status();
+        self.cue(if pause {
+            Cue::ClippingStopped
+        } else {
+            Cue::ClippingStarted
+        });
+        self.capture.notice = notice(
+            if pause {
+                "Clipping paused. The replay is kept; press the key again to carry on."
+            } else {
+                "Clipping resumed."
+            },
+            false,
+            None,
+        );
+    }
+
     fn toggle_capture(&mut self) {
         if self.capture.is_active() {
             if self.recording.game_only_capture {
@@ -1231,6 +1259,9 @@ impl ClipCraftApp {
         let game_name = self.capture.game_recording_name().map(str::to_owned);
         let (dot, text) = match self.capture.status.as_ref() {
             Some(status) => match status.state {
+                RecordState::Running if status.paused => {
+                    (MUTED, "Paused \u{b7} replay kept".to_owned())
+                }
                 RecordState::Running => {
                     let encoder = status.encoder.split([' ', '(']).next().unwrap_or("");
                     let tag = status
@@ -1293,6 +1324,27 @@ impl ClipCraftApp {
             .clicked()
         {
             self.toggle_capture();
+        }
+        if active {
+            let paused = self.capture.status.as_ref().is_some_and(|s| s.paused);
+            let key = self.recording.hotkeys.toggle_pause.replace('+', " + ");
+            let hint = if key.is_empty() {
+                "Pause or resume clipping. Set a key under Settings \u{203a} Hotkeys.".to_owned()
+            } else {
+                format!("Pause or resume clipping ({key})")
+            };
+            ui.add_space(4.0);
+            let (icon, label) = if paused {
+                (Icon::Play, "Resume")
+            } else {
+                (Icon::Pause, "Pause")
+            };
+            if kit::labelled_button(ui, icon, label, false, true)
+                .on_hover_text(hint)
+                .clicked()
+            {
+                self.toggle_pause();
+            }
         }
         ui.add_space(4.0);
         let saving = self.capture.saving.is_some();

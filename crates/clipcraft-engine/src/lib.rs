@@ -1540,6 +1540,7 @@ pub const fn command_ids() -> &'static [&'static str] {
         "clip.normalize",
         "library.find_file",
         "capture.toggle_microphone",
+        "capture.pause",
         "capture.push_to_talk",
         "recording.save_settings",
         "recording.test_microphone",

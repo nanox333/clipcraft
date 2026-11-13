@@ -324,6 +324,14 @@ impl CaptureSession {
         }
     }
 
+    /// Pauses or resumes the recording; the replay buffer keeps what it has. Command id
+    /// `capture.pause`.
+    pub fn set_paused(&self, paused: bool) {
+        if let Some(recorder) = &self.recorder {
+            recorder.set_paused(paused);
+        }
+    }
+
     /// When on, a source that goes away (a game window closing) does not end the recording: the
     /// replay buffer is kept and [`CaptureSession::replace_source`] carries on from it.
     pub fn keep_through_source_loss(&self, on: bool) {
@@ -438,6 +446,7 @@ impl CaptureSession {
             path: free_clip_path(folder, format, None, unix)?,
             folder: folder.to_path_buf(),
             trim_to: (limit > 0 && settings.delete_oldest_when_full).then_some(limit),
+            restart_replay: settings.restart_replay_after_save,
         })
     }
 }
@@ -453,6 +462,8 @@ pub struct SaveJob {
     path: PathBuf,
     folder: PathBuf,
     trim_to: Option<u64>,
+    /// Forget the saved footage afterwards (the "restart the replay after each save" setting).
+    restart_replay: bool,
 }
 
 impl SaveJob {
@@ -529,10 +540,14 @@ impl SaveJob {
             let left = until.saturating_duration_since(Instant::now());
             std::thread::sleep(left.min(Duration::from_millis(50)));
         }
-        let clip = self
-            .recorder
-            .save_clip(self.seconds, self.format, &self.path)
-            .map_err(EngineError::Record)?;
+        let saved = if self.restart_replay {
+            self.recorder
+                .save_clip_and_restart(self.seconds, self.format, &self.path)
+        } else {
+            self.recorder
+                .save_clip(self.seconds, self.format, &self.path)
+        };
+        let clip = saved.map_err(EngineError::Record)?;
         let deleted = match self.trim_to {
             Some(limit) => trim_to_limit(&self.folder, &clip.path, limit),
             None => Vec::new(),
@@ -928,6 +943,68 @@ mod tests {
         assert_ne!(second.clip.path, report.clip.path);
         assert!(report.clip.path.exists() && second.clip.path.exists());
         assert!(session.stop().is_some() && !session.is_active());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restarting_the_replay_after_a_save_keeps_the_next_clip_from_repeating_the_last() {
+        let dir = std::env::temp_dir().join(format!("clipcraft-restart-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let settings = RecordingSettings {
+            quality: crate::QualityMode::Custom,
+            height: 90,
+            frames_per_second: 30,
+            video_kbps: 500,
+            replay_seconds: 15,
+            keyframe_seconds: 1,
+            capture_game_audio: false,
+            capture_microphone: false,
+            restart_replay_after_save: true,
+            ..RecordingSettings::default()
+        };
+        let mut session = CaptureSession::new();
+        session
+            .start(&settings, Box::new(SyntheticSource::new(160, 90, 30)), None)
+            .unwrap();
+        let wait = |session: &CaptureSession, seconds: f32| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(30);
+            while session
+                .status()
+                .is_none_or(|status| status.buffered_seconds < seconds)
+            {
+                assert!(std::time::Instant::now() < deadline, "did not fill");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        wait(&session, 4.0);
+        let first = session
+            .prepare_save(&settings, &dir)
+            .unwrap()
+            .run()
+            .unwrap();
+        assert!(first.clip.duration_frames >= 110);
+        // What went into the clip is gone, and that is not reported as a reset.
+        let after = session.status().unwrap();
+        assert_eq!(after.buffer_resets, 0, "{after:?}");
+        assert!(
+            after.buffered_seconds < 2.0,
+            "the buffer was kept: {}",
+            after.buffered_seconds
+        );
+        // It fills again, and the next clip is only the new footage.
+        wait(&session, 2.0);
+        let second = session
+            .prepare_save(&settings, &dir)
+            .unwrap()
+            .run()
+            .unwrap();
+        assert!(
+            second.clip.duration_frames < first.clip.duration_frames,
+            "{} vs {}",
+            second.clip.duration_frames,
+            first.clip.duration_frames
+        );
+        assert!(session.stop().is_some());
         let _ = fs::remove_dir_all(&dir);
     }
 

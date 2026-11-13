@@ -773,6 +773,15 @@ impl AudioEngine {
         out
     }
 
+    /// Reads every source and throws the sound away, for a paused recording: the devices keep
+    /// being emptied so nothing from the pause is mixed in when recording resumes.
+    pub fn discard(&mut self, elapsed: Duration) {
+        for lane in &mut self.lanes {
+            Self::read_lane(lane, elapsed, &mut self.scratch);
+            lane.lane.fifo.clear();
+        }
+    }
+
     fn read_lane(lane: &mut LaneState, elapsed: Duration, scratch: &mut Vec<f32>) {
         if lane.lost {
             if elapsed.saturating_sub(lane.last_recover) >= Duration::from_secs(2) {

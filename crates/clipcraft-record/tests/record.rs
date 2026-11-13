@@ -279,6 +279,51 @@ fn a_lost_source_can_be_replaced_without_losing_the_buffer() {
 }
 
 #[test]
+fn pausing_keeps_the_buffer_adds_nothing_and_leaves_no_gap_in_the_clip() {
+    let scratch = Scratch::new("pause");
+    let recorder = Recorder::start(Box::new(SyntheticSource::new(160, 90, 30)), config()).unwrap();
+    wait_for(&recorder, "some video", |s| s.buffered_seconds >= 1.5);
+    recorder.set_paused(true);
+    // Let a frame in flight land, then note what is there.
+    std::thread::sleep(Duration::from_millis(300));
+    let paused = recorder.status();
+    assert!(paused.paused);
+    std::thread::sleep(Duration::from_millis(2_500));
+    let still = recorder.status();
+    assert_eq!(
+        still.frames_captured, paused.frames_captured,
+        "nothing is captured while paused"
+    );
+    assert_eq!(still.buffered_frames, paused.buffered_frames);
+    assert_eq!(still.buffer_resets, 0);
+
+    recorder.set_paused(false);
+    wait_for(&recorder, "video after the pause", |s| {
+        !s.paused && s.buffered_seconds >= paused.buffered_seconds + 1.5
+    });
+    let after = recorder.status();
+    assert_eq!(after.buffer_resets, 0, "{after:?}");
+    assert_eq!(after.restarts, 0, "{after:?}");
+    // The two stretches follow each other: the 2.5 s pause is not inside the buffer's span.
+    assert!(
+        after.buffered_seconds < paused.buffered_seconds + 3.0,
+        "{} vs {}",
+        after.buffered_seconds,
+        paused.buffered_seconds
+    );
+    let path = scratch.file("paused.mkv");
+    let saved = recorder.save_clip(60, ClipFormat::Mkv, &path).unwrap();
+    if tool("ffprobe") && tool("ffmpeg") {
+        decodes_cleanly(&path);
+    }
+    let seconds = saved.duration_frames as f32 / 30.0;
+    assert!(
+        seconds < paused.buffered_seconds + 3.0 && seconds > paused.buffered_seconds + 1.0,
+        "{seconds}"
+    );
+}
+
+#[test]
 fn a_changing_picture_size_restarts_the_stream_with_matching_clips() {
     let scratch = Scratch::new("resize");
     let source = SyntheticSource::new(160, 90, 30).resizing_after(30, 240, 120);

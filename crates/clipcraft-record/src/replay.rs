@@ -132,6 +132,26 @@ impl ReplayBuffer {
         self.bytes = 0;
     }
 
+    /// Forgets the video up to and including picture time `pts`, then whatever follows until the
+    /// next keyframe, so what is left can still be saved from its start. Not counted as a reset:
+    /// it is what "restart the replay after each save" does, on purpose.
+    pub fn discard_through(&mut self, pts: i64) {
+        while let Some(front) = self.samples.front() {
+            if front.pts > pts && front.keyframe {
+                break;
+            }
+            if let Some(old) = self.samples.pop_front() {
+                self.bytes = self.bytes.saturating_sub(old.data.len());
+            }
+        }
+        self.next_group = self
+            .samples
+            .iter()
+            .skip(1)
+            .position(|sample| sample.keyframe)
+            .map(|offset| offset + 1);
+    }
+
     /// Pictures stored.
     pub fn len(&self) -> usize {
         self.samples.len()
@@ -268,6 +288,23 @@ mod tests {
         buffer.push(sample(2, false)).unwrap();
         assert!(buffer.is_empty());
         assert_eq!(buffer.resets(), 1);
+    }
+
+    #[test]
+    fn discarding_through_a_time_keeps_only_whole_groups_after_it_and_is_not_a_reset() {
+        let mut buffer = ReplayBuffer::new(1_000, usize::MAX);
+        fill(&mut buffer, 30, 10);
+        buffer.discard_through(14);
+        // Nothing before the keyframe at 20 is left, and the buffer still starts on a keyframe.
+        let kept = buffer.snapshot(1_000);
+        assert_eq!(kept.first().map(|s| (s.pts, s.keyframe)), Some((20, true)));
+        assert_eq!(buffer.len(), 10);
+        assert_eq!(buffer.resets(), 0);
+        buffer.discard_through(1_000);
+        assert!(buffer.is_empty() && buffer.bytes() == 0);
+        // Later pictures join once a keyframe arrives.
+        assert!(buffer.push(sample(31, false)).is_err());
+        assert!(buffer.push(sample(40, true)).is_ok());
     }
 
     #[test]

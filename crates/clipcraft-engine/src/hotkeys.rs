@@ -15,16 +15,19 @@ pub enum HotkeyAction {
     PushToTalk,
     /// Save a still picture of the game.
     Screenshot,
+    /// Pause or resume clipping without losing the replay.
+    TogglePause,
 }
 
 impl HotkeyAction {
     /// Every action, in the order the settings list them.
-    pub const ALL: [HotkeyAction; 5] = [
+    pub const ALL: [HotkeyAction; 6] = [
         Self::SaveClip,
         Self::ToggleRecording,
         Self::ToggleMicrophone,
         Self::PushToTalk,
         Self::Screenshot,
+        Self::TogglePause,
     ];
 
     /// The name shown to people.
@@ -35,6 +38,7 @@ impl HotkeyAction {
             Self::ToggleMicrophone => "Mute or unmute microphone",
             Self::PushToTalk => "Push to talk",
             Self::Screenshot => "Take screenshot",
+            Self::TogglePause => "Pause or resume clipping",
         }
     }
 
@@ -48,6 +52,9 @@ impl HotkeyAction {
             Self::ToggleMicrophone => "Switches your microphone on or off in clips.",
             Self::PushToTalk => "Your microphone is only recorded while you hold this key.",
             Self::Screenshot => "Saves the current frame as a picture.",
+            Self::TogglePause => {
+                "Stops adding to the replay and carries on from the same replay when you press it again. Handy in menus, loading screens or while away."
+            }
         }
     }
 
@@ -59,6 +66,7 @@ impl HotkeyAction {
             Self::ToggleMicrophone => "F10",
             Self::PushToTalk => "",
             Self::Screenshot => "F11",
+            Self::TogglePause => "",
         }
     }
 }
@@ -77,11 +85,31 @@ pub struct Hotkeys {
     pub push_to_talk: String,
     /// Take screenshot.
     pub screenshot: String,
-    /// Extra bindings in action order; the original string fields remain compatible with older settings.
-    pub alternatives: [Vec<String>; 5],
+    /// Pause or resume clipping.
+    pub toggle_pause: String,
+    /// Extra bindings in action order; the original string fields remain compatible with older
+    /// settings (which stored fewer lists, so any length is accepted and padded).
+    #[serde(deserialize_with = "alternatives_of_any_length")]
+    pub alternatives: [Vec<String>; HotkeyAction::ALL.len()],
     /// Shortcuts that save a clip of their own length, such as `Shift+F8` for the last two
     /// minutes. Empty by default; the Save clip shortcut keeps the replay length.
     pub clip_lengths: Vec<ClipLengthShortcut>,
+}
+
+/// Reads the extra-binding lists whatever their number: an older settings file has one list per
+/// action it knew, a newer one may have more than this version knows.
+fn alternatives_of_any_length<'de, D>(
+    deserializer: D,
+) -> Result<[Vec<String>; HotkeyAction::ALL.len()], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let lists = Vec::<Vec<String>>::deserialize(deserializer)?;
+    let mut out: [Vec<String>; HotkeyAction::ALL.len()] = Default::default();
+    for (slot, list) in out.iter_mut().zip(lists) {
+        *slot = list;
+    }
+    Ok(out)
 }
 
 /// A shortcut that saves the last `seconds` of the replay buffer.
@@ -110,6 +138,7 @@ impl Default for Hotkeys {
             toggle_microphone: String::new(),
             push_to_talk: String::new(),
             screenshot: String::new(),
+            toggle_pause: String::new(),
             alternatives: Default::default(),
             clip_lengths: Vec::new(),
         };
@@ -320,6 +349,7 @@ impl Hotkeys {
             HotkeyAction::ToggleMicrophone => &mut self.toggle_microphone,
             HotkeyAction::PushToTalk => &mut self.push_to_talk,
             HotkeyAction::Screenshot => &mut self.screenshot,
+            HotkeyAction::TogglePause => &mut self.toggle_pause,
         }
     }
 
@@ -331,6 +361,7 @@ impl Hotkeys {
             HotkeyAction::ToggleMicrophone => &self.toggle_microphone,
             HotkeyAction::PushToTalk => &self.push_to_talk,
             HotkeyAction::Screenshot => &self.screenshot,
+            HotkeyAction::TogglePause => &self.toggle_pause,
         }
     }
 
@@ -490,6 +521,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn settings_saved_before_pause_existed_still_load_with_their_extra_keys() {
+        // Five lists, as written by versions that had five actions.
+        let old = r#"{"save_clip":"F8","alternatives":[["Ctrl+F1"],[],[],[],["Ctrl+F5"]]}"#;
+        let keys: Hotkeys = serde_json::from_str(old).expect("old settings load");
+        assert_eq!(keys.bindings(HotkeyAction::SaveClip).count(), 2);
+        assert_eq!(keys.bindings(HotkeyAction::Screenshot).count(), 2);
+        assert_eq!(keys.get(HotkeyAction::TogglePause), "");
+        // More lists than this version knows are ignored, not an error.
+        let newer = r#"{"alternatives":[[],[],[],[],[],[],["F1"],["F2"]]}"#;
+        assert!(serde_json::from_str::<Hotkeys>(newer).is_ok());
+    }
+
+    #[test]
     fn alternatives_round_trip_limit_collisions_and_registration_ids() {
         let old: Hotkeys = serde_json::from_str(r#"{"save_clip":"Ctrl+F8"}"#).unwrap();
         assert_eq!(
@@ -516,7 +560,7 @@ mod tests {
             assert_eq!(Hotkeys::action_for_id(*id), Some(*action));
         }
         assert_eq!(Hotkeys::action_for_id(0), None);
-        assert_eq!(Hotkeys::action_for_id(26), None);
+        assert_eq!(Hotkeys::action_for_id(31), None);
         keys.remove_binding(HotkeyAction::SaveClip, 0);
         assert_eq!(keys.save_clip, "F1");
         assert_eq!(keys.bindings(HotkeyAction::SaveClip).count(), 4);

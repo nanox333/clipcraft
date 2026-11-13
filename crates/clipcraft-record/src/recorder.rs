@@ -164,6 +164,8 @@ pub struct RecordStatus {
     pub buffered_seconds: f32,
     /// Complete replay resets that discarded buffered video during this recording.
     pub buffer_resets: u64,
+    /// Recording is paused: nothing is being added to the replay buffer.
+    pub paused: bool,
     /// The source stopped giving pictures (its window closed) and the recorder is waiting for
     /// [`Recorder::replace_source`] with the buffered video kept. Always false unless
     /// [`Recorder::keep_through_source_loss`] is on.
@@ -240,7 +242,47 @@ struct Mailbox {
     capture_done: bool,
 }
 
+/// The recording's clock. It stops while the recording is paused, so pictures and sound taken
+/// after a pause carry on from where they stopped and a clip has no frozen gap in it.
+struct Clock {
+    epoch: Instant,
+    /// Time spent paused so far, and since when the recording has been paused (if it is).
+    paused: Mutex<(Duration, Option<Instant>)>,
+}
+
+impl Clock {
+    fn new() -> Self {
+        Self {
+            epoch: Instant::now(),
+            paused: Mutex::new((Duration::ZERO, None)),
+        }
+    }
+
+    fn elapsed(&self) -> Duration {
+        let (total, since) = *lock(&self.paused);
+        let now = since.map_or_else(|| self.epoch.elapsed(), |at| at.duration_since(self.epoch));
+        now.saturating_sub(total)
+    }
+
+    fn is_paused(&self) -> bool {
+        lock(&self.paused).1.is_some()
+    }
+
+    fn set_paused(&self, paused: bool) {
+        let mut state = lock(&self.paused);
+        match (paused, state.1) {
+            (true, None) => state.1 = Some(Instant::now()),
+            (false, Some(since)) => {
+                state.0 += since.elapsed();
+                state.1 = None;
+            }
+            _ => {}
+        }
+    }
+}
+
 struct Shared {
+    clock: Clock,
     stop: AtomicBool,
     fps: u32,
     source_name: Mutex<String>,
@@ -307,7 +349,6 @@ impl Recorder {
         audio: Option<AudioSetup>,
     ) -> Result<Self, RecordError> {
         config.validate()?;
-        let epoch = Instant::now();
         let (engine, audio_rate, track_count) = match audio {
             Some(setup) => {
                 let rate = setup.config.sample_rate;
@@ -326,6 +367,7 @@ impl Recorder {
         });
         let window_frames = i64::from(config.replay_seconds) * i64::from(config.fps);
         let shared = Arc::new(Shared {
+            clock: Clock::new(),
             stop: AtomicBool::new(false),
             fps: config.fps,
             source_name: Mutex::new(source.target().name.clone()),
@@ -362,7 +404,7 @@ impl Recorder {
         let fps = config.fps;
         let capture = std::thread::Builder::new()
             .name("clipcraft-capture".to_owned())
-            .spawn(move || capture_loop(&capture_shared, source, fps, epoch))
+            .spawn(move || capture_loop(&capture_shared, source, fps))
             .map_err(|_| {
                 shared.stop.store(true, Ordering::SeqCst);
                 RecordError::ThreadFailed
@@ -372,7 +414,7 @@ impl Recorder {
                 let audio_shared = shared.clone();
                 let handle = std::thread::Builder::new()
                     .name("clipcraft-audio".to_owned())
-                    .spawn(move || audio_loop(&audio_shared, engine, epoch))
+                    .spawn(move || audio_loop(&audio_shared, engine))
                     .map_err(|_| {
                         shared.stop.store(true, Ordering::SeqCst);
                         RecordError::ThreadFailed
@@ -387,6 +429,13 @@ impl Recorder {
             encode: Some(encode),
             audio: sound,
         })
+    }
+
+    /// Pauses or resumes recording. While paused nothing is added to the replay buffer and the
+    /// recording's clock stands still, so what was buffered before and what is recorded after
+    /// follow each other in one clip without a frozen stretch between them.
+    pub fn set_paused(&self, paused: bool) {
+        self.shared.clock.set_paused(paused);
     }
 
     /// When on, losing the source (its window closed) does not end the recording: the recorder
@@ -433,6 +482,7 @@ impl Recorder {
             buffered_bytes,
             buffered_seconds: span as f32 / self.shared.fps.max(1) as f32,
             buffer_resets,
+            paused: self.shared.clock.is_paused(),
             source_lost: self.shared.source_lost.load(Ordering::SeqCst),
             output,
             average_encode_ms,
@@ -451,6 +501,24 @@ impl Recorder {
     ) -> Result<SavedClip, RecordError> {
         let (samples, video, audio) = self.clip_parts(seconds)?;
         write_clip(&samples, &video, &audio, format, path)
+    }
+
+    /// As [`Recorder::save_clip`], then forgets the video that went into the clip, so the next
+    /// clip starts from nothing instead of overlapping this one. Picture taken while the file was
+    /// being written is kept.
+    pub fn save_clip_and_restart(
+        &self,
+        seconds: u32,
+        format: ClipFormat,
+        path: &Path,
+    ) -> Result<SavedClip, RecordError> {
+        let (samples, video, audio) = self.clip_parts(seconds)?;
+        let last = samples.last().map(|sample| sample.pts);
+        let saved = write_clip(&samples, &video, &audio, format, path)?;
+        if let Some(last) = last {
+            lock(&self.shared.buffer).discard_through(last);
+        }
+        Ok(saved)
     }
 
     /// Writes the first `fragments` fragments of the clip's crash-safe copy to `path` and stops,
@@ -595,7 +663,7 @@ impl Drop for Recorder {
     }
 }
 
-fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, start: Instant) {
+fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32) {
     let nanos_per_second = 1_000_000_000_u128;
     let mut next: u64 = 0;
     // Consecutive picture failures that may pass (a mode switch, a window being resized).
@@ -613,7 +681,12 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
             u64::try_from(u128::from(next) * nanos_per_second / u128::from(fps))
                 .unwrap_or(u64::MAX),
         );
-        let elapsed = start.elapsed();
+        // While paused nothing is captured, and the clock does not move.
+        if shared.clock.is_paused() {
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        }
+        let elapsed = shared.clock.elapsed();
         if due > elapsed {
             // Sleep in short slices so a stop request is noticed within a frame or two.
             std::thread::sleep((due - elapsed).min(Duration::from_millis(20)));
@@ -631,9 +704,10 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
             Ok(mut frame) => {
                 failures = 0;
                 shared.source_lost.store(false, Ordering::SeqCst);
-                let pts =
-                    i64::try_from(start.elapsed().as_nanos() * u128::from(fps) / nanos_per_second)
-                        .unwrap_or(i64::MAX);
+                let pts = i64::try_from(
+                    shared.clock.elapsed().as_nanos() * u128::from(fps) / nanos_per_second,
+                )
+                .unwrap_or(i64::MAX);
                 lock(&shared.stats).captured += 1;
                 if shared.screenshot_wanted.swap(false, Ordering::SeqCst) {
                     match frame.readback().ok().cloned() {
@@ -689,9 +763,15 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
     shared.wake.notify_all();
 }
 
-fn audio_loop(shared: &Shared, mut engine: AudioEngine, epoch: Instant) {
+fn audio_loop(shared: &Shared, mut engine: AudioEngine) {
     while !shared.stop.load(Ordering::SeqCst) {
-        let packets = engine.tick(epoch.elapsed());
+        // While paused the devices are still read, so they do not back up, but nothing is kept.
+        if shared.clock.is_paused() {
+            engine.discard(shared.clock.elapsed());
+            std::thread::sleep(Duration::from_millis(10));
+            continue;
+        }
+        let packets = engine.tick(shared.clock.elapsed());
         if !packets.is_empty() {
             let mut buffer = lock(&shared.audio_buffer);
             for (track, packet) in packets {
