@@ -115,6 +115,8 @@ are separate and can be much larger. Detailed decoder limits and remaining measu
 | Standard quality | H.264 MP4 at the selected resolution/FPS, with a 4–50 Mbps video target |
 | Small file | Estimated 10 MB output |
 | Medium file | Estimated 25 MB output |
+| Large file | Estimated 50 MB output (Discord Nitro Basic) |
+| Largest file | Estimated 500 MB output (Discord Nitro) |
 | Custom size | Estimated 1–500 MB output |
 
 **Resolution** offers **720p**, **1080p** and **Source · up to 4K**. **Frame rate** offers
@@ -258,7 +260,7 @@ compatible with earlier request payloads:
 ```
 
 To use the 10 MB target, add `"preset":{"preset":"small"}`. The 25 MB target is
-`{"preset":"medium"}`; a custom 8 MB target is `{"preset":"custom","megabytes":8}`. These are the
+`{"preset":"medium"}`; 50 MB and 500 MB are `{"preset":"large"}` and `{"preset":"largest"}`; a custom 8 MB target is `{"preset":"custom","megabytes":8}`. These are the
 values of the request's `preset` field, not separate commands. For example:
 
 ```json

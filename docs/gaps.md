@@ -57,6 +57,28 @@ shortcut saves about one second while the normal save keeps the buffer, and a ke
 settings test. Global registration on Windows and Wayland is the same mechanism as the other
 shortcuts and has not been run on those desktops for these keys.
 
+## Small features: share sizes, copy file, black-window rescue, restart after save, pause
+
+- **Discord sizes / copy file:** presets Large (50 MB) and Largest (500 MB) join Small (10) and
+  Medium (25); the retry-once size fit applies to them. `library.copy_file` (CLI `library copy-file`)
+  puts a clip's file on the clipboard: Windows uses the file-drop clipboard format
+  (type-checked in the Windows cross-compile lint only, not run on Windows), macOS asks the script
+  runner, Linux writes `text/uri-list` through `wl-copy` or `xclip` (checked with xclip under Xvfb;
+  not checked with Wayland or by pasting into Discord). Without a way to copy, the path is copied
+  and the message says so. Not done: dragging a clip out of the window.
+- **Black-window rescue:** a window source whose pictures are black everywhere sampled for three
+  seconds is reported (`RecordStatus.source_black`; only windows are watched, a dark monitor is not
+  a fault) and, in game-only mode with the screen fallback on, capture moves to the screen inside the
+  same recording; the window is tried again after a minute. For graphics-card surfaces the picture
+  is copied to look at once every two seconds, a cost not measured on Windows. A real black loading
+  screen also triggers it; recording the screen then is harmless.
+- **Restart after save:** `ReplayBuffer::discard_through` drops what went into the clip plus the
+  following pictures up to the next keyframe, so the replay refills from the next keyframe (up to the
+  keyframe interval of gap). Not counted as a reset.
+- **Pause:** the recorder's clock stops while paused (no frozen gap in clips); sound is read and
+  thrown away so nothing from the pause is mixed in. Recorder test: nothing captured while paused,
+  no reset, no restart, valid clip. Older settings files with five shortcut lists still load.
+
 ## Considered: Vulkan Video encoding (`gpu-video`, 2026-11-12)
 
 Evaluated software-mansion/smelter's `gpu-video` 0.5 (MIT; H.264 and H.265 encode through Vulkan

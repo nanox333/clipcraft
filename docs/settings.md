@@ -19,6 +19,10 @@ and Continue, then Finish setup, or keep the current draft with Skip. Closing be
 leaves setup pending. Nothing records during setup. Existing preference files bypass it. All
 choices remain available in Settings; no account or internet is needed.
 
+Hotkeys: Save clip (F8), Start or stop clipping (F9), mute microphone (F10), push to talk, take
+screenshot (F11) and **Pause or resume clipping** (no key until you choose one; it also has a
+Pause button in the top bar). Pausing keeps the replay and adds nothing until you resume.
+
 In **Settings → Hotkeys**, press **+** next to an action, then press a shortcut. Each action can
 have five bindings. Click a binding to replace it, × to remove it, or Reset to defaults to restore
 the original shortcuts. Escape cancels assignment. Duplicate keys are rejected with an explanation;

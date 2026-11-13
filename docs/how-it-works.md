@@ -58,7 +58,9 @@ The data folder is `%APPDATA%` on Windows, `~/Library/Application Support` on ma
 3. **Buffer.** Encoded pictures go into a `ReplayBuffer`: the newest N seconds kept as whole groups
    of pictures that start on a keyframe, bounded in time *and* bytes, so memory never grows. The
    oldest whole group is dropped as new ones arrive. Sound has its own bounded buffer.
-4. **Resets.** A change of picture size (when the stream cannot be kept), a silence longer than the
+4. **Pause.** The recorder's clock can stop (`set_paused`): nothing is captured or kept, sound is
+   read and discarded, and later pictures carry on from the same time so a clip has no frozen gap.
+5. **Resets.** A change of picture size (when the stream cannot be kept), a silence longer than the
    gap setting, or a hardware/software encoder switch starts a new stream and clears the buffer.
    The capture bar reports it. When the source changes in game-only mode the stream is *kept*
    (see below).

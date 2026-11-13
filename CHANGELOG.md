@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Share-ready exports:** Large (50 MB) and Largest (500 MB) size presets next to 10 and 25 MB, so
+  a clip fits Discord with or without Nitro, and **Copy file** (clip page and right-click menu,
+  `clipcraft-cli library copy-file`) puts the clip itself on the clipboard to paste into a chat or
+  folder. Windows and macOS use the system clipboard; Linux needs `wl-copy` or `xclip`, and
+  otherwise the path is copied and the message says so.
+- **Black-window rescue:** when a game's window gives only black pictures for three seconds,
+  capture switches to the screen in the same recording and tries the window again a minute later.
+- **Start the replay over after each save (optional):** Settings → Replay. The saved footage is
+  forgotten so the next clip never repeats it.
+- **Pause and resume clipping:** a hotkey (Settings → Hotkeys, no key by default) and a Pause
+  button. The replay is kept, nothing is added while paused, and the clip has no frozen gap.
 - **Hear the sound effects:** `cargo run -p clipcraft-audio-out --example cues` plays each one;
   add `-- --wav NEW_FOLDER` to save them as WAV files instead.
 - **Docs:** a new `docs/how-it-works.md` explains how recording, saving, game detection, the

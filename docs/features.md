@@ -63,7 +63,7 @@ The full, detailed feature list and known limits. The [README](../README.md) has
   Closing waits for accepted writes; the app warns before discarding unsaved metadata. Abrupt
   termination can lose unacknowledged metadata; source clips remain untouched.
 - **Quick trim and export:** mark a range in the player and save an original-quality trim, or
-  choose an estimated 10 MB, 25 MB, or custom 1–500 MB small-file export. Compression uses the Rust
+  choose an estimated 10 MB, 25 MB, 50 MB, 500 MB (the sizes Discord takes with and without Nitro) or custom 1–500 MB small-file export. Compression uses the Rust
   software H.264 encoder, preserves AAC audio tracks, and reduces video to at most 720p/30 fps
   without upscaling. Both paths preserve the source and support progress/cancel; compressed exports
   report their actual size. Both writers use exclusive temporary files and no-replace publication.
@@ -94,7 +94,7 @@ The full, detailed feature list and known limits. The [README](../README.md) has
   in the background before the clip can be added.
   Timeline strips sample the source pictures and linked audio waveforms; bounded background
   analysis keeps media work off the UI thread. Preview prepares the next source across cuts.
-  **Export video** offers standard H.264 MP4 or estimated 10 MB, 25 MB and custom 1–500 MB presets,
+  **Export video** offers standard H.264 MP4 or estimated 10 MB, 25 MB, 50 MB, 500 MB and custom 1–500 MB presets,
   with actual size and encoder reporting, progress/cancel and GPU-encoder fallback to software.
   Choose **720p**, **1080p**, or **Source (up to 4K)** at **30 or 60 FPS**, with stereo AAC.
   Size presets can reduce resolution or bitrate; the dialog explains reductions and shows actual

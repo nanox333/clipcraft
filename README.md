@@ -34,7 +34,10 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
 
 ## What it does
 
-- **Record and replay:** capture a screen or game window into a bounded replay buffer and save the
+- **Record and replay:** pause and resume clipping with a hotkey or the Pause button, and an optional
+  setting that starts the replay over after each save so clips never repeat footage. If a game
+  window delivers only black, ClipCraft switches to recording the screen in the same recording.
+  Capture a screen or game window into a bounded replay buffer and save the
   last moments with a global hotkey. Game-only mode waits until a recognized game is running and
   follows it to the window it actually draws in, even when a launcher starts the game process;
   if no window can be found it records the screen until one appears.
@@ -46,6 +49,8 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
   continues on the processor and the card is tried again every 20 s or longer.
 - **Audio:** system sound and microphone, mixed or on separate tracks, with optional offline
   microphone noise suppression and a mic test.
+- **Share:** export sized for Discord (10, 50 or 500 MB), and copy a clip as a file to paste
+  straight into a chat or folder (Linux needs `wl-copy` or `xclip`).
 - **Library:** a searchable local clip library with favorites, collections and game labels.
   Rename a clip (F2) without losing its favorite, collections or game, and delete clips to the
   Recycle Bin from a right-click menu. A focused card opens with Enter and favorites with F.
