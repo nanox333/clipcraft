@@ -152,7 +152,9 @@ jobs:
                 fi
               done
               gh release upload "$tag" "$folder"/* --repo "$GITHUB_REPOSITORY" --clobber
-              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$title" --notes-file "$notes" --latest="$latest"
+              # GitHub refuses --latest on a draft that already exists; which release is the latest
+              # is decided when a draft is published (the app is published last).
+              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$title" --notes-file "$notes"
             else
               gh release create "$tag" "$folder"/* \
                 --repo "$GITHUB_REPOSITORY" \
