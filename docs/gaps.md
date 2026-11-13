@@ -79,6 +79,25 @@ shortcuts and has not been run on those desktops for these keys.
   thrown away so nothing from the pause is mixed in. Recorder test: nothing captured while paused,
   no reset, no restart, valid clip. Older settings files with five shortcut lists still load.
 
+## Safety review (2026-11)
+
+Read for: unsafe code (none outside `clipcraft-platform` and `clipcraft-audio-out`, each block with a
+`// SAFETY:` note), panics in non-test code (none in the code added recently), external programs run
+(fixed arguments, paths passed as arguments or on stdin, never through a shell; the macOS
+script's path is escaped), network use (updates only, https, GitHub hosts only, size caps, SHA-256
+checked, a redirect limit), local listeners (the CS2/Dota 2 game-state listener binds loopback only,
+checks a key, caps sizes and has timeouts), settings, index and clip-header parsing (size and depth
+caps), uninstall (only what the install manifest lists), launch-at-sign-in entries (quoted and
+escaped), and unbounded growth (replay buffer, thumbnails, index, share copies, update download all
+capped). `cargo deny check advisories` now passes (it needs network, so it is not part of
+`cargo xtask ci`; run it before each release). **Known and accepted:** five unmaintained crates
+reached through other crates (`paste`, `ttf-parser`, `zbus_names`, `zvariant`, `zvariant_derive`;
+fixing the last three means moving to zbus 6, which removed the blocking API the shortcut and
+portal code uses), listed with reasons in `deny.toml`; updates are authenticated only by HTTPS to
+GitHub and a checksum published beside the download (there is no signature, so a compromised
+release would be trusted); the OLE drag on Windows blocks the window until the drop. **Not done:** a
+fuzzing pass over the media parsers (they are FilmCraft's, with size caps on our side).
+
 ## Safety watchdog (a report of 100% processor use and a near-crash)
 
 **The cause of that report was not found**: it was one report without details, and no runaway loop

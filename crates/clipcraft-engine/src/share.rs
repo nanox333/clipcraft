@@ -22,6 +22,54 @@ pub enum SharePlan {
     Needed(PathBuf),
 }
 
+/// Most share copies kept in one `Shared` folder, and the most space they may take together. The
+/// oldest go first. They are copies, made again whenever they are wanted.
+const KEEP_COPIES: usize = 24;
+const KEEP_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Removes the oldest share copies in `folder` until it holds at most [`KEEP_COPIES`] files and
+/// [`KEEP_BYTES`], leaving `keep` alone. Only files named like share copies (`... (10 MB).mp4`) in
+/// a folder called `Shared` are ever touched.
+fn prune_share_folder(folder: &Path, keep: &Path) {
+    if folder.file_name().is_none_or(|name| name != SHARE_FOLDER) {
+        return;
+    }
+    let Ok(listing) = fs::read_dir(folder) else {
+        return;
+    };
+    let mut copies: Vec<(std::time::SystemTime, u64, PathBuf)> = listing
+        .filter_map(Result::ok)
+        .filter_map(|item| {
+            let path = item.path();
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            let metadata = fs::symlink_metadata(&path).ok()?;
+            let named_like_a_copy = name.ends_with(".mp4") && name.contains(" MB)");
+            (metadata.is_file() && named_like_a_copy).then(|| {
+                (
+                    metadata.modified().ok().unwrap_or(std::time::UNIX_EPOCH),
+                    metadata.len(),
+                    path,
+                )
+            })
+        })
+        .collect();
+    copies.sort_by_key(|(modified, _, _)| *modified);
+    let mut total: u64 = copies.iter().map(|(_, size, _)| size).sum();
+    let mut count = copies.len();
+    for (_, size, path) in copies {
+        if count <= KEEP_COPIES && total <= KEEP_BYTES {
+            break;
+        }
+        if path == keep {
+            continue;
+        }
+        if fs::remove_file(&path).is_ok() {
+            count -= 1;
+            total = total.saturating_sub(size);
+        }
+    }
+}
+
 /// A share copy that is ready.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct SharedCopy {
@@ -95,6 +143,17 @@ pub fn make_share_copy(
         SharePlan::Needed(output) => {
             if let Some(folder) = output.parent() {
                 fs::create_dir_all(folder).map_err(|_| EngineError::FileUnavailable)?;
+                // Room for the copy (and the retry that may follow), and the folder kept in check.
+                let needed = target_bytes(megabytes)?
+                    .saturating_mul(2)
+                    .saturating_add(64 * 1024 * 1024);
+                if crate::storage::storage_usage(folder)
+                    .free_bytes
+                    .is_some_and(|free| free < needed)
+                {
+                    return Err(EngineError::Record(clipcraft_record::RecordError::DiskFull));
+                }
+                prune_share_folder(folder, &output);
             }
             let request = clipcraft_export::TrimRequest {
                 input: crate::existing_clip(source)?,
@@ -151,6 +210,36 @@ mod tests {
         assert_eq!(share_plan(&notes, 10), Err(EngineError::NotAClip));
         assert!(share_plan(&big, 0).is_err());
         assert!(share_plan(&big, 501).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_shared_folder_is_kept_small_and_only_share_copies_in_it_are_ever_removed() {
+        let dir = folder();
+        let shared = dir.join(SHARE_FOLDER);
+        fs::create_dir_all(&shared).unwrap();
+        for number in 0..30 {
+            fs::write(shared.join(format!("clip {number} (10 MB).mp4")), b"copy").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // Things that are not share copies are not touched, however many there are.
+        fs::write(shared.join("holiday.mp4"), b"mine").unwrap();
+        fs::write(shared.join("notes.txt"), b"mine").unwrap();
+        let newest = shared.join("clip 29 (10 MB).mp4");
+        let oldest = shared.join("clip 0 (10 MB).mp4");
+        prune_share_folder(&shared, &newest);
+        let left = fs::read_dir(&shared).unwrap().count();
+        assert_eq!(left, KEEP_COPIES + 2, "24 copies and the two others");
+        assert!(!oldest.exists() && newest.exists());
+        assert!(shared.join("holiday.mp4").exists() && shared.join("notes.txt").exists());
+        // A folder with another name is never pruned.
+        let other = dir.join("Other");
+        fs::create_dir_all(&other).unwrap();
+        for number in 0..30 {
+            fs::write(other.join(format!("x {number} (10 MB).mp4")), b"copy").unwrap();
+        }
+        prune_share_folder(&other, &other.join("none.mp4"));
+        assert_eq!(fs::read_dir(&other).unwrap().count(), 30);
         let _ = fs::remove_dir_all(&dir);
     }
 

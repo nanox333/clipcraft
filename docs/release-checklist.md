@@ -77,3 +77,8 @@ successfully for the published 0.1.0, 0.2.0 and 0.2.1 releases (0.2.1 was starte
 that the release tag points to the intended commit and that both platform packages were rebuilt
 from it. Store release notes in `docs/releases/v<version>.md` before running the workflow. There is
 no macOS download (no macOS provider yet).
+
+## Dependency advisories
+
+Run `cargo deny check advisories` before publishing (it needs network, so it is not part of
+`cargo xtask ci`). It must pass; the few ignored advisories are listed with reasons in `deny.toml`.

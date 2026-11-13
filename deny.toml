@@ -1,5 +1,15 @@
 [advisories]
 version = 2
+# Crates their authors have stopped maintaining, reached only through other crates we cannot move
+# yet. None is a known vulnerability. Revisit when eframe or zbus (the portal and shortcut code uses
+# its blocking API, which zbus 6 removed) move on.
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; transitive through the graphics stack" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; transitive through the font stack" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names merged into zbus 6; we use zbus 5's blocking API" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant merged into zbus 6; we use zbus 5's blocking API" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive merged into zbus 6; we use zbus 5's blocking API" },
+]
 
 [licenses]
 confidence-threshold = 0.8

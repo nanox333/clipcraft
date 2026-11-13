@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Safety review:** updated two dependencies with known problems (`rustix`, which had a
+  memory-safety advisory in functions ClipCraft does not call, and the yanked `clipboard-win`
+  and `async-executor`); the clipboard tools used by Copy file can no longer hang the window (they
+  are ended after three seconds); only one drag runs at a time and none lasts over five minutes; the
+  `Shared` folder of Discord-sized copies is kept to 24 files and 2 GB, and a copy is not started
+  without room for it.
 - **Protects your computer from a runaway:** while clipping, ClipCraft now watches its own use of the
   processor and memory. If it uses nearly all of the processor for 20 seconds it records fewer
   pictures a second at once; if that does not help within a minute it stops clipping and tells you
