@@ -17,7 +17,9 @@ Automated checks run on Linux and Windows; they do not replace testing on real c
 Download [ClipCraft 0.2.1](https://github.com/nanox333/clipcraft/releases/tag/v0.2.1) as a Windows
 **ClipCraft-Setup** installer or a Linux x86_64 tarball. The command-line tool is available as a
 separate download. The Windows installer works for the current user and needs no administrator
-rights or account.
+rights or account. From 0.3.0 Windows also has a **portable zip** (unzip anywhere and run
+`bin\clipcraft.exe`; nothing is installed), and the command-line tool is its own release
+(`cli-v<version>`) rather than a file in the app's release.
 
 Check a download against `SHA256SUMS.txt` if you like. Downloads are not code-signed, so Windows
 SmartScreen may warn: choose *More info*, then *Run anyway*. ClipCraft can tell you when a newer

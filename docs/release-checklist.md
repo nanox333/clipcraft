@@ -41,8 +41,10 @@ alone.
 
 ### Offline Windows installer (M5.1a)
 
-`cargo xtask package` builds `target/dist/ClipCraft-Setup-<version>.exe` and a separate
-`clipcraft-cli-<version>-windows-<arch>.zip` (the CLI is not part of the app download or installer). The setup executable contains all application files and notices, installs
+`cargo xtask package` builds `target/dist/ClipCraft-Setup-<version>.exe`, the portable
+`clipcraft-<version>-windows-<arch>.zip` (unzip anywhere and run `bin\clipcraft.exe`; nothing is
+installed) and a separate `clipcraft-cli-<version>-windows-<arch>.zip` (the CLI is not part of the
+app download or installer). The setup executable contains all application files and notices, installs
 to `%LOCALAPPDATA%/Programs/ClipCraft` by default, and needs no administrator/account/network.
 It adds Start menu links, an optional desktop link and a current-user Windows uninstall entry.
 The installed `uninstall.exe` (or Windows Settings → Apps) removes owned application versions,
@@ -62,8 +64,13 @@ install/upgrade/remove check remain release gates. See ADR 0031.
 RNNoise model's required notice, alongside `ATTRIBUTION.md` and the dependency license list.
 Keep this notice with binary redistributions, including manually assembled Windows builds.
 
-`.github/workflows/release.yml` builds the Linux (x86_64) tarball and CLI archive and the Windows (x86_64) setup executable and CLI zip with
-`cargo xtask package`, writes `SHA256SUMS.txt`, and creates a **draft** GitHub Release for review.
+`.github/workflows/release.yml` builds the Linux (x86_64) tarball and CLI archive and the Windows (x86_64) setup
+executable, portable zip and CLI zip with `cargo xtask package`, and creates two **draft** GitHub
+Releases for review, each with its own `SHA256SUMS.txt` (and signature, when the key is set):
+`v<version>` for the app (setup, portable zip, Linux tarball) and `cli-v<version>` for the command
+line tool alone. The update check reads the repository's *latest* release, which must stay the app:
+the CLI release is created as "not latest", and **publish the CLI draft first and the app draft
+last**.
 
 1. Set the version in `Cargo.toml` (`[workspace.package]`) and merge it.
 2. Push a tag that matches it, for example `git tag v0.1.0 && git push origin v0.1.0` (or run the

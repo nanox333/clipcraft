@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Releases:** Windows now has a portable zip next to the setup program (unzip anywhere, run
+  `bin\clipcraft.exe`), and the command line tool is its own release (`cli-v<version>`) instead of
+  files inside the app's release. Each release has its own checksum list.
+
 - **Sound mixer (Windows and Linux):** Settings → Audio → Applications records the game, Discord, a music
   player or any program on a track of its own, with its own level and a live meter, picked up
   whenever it starts playing (even if it was opened after you began clipping). Needs Windows 10

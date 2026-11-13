@@ -527,11 +527,22 @@ recording does not work. It is separate from the app, which has its own download
         }
         Ok(archive)
     };
-    // On Windows the app is downloaded as the setup program; Linux gets a tarball.
-    let mut archives = vec![pack(&cli_name)?];
-    if !windows {
-        archives.push(pack(&name)?);
+    // The app comes as a portable archive on both systems; Windows also has the setup program. The
+    // setup was built from the folder above with its own notes; the portable copy says how to run
+    // it from any folder.
+    if windows {
+        fs::write(
+            folder.join("INSTALL.txt"),
+            "ClipCraft is portable: unzip this folder anywhere and run bin\\clipcraft.exe. Nothing is\n\
+installed and no administrator rights are needed. Delete the folder to remove the program; your\n\
+clips and settings stay where they were saved. For Start menu links and an uninstaller, use the\n\
+ClipCraft setup program from the same release instead.\n\
+This download is not signed, so Windows SmartScreen may say the publisher is unknown: choose\n\
+More info, then Run anyway. Check the file against SHA256SUMS.txt from the release page first.\n",
+        )
+        .map_err(fail)?;
     }
+    let archives = vec![pack(&cli_name)?, pack(&name)?];
     // On Windows the release workflow writes the checksums for every file together.
     if !windows {
         let sums = Command::new("sha256sum")

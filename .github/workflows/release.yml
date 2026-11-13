@@ -89,42 +89,68 @@ jobs:
           path: dist
           pattern: package-*
           merge-multiple: true
-      - name: Write checksums
-        working-directory: dist
-        run: sha256sum clipcraft-* ClipCraft-* > SHA256SUMS.txt && cat SHA256SUMS.txt
+      # Two releases from one build: the app (setup program, portable zip, Linux tarball) on
+      # v<version>, and the command line tool on its own on cli-v<version>.
+      - name: Sort the downloads into app and command line folders
+        run: |
+          mkdir dist/app dist/cli
+          mv dist/clipcraft-cli-* dist/cli/
+          mv dist/clipcraft-* dist/ClipCraft-* dist/app/
+          for folder in app cli; do
+            (cd "dist/$folder" && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          done
       - uses: dtolnay/rust-toolchain@stable
         if: env.CLIPCRAFT_SIGNING_KEY != ''
       - name: Sign the checksums
         if: env.CLIPCRAFT_SIGNING_KEY != ''
-        run: cargo xtask sign dist/SHA256SUMS.txt
-      - name: Create or refresh the draft release
+        run: |
+          cargo xtask sign dist/app/SHA256SUMS.txt
+          cargo xtask sign dist/cli/SHA256SUMS.txt
+      - name: Create or refresh the draft releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          tag="v${VERSION}"
-          notes="docs/releases/${tag}.md"
-          if [ ! -f "$notes" ]; then
-            echo "::error::missing release notes: $notes"
+          app_notes="docs/releases/v${VERSION}.md"
+          if [ ! -f "$app_notes" ]; then
+            echo "::error::missing release notes: $app_notes"
             exit 1
           fi
-          if draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
-            if [ "$draft" != true ]; then
-              echo "::error::refusing to overwrite a published release"
-              exit 1
+          cli_notes="$RUNNER_TEMP/cli-notes.md"
+          cat > "$cli_notes" <<EOF
+          The ClipCraft command line tool ${VERSION}, on its own: list capture targets, record, trim,
+          export and inspect your library from a terminal. Run it with \`help\`, and \`diagnose\` if
+          recording does not work.
+
+          This is not the app. The ClipCraft app (setup program and portable zip for Windows, tarball
+          for Linux) is on the [v${VERSION} release](https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${VERSION}).
+          Check your download against \`SHA256SUMS.txt\` first.
+          EOF
+          # Publish the command line release first and the app release last: the app's update
+          # check reads the repository's latest release, which must stay the app.
+          publish() {
+            tag="$1"; title="$2"; notes="$3"; folder="$4"; latest="$5"
+            if draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
+              if [ "$draft" != true ]; then
+                echo "::error::refusing to overwrite a published release ($tag)"
+                exit 1
+              fi
+              tagged_commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${tag}" --jq .sha)
+              if [ "$tagged_commit" != "$GITHUB_SHA" ]; then
+                echo "::error::release tag $tag points to $tagged_commit, but packages were built from $GITHUB_SHA"
+                exit 1
+              fi
+              gh release upload "$tag" "$folder"/* --repo "$GITHUB_REPOSITORY" --clobber
+              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$title" --notes-file "$notes" --latest="$latest"
+            else
+              gh release create "$tag" "$folder"/* \
+                --repo "$GITHUB_REPOSITORY" \
+                --target "$GITHUB_SHA" \
+                --title "$title" \
+                --notes-file "$notes" \
+                --latest="$latest" \
+                --draft
             fi
-            tagged_commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${tag}" --jq .sha)
-            if [ "$tagged_commit" != "$GITHUB_SHA" ]; then
-              echo "::error::release tag points to $tagged_commit, but packages were built from $GITHUB_SHA"
-              exit 1
-            fi
-            gh release upload "$tag" dist/* --repo "$GITHUB_REPOSITORY" --clobber
-            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "ClipCraft ${VERSION}" --notes-file "$notes"
-          else
-            gh release create "$tag" dist/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "ClipCraft ${VERSION}" \
-              --notes-file "$notes" \
-              --draft
-          fi
+          }
+          publish "cli-v${VERSION}" "ClipCraft command line ${VERSION}" "$cli_notes" dist/cli false
+          publish "v${VERSION}" "ClipCraft ${VERSION}" "$app_notes" dist/app true
