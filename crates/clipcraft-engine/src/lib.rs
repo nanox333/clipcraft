@@ -34,6 +34,7 @@ mod recording;
 mod recovery;
 mod relink;
 mod rename;
+mod safety;
 mod scan;
 mod screenshot;
 mod share;
@@ -90,6 +91,7 @@ pub use recording::{
 pub use recovery::{Recovery, recover_interrupted};
 pub use relink::{SearchResult, find_moved_file};
 pub use rename::{MAX_CLIP_NAME_CHARS, RenamedClip, clean_clip_name};
+pub use safety::{HOGGING_SHARE, HeavyWork, MEMORY_LIMIT_BYTES, StopReason, Verdict, Watchdog};
 pub use screenshot::{ScreenshotJob, screenshot_name};
 pub use session::{
     CLIP_PREFIX, CaptureSession, MicrophoneTestPlan, SaveJob, SavedClipReport, clip_format,

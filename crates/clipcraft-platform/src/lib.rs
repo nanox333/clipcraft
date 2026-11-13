@@ -39,6 +39,7 @@ mod priority;
 mod process;
 #[cfg(target_os = "linux")]
 mod pulse;
+mod resources;
 mod screen;
 mod timer;
 mod trash;
@@ -76,6 +77,7 @@ pub use priority::set_background_priority;
 pub use process::{
     ProcessObserver, RunningProcess, process_family, running_processes, steam_installation_roots,
 };
+pub use resources::{SelfMeter, SelfUsage};
 pub use screen::{make_window_passive, set_taskbar_button, window_minimized, work_area};
 pub use timer::set_fine_timer;
 pub use trash::move_to_trash;
