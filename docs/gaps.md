@@ -1,5 +1,16 @@
 # Known gaps
 
+## 0.3.0 release verification
+
+Linux and Windows CI ran the full gate (`cargo xtask ci`) on the 0.3.0 release commit. Two releases
+are built from one run: the app (Windows setup and portable zip, Linux tarball) and the command line
+tool on its own (`cli-v0.3.0`). Not verified: installing the setup or running the portable zip on a
+clean Windows machine, and the Windows-only features (per-program sound, drag into Discord, Copy
+file) and the pause, black-window rescue and automatic-quality changes with real games. The
+signing key is not set, so the packages and update checks are unsigned. One CI check, "a light
+recording stays at full rate", can fail on a stalled shared runner when a few pictures are lost; it
+now only fails when the rate is lowered with nothing dropped.
+
 ## 0.2.0 release verification
 
 Linux and Windows CI passed on the 0.2.0 release commit. The release workflow built both platform

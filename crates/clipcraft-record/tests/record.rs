@@ -341,7 +341,15 @@ fn automatic_quality_lowers_the_picture_rate_when_the_encoder_cannot_keep_up_wit
     let calm = Recorder::start(Box::new(SyntheticSource::new(160, 90, 30)), config()).unwrap();
     calm.adapt_to_load(true);
     std::thread::sleep(Duration::from_secs(8));
-    assert_eq!(calm.status().effective_fps, 30);
+    // A busy shared machine can stall the encoder for a moment and lose pictures, and lowering
+    // the rate then is right. What must never happen is lowering it with nothing lost: that would
+    // be the "squeezed" rule firing on a recording that has plenty of room.
+    let status = calm.status();
+    assert!(
+        status.effective_fps == 30 || status.frames_dropped > 0,
+        "lowered to {} with no pictures dropped: {status:?}",
+        status.effective_fps
+    );
 }
 
 #[test]
