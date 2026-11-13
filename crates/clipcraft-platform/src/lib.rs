@@ -15,6 +15,7 @@ mod borderless;
 mod clipboard;
 #[cfg(windows)]
 mod d3d11;
+mod drag;
 #[cfg(target_os = "linux")]
 mod evdev;
 pub mod game_state;
@@ -66,6 +67,9 @@ pub fn start_wayland_hotkeys_on(
     global_shortcuts::start(bindings, false, Some(address.to_owned()))
 }
 pub use clipboard::copy_file_to_clipboard;
+pub use drag::start_file_drag;
+#[cfg(all(unix, not(target_os = "macos")))]
+pub use drag::start_file_drag_on;
 pub use http::https_get;
 pub use installation::{register_installation, unregister_installation};
 pub use priority::set_background_priority;
