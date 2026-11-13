@@ -566,6 +566,7 @@ impl ClipCraftApp {
             return;
         };
         let (now, target) = (status.effective_fps, status.target_fps);
+        let squeezed = status.squeezed;
         let before = self.capture.last_effective_fps.replace(now);
         let Some(before) = before.filter(|before| *before != now) else {
             return;
@@ -580,7 +581,11 @@ impl ClipCraftApp {
             return;
         }
         self.capture.notice = notice(
-            if now < before {
+            if now < before && squeezed {
+                format!(
+                    "Your game started using more of your computer, so ClipCraft is recording {now} pictures a second instead of {target} to stay out of its way. Your replay is kept, and it goes back up when there is room."
+                )
+            } else if now < before {
                 format!(
                     "Your computer is struggling to keep up, so ClipCraft is recording {now} pictures a second instead of {target}. Your replay is kept, and it goes back up when there is room."
                 )

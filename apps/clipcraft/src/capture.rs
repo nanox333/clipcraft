@@ -2010,13 +2010,24 @@ mod tests {
             "the same rate is not said again"
         );
         status.effective_fps = status.target_fps;
-        app.capture.status = Some(status);
+        app.capture.status = Some(status.clone());
         app.report_quality_change();
         assert!(
             app.capture
                 .notice
                 .as_ref()
                 .is_some_and(|notice| notice.text.contains("room again"))
+        );
+        // Lowered before anything was lost, because the game took more of the computer: it says so.
+        status.effective_fps = status.target_fps / 2;
+        status.squeezed = true;
+        app.capture.status = Some(status);
+        app.report_quality_change();
+        assert!(
+            app.capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.text.contains("started using more"))
         );
         drop(app);
         remove_scratch(root);

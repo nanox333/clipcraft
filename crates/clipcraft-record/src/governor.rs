@@ -5,6 +5,12 @@
 //! the replay buffer is never cleared by a change; a clip simply has fewer pictures a second for
 //! a while (a "half rate" clip of a 60 fps recording plays at 30).
 //!
+//! Two things lower the rate. Pictures being dropped is the plain one. The earlier one is
+//! *squeezing*: the encoder is busy more than half the time and each picture suddenly takes much
+//! longer than it did a little while ago, which is what it looks like when a game (or anything else)
+//! starts taking the graphics card or the processor. Lowering then happens before pictures are lost
+//! and before the game itself stutters because of the recording.
+//!
 //! The decision is plain arithmetic on counters, so it is tested without any recording.
 
 use std::collections::VecDeque;
@@ -20,6 +26,14 @@ const LOWER_AFTER: f64 = 8.0;
 const RAISE_AFTER: f64 = 30.0;
 /// How full the encoder may be, at the higher rate, for going back to be tried.
 const RAISE_BELOW_LOAD: f64 = 0.6;
+/// Squeezing: the encoder is busy at least this share of the time, and a picture takes at least
+/// this many times longer than the quickest it took in the last minute. The load figure is the
+/// same one the way back up uses, so a rate it lowers to does not bounce straight back.
+const SQUEEZE_MIN_LOAD: f64 = RAISE_BELOW_LOAD;
+const SQUEEZE_RATIO: f64 = 1.5;
+/// How far back "the quickest it took" looks, and how many pictures a measurement needs.
+const BASELINE_SECONDS: f64 = 60.0;
+const MIN_PICTURES: u64 = 10;
 
 /// Counters since the recording started.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -41,6 +55,21 @@ pub struct Governor {
     level: u32,
     history: VecDeque<(f64, Counters)>,
     last_change: f64,
+    /// Average encode time per picture (seconds) over each recent window, with when it was seen.
+    per_picture: VecDeque<(f64, f64)>,
+    /// Why the rate last went down.
+    last_reason: Option<Reason>,
+}
+
+/// Why the rate was lowered.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Reason {
+    /// Pictures were being dropped.
+    Dropping,
+    /// Pictures were not dropped yet, but each took much longer than a moment ago.
+    Squeezed,
+    /// Asked for from outside (the safety watchdog).
+    Forced,
 }
 
 impl Governor {
@@ -56,6 +85,8 @@ impl Governor {
             level: 0,
             history: VecDeque::new(),
             last_change: f64::NEG_INFINITY,
+            per_picture: VecDeque::new(),
+            last_reason: None,
         }
     }
 
@@ -65,7 +96,13 @@ impl Governor {
         self.level = self.max_level;
         self.last_change = now;
         self.history.clear();
+        self.last_reason = Some(Reason::Forced);
         self.level
+    }
+
+    /// Why the rate was last lowered, if it has been.
+    pub fn last_reason(&self) -> Option<Reason> {
+        self.last_reason
     }
 
     /// 0 is every picture, 1 every second one, 2 every third.
@@ -95,12 +132,38 @@ impl Governor {
         let nanos = counters.encode_nanos.saturating_sub(oldest.encode_nanos);
         let seen = captured.max(1) as f64;
         let drop_rate = dropped as f64 / seen;
-        if drop_rate > DROP_LIMIT
+        // How long a picture took, how much of the time the encoder was busy, and whether that
+        // is much worse than the best of the last minute.
+        let mut squeezed = false;
+        if encoded >= MIN_PICTURES {
+            let per_picture = nanos as f64 / encoded as f64 / 1e9;
+            let busy = nanos as f64 / 1e9 / (now - then).max(1.0);
+            self.per_picture.push_back((now, per_picture));
+            while self
+                .per_picture
+                .front()
+                .is_some_and(|(seen_at, _)| now - seen_at > BASELINE_SECONDS)
+            {
+                self.per_picture.pop_front();
+            }
+            let best = self
+                .per_picture
+                .iter()
+                .map(|(_, value)| *value)
+                .fold(f64::INFINITY, f64::min);
+            squeezed = busy >= SQUEEZE_MIN_LOAD && per_picture >= SQUEEZE_RATIO * best;
+        }
+        if (drop_rate > DROP_LIMIT || squeezed)
             && self.level < self.max_level
             && now - self.last_change >= LOWER_AFTER
         {
             self.level += 1;
             self.last_change = now;
+            self.last_reason = Some(if drop_rate > DROP_LIMIT {
+                Reason::Dropping
+            } else {
+                Reason::Squeezed
+            });
             // What came before was at the old rate, so it says nothing about the new one.
             self.history.clear();
             return Some(self.level);
@@ -172,6 +235,46 @@ mod tests {
         // Changes are spaced out, not made on every second of trouble.
         assert!(changes[1].0 - changes[0].0 >= 8);
         assert_eq!(governor.level(), 2);
+    }
+
+    #[test]
+    fn a_game_taking_the_card_lowers_the_rate_before_anything_is_dropped() {
+        let mut governor = Governor::new(60);
+        let mut counters = Counters::default();
+        // A minute of easy encoding: 6 ms a picture at 60 a second is 36% busy.
+        assert!(run(&mut governor, &mut counters, 0, 60, 60, 0.0, 6.0).is_empty());
+        // The game starts using the card: the same pictures now take 14 ms (84% busy), and the
+        // encoder still keeps up, so nothing is dropped yet.
+        let changes = run(&mut governor, &mut counters, 60, 20, 60, 0.0, 14.0);
+        assert_eq!(changes.len(), 1, "{changes:?}");
+        assert_eq!(changes[0].1, 1);
+        assert_eq!(governor.last_reason(), Some(Reason::Squeezed));
+        // At half the rate the encoder is about 42% busy and the rate stays down: it does not
+        // bounce back while the game still holds the card.
+        let later = run(&mut governor, &mut counters, 80, 120, 60, 0.0, 14.0);
+        assert!(later.is_empty(), "{later:?}");
+        assert_eq!(governor.level(), 1);
+    }
+
+    #[test]
+    fn a_steady_heavy_load_with_no_trouble_is_not_mistaken_for_a_squeeze() {
+        // The encoder is 80% busy from the start and always was: nothing changed, nothing dropped.
+        let mut governor = Governor::new(60);
+        let mut counters = Counters::default();
+        assert!(run(&mut governor, &mut counters, 0, 180, 60, 0.0, 13.0).is_empty());
+        // A light recording whose pictures merely vary a little is left alone too.
+        let mut governor = Governor::new(60);
+        let mut counters = Counters::default();
+        run(&mut governor, &mut counters, 0, 60, 60, 0.0, 6.0);
+        assert!(run(&mut governor, &mut counters, 60, 60, 60, 0.0, 8.0).is_empty());
+    }
+
+    #[test]
+    fn dropping_is_named_as_the_reason_when_pictures_are_lost() {
+        let mut governor = Governor::new(60);
+        let mut counters = Counters::default();
+        run(&mut governor, &mut counters, 0, 10, 60, 0.4, 30.0);
+        assert_eq!(governor.last_reason(), Some(Reason::Dropping));
     }
 
     #[test]

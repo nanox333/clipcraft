@@ -28,7 +28,7 @@ pub use audio::{
     AudioProvider, AudioSetup, AudioSource, PcmMonitor, SampleQueue, ToneSource,
 };
 pub use denoise::NoiseSuppressedSource;
-pub use governor::{Counters, Governor};
+pub use governor::{Counters, Governor, Reason};
 pub use hardware::{
     HardwareEncoder, HardwarePacket, HardwareProvider, HardwareRequest, StreamCodec, SurfaceFit,
 };

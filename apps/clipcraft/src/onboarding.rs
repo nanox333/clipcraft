@@ -18,6 +18,9 @@ pub(crate) struct Setup {
 
 impl Setup {
     pub(crate) fn new(mut draft: RecordingSettings) -> Self {
+        // Ready when you play: the setup starts with "start quietly at sign-in" on, and the last
+        // page lets the person turn it off. Nothing is registered until the setup is finished.
+        draft.launch_at_startup = true;
         if draft.capture_folder.is_empty() {
             draft.capture_folder = clipcraft_engine::default_capture_folder()
                 .map(|path| path.to_string_lossy().into_owned())
@@ -677,10 +680,32 @@ impl ClipCraftApp {
                 Ok(settings) => {
                     self.recording = settings;
                     self.setup = None;
+                    self.register_start_at_sign_in();
                     self.reconcile_clips_folder();
                 }
                 Err(error) => setup.error = Some(error),
             }
+        }
+    }
+}
+
+impl ClipCraftApp {
+    /// Registers "start quietly at sign-in" once the setup is finished, when it was chosen. If the
+    /// system refuses, the choice is switched off again and the person is told.
+    fn register_start_at_sign_in(&mut self) {
+        if !self.recording.launch_at_startup {
+            return;
+        }
+        let executable = std::env::current_exe().unwrap_or_default();
+        if let Err(error) = execute(Command::SetLaunchAtStartup {
+            enabled: true,
+            executable,
+        }) {
+            self.error = Some(format!(
+                "ClipCraft could not be set to start when you sign in: {error}"
+            ));
+            self.recording.launch_at_startup = false;
+            self.save_recording_settings();
         }
     }
 }
@@ -1234,6 +1259,36 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                 (false, true) => "Microphone",
                 (false, false) => "No sound",
             };
+            settings::card(ui, "When you sign in", |ui| {
+                settings::setting_row(
+                    ui,
+                    "Start quietly when I sign in",
+                    if cfg!(windows) {
+                        "ClipCraft opens in the tray with no window, pop-ups or sounds, so clips are ready when you play."
+                    } else {
+                        "ClipCraft opens in the background with no pop-ups or sounds, so clips are ready when you play."
+                    },
+                    true,
+                    |ui| {
+                        let on = setup.draft.launch_at_startup;
+                        let (rect, response) =
+                            ui.allocate_exact_size(egui::vec2(40.0, 22.0), egui::Sense::click());
+                        response.widget_info(|| {
+                            egui::WidgetInfo::selected(
+                                egui::WidgetType::Checkbox,
+                                true,
+                                on,
+                                "Start quietly when I sign in",
+                            )
+                        });
+                        settings::paint_switch(ui.painter(), rect, on);
+                        if response.clicked() {
+                            setup.draft.launch_at_startup = !on;
+                        }
+                    },
+                );
+            });
+            ui.add_space(14.0);
             settings::card(ui, "Your setup", |ui| {
                 settings::info_row(ui, "Quality", profile, false);
                 settings::info_row(
@@ -1325,6 +1380,21 @@ mod tests {
         );
         std::fs::remove_file(path).unwrap();
     }
+    #[test]
+    fn the_setup_starts_with_a_quiet_start_at_sign_in_that_is_only_saved_not_registered() {
+        let setup = Setup::new(RecordingSettings::default());
+        assert!(setup.draft.launch_at_startup);
+        // Pop-ups and sounds stay off however it is chosen.
+        assert!(!setup.draft.sound_effects && !setup.draft.show_save_notification);
+        let path =
+            std::env::temp_dir().join(format!("cut-setup-startup-{}.json", std::process::id()));
+        let mut setup = setup;
+        // Finishing only saves the choice; the system's start-up entry is made by the app after.
+        let saved = setup.finish(Some(path.clone())).unwrap();
+        assert!(saved.launch_at_startup && saved.setup_completed);
+        let _ = std::fs::remove_file(path);
+    }
+
     #[test]
     fn setup_saves_only_when_finished_and_reports_failure() {
         let mut setup = Setup::new(RecordingSettings::default());

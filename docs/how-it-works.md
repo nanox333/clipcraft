@@ -59,7 +59,9 @@ The data folder is `%APPDATA%` on Windows, `~/Library/Application Support` on ma
    of pictures that start on a keyframe, bounded in time *and* bytes, so memory never grows. The
    oldest whole group is dropped as new ones arrive. Sound has its own bounded buffer.
 4. **Automatic quality.** Once a second the capture loop asks the governor whether pictures are
-   being dropped; if so it takes every second or third picture instead, and goes back when there
+   being dropped, or whether each picture has suddenly become much slower to encode while the
+   encoder is busy more than 60% of the time (a game started taking the computer: "squeezed");
+   if so it takes every second or third picture instead, and goes back when there
    is room. The stream is unchanged, so the buffer is kept.
 5. **Safety.** The app reads ClipCraft's own processor and memory use once a second while it
    records; a runaway first lowers the picture rate and then stops clipping (`safety.rs`).

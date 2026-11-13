@@ -176,8 +176,21 @@ have fewer pictures a second). Verified: arithmetic tests of the governor, and a
 HD at 60 a second on one thread (overloaded here) that gets lowered with no reset or restart,
 while a light recording is left alone. **Not done:** lowering the picture *size* or bitrate
 (that needs a new stream and would clear the replay); capping at the monitor's refresh rate (the
-capture targets do not report it yet); recognising a game that takes the graphics card other than
-by the drops it causes. Not measured on a real game on Windows.
+capture targets do not report it yet). **Squeezing (a game taking the card):** besides drops, the
+governor lowers the rate when the encoder was busy at least 60% of the time over the window and a
+picture takes 1.5 times or more of the quickest of the last 60 seconds (`Reason::Squeezed`; the
+notice says the game started using more of the computer). This is inferred from encode time only:
+it does not read the graphics card's own load, a game that is slow for other reasons looks the
+same, and a game that was already heavy when the recording began sets the baseline, so only a
+change after that is noticed. Verified with arithmetic tests (it fires before any drop, does not
+bounce back while the load stays, and ignores a steady heavy load); not measured on a real game.
+Not measured on a real game on Windows.
+
+**Start quietly at sign-in:** the setup's last page shows "Start quietly when I sign in" (on by
+default); finishing the setup saves it and the app then registers the start-up entry
+(`--minimized`; the tray hides the taskbar button on Windows). A refusal by the system switches it
+off again with a message. Verified: the draft default and that finishing the setup registers
+nothing itself; the real Windows registry entry and tray start were not run.
 
 ## Dragging a clip into a chat (Windows OLE, X11 XDND)
 

@@ -26,7 +26,8 @@ SmartScreen may warn: choose *More info*, then *Run anyway*. ClipCraft can tell 
 version is published and install it for you (Settings → About); turn the automatic check off under
 Settings → General and it never goes online. See [`CHANGELOG.md`](CHANGELOG.md) for each release.
 
-New profiles get a short setup for storage, capture, audio and shortcuts. Each hotkey action
+New profiles get a short setup for storage, capture, audio and shortcuts; its last page offers
+to start ClipCraft quietly (in the tray on Windows, no window, pop-ups or sounds) when you sign in. Each hotkey action
 supports up to five shortcuts: use **+** in Settings → Hotkeys. **Clip-length shortcuts** give
 keys their own clip length, for example Shift + F8 for the last 2 minutes next to F8 for the
 whole replay.
@@ -40,7 +41,8 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
   ClipCraft itself uses nearly all of the processor for a long time or far too much memory, so it
   cannot starve the computer. Automatic quality (on by default) records half, then a third, of the
   pictures per second when the computer cannot keep up, and goes back when there is room, without
-  clearing the replay. Pause and resume clipping with a hotkey or the Pause button, and an optional
+  clearing the replay. It also steps down before anything is lost when a game starts taking the
+  computer and each picture suddenly takes much longer to encode. Pause and resume clipping with a hotkey or the Pause button, and an optional
   setting that starts the replay over after each save so clips never repeat footage. If a game
   window delivers only black, ClipCraft switches to recording the screen in the same recording.
   Capture a screen or game window into a bounded replay buffer and save the

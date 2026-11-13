@@ -16,7 +16,7 @@ use filmcraft_h264enc::{Encoder, EncoderConfig, PacketFormat, Preset, Profile, R
 use crate::RecordError;
 use crate::audio::{AudioBuffer, AudioEngine, AudioInputStatus, AudioSetup, AudioTrackInfo};
 use crate::convert::{convert, convert_rgba};
-use crate::governor::{Counters, Governor};
+use crate::governor::{Counters, Governor, Reason};
 use crate::hardware::{
     HardwareEncoder, HardwareProvider, HardwareRequest, StreamCodec, SurfaceFit,
 };
@@ -170,6 +170,10 @@ pub struct RecordStatus {
     /// Pictures per second actually being recorded. Below `target_fps` when automatic quality has
     /// lowered the rate to keep up.
     pub effective_fps: u32,
+    /// The rate was lowered before any picture was lost, because pictures suddenly took much
+    /// longer to encode (something else, such as a game, started using the computer). False when
+    /// the rate is full, or was lowered because pictures were being dropped.
+    pub squeezed: bool,
     /// A window being captured has given only black pictures for a few seconds (some games and
     /// protected windows do), so the picture is probably not being delivered.
     pub source_black: bool,
@@ -300,6 +304,8 @@ struct Shared {
     source_lost: AtomicBool,
     /// A window source has given only black pictures for a few seconds.
     source_black: AtomicBool,
+    /// The last lowering of the rate was because of squeezing, not drops.
+    squeezed: AtomicBool,
     /// Automatic quality is on: record fewer pictures a second when the computer cannot keep up.
     adaptive: AtomicBool,
     /// How many pictures in a row are skipped for each one taken (0 = every picture).
@@ -390,6 +396,7 @@ impl Recorder {
             hold_on_loss: AtomicBool::new(false),
             source_lost: AtomicBool::new(false),
             source_black: AtomicBool::new(false),
+            squeezed: AtomicBool::new(false),
             adaptive: AtomicBool::new(false),
             skip_level: AtomicU32::new(0),
             lighten_now: AtomicBool::new(false),
@@ -519,6 +526,8 @@ impl Recorder {
             buffer_resets,
             paused: self.shared.clock.is_paused(),
             effective_fps: self.shared.fps / (self.shared.skip_level.load(Ordering::SeqCst) + 1),
+            squeezed: self.shared.squeezed.load(Ordering::SeqCst)
+                && self.shared.skip_level.load(Ordering::SeqCst) > 0,
             source_black: self.shared.source_black.load(Ordering::SeqCst),
             source_lost: self.shared.source_lost.load(Ordering::SeqCst),
             output,
@@ -804,6 +813,7 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32) {
             if shared.lighten_now.swap(false, Ordering::SeqCst) {
                 let level = governor.force_lowest(shared.clock.epoch.elapsed().as_secs_f64());
                 shared.skip_level.store(level, Ordering::SeqCst);
+                shared.squeezed.store(false, Ordering::SeqCst);
             }
             if (shared.adaptive.load(Ordering::SeqCst) || governor.level() > 0)
                 && !shared.clock.is_paused()
@@ -821,6 +831,10 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32) {
                     governor.observe(shared.clock.epoch.elapsed().as_secs_f64(), counters)
                 {
                     shared.skip_level.store(level, Ordering::SeqCst);
+                    shared.squeezed.store(
+                        governor.last_reason() == Some(Reason::Squeezed),
+                        Ordering::SeqCst,
+                    );
                 }
             }
         }

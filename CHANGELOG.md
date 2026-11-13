@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Automatic quality notices a game taking the computer:** besides dropped pictures, it now lowers
+  the rate when the encoder is busy more than 60% of the time and each picture takes at least 1.5
+  times longer than the quickest in the last minute, before anything is lost, and says "Your game
+  started using more of your computer" instead of the general message.
+- **Start quietly at sign-in:** the setup's last page has a switch (on) to start ClipCraft when you
+  sign in, in the tray on Windows, with no window, pop-ups or sounds. It is registered only when
+  the setup is finished, and Settings → General still controls it.
+
 - **Releases:** Windows now has a portable zip next to the setup program (unzip anywhere, run
   `bin\clipcraft.exe`), and the command line tool is its own release (`cli-v<version>`) instead of
   files inside the app's release. Each release has its own checksum list.
