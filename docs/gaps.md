@@ -84,17 +84,24 @@ shortcuts and has not been run on those desktops for these keys.
 `AppAudioRow`s in the settings (up to six: the game, or a program by file name, each with a level
 and an own-track switch) become `AudioKind::Application` sources (`app_audio.rs`). On Windows 10
 version 2004 or newer a source captures one process and everything it started through process
-loopback (`ActivateAudioInterfaceAsync`), on a thread of its own with a bounded queue. If the program is
+loopback (`ActivateAudioInterfaceAsync`), on a thread of its own with a bounded queue. On Linux the
+source finds the program's PulseAudio stream with `pactl --format=json list sink-inputs` (by process
+family, or by the stream's binary or application name) and records it with
+`parec --monitor-stream=<index>` into a bounded queue; the tools must be installed and the screen
+says so when they are not. If the program is
 not running yet the source reports "X is not running" and `recover` looks again every two seconds,
 so it attaches when the program starts or restarts; "the game" follows the recognized game's process.
 Tracks: rows with an own track get one named after the row; others mix into the main sound; the
 microphone and "Game and system" keep their old layout; no empty main track is made when only rows
 are recorded. Verified (Linux): the track layout and failure handling with a fake provider, row
 sanitising (bounded, path-free), the process-lookup rules (root of a program's processes, the
-game's process), the mixer drawn with named controls. **The Windows capture compiles in the
+game's process), the mixer drawn with named controls, and a real PulseAudio server with a null
+sink (`tests/pulse_app.rs`: a tone played by `paplay` is recorded by the `exe:paplay` row, a row for
+a program that is not playing stays silent and waiting). **The Windows capture compiles in the
 cross-compile lint but has never been run**: nothing here could play sound from a process.
-**Limits:** Linux and macOS report that it is not available (PulseAudio's per-stream monitor needs
-its asynchronous API; not done). Whole-system sound cannot exclude the chosen programs (Windows
+**Limits:** macOS reports that it is not available. On Linux only the program's first (lowest
+numbered) playing stream is recorded, a program that opens a second stream later is not added, and
+every attach starts two short-lived tool processes (every two seconds while waiting). Whole-system sound cannot exclude the chosen programs (Windows
 only offers excluding one process), so with "Record game and system sound" on they are recorded
 twice; the screen says so. A program is matched by file name, not by window.
 
@@ -820,7 +827,7 @@ touches ClipCraft's own clips.
   PulseAudio server with a null sink (a tone played into it ends up in a saved clip); the output chosen in
   Settings › Audio (PulseAudio's outputs are listed by name and recorded through their monitors;
   verified with two null sinks: a tone played to one is heard only by its monitor) is what is
-  recorded, and macOS has none; resampling is linear; per-application audio is not separated;
+  recorded, and macOS has none; resampling is linear; per-application audio is separate only through the mixer rows;
   screenshots are wired to a global hotkey and save PNGs beside clips; push-to-talk works through the global hotkey only (not when ClipCraft
   has the focus). Sound and picture of a clip can differ by up to a frame at the very end.
 - **Settings not yet applied:** WebM.

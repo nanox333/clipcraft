@@ -43,7 +43,8 @@ pub(crate) fn mixer_rows(
     s: &mut RecordingSettings,
     state: &mut SettingsState,
 ) {
-    mixer_rows_with(rows, ui, s, state, cfg!(windows));
+    let problem = clipcraft_platform::app_audio_problem();
+    mixer_rows_with(rows, ui, s, state, problem.as_deref());
 }
 
 /// As [`mixer_rows`], saying whether this system can record one application's sound.
@@ -52,15 +53,14 @@ pub(crate) fn mixer_rows_with(
     ui: &mut egui::Ui,
     s: &mut RecordingSettings,
     state: &mut SettingsState,
-    available: bool,
+    problem: Option<&str>,
 ) {
+    let available = problem.is_none();
     rows.section(ui, "Applications");
     rows.extra(ui, |ui| {
-        let note = if available {
-            "Record the game, Discord, a music player or any program on a track of its own, so you can edit them apart. Without this, everything you hear is one sound. The program is picked up when it starts playing, even if it was opened later."
-        } else {
-            "Recording one application's sound needs Windows 10 (version 2004) or newer. It is not available on this system yet."
-        };
+        let note = problem.unwrap_or(
+            "Record the game, Discord, a music player or any program on a track of its own, so you can edit them apart. Without this, everything you hear is one sound. The program is picked up when it starts playing, even if it was opened later.",
+        );
         ui.label(RichText::new(note).color(MUTED).size(12.5));
         ui.add_space(6.0);
     });

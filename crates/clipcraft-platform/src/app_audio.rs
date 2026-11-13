@@ -6,6 +6,9 @@
 //! picks the application up when it appears, and again if it restarts. Other systems cannot do
 //! this yet and say so.
 //!
+//! Linux records one stream of PulseAudio (or PipeWire's PulseAudio server) with the `pactl` and
+//! `parec` tools.
+//!
 //! The Windows capture runs on a thread of its own that fills a bounded queue, the same shape as
 //! the other sound sources; all the COM objects live and die on that thread. The `unsafe` calls
 //! are documented where they are made.
@@ -90,15 +93,355 @@ pub fn open_app_audio(
     platform::open(target, game_process)
 }
 
-#[cfg(not(windows))]
+/// Why recording one application's sound cannot work on this system, or `None` when it can. The
+/// answer is looked up once (on Linux it starts a tool) and remembered.
+pub fn app_audio_problem() -> Option<String> {
+    static PROBLEM: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    PROBLEM.get_or_init(platform::problem).clone()
+}
+
+#[cfg(target_os = "macos")]
 mod platform {
     use super::*;
 
+    pub fn problem() -> Option<String> {
+        Some("Recording one application's sound is not available on macOS yet.".to_owned())
+    }
+
     pub fn open(_: AppTarget, _: Arc<AtomicU32>) -> Result<Box<dyn AudioSource>, String> {
-        Err(
-            "recording one application's sound needs Windows 10 (version 2004) or newer; it is not available on this system yet"
-                .to_owned(),
-        )
+        Err("recording one application's sound is not available on macOS yet".to_owned())
+    }
+}
+
+/// Linux: PulseAudio (and PipeWire's PulseAudio server) can record one playing stream on its own.
+/// `pactl` finds the program's stream and `parec` records it, so the PulseAudio tools
+/// (`pulseaudio-utils`) must be installed; both are ordinary programs started with fixed
+/// arguments. Like on Windows the source waits for the program to start playing and picks it up.
+#[cfg(all(unix, not(target_os = "macos")))]
+mod platform {
+    use std::io::Read;
+    use std::process::{Child, Command, Stdio};
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    use clipcraft_record::{AudioError, AudioFormat, SampleQueue};
+
+    use super::*;
+
+    const RATE: u32 = 48_000;
+    const CHANNELS: u16 = 2;
+    const QUEUE_SECONDS: usize = 2;
+    /// Most of `pactl`'s answer that is read.
+    const MAX_LISTING_BYTES: u64 = 4 * 1024 * 1024;
+    const TOOL_TIMEOUT: Duration = Duration::from_secs(3);
+    const MISSING_TOOLS: &str = "recording one application's sound needs the PulseAudio tools (pactl and parec, in the pulseaudio-utils package)";
+
+    /// One playing stream, as `pactl` describes it.
+    #[derive(Debug, Eq, PartialEq)]
+    pub(super) struct Stream {
+        pub index: u64,
+        pub process: Option<u32>,
+        pub binary: String,
+        pub name: String,
+    }
+
+    /// Reads the answer of `pactl --format=json list sink-inputs`.
+    pub(super) fn parse_streams(json: &[u8]) -> Vec<Stream> {
+        let Ok(serde_json::Value::Array(items)) = serde_json::from_slice::<serde_json::Value>(json)
+        else {
+            return Vec::new();
+        };
+        items
+            .iter()
+            .filter_map(|item| {
+                let index = item.get("index")?.as_u64()?;
+                let properties = item.get("properties")?;
+                let text = |key: &str| {
+                    properties
+                        .get(key)
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_owned()
+                };
+                Some(Stream {
+                    index,
+                    process: text("application.process.id").parse().ok(),
+                    binary: text("application.process.binary"),
+                    name: text("application.name"),
+                })
+            })
+            .collect()
+    }
+
+    /// The stream to record for `target`: one whose process is the program (or the game) or one of
+    /// the processes it started, or that is named for the program. The lowest index wins.
+    pub(super) fn pick_stream(
+        target: &AppTarget,
+        family: &[u32],
+        streams: &[Stream],
+    ) -> Option<u64> {
+        let named = |text: &str| match target {
+            AppTarget::Game => false,
+            AppTarget::Executable(wanted) => {
+                let wanted = wanted.trim_end_matches(".exe").to_ascii_lowercase();
+                !text.is_empty() && text.trim_end_matches(".exe").to_ascii_lowercase() == wanted
+            }
+        };
+        streams
+            .iter()
+            .filter(|stream| {
+                stream
+                    .process
+                    .is_some_and(|process| family.contains(&process))
+                    || named(&stream.binary)
+                    || named(&stream.name)
+            })
+            .map(|stream| stream.index)
+            .min()
+    }
+
+    /// Runs a tool and returns what it printed, giving up after a few seconds.
+    fn run(program: &str, arguments: &[&str]) -> Result<Vec<u8>, String> {
+        let mut child = Command::new(program)
+            .args(arguments)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| MISSING_TOOLS.to_owned())?;
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| MISSING_TOOLS.to_owned())?;
+        let reader = std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = (&mut stdout)
+                .take(MAX_LISTING_BYTES)
+                .read_to_end(&mut bytes);
+            bytes
+        });
+        let start = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => {
+                    return reader.join().map_err(|_| "pactl failed".to_owned());
+                }
+                Ok(Some(_)) => return Err("PulseAudio is not answering".to_owned()),
+                Ok(None) if start.elapsed() < TOOL_TIMEOUT => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("PulseAudio did not answer in time".to_owned());
+                }
+            }
+        }
+    }
+
+    pub fn problem() -> Option<String> {
+        run("pactl", &["--version"]).err().map(|why| {
+            format!("{why}. Install it and restart ClipCraft to record one application's sound.")
+        })
+    }
+
+    /// One application's sound as a source. See the module note.
+    pub struct AppAudio {
+        target: AppTarget,
+        game_process: Arc<AtomicU32>,
+        queue: Arc<SampleQueue>,
+        recorder: Option<Child>,
+        waiting: String,
+        last_try: Instant,
+    }
+
+    pub fn open(
+        target: AppTarget,
+        game_process: Arc<AtomicU32>,
+    ) -> Result<Box<dyn AudioSource>, String> {
+        // The tools have to exist; the application does not have to be running yet.
+        run("pactl", &["--version"])?;
+        let mut source = AppAudio {
+            waiting: format!("{} is not playing sound", target.label()),
+            target,
+            game_process,
+            queue: Arc::new(SampleQueue::new(
+                RATE as usize * usize::from(CHANNELS) * QUEUE_SECONDS,
+            )),
+            recorder: None,
+            last_try: Instant::now(),
+        };
+        let _ = source.attach();
+        Ok(Box::new(source))
+    }
+
+    impl AppAudio {
+        fn stop_recorder(&mut self) {
+            if let Some(mut child) = self.recorder.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+
+        /// Looks for the application's stream and starts recording it. True when recording.
+        fn attach(&mut self) -> bool {
+            self.last_try = Instant::now();
+            let streams = match run("pactl", &["--format=json", "list", "sink-inputs"]) {
+                Ok(listing) => parse_streams(&listing),
+                Err(why) => {
+                    self.waiting = why;
+                    return false;
+                }
+            };
+            let processes = crate::ProcessObserver::default().refresh(false);
+            let root = resolve_process(
+                &self.target,
+                self.game_process.load(Ordering::SeqCst),
+                &processes,
+            );
+            let family = root.map_or_else(Vec::new, |root| crate::process_family(&processes, root));
+            let Some(index) = pick_stream(&self.target, &family, &streams) else {
+                self.waiting = format!("{} is not playing sound", self.target.label());
+                return false;
+            };
+            self.stop_recorder();
+            let Ok(mut child) = Command::new("parec")
+                .arg(format!("--monitor-stream={index}"))
+                .args([
+                    "--format=float32le",
+                    "--rate=48000",
+                    "--channels=2",
+                    "--raw",
+                ])
+                .arg("--latency-msec=20")
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+            else {
+                self.waiting = MISSING_TOOLS.to_owned();
+                return false;
+            };
+            let Some(mut stdout) = child.stdout.take() else {
+                let _ = child.kill();
+                return false;
+            };
+            let queue = Arc::new(SampleQueue::new(
+                RATE as usize * usize::from(CHANNELS) * QUEUE_SECONDS,
+            ));
+            let thread_queue = queue.clone();
+            let spawned = std::thread::Builder::new()
+                .name("clipcraft-app-audio".to_owned())
+                .spawn(move || {
+                    // 20 ms of 48 kHz stereo float samples at a time.
+                    let mut buffer = vec![0_u8; RATE as usize / 50 * usize::from(CHANNELS) * 4];
+                    loop {
+                        match stdout.read(&mut buffer) {
+                            Ok(0) | Err(_) => {
+                                // The stream ended: the application stopped playing, or the
+                                // recorder was stopped.
+                                thread_queue.fail();
+                                return;
+                            }
+                            Ok(count) => thread_queue.push(
+                                buffer[..count]
+                                    .chunks_exact(4)
+                                    .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                                    .collect::<Vec<f32>>()
+                                    .into_iter(),
+                            ),
+                        }
+                    }
+                });
+            if spawned.is_err() {
+                let _ = child.kill();
+                let _ = child.wait();
+                self.waiting = "the sound thread could not start".to_owned();
+                return false;
+            }
+            self.queue = queue;
+            self.recorder = Some(child);
+            true
+        }
+    }
+
+    impl AudioSource for AppAudio {
+        fn name(&self) -> String {
+            self.target.label()
+        }
+
+        fn format(&self) -> AudioFormat {
+            AudioFormat {
+                sample_rate: RATE,
+                channels: CHANNELS,
+            }
+        }
+
+        fn read(&mut self, out: &mut Vec<f32>) -> Result<(), AudioError> {
+            if self.recorder.is_none() {
+                return Err(AudioError::DeviceLost(self.waiting.clone()));
+            }
+            self.queue.drain_into(out);
+            if self.queue.failed() {
+                self.stop_recorder();
+                self.waiting = format!("{} stopped playing sound", self.target.label());
+                return Err(AudioError::DeviceLost(self.waiting.clone()));
+            }
+            Ok(())
+        }
+
+        fn recover(&mut self) -> bool {
+            if self.last_try.elapsed() < Duration::from_secs(2) {
+                return false;
+            }
+            self.attach()
+        }
+    }
+
+    impl Drop for AppAudio {
+        fn drop(&mut self) {
+            self.stop_recorder();
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn pactls_listing_is_read_and_the_right_stream_is_picked() {
+            let listing = br#"[
+              {"index": 7, "properties": {"application.process.id": "100",
+                "application.process.binary": "Discord", "application.name": "Discord"}},
+              {"index": 9, "properties": {"application.process.id": "205",
+                "application.process.binary": "spotify", "application.name": "Spotify"}},
+              {"index": 12, "properties": {"application.process.id": "101",
+                "application.process.binary": "Discord", "application.name": "WebRTC"}},
+              {"index": "not a number", "properties": {}},
+              {"index": 15}
+            ]"#;
+            let streams = parse_streams(listing);
+            assert_eq!(streams.len(), 3);
+            assert_eq!(streams[0].process, Some(100));
+            let discord = AppTarget::Executable("Discord.exe".into());
+            // By process family, or by name when the process is unknown.
+            assert_eq!(pick_stream(&discord, &[100, 101], &streams), Some(7));
+            assert_eq!(pick_stream(&discord, &[], &streams), Some(7));
+            assert_eq!(
+                pick_stream(&AppTarget::Executable("SPOTIFY".into()), &[], &streams),
+                Some(9)
+            );
+            assert_eq!(
+                pick_stream(&AppTarget::Executable("chrome".into()), &[], &streams),
+                None
+            );
+            // The game is only ever matched by its process family.
+            assert_eq!(pick_stream(&AppTarget::Game, &[205], &streams), Some(9));
+            assert_eq!(pick_stream(&AppTarget::Game, &[], &streams), None);
+            // Garbage and hostile text give nothing, not a panic.
+            assert!(parse_streams(b"not json").is_empty());
+            assert!(parse_streams(b"{}").is_empty());
+        }
     }
 }
 
@@ -127,6 +470,10 @@ mod platform {
     use windows::core::{IUnknown, Interface, Ref, implement};
 
     use super::*;
+
+    pub fn problem() -> Option<String> {
+        None
+    }
 
     /// The format asked of the virtual device: 16-bit stereo at 44.1 kHz, which Windows converts
     /// to for any process.
@@ -531,13 +878,9 @@ mod tests {
         );
     }
 
-    #[cfg(not(windows))]
     #[test]
-    fn where_it_is_not_available_it_says_so_instead_of_pretending() {
-        let error = open_app_audio("exe:discord.exe", Arc::new(AtomicU32::new(0)))
-            .err()
-            .expect("not available here");
-        assert!(error.contains("Windows 10"), "{error}");
+    fn a_nonsense_application_is_refused_on_every_system() {
         assert!(open_app_audio("nonsense", Arc::new(AtomicU32::new(0))).is_err());
+        assert!(open_app_audio("exe:", Arc::new(AtomicU32::new(0))).is_err());
     }
 }

@@ -95,7 +95,7 @@ thread so the window and the game are never blocked.
 
 Besides the system sound and the microphone, the settings can list up to six *application rows*.
 Each becomes a sound source of its own (on Windows, process loopback of one program and what it
-started), with its own level, and either its own track in the clip or a place in the main mix.
+started; on Linux, `parec` recording that program's PulseAudio stream, found with `pactl`), with its own level, and either its own track in the clip or a place in the main mix.
 `audio_setup` in the engine assigns the tracks; the app's provider opens the sources and tells
 the "game" row which process is the game.
 

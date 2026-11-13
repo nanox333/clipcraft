@@ -2,10 +2,11 @@
 
 ## Unreleased
 
-- **Sound mixer (Windows):** Settings → Audio → Applications records the game, Discord, a music
+- **Sound mixer (Windows and Linux):** Settings → Audio → Applications records the game, Discord, a music
   player or any program on a track of its own, with its own level and a live meter, picked up
   whenever it starts playing (even if it was opened after you began clipping). Needs Windows 10
-  (version 2004) or newer; elsewhere the section says it is not available yet. Turn off "Record game
+  (version 2004) or newer, or on Linux PulseAudio or PipeWire with `pactl` and `parec` installed
+  (`pulseaudio-utils`); elsewhere, or without the tools, the section says why it is not available. Turn off "Record game
   and system sound" to keep those programs only on their own tracks.
 - **Quiet by default:** new profiles start with sound effects and the save pop-up off (existing
   settings are kept), and the setup's last page says so.
