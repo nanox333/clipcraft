@@ -11,6 +11,7 @@
 
 use clipcraft_capture::{Capabilities, CaptureError, CaptureSource, CaptureTarget};
 
+mod app_audio;
 mod borderless;
 mod clipboard;
 #[cfg(windows)]
@@ -67,6 +68,7 @@ pub fn start_wayland_hotkeys_on(
 ) -> Result<HotkeyListener, CaptureError> {
     global_shortcuts::start(bindings, false, Some(address.to_owned()))
 }
+pub use app_audio::{AppTarget, open_app_audio, resolve_process};
 pub use clipboard::copy_file_to_clipboard;
 pub use drag::start_file_drag;
 #[cfg(all(unix, not(target_os = "macos")))]
