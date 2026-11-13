@@ -22,6 +22,10 @@ pub(crate) enum ClipCardAction {
     RemoveFromLibrary(String),
     /// Ask about moving the clip's file to the Recycle Bin.
     Delete(Box<MediaEntry>),
+    /// Start dragging the clip out of the window, into a chat.
+    DragOut(Box<MediaEntry>),
+    /// The pointer has rested on the clip: get its share copy ready.
+    Prepare(Box<MediaEntry>),
     /// Open the rename box for the clip.
     Rename(Box<MediaEntry>),
     /// Look for a clip whose file moved: its path, name and size.
@@ -41,7 +45,11 @@ pub(crate) fn clip_card(
     const FOOTER_HEIGHT: f32 = 42.0;
     let thumb_height = (width * 0.5625).clamp(120.0, 240.0);
     let (_, card) = ui.allocate_space(Vec2::new(width, thumb_height + BODY_HEIGHT + FOOTER_HEIGHT));
-    let response = ui.interact(card, library_grid::card_id(entry), egui::Sense::click());
+    let response = ui.interact(
+        card,
+        library_grid::card_id(entry),
+        egui::Sense::click_and_drag(),
+    );
     let thumbnail = egui::Rect::from_min_size(card.min, Vec2::new(width, thumb_height));
     let footer = egui::Rect::from_min_max(
         egui::pos2(card.left(), card.bottom() - FOOTER_HEIGHT),
@@ -407,11 +415,40 @@ pub(crate) fn clip_card(
         } else {
             ClipCardAction::Reveal(entry.path.clone())
         })
+    } else if response.drag_started() && !entry.offline {
+        Some(ClipCardAction::DragOut(Box::new(entry.clone())))
     } else if response.clicked() && !entry.offline {
         Some(ClipCardAction::Open(Box::new(entry.clone())))
+    } else if rested_on(ui, &response) && !entry.offline {
+        Some(ClipCardAction::Prepare(Box::new(entry.clone())))
     } else {
         None
     }
+}
+
+/// True once, when the pointer has rested on a card for a moment: the cue to get its share copy
+/// ready while the person decides what to do with it.
+fn rested_on(ui: &egui::Ui, response: &egui::Response) -> bool {
+    let key = response.id.with("rested");
+    let now = ui.input(|input| input.time);
+    if !response.hovered() {
+        ui.data_mut(|data| data.remove_temp::<(f64, bool)>(key));
+        return false;
+    }
+    let (since, announced) = ui
+        .data_mut(|data| data.get_temp::<(f64, bool)>(key))
+        .unwrap_or((now, false));
+    if announced {
+        return false;
+    }
+    if now - since >= 0.6 {
+        ui.data_mut(|data| data.insert_temp(key, (since, true)));
+        return true;
+    }
+    ui.data_mut(|data| data.insert_temp(key, (since, false)));
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(650));
+    false
 }
 
 pub(crate) fn paint_video_placeholder(

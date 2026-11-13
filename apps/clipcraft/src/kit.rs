@@ -346,6 +346,20 @@ pub fn labelled_button_sized(
     enabled: bool,
     min_width: f32,
 ) -> Response {
+    labelled_button_sensing(ui, icon, label, primary, enabled, min_width, Sense::click())
+}
+
+/// Like [`labelled_button_sized`], reacting to `sense` (for example a click or a drag) while
+/// enabled.
+pub fn labelled_button_sensing(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    label: &str,
+    primary: bool,
+    enabled: bool,
+    min_width: f32,
+    enabled_sense: Sense,
+) -> Response {
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
         FontId::new(14.0, medium()),
@@ -353,7 +367,7 @@ pub fn labelled_button_sized(
     );
     let size = Vec2::new((galley.size().x + 52.0).max(min_width), 36.0);
     let sense = if enabled {
-        Sense::click()
+        enabled_sense
     } else {
         Sense::hover()
     };

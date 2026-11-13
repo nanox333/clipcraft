@@ -311,6 +311,13 @@ impl CaptureState {
         self.game_session.is_some() || self.desktop_fallback
     }
 
+    /// Starts recording a synthetic picture, so tests can have a clipping session.
+    #[cfg(test)]
+    pub(crate) fn start_synthetic(&mut self, settings: &RecordingSettings) {
+        let source = Box::new(clipcraft_capture::SyntheticSource::new(160, 90, 30));
+        let _ = self.session.start(settings, source, None);
+    }
+
     pub fn targets_loaded(&self) -> bool {
         self.targets_loaded
     }

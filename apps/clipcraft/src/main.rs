@@ -31,6 +31,7 @@ mod rows;
 mod saved_toast;
 mod settings;
 mod settings_page;
+mod share;
 mod svg;
 mod thumbs;
 mod tray;
@@ -182,6 +183,8 @@ struct ClipCraftApp {
     confirm_delete: Option<MediaEntry>,
     /// A clip being moved to the Recycle Bin.
     trashing: Option<clip_delete::Trashing>,
+    /// A share copy being made.
+    sharing: Option<share::ShareJob>,
     /// The rename box, while it is open.
     rename_draft: Option<clip_rename::RenameDraft>,
     /// A clip being renamed.
@@ -659,6 +662,7 @@ impl ClipCraftApp {
         self.notice_toast(context);
         self.poll_trash(context);
         self.poll_rename(context);
+        self.poll_share(context);
 
         egui::CentralPanel::default()
             .frame(
@@ -1573,6 +1577,8 @@ impl ClipCraftApp {
                 }
                 ClipCardAction::Delete(entry) => self.ask_to_delete(*entry),
                 ClipCardAction::Rename(entry) => self.ask_to_rename(*entry),
+                ClipCardAction::DragOut(entry) => self.drag_clip_out(ui.ctx(), &entry),
+                ClipCardAction::Prepare(entry) => self.prepare_share(&entry, false),
                 ClipCardAction::SetCollection { path, name, add } => {
                     self.edit_library(if add {
                         MetaEdit::AddToCollection { path, name }

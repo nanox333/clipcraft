@@ -453,6 +453,9 @@ pub struct RecordingSettings {
     /// Start the replay over after each saved clip, so the next clip never contains footage that
     /// is already in this one.
     pub restart_replay_after_save: bool,
+    /// The size, in megabytes, that a clip is made to fit when it is dragged into a chat:
+    /// Discord takes 10, 50 (Nitro Basic) or 500 (Nitro).
+    pub share_megabytes: u32,
 }
 
 impl Default for RecordingSettings {
@@ -519,6 +522,7 @@ impl Default for RecordingSettings {
             replay_seconds: 30,
             post_roll_seconds: 0,
             restart_replay_after_save: false,
+            share_megabytes: 10,
         }
     }
 }
@@ -668,6 +672,7 @@ impl RecordingSettings {
         self.sound_effects_percent = self.sound_effects_percent.min(100);
         self.replay_seconds = self.replay_seconds.clamp(5, 600);
         self.post_roll_seconds = self.post_roll_seconds.min(30);
+        self.share_megabytes = self.share_megabytes.clamp(1, 500);
         if let Some((height, frames_per_second, video_kbps)) = self.quality.values() {
             self.height = height;
             self.frames_per_second = frames_per_second;

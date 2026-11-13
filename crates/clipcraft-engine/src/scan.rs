@@ -72,6 +72,10 @@ pub(crate) fn scan(
             continue;
         }
         if metadata.is_dir() {
+            // Share copies (clips made small for a chat) are copies, not clips of their own.
+            if item.file_name() == crate::SHARE_FOLDER {
+                continue;
+            }
             if stack.len() > MAX_SCAN_DEPTH {
                 return Err(EngineError::ScanDepthLimit);
             }

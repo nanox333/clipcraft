@@ -36,6 +36,7 @@ mod relink;
 mod rename;
 mod scan;
 mod screenshot;
+mod share;
 pub use scan::MAX_SCAN_DEPTH;
 pub mod installation;
 mod session;
@@ -94,6 +95,7 @@ pub use session::{
     CLIP_PREFIX, CaptureSession, MicrophoneTestPlan, SaveJob, SavedClipReport, clip_format,
     clip_stem, folder_name_for, game_clip_stem, is_clip_file_name, record_config,
 };
+pub use share::{SHARE_FOLDER, SharePlan, SharedCopy, make_share_copy, share_plan};
 pub use storage::{
     StorageUsage, StoredClip, cleanup_plan, default_capture_folder, list_clips, storage_usage,
 };
@@ -258,6 +260,12 @@ pub enum Command {
     TrashClip {
         path: PathBuf,
     },
+    /// Makes (or finds) a copy of a clip small enough to share at `megabytes`: Discord takes 10,
+    /// 50 or 500. A clip that already fits is returned as it is.
+    MakeShareCopy {
+        path: PathBuf,
+        megabytes: u16,
+    },
     /// Puts a clip's file on the clipboard, so it can be pasted into a chat or a folder.
     CopyClipFile {
         path: PathBuf,
@@ -344,6 +352,7 @@ impl Command {
             Self::TrashClip { .. } => "library.trash",
             Self::RenameClip { .. } => "library.rename",
             Self::CopyClipFile { .. } => "library.copy_file",
+            Self::MakeShareCopy { .. } => "clip.share_copy",
             Self::CheckForUpdate { .. } => "app.check_for_update",
             Self::DownloadUpdate { .. } => "app.download_update",
             Self::RefreshLibrary { .. } => "library.refresh",
@@ -833,6 +842,8 @@ pub enum CommandOutput {
     },
     /// A clip was renamed.
     Renamed(Box<rename::RenamedClip>),
+    /// A copy of a clip that is small enough to share.
+    ShareCopy(share::SharedCopy),
     /// A clip's file was put on the clipboard.
     Copied {
         path: String,
@@ -1347,6 +1358,10 @@ pub fn execute_cancellable(
         Command::TrashClip { path } => {
             trash_clip(&path).map(|path| CommandOutput::Trashed { path })
         }
+        Command::MakeShareCopy { path, megabytes } => {
+            let never = std::sync::atomic::AtomicBool::new(false);
+            make_share_copy(&path, megabytes, &mut |_| {}, &never).map(CommandOutput::ShareCopy)
+        }
         Command::CopyClipFile { path } => {
             copy_clip_file(&path).map(|path| CommandOutput::Copied { path })
         }
@@ -1566,6 +1581,7 @@ pub const fn command_ids() -> &'static [&'static str] {
         "library.trash",
         "library.rename",
         "library.copy_file",
+        "clip.share_copy",
         "app.check_for_update",
         "app.download_update",
         "library.refresh",

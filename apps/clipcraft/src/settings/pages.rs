@@ -713,6 +713,8 @@ pub fn video_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, gpu: &GpuP
 // Replay
 // ---------------------------------------------------------------------------------------------
 
+const SHARE_STOPS: [u32; 4] = [10, 25, 50, 500];
+
 const REPLAY_STOPS: [u32; 12] = [5, 10, 15, 30, 45, 60, 90, 120, 180, 300, 450, 600];
 
 pub(crate) fn seconds_label(seconds: u32) -> String {
@@ -762,6 +764,18 @@ pub(crate) fn replay_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut RecordingS
             "popup toast notice saved clip corner overlay",
         ),
         |s| &mut s.show_save_notification,
+    );
+    rows.stepped(
+        ui,
+        s,
+        Meta::new(
+            "Size for sharing",
+            "Dragging a clip into a chat (or Share) makes a copy this small when the clip is bigger. Discord takes 10 MB, 50 MB with Nitro Basic and 500 MB with Nitro. Clips that already fit are shared as they are.",
+            "share discord size megabytes drag chat limit nitro",
+        ),
+        |s| &mut s.share_megabytes,
+        &SHARE_STOPS,
+        |megabytes| format!("{megabytes} MB"),
     );
     rows.toggle(
         ui,
