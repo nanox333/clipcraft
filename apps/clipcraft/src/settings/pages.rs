@@ -1150,6 +1150,7 @@ pub(crate) fn audio_rows(
             },
         );
     }
+    mixer_rows(rows, ui, s, state);
     rows.section(ui, "Tracks and quality");
     rows.toggle(
         ui,

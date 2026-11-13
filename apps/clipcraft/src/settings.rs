@@ -18,7 +18,9 @@ mod pages;
 mod widgets;
 pub(crate) use widgets::*;
 mod games;
+mod mixer;
 pub use games::*;
+pub(crate) use mixer::*;
 mod hotkeys;
 pub use hotkeys::*;
 mod storage;
@@ -51,6 +53,10 @@ pub struct SettingsState {
     /// (its monitors are what is recorded), the sound system's own list elsewhere.
     outputs: Vec<(String, String)>,
     mic: Option<MicTest>,
+    /// How each recorded sound source is doing right now, for the mixer's meters.
+    pub(crate) live_audio: Vec<clipcraft_record::AudioInputStatus>,
+    /// The programs the mixer's Add menu offers, read when the menu is first opened.
+    mixer_candidates: Option<Vec<String>>,
     mic_plan: Option<clipcraft_engine::MicrophoneTestPlan>,
     mic_visible: bool,
     mic_error: Option<String>,
@@ -156,6 +162,7 @@ impl SettingsState {
             self.mic = None;
             self.mic_shown = 0.0;
         }
+        self.mixer_candidates = None;
         if !keep_capture {
             self.capturing = None;
             self.capturing_clip_length = None;

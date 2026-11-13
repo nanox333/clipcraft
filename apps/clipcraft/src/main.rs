@@ -2644,6 +2644,22 @@ mod tests {
             ["custom-game.exe"],
         )];
         app.recording.quality = clipcraft_engine::QualityMode::Custom;
+        // Mixer rows, one waiting for its program and one listening, so their sliders, checkboxes
+        // and buttons are checked for names too.
+        app.recording.audio_apps = vec![
+            clipcraft_engine::AppAudioRow::for_game(),
+            clipcraft_engine::AppAudioRow::for_program("Discord.exe"),
+        ];
+        app.settings_state.live_audio = vec![clipcraft_record::AudioInputStatus {
+            name: "Discord".to_owned(),
+            track: 1,
+            level: 0.4,
+            muted: false,
+            lost: true,
+            error: Some("Discord is not running".to_owned()),
+            silence_ms: 0,
+            dropped_ms: 0,
+        }];
         for tab in [
             SettingsTab::Overview,
             SettingsTab::General,

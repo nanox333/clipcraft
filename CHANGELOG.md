@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Sound mixer (Windows):** Settings → Audio → Applications records the game, Discord, a music
+  player or any program on a track of its own, with its own level and a live meter, picked up
+  whenever it starts playing (even if it was opened after you began clipping). Needs Windows 10
+  (version 2004) or newer; elsewhere the section says it is not available yet. Turn off "Record game
+  and system sound" to keep those programs only on their own tracks.
+- **Quiet by default:** new profiles start with sound effects and the save pop-up off (existing
+  settings are kept), and the setup's last page says so.
+- **Updates never close ClipCraft mid-recording:** a downloaded update installs once clipping has
+  stopped and no clip is being written.
+- **Measured numbers in the README** (from `docs/windows-performance.md`, with their limits).
 - **Signed updates (ready, switched on by a key):** an update can now be checked against an ed25519
   signature of the release's checksum list, not only against the checksum published beside it, so a
   compromised download page cannot push a changed installer. It needs a key: `cargo xtask

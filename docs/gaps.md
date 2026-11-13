@@ -79,6 +79,30 @@ shortcuts and has not been run on those desktops for these keys.
   thrown away so nothing from the pause is mixed in. Recorder test: nothing captured while paused,
   no reset, no restart, valid clip. Older settings files with five shortcut lists still load.
 
+## Sound mixer: one row per application (from Kairos' idea; written fresh)
+
+`AppAudioRow`s in the settings (up to six: the game, or a program by file name, each with a level
+and an own-track switch) become `AudioKind::Application` sources (`app_audio.rs`). On Windows 10
+version 2004 or newer a source captures one process and everything it started through process
+loopback (`ActivateAudioInterfaceAsync`), on a thread of its own with a bounded queue. If the program is
+not running yet the source reports "X is not running" and `recover` looks again every two seconds,
+so it attaches when the program starts or restarts; "the game" follows the recognized game's process.
+Tracks: rows with an own track get one named after the row; others mix into the main sound; the
+microphone and "Game and system" keep their old layout; no empty main track is made when only rows
+are recorded. Verified (Linux): the track layout and failure handling with a fake provider, row
+sanitising (bounded, path-free), the process-lookup rules (root of a program's processes, the
+game's process), the mixer drawn with named controls. **The Windows capture compiles in the
+cross-compile lint but has never been run**: nothing here could play sound from a process.
+**Limits:** Linux and macOS report that it is not available (PulseAudio's per-stream monitor needs
+its asynchronous API; not done). Whole-system sound cannot exclude the chosen programs (Windows
+only offers excluding one process), so with "Record game and system sound" on they are recorded
+twice; the screen says so. A program is matched by file name, not by window.
+
+**Small touches from the same review:** new profiles start with sound effects and the save pop-up
+off (saved settings keep their values); a downloaded update waits for clipping and saving to stop
+before it closes ClipCraft (tested as a rule; the install itself needs Windows); the README quotes
+the measured Windows numbers from `docs/windows-performance.md` with their limits.
+
 ## Safety review (2026-11)
 
 Read for: unsafe code (none outside `clipcraft-platform` and `clipcraft-audio-out`, each block with a

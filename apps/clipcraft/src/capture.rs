@@ -107,10 +107,17 @@ fn should_report_reset(
         && matches!((previous, current), (Some(old), Some(new)) if new > old)
 }
 
-fn audio_provider() -> clipcraft_record::AudioProvider {
+/// `game_process` is the process of the game being recorded (0 when none), kept up to date by the
+/// app so a mixer row for "the game" follows whichever game is on.
+fn audio_provider(
+    game_process: std::sync::Arc<std::sync::atomic::AtomicU32>,
+) -> clipcraft_record::AudioProvider {
     use clipcraft_audio_out::{CaptureKind, DeviceCapture};
     use clipcraft_record::AudioKind;
-    clipcraft_record::AudioProvider::new(|kind, device| {
+    clipcraft_record::AudioProvider::new(move |kind, device| {
+        if kind == AudioKind::Application {
+            return clipcraft_platform::open_app_audio(device, game_process.clone());
+        }
         // On Linux the sound server's own "monitor" records what is playing; the generic device
         // layer (ALSA) cannot reach it on most systems.
         #[cfg(target_os = "linux")]
@@ -124,7 +131,7 @@ fn audio_provider() -> clipcraft_record::AudioProvider {
         }
         let kind = match kind {
             AudioKind::Microphone => CaptureKind::Microphone,
-            AudioKind::SystemOutput => CaptureKind::SystemOutput,
+            AudioKind::SystemOutput | AudioKind::Application => CaptureKind::SystemOutput,
         };
         DeviceCapture::open(kind, device)
             .map(|capture| Box::new(capture) as Box<dyn clipcraft_record::AudioSource>)
@@ -222,6 +229,8 @@ pub struct CaptureState {
     /// The game session is recording the screen because no window of the game was found; capture
     /// moves to the game's window as soon as one appears.
     game_on_screen: bool,
+    /// The process of the game being recorded (0 when none), shared with the sound mixer's rows.
+    game_audio_process: std::sync::Arc<std::sync::atomic::AtomicU32>,
     /// Watches the program's own processor and memory use while it records.
     watchdog: clipcraft_engine::Watchdog,
     meter: Option<clipcraft_platform::SelfMeter>,
@@ -506,9 +515,22 @@ impl ClipCraftApp {
             .as_ref()
             .map(|status| status.buffer_resets);
         self.capture.status = self.capture.session.status();
+        self.capture.game_audio_process.store(
+            self.capture
+                .game_session
+                .as_ref()
+                .map_or(0, |game| game.process_id),
+            std::sync::atomic::Ordering::SeqCst,
+        );
         self.rescue_black_window();
         self.report_quality_change();
         self.watch_resources();
+        self.settings_state.live_audio = self
+            .capture
+            .status
+            .as_ref()
+            .map(|status| status.audio.clone())
+            .unwrap_or_default();
         if should_report_reset(
             previous_resets,
             self.capture
@@ -845,7 +867,7 @@ impl ClipCraftApp {
             &self.recording,
             source,
             hardware,
-            Some(audio_provider()),
+            Some(audio_provider(self.capture.game_audio_process.clone())),
         ) {
             Ok(()) => {
                 // In game-only mode a closing game window does not end the recording: the buffer

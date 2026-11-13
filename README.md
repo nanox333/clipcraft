@@ -51,7 +51,8 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
 - **Encoding:** hardware H.264 and H.265 on supported GPUs (Windows), or a built-in software H.264
   encoder tuned for screen recording (desktop clips are about a third smaller than before). If the graphics-card encoder fails or is busy, recording
   continues on the processor and the card is tried again every 20 s or longer.
-- **Audio:** system sound and microphone, mixed or on separate tracks, with optional offline
+- **Audio:** per-application sound (Windows 10 2004 or newer): record the game, Discord or a music
+  player on a track of its own, each with its own level, picked up when it starts playing. System sound and microphone, mixed or on separate tracks, with optional offline
   microphone noise suppression and a mic test.
 - **Share:** drag a clip from the library (or the **Drag into Discord** button on its page) straight
   into a Discord chat or any program that takes files. A clip bigger than the size chosen in
