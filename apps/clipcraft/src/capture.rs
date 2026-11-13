@@ -222,6 +222,10 @@ pub struct CaptureState {
     /// The game session is recording the screen because no window of the game was found; capture
     /// moves to the game's window as soon as one appears.
     game_on_screen: bool,
+    /// Watches the program's own processor and memory use while it records.
+    watchdog: clipcraft_engine::Watchdog,
+    meter: Option<clipcraft_platform::SelfMeter>,
+    meter_read_at: Option<Instant>,
     /// The picture rate last shown to the person, to say when automatic quality changes it.
     last_effective_fps: Option<u32>,
     /// The game window being recorded, when capture follows a window of a game.
@@ -366,8 +370,10 @@ impl ClipCraftApp {
         self.poll_hotkey_status(context);
         // Hotkeys are read here, once per frame. Without the focus no input wakes the window (it
         // may be in the tray or behind a game), so look again often enough to feel instant.
+        // Not faster than needed: each look draws the whole window, and in the background that is
+        // a cost the game feels.
         if self.capture.listener.is_some() && !context.input(|input| input.focused) {
-            context.request_repaint_after(Duration::from_millis(50));
+            context.request_repaint_after(Duration::from_millis(100));
         }
         let mut actions = Vec::new();
         // Clip-length shortcuts pressed, as the length each asks for.
@@ -497,6 +503,7 @@ impl ClipCraftApp {
         self.capture.status = self.capture.session.status();
         self.rescue_black_window();
         self.report_quality_change();
+        self.watch_resources();
         if should_report_reset(
             previous_resets,
             self.capture
@@ -864,7 +871,8 @@ impl ClipCraftApp {
     /// While clipping the program runs a little below normal priority, so a game that wants the
     /// processor gets it before the encoder does; back to normal when clipping stops.
     fn yield_to_the_game(&mut self) {
-        let clipping = self.capture.session.is_active();
+        // Also while an export runs, so a long encode never makes the rest of the computer crawl.
+        let clipping = self.capture.session.is_active() || clipcraft_engine::HeavyWork::running();
         if clipping != self.capture.background_priority {
             clipcraft_platform::set_background_priority(clipping);
             self.capture.background_priority = clipping;
@@ -1887,6 +1895,64 @@ mod tests {
         assert!(app.capture.is_active());
         assert!(!app.capture.game_on_screen);
         wait_for_frames(&app);
+        drop(app);
+        remove_scratch(root);
+    }
+
+    #[test]
+    fn the_safety_verdicts_lighten_then_stop_and_a_stop_is_not_undone_by_game_capture() {
+        use clipcraft_engine::{StopReason, Verdict};
+        let (mut app, root) = automatic_app(DesktopCaptureMode::Never);
+        let settings = app.recording.clone();
+        app.capture.start_synthetic(&settings);
+        assert!(app.capture.is_active());
+        let target = app.capture.session.status().unwrap().target_fps;
+        app.apply_safety_verdict(Verdict::Lighten);
+        // The recorder takes the lowest rate within a second, and keeps the replay.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while app
+            .capture
+            .session
+            .status()
+            .is_some_and(|status| status.effective_fps >= target)
+        {
+            assert!(Instant::now() < deadline, "the rate was never lowered");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let status = app.capture.session.status().unwrap();
+        assert_eq!(status.buffer_resets, 0);
+        assert!(
+            app.capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.error)
+        );
+
+        app.apply_safety_verdict(Verdict::Stop(StopReason::Processor));
+        assert!(!app.capture.is_active());
+        assert!(app.capture.notice.as_ref().is_some_and(
+            |notice| notice.error && notice.text.contains("almost all of your processor")
+        ));
+        // Game capture does not start it again behind the person's back.
+        app.apply_game_observation(observation(Some(42)));
+        assert!(!app.capture.is_active());
+        drop(app);
+        remove_scratch(root);
+    }
+
+    #[test]
+    fn protection_can_be_turned_off_and_is_not_watching_while_not_clipping() {
+        let (mut app, root) = automatic_app(DesktopCaptureMode::Never);
+        // Not clipping: nothing is watched or started.
+        app.watch_resources();
+        assert!(app.capture.meter_read_at.is_none());
+        let settings = app.recording.clone();
+        app.capture.start_synthetic(&settings);
+        app.watch_resources();
+        assert!(app.capture.meter_read_at.is_some(), "clipping is watched");
+        app.recording.protect_computer = false;
+        app.watch_resources();
+        assert!(app.capture.meter_read_at.is_none(), "unless turned off");
         drop(app);
         remove_scratch(root);
     }

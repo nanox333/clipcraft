@@ -304,6 +304,8 @@ struct Shared {
     adaptive: AtomicBool,
     /// How many pictures in a row are skipped for each one taken (0 = every picture).
     skip_level: AtomicU32,
+    /// Asks for the lowest picture rate at once (the computer is being starved).
+    lighten_now: AtomicBool,
     buffer: Mutex<ReplayBuffer>,
     video: Mutex<Option<VideoInfo>>,
     encoder: Mutex<String>,
@@ -390,6 +392,7 @@ impl Recorder {
             source_black: AtomicBool::new(false),
             adaptive: AtomicBool::new(false),
             skip_level: AtomicU32::new(0),
+            lighten_now: AtomicBool::new(false),
             buffer: Mutex::new(ReplayBuffer::new(window_frames, config.max_buffer_bytes)),
             video: Mutex::new(None),
             encoder: Mutex::new(String::from("Starting")),
@@ -455,6 +458,12 @@ impl Recorder {
         if !on {
             self.shared.skip_level.store(0, Ordering::SeqCst);
         }
+    }
+
+    /// Goes to the lowest picture rate at once, for a computer that is being starved. Does
+    /// nothing to the replay. It comes back up by the usual rule when there is room.
+    pub fn lighten_now(&self) {
+        self.shared.lighten_now.store(true, Ordering::SeqCst);
     }
 
     /// Pauses or resumes recording. While paused nothing is added to the replay buffer and the
@@ -792,7 +801,13 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32) {
         // Automatic quality: once a second, look at whether the encoder is keeping up.
         if governor_checked.elapsed() >= Duration::from_secs(1) {
             governor_checked = Instant::now();
-            if shared.adaptive.load(Ordering::SeqCst) && !shared.clock.is_paused() {
+            if shared.lighten_now.swap(false, Ordering::SeqCst) {
+                let level = governor.force_lowest(shared.clock.epoch.elapsed().as_secs_f64());
+                shared.skip_level.store(level, Ordering::SeqCst);
+            }
+            if (shared.adaptive.load(Ordering::SeqCst) || governor.level() > 0)
+                && !shared.clock.is_paused()
+            {
                 let counters = {
                     let stats = lock(&shared.stats);
                     Counters {

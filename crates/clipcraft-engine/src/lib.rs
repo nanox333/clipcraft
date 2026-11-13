@@ -509,6 +509,7 @@ pub fn normalize_clip(
     progress: &mut dyn FnMut(f32),
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<NormalizedClip, EngineError> {
+    let _heavy = HeavyWork::begin();
     if input.as_os_str().is_empty() || output.as_os_str().is_empty() {
         return Err(EngineError::EmptyMediaPath);
     }
@@ -633,6 +634,7 @@ pub fn export_sequence(
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
 ) -> Result<ExportedSequence, EngineError> {
+    let _heavy = HeavyWork::begin();
     let hardware = export_hardware();
     let report =
         clipcraft_export::sequence_to_mp4_with(request, hardware.as_ref(), progress, cancel)
@@ -659,6 +661,7 @@ pub fn export_clip(
     progress: &mut dyn FnMut(f32),
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<ExportedClip, EngineError> {
+    let _heavy = HeavyWork::begin();
     if request.input.as_os_str().is_empty() || request.output.as_os_str().is_empty() {
         return Err(EngineError::EmptyMediaPath);
     }
@@ -699,6 +702,7 @@ pub fn export_gif_clip(
     progress: &mut dyn FnMut(f32),
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<TrimmedClip, EngineError> {
+    let _heavy = HeavyWork::begin();
     if input.as_os_str().is_empty() || output.as_os_str().is_empty() {
         return Err(EngineError::EmptyMediaPath);
     }

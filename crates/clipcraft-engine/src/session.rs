@@ -333,6 +333,13 @@ impl CaptureSession {
         }
     }
 
+    /// Goes to the lowest picture rate at once; the replay is kept. For a computer being starved.
+    pub fn lighten_now(&self) {
+        if let Some(recorder) = &self.recorder {
+            recorder.lighten_now();
+        }
+    }
+
     /// When on, a source that goes away (a game window closing) does not end the recording: the
     /// replay buffer is kept and [`CaptureSession::replace_source`] carries on from it.
     pub fn keep_through_source_loss(&self, on: bool) {

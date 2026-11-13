@@ -61,9 +61,11 @@ The data folder is `%APPDATA%` on Windows, `~/Library/Application Support` on ma
 4. **Automatic quality.** Once a second the capture loop asks the governor whether pictures are
    being dropped; if so it takes every second or third picture instead, and goes back when there
    is room. The stream is unchanged, so the buffer is kept.
-5. **Pause.** The recorder's clock can stop (`set_paused`): nothing is captured or kept, sound is
+5. **Safety.** The app reads ClipCraft's own processor and memory use once a second while it
+   records; a runaway first lowers the picture rate and then stops clipping (`safety.rs`).
+6. **Pause.** The recorder's clock can stop (`set_paused`): nothing is captured or kept, sound is
    read and discarded, and later pictures carry on from the same time so a clip has no frozen gap.
-6. **Resets.** A change of picture size (when the stream cannot be kept), a silence longer than the
+7. **Resets.** A change of picture size (when the stream cannot be kept), a silence longer than the
    gap setting, or a hardware/software encoder switch starts a new stream and clears the buffer.
    The capture bar reports it. When the source changes in game-only mode the stream is *kept*
    (see below).

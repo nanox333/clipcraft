@@ -485,6 +485,80 @@ impl ClipCraftApp {
         }
     }
 
+    /// While clipping, watches how much of the computer ClipCraft itself is using once a second.
+    /// Using nearly all of the processor for a long time first lightens the recording, and then
+    /// stops it; far too much memory stops it at once. Never while an export is running (that is
+    /// heavy on purpose).
+    pub(crate) fn watch_resources(&mut self) {
+        let watching = self.recording.protect_computer
+            && self.capture.session.is_active()
+            && !clipcraft_engine::HeavyWork::running();
+        if !watching {
+            self.capture.watchdog.reset();
+            self.capture.meter_read_at = None;
+            return;
+        }
+        if self
+            .capture
+            .meter_read_at
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(1))
+        {
+            return;
+        }
+        self.capture.meter_read_at = Some(Instant::now());
+        if self.capture.meter.is_none() {
+            self.capture.meter = clipcraft_platform::SelfMeter::new();
+        }
+        let Some(usage) = self.capture.meter.as_mut().and_then(|meter| meter.sample()) else {
+            return;
+        };
+        if let Some(verdict) = self
+            .capture
+            .watchdog
+            .observe(usage.cpu_share, usage.memory_bytes)
+        {
+            self.apply_safety_verdict(verdict);
+        }
+    }
+
+    /// Does what the watchdog asks.
+    pub(crate) fn apply_safety_verdict(&mut self, verdict: clipcraft_engine::Verdict) {
+        use clipcraft_engine::{StopReason, Verdict};
+        match verdict {
+            Verdict::Lighten => {
+                self.capture.session.lighten_now();
+                self.capture.notice = notice(
+                    "ClipCraft is using almost all of your processor, so it is recording fewer pictures a second to take the load off. Try the graphics card encoder or a lower quality in Settings if this keeps happening.",
+                    true,
+                    None,
+                );
+            }
+            Verdict::Recovered => {
+                self.capture.notice = notice(
+                    "ClipCraft is back to using a normal amount of your processor.",
+                    false,
+                    None,
+                );
+            }
+            Verdict::Stop(reason) => {
+                let why = match reason {
+                    StopReason::Processor => {
+                        "ClipCraft stopped clipping because it was using almost all of your processor even after lowering the quality, which can make the whole computer unresponsive. Switch to the graphics card encoder or a lower quality in Settings, then start clipping again."
+                    }
+                    StopReason::Memory => {
+                        "ClipCraft stopped clipping because it was using far more memory than a replay needs. Lower the replay length or the quality in Settings, then start clipping again."
+                    }
+                };
+                // Stopped for safety: automatic game capture must not start it again at once.
+                if self.recording.game_only_capture {
+                    self.capture.game_arming.capture_stopped_by_user();
+                }
+                self.stop_capture();
+                self.capture.notice = notice(why, true, None);
+            }
+        }
+    }
+
     /// Says so when automatic quality changes the picture rate, and shows the rate in the bar.
     pub(crate) fn report_quality_change(&mut self) {
         let Some(status) = self.capture.status.as_ref() else {

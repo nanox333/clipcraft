@@ -645,6 +645,16 @@ pub(crate) fn video_rows(
         ui,
         s,
         Meta::new(
+            "Protect my computer",
+            "If ClipCraft itself uses nearly all of the processor for a long time, it first records fewer pictures a second and, if that does not help, stops clipping and tells you. It also stops if it ever uses far too much memory. Exports are not affected.",
+            "protect safety cpu 100 percent freeze crash overload stop limit memory watchdog",
+        ),
+        |s| &mut s.protect_computer,
+    );
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
             "Adjust automatically",
             "If the computer cannot keep up, record fewer pictures a second (half, then a third) instead of dropping them at random, and go back when there is room. The size and your replay are never touched.",
             "automatic quality adapt lag dropped frames stutter fps lower lighter keep up",

@@ -34,7 +34,9 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
 
 ## What it does
 
-- **Record and replay:** automatic quality (on by default) records half, then a third, of the
+- **Record and replay:** a safety watchdog (on by default) lightens and, if needed, stops clipping if
+  ClipCraft itself uses nearly all of the processor for a long time or far too much memory, so it
+  cannot starve the computer. Automatic quality (on by default) records half, then a third, of the
   pictures per second when the computer cannot keep up, and goes back when there is room, without
   clearing the replay. Pause and resume clipping with a hotkey or the Pause button, and an optional
   setting that starts the replay over after each save so clips never repeat footage. If a game

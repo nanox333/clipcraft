@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Protects your computer from a runaway:** while clipping, ClipCraft now watches its own use of the
+  processor and memory. If it uses nearly all of the processor for 20 seconds it records fewer
+  pictures a second at once; if that does not help within a minute it stops clipping and tells you
+  why (and automatic game capture does not start it again behind your back). Far too much memory
+  (6 GB) stops it immediately. Exports are exempt, but now use half the cores instead of all but
+  one and run at below-normal priority (Windows). In the background the window no longer redraws
+  twenty times a second just to listen for hotkeys (ten now). Settings → Video → *Protect my
+  computer*, on by default.
 - **Automatic quality:** when the computer cannot keep up (the encoder is dropping pictures), ClipCraft
   now records every second picture, then every third, instead of dropping them at random, and goes
   back after half a minute of calm with room to spare. The size, the bitrate and your replay are

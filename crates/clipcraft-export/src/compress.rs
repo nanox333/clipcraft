@@ -344,11 +344,12 @@ fn scale_yuv420(
     Some((y, u, v))
 }
 
-/// Encoder threads: every core but one (so the app and a running game keep responding), 2 to 8.
+/// Encoder threads: half the cores, 2 to 6. An export is something the person waits for, but the
+/// rest of the computer (and a game) has to stay usable while it runs.
 pub(crate) fn worker_threads() -> usize {
     std::thread::available_parallelism()
-        .map_or(2, |cores| cores.get().saturating_sub(1))
-        .clamp(2, 8)
+        .map_or(2, |cores| cores.get() / 2)
+        .clamp(2, 6)
 }
 
 pub(crate) fn check_cancel(cancel: &AtomicBool) -> Result<(), ExportError> {

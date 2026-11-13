@@ -59,6 +59,15 @@ impl Governor {
         }
     }
 
+    /// Goes straight to the lowest rate (the computer is being starved), as if it had been asked
+    /// for by the drops. It goes back up by the usual rule, after a calm spell.
+    pub fn force_lowest(&mut self, now: f64) -> u32 {
+        self.level = self.max_level;
+        self.last_change = now;
+        self.history.clear();
+        self.level
+    }
+
     /// 0 is every picture, 1 every second one, 2 every third.
     pub fn level(&self) -> u32 {
         self.level
@@ -163,6 +172,18 @@ mod tests {
         // Changes are spaced out, not made on every second of trouble.
         assert!(changes[1].0 - changes[0].0 >= 8);
         assert_eq!(governor.level(), 2);
+    }
+
+    #[test]
+    fn forcing_the_lowest_rate_goes_there_at_once_and_comes_back_by_the_usual_rule() {
+        let mut governor = Governor::new(60);
+        assert_eq!(governor.force_lowest(0.0), 2);
+        let mut counters = Counters::default();
+        let changes = run(&mut governor, &mut counters, 1, 100, 60, 0.0, 2.0);
+        // Calm and light: one step up after the wait, another after the next.
+        let levels: Vec<u32> = changes.iter().map(|(_, level)| *level).collect();
+        assert_eq!(levels, [1, 0], "{changes:?}");
+        assert!(changes[0].0 >= 30);
     }
 
     #[test]

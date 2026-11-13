@@ -459,6 +459,9 @@ pub struct RecordingSettings {
     /// When the computer cannot keep up, record fewer pictures a second instead of dropping them
     /// at random, and go back when there is room. Never clears the replay.
     pub automatic_quality: bool,
+    /// Lighten and finally stop recording if ClipCraft itself uses nearly all of the processor for
+    /// a long time, or far too much memory, so it can never starve the computer.
+    pub protect_computer: bool,
 }
 
 impl Default for RecordingSettings {
@@ -527,6 +530,7 @@ impl Default for RecordingSettings {
             restart_replay_after_save: false,
             share_megabytes: 10,
             automatic_quality: true,
+            protect_computer: true,
         }
     }
 }

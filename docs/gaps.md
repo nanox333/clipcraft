@@ -79,6 +79,24 @@ shortcuts and has not been run on those desktops for these keys.
   thrown away so nothing from the pause is mixed in. Recorder test: nothing captured while paused,
   no reset, no restart, valid clip. Older settings files with five shortcut lists still load.
 
+## Safety watchdog (a report of 100% processor use and a near-crash)
+
+**The cause of that report was not found**: it was one report without details, and no runaway loop
+turned up in a read of every worker loop in non-test code (all sleep, wait or are bounded). The
+likely contributors are the processor video encoder under a heavy setting, exports using all but one
+core at normal priority, and a full redraw twenty times a second while the window sits in the
+background listening for hotkeys; all three are reduced. Whatever the cause, `Watchdog`
+(`clipcraft-engine/src/safety.rs`) now guards it: once a second while clipping, ClipCraft reads
+its own processor and memory use (`clipcraft_platform::SelfMeter`, from the process's CPU time).
+At 85% or more of the whole processor for 20 seconds it takes the recorder to its lowest picture
+rate (the replay is kept); if it is still at 85% for another 60 seconds it stops clipping with an
+explanation and, in game-only mode, does not start again until the person does; a calm 20 seconds
+ends the watch; 6 GB of memory stops it at once. Not while an export runs (`HeavyWork`). Verified:
+arithmetic tests of every path, the app applying each verdict (rate lowered with no reset, stop with
+the message, no restart by game capture), and the meter reading a busy loop. **Not verified:** a real
+overload on Windows; whether 85% for 80 seconds is the right limit on a 4-core machine. On
+Linux there is no below-normal priority for exports (the system call is per thread).
+
 ## Automatic quality (from Kairos' idea; written fresh)
 
 `Governor` (`clipcraft-record/src/governor.rs`) looks at counters once a second over a five-second
