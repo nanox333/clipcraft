@@ -318,6 +318,19 @@ impl ClipCraftApp {
                 );
                 ui.add_space(8.0);
                 let full = ui.available_width();
+                if kit::labelled_button_sized(
+                    ui,
+                    Icon::Copy,
+                    "Copy file",
+                    true,
+                    !entry.offline,
+                    full,
+                )
+                .on_hover_text("Copy the clip itself, so you can paste it into Discord or a folder")
+                .clicked()
+                {
+                    self.copy_clip_file(ui.ctx(), PathBuf::from(&entry.path));
+                }
                 if kit::labelled_button_sized(ui, Icon::Copy, "Copy file path", false, true, full)
                     .clicked()
                 {

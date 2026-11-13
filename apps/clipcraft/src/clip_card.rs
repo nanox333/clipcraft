@@ -6,6 +6,8 @@ pub(crate) enum ClipCardAction {
     Open(Box<MediaEntry>),
     SendToEditor(Box<MediaEntry>),
     CopyPath(String),
+    /// Put the clip's file on the clipboard.
+    CopyFile(String),
     Reveal(String),
     SetFavorite {
         path: String,
@@ -315,6 +317,10 @@ pub(crate) fn clip_card(
         }
         if !entry.offline && ui.button(open_in_file_manager_label()).clicked() {
             menu_action = Some(ClipCardAction::Reveal(entry.path.clone()));
+            ui.close();
+        }
+        if !entry.offline && ui.button("Copy file").clicked() {
+            menu_action = Some(ClipCardAction::CopyFile(entry.path.clone()));
             ui.close();
         }
         if ui.button("Copy path").clicked() {

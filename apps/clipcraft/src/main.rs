@@ -55,6 +55,7 @@ use window_chrome::{WindowButton, nav_button, resize_from_the_edges, window_butt
 
 fn main() -> eframe::Result<()> {
     clipcraft_engine::set_trash_handler(clipcraft_platform::move_to_trash);
+    clipcraft_engine::set_clipboard_files_handler(clipcraft_platform::copy_file_to_clipboard);
     clipcraft_engine::update::set_http_fetcher(clipcraft_platform::https_get);
     let launch_settings = clipcraft_engine::default_settings_path()
         .and_then(
@@ -1559,6 +1560,9 @@ impl ClipCraftApp {
                 ClipCardAction::CopyPath(path) => {
                     self.copy_media_path(ui.ctx(), PathBuf::from(path));
                 }
+                ClipCardAction::CopyFile(path) => {
+                    self.copy_clip_file(ui.ctx(), PathBuf::from(path))
+                }
                 ClipCardAction::Reveal(path) => self.reveal_media(PathBuf::from(path)),
                 ClipCardAction::SetFavorite { path, favorite } => {
                     self.edit_library(MetaEdit::SetFavorite { path, favorite });
@@ -1646,6 +1650,31 @@ impl ClipCraftApp {
                 self.error = Some("The path command returned an unexpected result.".to_owned());
             }
             Err(error) => self.error = Some(error.to_string()),
+        }
+    }
+
+    /// Puts the clip's file on the clipboard, to paste into Discord or a folder. When the system
+    /// cannot, the path is copied as text instead and the message says so.
+    pub(crate) fn copy_clip_file(&mut self, context: &egui::Context, path: PathBuf) {
+        self.error = None;
+        match execute(Command::CopyClipFile { path: path.clone() }) {
+            Ok(_) => {
+                self.capture.notice = capture::notice(
+                    "File copied. Paste it into Discord, a message or a folder.",
+                    false,
+                    None,
+                );
+            }
+            Err(error) => {
+                self.copy_media_path(context, path);
+                if self.error.is_none() {
+                    self.capture.notice = capture::notice(
+                        format!("{error} The path was copied instead."),
+                        true,
+                        None,
+                    );
+                }
+            }
         }
     }
 

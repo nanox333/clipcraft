@@ -7,6 +7,7 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     clipcraft_engine::set_trash_handler(clipcraft_platform::move_to_trash);
+    clipcraft_engine::set_clipboard_files_handler(clipcraft_platform::copy_file_to_clipboard);
     clipcraft_engine::update::set_http_fetcher(clipcraft_platform::https_get);
     match run(std::env::args_os().skip(1).collect()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -385,6 +386,13 @@ fn run_library(arguments: &[OsString]) -> Result<(), CliError> {
             let output = execute(Command::TrashClip { path }).map_err(CliError::Engine)?;
             match output {
                 CommandOutput::Trashed { path } => write_json(&path),
+                _ => Err(CliError::UnexpectedOutput),
+            }
+        }
+        "copy-file" => {
+            let output = execute(Command::CopyClipFile { path }).map_err(CliError::Engine)?;
+            match output {
+                CommandOutput::Copied { path } => write_json(&path),
                 _ => Err(CliError::UnexpectedOutput),
             }
         }
@@ -898,6 +906,7 @@ fn print_help() -> Result<(), CliError> {
         "  clipcraft-cli library path <file>\n",
         "  clipcraft-cli library reveal <file>\n",
         "  clipcraft-cli library trash <file>  (moves the clip to the Recycle Bin)\n",
+        "  clipcraft-cli library copy-file <file>  (puts the clip on the clipboard to paste elsewhere)\n",
         "  clipcraft-cli library rename <file> <new name>  (keeps the extension; never replaces a file)\n",
         "  clipcraft-cli library probe <file>\n",
         "  clipcraft-cli library thumbnail <file>\n",

@@ -913,7 +913,7 @@ impl EditorState {
                     !self.session.clips().is_empty() && !self.busy(),
                 )
                 .on_hover_text(
-                    "Choose standard export or an estimated 10 MB, 25 MB or custom file size.",
+                    "Choose standard export or an estimated 10 MB, 25 MB, 50 MB, 500 MB or custom file size (10, 50 and 500 MB are what Discord takes).",
                 )
                 .clicked()
                 {

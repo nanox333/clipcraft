@@ -661,6 +661,7 @@ pub fn app_icon() -> egui::IconData {
 
 /// The label of an export size choice. `original` names "no size target" ("Original quality" in
 /// the trim panel, "Standard quality" in the editor). Shared so the two screens cannot drift.
+/// The sizes line up with what Discord accepts: 10 MB for everyone, 50 MB and 500 MB with Nitro.
 pub fn export_size_label(
     preset: Option<clipcraft_engine::ExportPreset>,
     original: &'static str,
@@ -668,8 +669,10 @@ pub fn export_size_label(
     use clipcraft_engine::ExportPreset;
     match preset {
         None => original,
-        Some(ExportPreset::Small) => "Small file \u{b7} ~10 MB",
+        Some(ExportPreset::Small) => "Small file \u{b7} ~10 MB (Discord)",
         Some(ExportPreset::Medium) => "Medium file \u{b7} ~25 MB",
+        Some(ExportPreset::Large) => "Large file \u{b7} ~50 MB (Discord Nitro Basic)",
+        Some(ExportPreset::Largest) => "Largest file \u{b7} ~500 MB (Discord Nitro)",
         Some(ExportPreset::Custom { .. }) => "Custom size",
     }
 }
@@ -679,7 +682,7 @@ pub fn export_size_label(
 pub fn export_size_choices(
     current: Option<clipcraft_engine::ExportPreset>,
     original: &'static str,
-) -> [(Option<clipcraft_engine::ExportPreset>, &'static str); 4] {
+) -> [(Option<clipcraft_engine::ExportPreset>, &'static str); 6] {
     use clipcraft_engine::ExportPreset;
     let custom = match current {
         Some(value @ ExportPreset::Custom { .. }) => value,
@@ -689,6 +692,8 @@ pub fn export_size_choices(
         None,
         Some(ExportPreset::Small),
         Some(ExportPreset::Medium),
+        Some(ExportPreset::Large),
+        Some(ExportPreset::Largest),
         Some(custom),
     ]
     .map(|value| (value, export_size_label(value, original)))

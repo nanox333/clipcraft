@@ -12,6 +12,7 @@
 use clipcraft_capture::{Capabilities, CaptureError, CaptureSource, CaptureTarget};
 
 mod borderless;
+mod clipboard;
 #[cfg(windows)]
 mod d3d11;
 #[cfg(target_os = "linux")]
@@ -64,6 +65,7 @@ pub fn start_wayland_hotkeys_on(
 ) -> Result<HotkeyListener, CaptureError> {
     global_shortcuts::start(bindings, false, Some(address.to_owned()))
 }
+pub use clipboard::copy_file_to_clipboard;
 pub use http::https_get;
 pub use installation::{register_installation, unregister_installation};
 pub use priority::set_background_priority;

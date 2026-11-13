@@ -36,6 +36,10 @@ pub enum ExportPreset {
     Small,
     /// Estimated 25 MB file.
     Medium,
+    /// Estimated 50 MB file.
+    Large,
+    /// Estimated 500 MB file.
+    Largest,
     /// Estimated size from 1 to 500 MB.
     Custom { megabytes: u16 },
 }
@@ -46,6 +50,8 @@ impl ExportPreset {
         let megabytes = match self {
             Self::Small => 10,
             Self::Medium => 25,
+            Self::Large => 50,
+            Self::Largest => 500,
             Self::Custom { megabytes } => megabytes,
         };
         if !(1..=500).contains(&megabytes) {
@@ -1104,6 +1110,9 @@ mod tests {
     #[test]
     fn targets_and_audio_budget_are_bounded() {
         assert_eq!(ExportPreset::Small.target_bytes(), Ok(10_000_000));
+        // The sizes Discord takes: 10 MB for everyone, 50 MB and 500 MB with Nitro.
+        assert_eq!(ExportPreset::Large.target_bytes(), Ok(50_000_000));
+        assert_eq!(ExportPreset::Largest.target_bytes(), Ok(500_000_000));
         assert!(
             ExportPreset::Custom { megabytes: 0 }
                 .target_bytes()
