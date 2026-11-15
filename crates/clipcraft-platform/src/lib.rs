@@ -11,9 +11,12 @@
 
 use clipcraft_capture::{Capabilities, CaptureError, CaptureSource, CaptureTarget};
 
+mod app_audio;
 mod borderless;
+mod clipboard;
 #[cfg(windows)]
 mod d3d11;
+mod drag;
 #[cfg(target_os = "linux")]
 mod evdev;
 pub mod game_state;
@@ -37,6 +40,7 @@ mod priority;
 mod process;
 #[cfg(target_os = "linux")]
 mod pulse;
+mod resources;
 mod screen;
 mod timer;
 mod trash;
@@ -65,12 +69,18 @@ pub fn start_wayland_hotkeys_on(
 ) -> Result<HotkeyListener, CaptureError> {
     global_shortcuts::start(bindings, false, Some(address.to_owned()))
 }
+pub use app_audio::{AppTarget, app_audio_problem, open_app_audio, resolve_process};
+pub use clipboard::copy_file_to_clipboard;
+pub use drag::start_file_drag;
+#[cfg(all(unix, not(target_os = "macos")))]
+pub use drag::start_file_drag_on;
 pub use http::https_get;
 pub use installation::{register_installation, unregister_installation};
 pub use priority::set_background_priority;
 pub use process::{
     ProcessObserver, RunningProcess, process_family, running_processes, steam_installation_roots,
 };
+pub use resources::{SelfMeter, SelfUsage};
 pub use screen::{make_window_passive, set_taskbar_button, window_minimized, work_area};
 pub use timer::set_fine_timer;
 pub use trash::move_to_trash;

@@ -643,6 +643,26 @@ pub(crate) fn video_rows(
             ),
         ],
     );
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
+            "Protect my computer",
+            "If ClipCraft itself uses nearly all of the processor for a long time, it first records fewer pictures a second and, if that does not help, stops clipping and tells you. It also stops if it ever uses far too much memory. Exports are not affected.",
+            "protect safety cpu 100 percent freeze crash overload stop limit memory watchdog",
+        ),
+        |s| &mut s.protect_computer,
+    );
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
+            "Adjust automatically",
+            "If the computer cannot keep up, record fewer pictures a second (half, then a third) instead of dropping them at random, and go back when there is room. The size and your replay are never touched.",
+            "automatic quality adapt lag dropped frames stutter fps lower lighter keep up",
+        ),
+        |s| &mut s.automatic_quality,
+    );
     rows.section(ui, "Bitrate and keyframes");
     let mode_note = s.rate_control.detail();
     rows.choose(
@@ -715,6 +735,8 @@ pub fn video_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, gpu: &GpuP
 // Replay
 // ---------------------------------------------------------------------------------------------
 
+const SHARE_STOPS: [u32; 4] = [10, 25, 50, 500];
+
 const REPLAY_STOPS: [u32; 12] = [5, 10, 15, 30, 45, 60, 90, 120, 180, 300, 450, 600];
 
 pub(crate) fn seconds_label(seconds: u32) -> String {
@@ -764,6 +786,28 @@ pub(crate) fn replay_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut RecordingS
             "popup toast notice saved clip corner overlay",
         ),
         |s| &mut s.show_save_notification,
+    );
+    rows.stepped(
+        ui,
+        s,
+        Meta::new(
+            "Size for sharing",
+            "Dragging a clip into a chat (or Share) makes a copy this small when the clip is bigger. Discord takes 10 MB, 50 MB with Nitro Basic and 500 MB with Nitro. Clips that already fit are shared as they are.",
+            "share discord size megabytes drag chat limit nitro",
+        ),
+        |s| &mut s.share_megabytes,
+        &SHARE_STOPS,
+        |megabytes| format!("{megabytes} MB"),
+    );
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
+            "Start the replay over after each save",
+            "Forgets the saved footage once the clip is written, so the next clip never repeats what is already in this one. The replay fills up again from that moment.",
+            "restart reset clear buffer after save overlap duplicate",
+        ),
+        |s| &mut s.restart_replay_after_save,
     );
     rows.finish(ui);
 }
@@ -1102,6 +1146,7 @@ pub(crate) fn audio_rows(
             },
         );
     }
+    mixer_rows(rows, ui, s, state);
     rows.section(ui, "Tracks and quality");
     rows.toggle(
         ui,

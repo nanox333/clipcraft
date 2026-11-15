@@ -40,12 +40,17 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_Direct3D11",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Media",
+    "Win32_Media_Audio",
     "Win32_Media_MediaFoundation",
     "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
     "Win32_System_Registry",
     "Win32_System_LibraryLoader",
     "Win32_System_Variant",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_System_SystemServices",
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_Ole",
     "Win32_System_Pipes",
@@ -70,7 +75,7 @@ filmcraft-h264.workspace = true
 filmcraft-h264enc.workspace = true
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dev-dependencies]
-x11rb = { version = "0.14" }
+x11rb = { version = "0.14", features = ["xtest"] }
 
 [target.'cfg(any(windows, all(target_os = "linux", target_pointer_width = "64"), target_os = "macos"))'.dependencies]
 filmcraft-platform.workspace = true

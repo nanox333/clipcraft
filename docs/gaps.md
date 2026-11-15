@@ -1,5 +1,16 @@
 # Known gaps
 
+## 0.3.0 release verification
+
+Linux and Windows CI ran the full gate (`cargo xtask ci`) on the 0.3.0 release commit. Two releases
+are built from one run: the app (Windows setup and portable zip, Linux tarball) and the command line
+tool on its own (`cli-v0.3.0`); the Windows portable zip has `-portable` in its file name. Not verified: installing the setup or running the portable zip on a
+clean Windows machine, and the Windows-only features (per-program sound, drag into Discord, Copy
+file) and the pause, black-window rescue and automatic-quality changes with real games. The
+signing key is not set, so the packages and update checks are unsigned. One CI check, "a light
+recording stays at full rate", can fail on a stalled shared runner when a few pictures are lost; it
+now only fails when the rate is lowered with nothing dropped.
+
 ## 0.2.0 release verification
 
 Linux and Windows CI passed on the 0.2.0 release commit. The release workflow built both platform
@@ -56,6 +67,162 @@ and post-roll. Verified: engine IDs/conflict/sanitising tests, a real recording 
 shortcut saves about one second while the normal save keeps the buffer, and a keyboard-only
 settings test. Global registration on Windows and Wayland is the same mechanism as the other
 shortcuts and has not been run on those desktops for these keys.
+
+## Small features: share sizes, copy file, black-window rescue, restart after save, pause
+
+- **Discord sizes / copy file:** presets Large (50 MB) and Largest (500 MB) join Small (10) and
+  Medium (25); the retry-once size fit applies to them. `library.copy_file` (CLI `library copy-file`)
+  puts a clip's file on the clipboard: Windows uses the file-drop clipboard format
+  (type-checked in the Windows cross-compile lint only, not run on Windows), macOS asks the script
+  runner, Linux writes `text/uri-list` through `wl-copy` or `xclip` (checked with xclip under Xvfb;
+  not checked with Wayland or by pasting into Discord). Without a way to copy, the path is copied
+  and the message says so. Not done: dragging a clip out of the window.
+- **Black-window rescue:** a window source whose pictures are black everywhere sampled for three
+  seconds is reported (`RecordStatus.source_black`; only windows are watched, a dark monitor is not
+  a fault) and, in game-only mode with the screen fallback on, capture moves to the screen inside the
+  same recording; the window is tried again after a minute. For graphics-card surfaces the picture
+  is copied to look at once every two seconds, a cost not measured on Windows. A real black loading
+  screen also triggers it; recording the screen then is harmless.
+- **Restart after save:** `ReplayBuffer::discard_through` drops what went into the clip plus the
+  following pictures up to the next keyframe, so the replay refills from the next keyframe (up to the
+  keyframe interval of gap). Not counted as a reset.
+- **Pause:** the recorder's clock stops while paused (no frozen gap in clips); sound is read and
+  thrown away so nothing from the pause is mixed in. Recorder test: nothing captured while paused,
+  no reset, no restart, valid clip. Older settings files with five shortcut lists still load.
+
+## Sound mixer: one row per application (from Kairos' idea; written fresh)
+
+`AppAudioRow`s in the settings (up to six: the game, or a program by file name, each with a level
+and an own-track switch) become `AudioKind::Application` sources (`app_audio.rs`). On Windows 10
+version 2004 or newer a source captures one process and everything it started through process
+loopback (`ActivateAudioInterfaceAsync`), on a thread of its own with a bounded queue. On Linux the
+source finds the program's PulseAudio stream with `pactl --format=json list sink-inputs` (by process
+family, or by the stream's binary or application name) and records it with
+`parec --monitor-stream=<index>` into a bounded queue; the tools must be installed and the screen
+says so when they are not. If the program is
+not running yet the source reports "X is not running" and `recover` looks again every two seconds,
+so it attaches when the program starts or restarts; "the game" follows the recognized game's process.
+Tracks: rows with an own track get one named after the row; others mix into the main sound; the
+microphone and "Game and system" keep their old layout; no empty main track is made when only rows
+are recorded. Verified (Linux): the track layout and failure handling with a fake provider, row
+sanitising (bounded, path-free), the process-lookup rules (root of a program's processes, the
+game's process), the mixer drawn with named controls, and a real PulseAudio server with a null
+sink (`tests/pulse_app.rs`: a tone played by `paplay` is recorded by the `exe:paplay` row, a row for
+a program that is not playing stays silent and waiting). **The Windows capture compiles in the
+cross-compile lint but has never been run**: nothing here could play sound from a process.
+**Limits:** macOS reports that it is not available. On Linux only the program's first (lowest
+numbered) playing stream is recorded, a program that opens a second stream later is not added, and
+every attach starts two short-lived tool processes (every two seconds while waiting). Whole-system sound cannot exclude the chosen programs (Windows
+only offers excluding one process), so with "Record game and system sound" on they are recorded
+twice; the screen says so. A program is matched by file name, not by window.
+
+**Small touches from the same review:** new profiles start with sound effects and the save pop-up
+off (saved settings keep their values); a downloaded update waits for clipping and saving to stop
+before it closes ClipCraft (tested as a rule; the install itself needs Windows); the README quotes
+the measured Windows numbers from `docs/windows-performance.md` with their limits.
+
+## Safety review (2026-11)
+
+Read for: unsafe code (none outside `clipcraft-platform` and `clipcraft-audio-out`, each block with a
+`// SAFETY:` note), panics in non-test code (none in the code added recently), external programs run
+(fixed arguments, paths passed as arguments or on stdin, never through a shell; the macOS
+script's path is escaped), network use (updates only, https, GitHub hosts only, size caps, SHA-256
+checked, a redirect limit), local listeners (the CS2/Dota 2 game-state listener binds loopback only,
+checks a key, caps sizes and has timeouts), settings, index and clip-header parsing (size and depth
+caps), uninstall (only what the install manifest lists), launch-at-sign-in entries (quoted and
+escaped), and unbounded growth (replay buffer, thumbnails, index, share copies, update download all
+capped). `cargo deny check advisories` now passes (it needs network, so it is not part of
+`cargo xtask ci`; run it before each release). **Known and accepted:** five unmaintained crates
+reached through other crates (`paste`, `ttf-parser`, `zbus_names`, `zvariant`, `zvariant_derive`;
+fixing the last three means moving to zbus 6, which removed the blocking API the shortcut and
+portal code uses), listed with reasons in `deny.toml`; updates are authenticated only by HTTPS to
+GitHub and a checksum published beside the download until a release key is set (see below); the OLE
+drag on Windows blocks the window until the drop.
+
+**Follow-up (the above, worked through):**
+- *Signatures:* `update.rs` verifies an ed25519 signature of `SHA256SUMS.txt` (`SHA256SUMS.txt.sig`)
+  against `update_key::RELEASE_PUBLIC_KEY`; with a key set, no signature or a wrong one refuses the
+  update. `cargo xtask sign-keygen` / `sign` make and use the keys and the release workflow signs
+  when the secret exists. Tested: good, tampered, wrong-key, garbage and missing signatures. **The
+  key itself has not been made**: that is a maintainer step (the private half must never be in a
+  chat or a repository), so updates are still checksum-only until it is.
+- *Hostile files:* `tests/hostile_files.rs` runs 176 truncated, bit-flipped and zeroed variants of a
+  real MP4 and MKV through the probe, thumbnail maker and player (every third) with a panic counter:
+  none panicked, hung or ballooned. A fixed pass, not open-ended fuzzing; the parsers' unsafe-free
+  Rust and size caps are what it exercises.
+- *Unmaintained crates:* moving our own zbus use to 6 was tried and works (an adapter keeps the
+  blocking calls; all portal tests pass) but achieves nothing, because `zvariant` and `zbus_names`
+  also arrive through eframe's accessibility layer (accesskit, atspi) on zbus 5, so it only added a
+  second copy; reverted. eframe 0.37 would drop `ttf-parser` (checked: about 28 compile errors in the
+  app, not attempted: a UI toolkit upgrade across four versions cannot be judged by eye here). Both
+  stay in `deny.toml` with reasons.
+- *Windows drag blocking:* inherent to OLE's `DoDragDrop`; not changed.
+
+## Safety watchdog (a report of 100% processor use and a near-crash)
+
+**The cause of that report was not found**: it was one report without details, and no runaway loop
+turned up in a read of every worker loop in non-test code (all sleep, wait or are bounded). The
+likely contributors are the processor video encoder under a heavy setting, exports using all but one
+core at normal priority, and a full redraw twenty times a second while the window sits in the
+background listening for hotkeys; all three are reduced. Whatever the cause, `Watchdog`
+(`clipcraft-engine/src/safety.rs`) now guards it: once a second while clipping, ClipCraft reads
+its own processor and memory use (`clipcraft_platform::SelfMeter`, from the process's CPU time).
+At 85% or more of the whole processor for 20 seconds it takes the recorder to its lowest picture
+rate (the replay is kept); if it is still at 85% for another 60 seconds it stops clipping with an
+explanation and, in game-only mode, does not start again until the person does; a calm 20 seconds
+ends the watch; 6 GB of memory stops it at once. Not while an export runs (`HeavyWork`). Verified:
+arithmetic tests of every path, the app applying each verdict (rate lowered with no reset, stop with
+the message, no restart by game capture), and the meter reading a busy loop. **Not verified:** a real
+overload on Windows; whether 85% for 80 seconds is the right limit on a 4-core machine. On
+Linux there is no below-normal priority for exports (the system call is per thread).
+
+## Automatic quality (from Kairos' idea; written fresh)
+
+`Governor` (`clipcraft-record/src/governor.rs`) looks at counters once a second over a five-second
+window: more than 8% of pictures dropped lowers the rate one step (every 2nd picture, then every
+3rd; never below 15 a second), at most every 8 seconds; after 30 calm seconds with the encoder under
+60% full at the higher rate it goes back up. The capture loop then simply takes every Nth picture,
+so the stream, size, bitrate and replay buffer are untouched (no reset; clips of a lowered stretch
+have fewer pictures a second). Verified: arithmetic tests of the governor, and a recording of Full
+HD at 60 a second on one thread (overloaded here) that gets lowered with no reset or restart,
+while a light recording is left alone. **Not done:** lowering the picture *size* or bitrate
+(that needs a new stream and would clear the replay); capping at the monitor's refresh rate (the
+capture targets do not report it yet). **Squeezing (a game taking the card):** besides drops, the
+governor lowers the rate when the encoder was busy at least 60% of the time over the window and a
+picture takes 1.5 times or more of the quickest of the last 60 seconds (`Reason::Squeezed`; the
+notice says the game started using more of the computer). This is inferred from encode time only:
+it does not read the graphics card's own load, a game that is slow for other reasons looks the
+same, and a game that was already heavy when the recording began sets the baseline, so only a
+change after that is noticed. Verified with arithmetic tests (it fires before any drop, does not
+bounce back while the load stays, and ignores a steady heavy load); not measured on a real game.
+Not measured on a real game on Windows.
+
+**Start quietly at sign-in:** the setup's last page shows "Start quietly when I sign in" (on by
+default); finishing the setup saves it and the app then registers the start-up entry
+(`--minimized`; the tray hides the taskbar button on Windows). A refusal by the system switches it
+off again with a message. Verified: the draft default and that finishing the setup registers
+nothing itself; the real Windows registry entry and tray start were not run.
+
+## Dragging a clip into a chat (Windows OLE, X11 XDND)
+
+- **Share copies:** `clip.share_copy` (`make_share_copy`) plans one of: the clip fits (shared as it
+  is), a newer copy that fits already exists in `<clip folder>/Shared` (reused), or a copy is
+  needed (re-encoded with the size-fit export; a stale copy is never overwritten, the next name is
+  used). The library skips `Shared`. Tested with real recorded clips (a 6 s, 640x360 CBR clip made
+  to fit 2 MB, then reused).
+- **Drag out, X11:** the source side of XDND 5 in `clipcraft-platform/src/drag.rs`, following the
+  pointer by polling (the window keeps its own mouse grab, so it still sees the button come up).
+  Tested end to end under Xvfb with fake pointer input (XTest) against a stand-in target, and with the
+  real app window dragging a real card to that target: the file arrived as `text/uri-list`. **Not
+  tested against Discord or any real program**; Electron's handling of XDND is the main unknown.
+  Escape does not cancel; letting go anywhere without a taker drops nothing.
+- **Drag out, Windows:** OLE `DoDragDrop` with the shell's own file data object (what Explorer
+  uses). It is type-checked in the Windows cross-compile lint only and has **never been run**; it
+  runs on the window's thread and blocks it until the drop, which may interact with the window
+  library's event loop in ways only a Windows run shows.
+- **Elsewhere:** Wayland and macOS report that dragging out is unavailable and the file is copied
+  to the clipboard instead. The pointer resting on a card for 0.6 s starts the copy, never while
+  clipping (a game could suffer); the clip page button starts it on request.
 
 ## Considered: Vulkan Video encoding (`gpu-video`, 2026-11-12)
 
@@ -742,7 +909,7 @@ touches ClipCraft's own clips.
   PulseAudio server with a null sink (a tone played into it ends up in a saved clip); the output chosen in
   Settings › Audio (PulseAudio's outputs are listed by name and recorded through their monitors;
   verified with two null sinks: a tone played to one is heard only by its monitor) is what is
-  recorded, and macOS has none; resampling is linear; per-application audio is not separated;
+  recorded, and macOS has none; resampling is linear; per-application audio is separate only through the mixer rows;
   screenshots are wired to a global hotkey and save PNGs beside clips; push-to-talk works through the global hotkey only (not when ClipCraft
   has the focus). Sound and picture of a clip can differ by up to a frame at the very end.
 - **Settings not yet applied:** WebM.

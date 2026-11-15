@@ -60,7 +60,16 @@ The data folder is `%APPDATA%` on Windows, `~/Library/Application Support` on ma
 3. **Buffer.** Encoded pictures go into a `ReplayBuffer`: the newest N seconds kept as whole groups
    of pictures that start on a keyframe, bounded in time *and* bytes, so memory never grows. The
    oldest whole group is dropped as new ones arrive. Sound has its own bounded buffer.
-4. **Resets.** A change of picture size (when the stream cannot be kept), a silence longer than the
+4. **Automatic quality.** Once a second the capture loop asks the governor whether pictures are
+   being dropped, or whether each picture has suddenly become much slower to encode while the
+   encoder is busy more than 60% of the time (a game started taking the computer: "squeezed");
+   if so it takes every second or third picture instead, and goes back when there
+   is room. The stream is unchanged, so the buffer is kept.
+5. **Safety.** The app reads ClipCraft's own processor and memory use once a second while it
+   records; a runaway first lowers the picture rate and then stops clipping (`safety.rs`).
+6. **Pause.** The recorder's clock can stop (`set_paused`): nothing is captured or kept, sound is
+   read and discarded, and later pictures carry on from the same time so a clip has no frozen gap.
+7. **Resets.** A change of picture size (when the stream cannot be kept), a silence longer than the
    gap setting, or a hardware/software encoder switch starts a new stream and clears the buffer.
    The capture bar reports it. When the source changes in game-only mode the stream is *kept*
    (see below).
@@ -85,6 +94,14 @@ thread so the window and the game are never blocked.
 4. **Trim the folder:** with "delete oldest" on, the oldest ClipCraft clips go until the folder is
    under its limit. Clips that ClipCraft did not make are never deleted.
 5. **Tell the library:** the finished clip is registered in the library index with its game label.
+
+## The sound mixer
+
+Besides the system sound and the microphone, the settings can list up to six *application rows*.
+Each becomes a sound source of its own (on Windows, process loopback of one program and what it
+started; on Linux, `parec` recording that program's PulseAudio stream, found with `pactl`), with its own level, and either its own track in the clip or a place in the main mix.
+`audio_setup` in the engine assigns the tracks; the app's provider opens the sources and tells
+the "game" row which process is the game.
 
 ## Hotkeys
 
@@ -121,6 +138,15 @@ hand. Most of this lives in `apps/clipcraft/src/capture/games.rs`, with the deci
    (the Wayland chooser, a source that will not open, or more than the gap setting of silence) the
    old behaviour applies: stop, clear and start again.
 5. A game closing never saves a clip by itself; clips are only saved when asked.
+
+## Sharing
+
+Dragging a card out of the window into a chat goes through `share.rs` in the app. First
+`share_plan` (engine) decides what would be shared: the clip itself when it fits the chosen size, a
+copy already made in `Shared`, or a copy to make (the same size-fit export as Export). A copy is
+started when the pointer rests on the card (not while clipping) and takes a few seconds. The drag
+itself is `clipcraft_platform::start_file_drag`: OLE on Windows, the XDND protocol on X11. Where
+neither exists, the file is copied to the clipboard.
 
 ## The library
 

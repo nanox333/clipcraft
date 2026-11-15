@@ -41,8 +41,10 @@ alone.
 
 ### Offline Windows installer (M5.1a)
 
-`cargo xtask package` builds `target/dist/ClipCraft-Setup-<version>.exe` and a separate
-`clipcraft-cli-<version>-windows-<arch>.zip` (the CLI is not part of the app download or installer). The setup executable contains all application files and notices, installs
+`cargo xtask package` builds `target/dist/ClipCraft-Setup-<version>.exe`, the portable
+`clipcraft-<version>-windows-<arch>-portable.zip` (unzip anywhere and run `bin\clipcraft.exe`; nothing is
+installed) and a separate `clipcraft-cli-<version>-windows-<arch>.zip` (the CLI is not part of the
+app download or installer). The setup executable contains all application files and notices, installs
 to `%LOCALAPPDATA%/Programs/ClipCraft` by default, and needs no administrator/account/network.
 It adds Start menu links, an optional desktop link and a current-user Windows uninstall entry.
 The installed `uninstall.exe` (or Windows Settings → Apps) removes owned application versions,
@@ -62,8 +64,13 @@ install/upgrade/remove check remain release gates. See ADR 0031.
 RNNoise model's required notice, alongside `ATTRIBUTION.md` and the dependency license list.
 Keep this notice with binary redistributions, including manually assembled Windows builds.
 
-`.github/workflows/release.yml` builds the Linux (x86_64) tarball and CLI archive and the Windows (x86_64) setup executable and CLI zip with
-`cargo xtask package`, writes `SHA256SUMS.txt`, and creates a **draft** GitHub Release for review.
+`.github/workflows/release.yml` builds the Linux (x86_64) tarball and CLI archive and the Windows (x86_64) setup
+executable, portable zip and CLI zip with `cargo xtask package`, and creates two **draft** GitHub
+Releases for review, each with its own `SHA256SUMS.txt` (and signature, when the key is set):
+`v<version>` for the app (setup, portable zip, Linux tarball) and `cli-v<version>` for the command
+line tool alone. The update check reads the repository's *latest* release, which must stay the app:
+the CLI release is created as "not latest", and **publish the CLI draft first and the app draft
+last**.
 
 1. Set the version in `Cargo.toml` (`[workspace.package]`) and merge it.
 2. Push a tag that matches it, for example `git tag v0.1.0 && git push origin v0.1.0` (or run the
@@ -73,7 +80,29 @@ Keep this notice with binary redistributions, including manually assembled Windo
 
 The downloads are **not code-signed**, so Windows SmartScreen may show "unknown publisher" until a
 user chooses More info, then Run anyway; `INSTALL.txt` in each download says so. The workflow ran
-successfully for the published 0.1.0, 0.2.0 and 0.2.1 releases (0.2.1 was started by hand from the Actions tab). Before publishing, verify
+successfully for the published 0.1.0, 0.2.0 and 0.2.1 releases (0.2.1 was started by hand from the Actions tab; 0.3.0 was the first to build two releases, the app and the command line tool). Before publishing, verify
 that the release tag points to the intended commit and that both platform packages were rebuilt
 from it. Store release notes in `docs/releases/v<version>.md` before running the workflow. There is
 no macOS download (no macOS provider yet).
+
+## Signing releases (once, then automatic)
+
+Updates are checked against a signed checksum list once a release key is configured.
+
+1. Run `cargo xtask sign-keygen`. It prints a public key and a private key.
+2. Put the **public** key in `crates/clipcraft-engine/src/update_key.rs` (`RELEASE_PUBLIC_KEY`) and
+   commit it. From the first release built after that, ClipCraft installs an update only if
+   `SHA256SUMS.txt.sig` verifies against it. **Release that version unsigned-compatible first**:
+   people on older versions do not check signatures, and a version with the key set refuses
+   unsigned updates, so the first release carrying the key must itself be signed.
+3. Store the **private** key as the repository secret `CLIPCRAFT_SIGNING_KEY` and nowhere else. The
+   release workflow signs `SHA256SUMS.txt` with it (`cargo xtask sign`) and uploads
+   `SHA256SUMS.txt.sig`. If the secret is missing the workflow still works and the release is
+   unsigned, which a version with the key set will refuse to install.
+4. Losing the private key means shipping a new public key in a release signed by the old one, or
+   asking people to reinstall by hand.
+
+## Dependency advisories
+
+Run `cargo deny check advisories` before publishing (it needs network, so it is not part of
+`cargo xtask ci`). It must pass; the few ignored advisories are listed with reasons in `deny.toml`.

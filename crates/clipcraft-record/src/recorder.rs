@@ -2,20 +2,21 @@
 
 use std::collections::VecDeque;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use clipcraft_capture::reframe::{Framing, OutputShape, PixelRect, Reframe, reframe, reframe_into};
 use clipcraft_capture::{
-    CaptureError, CaptureFrame, CaptureSource, MAX_CAPTURE_EDGE, NativeCaptureFrame,
+    CaptureError, CaptureFrame, CaptureSource, MAX_CAPTURE_EDGE, NativeCaptureFrame, TargetKind,
 };
 use filmcraft_h264enc::{Encoder, EncoderConfig, PacketFormat, Preset, Profile, RateControl};
 
 use crate::RecordError;
 use crate::audio::{AudioBuffer, AudioEngine, AudioInputStatus, AudioSetup, AudioTrackInfo};
 use crate::convert::{convert, convert_rgba};
+use crate::governor::{Counters, Governor, Reason};
 use crate::hardware::{
     HardwareEncoder, HardwareProvider, HardwareRequest, StreamCodec, SurfaceFit,
 };
@@ -164,6 +165,18 @@ pub struct RecordStatus {
     pub buffered_seconds: f32,
     /// Complete replay resets that discarded buffered video during this recording.
     pub buffer_resets: u64,
+    /// Recording is paused: nothing is being added to the replay buffer.
+    pub paused: bool,
+    /// Pictures per second actually being recorded. Below `target_fps` when automatic quality has
+    /// lowered the rate to keep up.
+    pub effective_fps: u32,
+    /// The rate was lowered before any picture was lost, because pictures suddenly took much
+    /// longer to encode (something else, such as a game, started using the computer). False when
+    /// the rate is full, or was lowered because pictures were being dropped.
+    pub squeezed: bool,
+    /// A window being captured has given only black pictures for a few seconds (some games and
+    /// protected windows do), so the picture is probably not being delivered.
+    pub source_black: bool,
     /// The source stopped giving pictures (its window closed) and the recorder is waiting for
     /// [`Recorder::replace_source`] with the buffered video kept. Always false unless
     /// [`Recorder::keep_through_source_loss`] is on.
@@ -240,7 +253,47 @@ struct Mailbox {
     capture_done: bool,
 }
 
+/// The recording's clock. It stops while the recording is paused, so pictures and sound taken
+/// after a pause carry on from where they stopped and a clip has no frozen gap in it.
+struct Clock {
+    epoch: Instant,
+    /// Time spent paused so far, and since when the recording has been paused (if it is).
+    paused: Mutex<(Duration, Option<Instant>)>,
+}
+
+impl Clock {
+    fn new() -> Self {
+        Self {
+            epoch: Instant::now(),
+            paused: Mutex::new((Duration::ZERO, None)),
+        }
+    }
+
+    fn elapsed(&self) -> Duration {
+        let (total, since) = *lock(&self.paused);
+        let now = since.map_or_else(|| self.epoch.elapsed(), |at| at.duration_since(self.epoch));
+        now.saturating_sub(total)
+    }
+
+    fn is_paused(&self) -> bool {
+        lock(&self.paused).1.is_some()
+    }
+
+    fn set_paused(&self, paused: bool) {
+        let mut state = lock(&self.paused);
+        match (paused, state.1) {
+            (true, None) => state.1 = Some(Instant::now()),
+            (false, Some(since)) => {
+                state.0 += since.elapsed();
+                state.1 = None;
+            }
+            _ => {}
+        }
+    }
+}
+
 struct Shared {
+    clock: Clock,
     stop: AtomicBool,
     fps: u32,
     source_name: Mutex<String>,
@@ -249,6 +302,16 @@ struct Shared {
     replacement: Mutex<Option<Box<dyn CaptureSource>>>,
     hold_on_loss: AtomicBool,
     source_lost: AtomicBool,
+    /// A window source has given only black pictures for a few seconds.
+    source_black: AtomicBool,
+    /// The last lowering of the rate was because of squeezing, not drops.
+    squeezed: AtomicBool,
+    /// Automatic quality is on: record fewer pictures a second when the computer cannot keep up.
+    adaptive: AtomicBool,
+    /// How many pictures in a row are skipped for each one taken (0 = every picture).
+    skip_level: AtomicU32,
+    /// Asks for the lowest picture rate at once (the computer is being starved).
+    lighten_now: AtomicBool,
     buffer: Mutex<ReplayBuffer>,
     video: Mutex<Option<VideoInfo>>,
     encoder: Mutex<String>,
@@ -307,7 +370,6 @@ impl Recorder {
         audio: Option<AudioSetup>,
     ) -> Result<Self, RecordError> {
         config.validate()?;
-        let epoch = Instant::now();
         let (engine, audio_rate, track_count) = match audio {
             Some(setup) => {
                 let rate = setup.config.sample_rate;
@@ -326,12 +388,18 @@ impl Recorder {
         });
         let window_frames = i64::from(config.replay_seconds) * i64::from(config.fps);
         let shared = Arc::new(Shared {
+            clock: Clock::new(),
             stop: AtomicBool::new(false),
             fps: config.fps,
             source_name: Mutex::new(source.target().name.clone()),
             replacement: Mutex::new(None),
             hold_on_loss: AtomicBool::new(false),
             source_lost: AtomicBool::new(false),
+            source_black: AtomicBool::new(false),
+            squeezed: AtomicBool::new(false),
+            adaptive: AtomicBool::new(false),
+            skip_level: AtomicU32::new(0),
+            lighten_now: AtomicBool::new(false),
             buffer: Mutex::new(ReplayBuffer::new(window_frames, config.max_buffer_bytes)),
             video: Mutex::new(None),
             encoder: Mutex::new(String::from("Starting")),
@@ -362,7 +430,7 @@ impl Recorder {
         let fps = config.fps;
         let capture = std::thread::Builder::new()
             .name("clipcraft-capture".to_owned())
-            .spawn(move || capture_loop(&capture_shared, source, fps, epoch))
+            .spawn(move || capture_loop(&capture_shared, source, fps))
             .map_err(|_| {
                 shared.stop.store(true, Ordering::SeqCst);
                 RecordError::ThreadFailed
@@ -372,7 +440,7 @@ impl Recorder {
                 let audio_shared = shared.clone();
                 let handle = std::thread::Builder::new()
                     .name("clipcraft-audio".to_owned())
-                    .spawn(move || audio_loop(&audio_shared, engine, epoch))
+                    .spawn(move || audio_loop(&audio_shared, engine))
                     .map_err(|_| {
                         shared.stop.store(true, Ordering::SeqCst);
                         RecordError::ThreadFailed
@@ -387,6 +455,29 @@ impl Recorder {
             encode: Some(encode),
             audio: sound,
         })
+    }
+
+    /// Turns automatic quality on or off: when on, the recorder takes every second or third picture
+    /// if the computer cannot keep up, and goes back when there is room. Nothing but the rate of
+    /// pictures changes, so the replay buffer is never cleared by it.
+    pub fn adapt_to_load(&self, on: bool) {
+        self.shared.adaptive.store(on, Ordering::SeqCst);
+        if !on {
+            self.shared.skip_level.store(0, Ordering::SeqCst);
+        }
+    }
+
+    /// Goes to the lowest picture rate at once, for a computer that is being starved. Does
+    /// nothing to the replay. It comes back up by the usual rule when there is room.
+    pub fn lighten_now(&self) {
+        self.shared.lighten_now.store(true, Ordering::SeqCst);
+    }
+
+    /// Pauses or resumes recording. While paused nothing is added to the replay buffer and the
+    /// recording's clock stands still, so what was buffered before and what is recorded after
+    /// follow each other in one clip without a frozen stretch between them.
+    pub fn set_paused(&self, paused: bool) {
+        self.shared.clock.set_paused(paused);
     }
 
     /// When on, losing the source (its window closed) does not end the recording: the recorder
@@ -433,6 +524,11 @@ impl Recorder {
             buffered_bytes,
             buffered_seconds: span as f32 / self.shared.fps.max(1) as f32,
             buffer_resets,
+            paused: self.shared.clock.is_paused(),
+            effective_fps: self.shared.fps / (self.shared.skip_level.load(Ordering::SeqCst) + 1),
+            squeezed: self.shared.squeezed.load(Ordering::SeqCst)
+                && self.shared.skip_level.load(Ordering::SeqCst) > 0,
+            source_black: self.shared.source_black.load(Ordering::SeqCst),
             source_lost: self.shared.source_lost.load(Ordering::SeqCst),
             output,
             average_encode_ms,
@@ -451,6 +547,24 @@ impl Recorder {
     ) -> Result<SavedClip, RecordError> {
         let (samples, video, audio) = self.clip_parts(seconds)?;
         write_clip(&samples, &video, &audio, format, path)
+    }
+
+    /// As [`Recorder::save_clip`], then forgets the video that went into the clip, so the next
+    /// clip starts from nothing instead of overlapping this one. Picture taken while the file was
+    /// being written is kept.
+    pub fn save_clip_and_restart(
+        &self,
+        seconds: u32,
+        format: ClipFormat,
+        path: &Path,
+    ) -> Result<SavedClip, RecordError> {
+        let (samples, video, audio) = self.clip_parts(seconds)?;
+        let last = samples.last().map(|sample| sample.pts);
+        let saved = write_clip(&samples, &video, &audio, format, path)?;
+        if let Some(last) = last {
+            lock(&self.shared.buffer).discard_through(last);
+        }
+        Ok(saved)
     }
 
     /// Writes the first `fragments` fragments of the clip's crash-safe copy to `path` and stops,
@@ -595,7 +709,85 @@ impl Drop for Recorder {
     }
 }
 
-fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, start: Instant) {
+/// How long a window must give only black before it is reported, and how often it is looked at.
+const BLACK_AFTER: Duration = Duration::from_secs(3);
+const BLACK_CHECK_EVERY: Duration = Duration::from_millis(500);
+/// A picture held on the graphics card has to be copied to be looked at, so it is looked at less.
+const BLACK_SURFACE_CHECK_EVERY: Duration = Duration::from_secs(2);
+
+/// True when a picture is black everywhere it is sampled (a few thousand points over the whole
+/// picture), allowing for a little noise.
+fn looks_black(frame: &CaptureFrame) -> bool {
+    let (width, height) = (frame.width as usize, frame.height as usize);
+    if width == 0 || height == 0 {
+        return false;
+    }
+    let step_x = (width / 64).max(1);
+    let step_y = (height / 64).max(1);
+    (0..height).step_by(step_y).all(|y| {
+        (0..width).step_by(step_x).all(|x| {
+            frame
+                .bgra
+                .get(y * frame.stride + x * 4..y * frame.stride + x * 4 + 3)
+                .is_some_and(|pixel| pixel.iter().all(|channel| *channel <= 6))
+        })
+    })
+}
+
+/// Watches a window source for pictures that are only black, and reports it in the status.
+struct BlackWatch {
+    window: bool,
+    last_check: Instant,
+    last_surface_check: Instant,
+    black_since: Option<Instant>,
+}
+
+impl BlackWatch {
+    fn new(source: &dyn CaptureSource) -> Self {
+        let now = Instant::now();
+        Self {
+            window: source.target().kind == TargetKind::Window,
+            last_check: now,
+            last_surface_check: now,
+            black_since: None,
+        }
+    }
+
+    fn look(&mut self, shared: &Shared, frame: &mut QueuedFrame) {
+        if !self.window || self.last_check.elapsed() < BLACK_CHECK_EVERY {
+            return;
+        }
+        self.last_check = Instant::now();
+        let verdict = match frame {
+            QueuedFrame::Cpu(picture) => Some(looks_black(picture)),
+            QueuedFrame::Surface { .. }
+                if self.last_surface_check.elapsed() >= BLACK_SURFACE_CHECK_EVERY =>
+            {
+                self.last_surface_check = Instant::now();
+                frame.readback().ok().map(looks_black)
+            }
+            QueuedFrame::Surface { .. } => None,
+        };
+        match verdict {
+            Some(true) => {
+                let since = *self.black_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= BLACK_AFTER {
+                    shared.source_black.store(true, Ordering::SeqCst);
+                }
+            }
+            Some(false) => {
+                self.black_since = None;
+                shared.source_black.store(false, Ordering::SeqCst);
+            }
+            None => {}
+        }
+    }
+}
+
+fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32) {
+    let mut black = BlackWatch::new(source.as_ref());
+    let mut governor = Governor::new(fps);
+    let mut governor_checked = Instant::now();
     let nanos_per_second = 1_000_000_000_u128;
     let mut next: u64 = 0;
     // Consecutive picture failures that may pass (a mode switch, a window being resized).
@@ -605,6 +797,8 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
         if let Some(replacement) = lock(&shared.replacement).take() {
             *lock(&shared.source_name) = replacement.target().name.clone();
             source = replacement;
+            black = BlackWatch::new(source.as_ref());
+            shared.source_black.store(false, Ordering::SeqCst);
             failures = 0;
             swapped = true;
             shared.source_lost.store(false, Ordering::SeqCst);
@@ -613,7 +807,43 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
             u64::try_from(u128::from(next) * nanos_per_second / u128::from(fps))
                 .unwrap_or(u64::MAX),
         );
-        let elapsed = start.elapsed();
+        // Automatic quality: once a second, look at whether the encoder is keeping up.
+        if governor_checked.elapsed() >= Duration::from_secs(1) {
+            governor_checked = Instant::now();
+            if shared.lighten_now.swap(false, Ordering::SeqCst) {
+                let level = governor.force_lowest(shared.clock.epoch.elapsed().as_secs_f64());
+                shared.skip_level.store(level, Ordering::SeqCst);
+                shared.squeezed.store(false, Ordering::SeqCst);
+            }
+            if (shared.adaptive.load(Ordering::SeqCst) || governor.level() > 0)
+                && !shared.clock.is_paused()
+            {
+                let counters = {
+                    let stats = lock(&shared.stats);
+                    Counters {
+                        captured: stats.captured,
+                        dropped: stats.dropped,
+                        encoded: stats.encoded,
+                        encode_nanos: stats.encode_nanos,
+                    }
+                };
+                if let Some(level) =
+                    governor.observe(shared.clock.epoch.elapsed().as_secs_f64(), counters)
+                {
+                    shared.skip_level.store(level, Ordering::SeqCst);
+                    shared.squeezed.store(
+                        governor.last_reason() == Some(Reason::Squeezed),
+                        Ordering::SeqCst,
+                    );
+                }
+            }
+        }
+        // While paused nothing is captured, and the clock does not move.
+        if shared.clock.is_paused() {
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        }
+        let elapsed = shared.clock.elapsed();
         if due > elapsed {
             // Sleep in short slices so a stop request is noticed within a frame or two.
             std::thread::sleep((due - elapsed).min(Duration::from_millis(20)));
@@ -631,10 +861,12 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
             Ok(mut frame) => {
                 failures = 0;
                 shared.source_lost.store(false, Ordering::SeqCst);
-                let pts =
-                    i64::try_from(start.elapsed().as_nanos() * u128::from(fps) / nanos_per_second)
-                        .unwrap_or(i64::MAX);
+                let pts = i64::try_from(
+                    shared.clock.elapsed().as_nanos() * u128::from(fps) / nanos_per_second,
+                )
+                .unwrap_or(i64::MAX);
                 lock(&shared.stats).captured += 1;
+                black.look(shared, &mut frame);
                 if shared.screenshot_wanted.swap(false, Ordering::SeqCst) {
                     match frame.readback().ok().cloned() {
                         Some(picture) => *lock(&shared.screenshot) = Some(picture),
@@ -658,7 +890,8 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
                 drop(mailbox);
                 shared.wake.notify_all();
                 // If the encoder or the capture call fell behind, skip the frames already missed.
-                next = (next + 1).max(u64::try_from(pts).unwrap_or(0) + 1);
+                let step = u64::from(shared.skip_level.load(Ordering::SeqCst)) + 1;
+                next = (next + step).max(u64::try_from(pts).unwrap_or(0) + 1);
             }
             Err(error @ (CaptureError::Failed | CaptureError::BadFrame))
                 if failures
@@ -689,9 +922,15 @@ fn capture_loop(shared: &Shared, mut source: Box<dyn CaptureSource>, fps: u32, s
     shared.wake.notify_all();
 }
 
-fn audio_loop(shared: &Shared, mut engine: AudioEngine, epoch: Instant) {
+fn audio_loop(shared: &Shared, mut engine: AudioEngine) {
     while !shared.stop.load(Ordering::SeqCst) {
-        let packets = engine.tick(epoch.elapsed());
+        // While paused the devices are still read, so they do not back up, but nothing is kept.
+        if shared.clock.is_paused() {
+            engine.discard(shared.clock.elapsed());
+            std::thread::sleep(Duration::from_millis(10));
+            continue;
+        }
+        let packets = engine.tick(shared.clock.elapsed());
         if !packets.is_empty() {
             let mut buffer = lock(&shared.audio_buffer);
             for (track, packet) in packets {

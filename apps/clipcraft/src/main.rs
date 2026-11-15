@@ -32,6 +32,7 @@ mod rows;
 mod saved_toast;
 mod settings;
 mod settings_page;
+mod share;
 mod single_instance;
 mod svg;
 mod thumbs;
@@ -70,6 +71,7 @@ fn main() -> eframe::Result<()> {
         None => None,
     };
     clipcraft_engine::set_trash_handler(clipcraft_platform::move_to_trash);
+    clipcraft_engine::set_clipboard_files_handler(clipcraft_platform::copy_file_to_clipboard);
     clipcraft_engine::update::set_http_fetcher(clipcraft_platform::https_get);
     let launch_settings = clipcraft_engine::default_settings_path()
         .and_then(
@@ -203,6 +205,8 @@ struct ClipCraftApp {
     confirm_delete: Option<MediaEntry>,
     /// A clip being moved to the Recycle Bin.
     trashing: Option<clip_delete::Trashing>,
+    /// A share copy being made.
+    sharing: Option<share::ShareJob>,
     /// The rename box, while it is open.
     rename_draft: Option<clip_rename::RenameDraft>,
     /// A clip being renamed.
@@ -691,6 +695,7 @@ impl ClipCraftApp {
         self.notice_toast(context);
         self.poll_trash(context);
         self.poll_rename(context);
+        self.poll_share(context);
 
         egui::CentralPanel::default()
             .frame(
@@ -1592,6 +1597,9 @@ impl ClipCraftApp {
                 ClipCardAction::CopyPath(path) => {
                     self.copy_media_path(ui.ctx(), PathBuf::from(path));
                 }
+                ClipCardAction::CopyFile(path) => {
+                    self.copy_clip_file(ui.ctx(), PathBuf::from(path))
+                }
                 ClipCardAction::Reveal(path) => self.reveal_media(PathBuf::from(path)),
                 ClipCardAction::SetFavorite { path, favorite } => {
                     self.edit_library(MetaEdit::SetFavorite { path, favorite });
@@ -1602,6 +1610,8 @@ impl ClipCraftApp {
                 }
                 ClipCardAction::Delete(entry) => self.ask_to_delete(*entry),
                 ClipCardAction::Rename(entry) => self.ask_to_rename(*entry),
+                ClipCardAction::DragOut(entry) => self.drag_clip_out(ui.ctx(), &entry),
+                ClipCardAction::Prepare(entry) => self.prepare_share(&entry, false),
                 ClipCardAction::SetCollection { path, name, add } => {
                     self.edit_library(if add {
                         MetaEdit::AddToCollection { path, name }
@@ -1679,6 +1689,31 @@ impl ClipCraftApp {
                 self.error = Some("The path command returned an unexpected result.".to_owned());
             }
             Err(error) => self.error = Some(error.to_string()),
+        }
+    }
+
+    /// Puts the clip's file on the clipboard, to paste into Discord or a folder. When the system
+    /// cannot, the path is copied as text instead and the message says so.
+    pub(crate) fn copy_clip_file(&mut self, context: &egui::Context, path: PathBuf) {
+        self.error = None;
+        match execute(Command::CopyClipFile { path: path.clone() }) {
+            Ok(_) => {
+                self.capture.notice = capture::notice(
+                    "File copied. Paste it into Discord, a message or a folder.",
+                    false,
+                    None,
+                );
+            }
+            Err(error) => {
+                self.copy_media_path(context, path);
+                if self.error.is_none() {
+                    self.capture.notice = capture::notice(
+                        format!("{error} The path was copied instead."),
+                        true,
+                        None,
+                    );
+                }
+            }
         }
     }
 
@@ -2645,6 +2680,22 @@ mod tests {
             ["custom-game.exe"],
         )];
         app.recording.quality = clipcraft_engine::QualityMode::Custom;
+        // Mixer rows, one waiting for its program and one listening, so their sliders, checkboxes
+        // and buttons are checked for names too.
+        app.recording.audio_apps = vec![
+            clipcraft_engine::AppAudioRow::for_game(),
+            clipcraft_engine::AppAudioRow::for_program("Discord.exe"),
+        ];
+        app.settings_state.live_audio = vec![clipcraft_record::AudioInputStatus {
+            name: "Discord".to_owned(),
+            track: 1,
+            level: 0.4,
+            muted: false,
+            lost: true,
+            error: Some("Discord is not running".to_owned()),
+            silence_ms: 0,
+            dropped_ms: 0,
+        }];
         for tab in [
             SettingsTab::Overview,
             SettingsTab::General,

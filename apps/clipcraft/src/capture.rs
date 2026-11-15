@@ -107,10 +107,17 @@ fn should_report_reset(
         && matches!((previous, current), (Some(old), Some(new)) if new > old)
 }
 
-fn audio_provider() -> clipcraft_record::AudioProvider {
+/// `game_process` is the process of the game being recorded (0 when none), kept up to date by the
+/// app so a mixer row for "the game" follows whichever game is on.
+fn audio_provider(
+    game_process: std::sync::Arc<std::sync::atomic::AtomicU32>,
+) -> clipcraft_record::AudioProvider {
     use clipcraft_audio_out::{CaptureKind, DeviceCapture};
     use clipcraft_record::AudioKind;
-    clipcraft_record::AudioProvider::new(|kind, device| {
+    clipcraft_record::AudioProvider::new(move |kind, device| {
+        if kind == AudioKind::Application {
+            return clipcraft_platform::open_app_audio(device, game_process.clone());
+        }
         // On Linux the sound server's own "monitor" records what is playing; the generic device
         // layer (ALSA) cannot reach it on most systems.
         #[cfg(target_os = "linux")]
@@ -124,7 +131,7 @@ fn audio_provider() -> clipcraft_record::AudioProvider {
         }
         let kind = match kind {
             AudioKind::Microphone => CaptureKind::Microphone,
-            AudioKind::SystemOutput => CaptureKind::SystemOutput,
+            AudioKind::SystemOutput | AudioKind::Application => CaptureKind::SystemOutput,
         };
         DeviceCapture::open(kind, device)
             .map(|capture| Box::new(capture) as Box<dyn clipcraft_record::AudioSource>)
@@ -207,6 +214,8 @@ pub struct CaptureState {
     /// Test targets whose picture stops after a few frames, as a closing window's does.
     #[cfg(test)]
     test_closing: Vec<String>,
+    #[cfg(test)]
+    test_black: Vec<String>,
     game_arming: GameArmingState,
     game_session: Option<GameProcessMatch>,
     game_scan_due: Option<Instant>,
@@ -220,6 +229,18 @@ pub struct CaptureState {
     /// The game session is recording the screen because no window of the game was found; capture
     /// moves to the game's window as soon as one appears.
     game_on_screen: bool,
+    /// The process of the game being recorded (0 when none), shared with the sound mixer's rows.
+    game_audio_process: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    /// Watches the program's own processor and memory use while it records.
+    watchdog: clipcraft_engine::Watchdog,
+    meter: Option<clipcraft_platform::SelfMeter>,
+    meter_read_at: Option<Instant>,
+    /// The picture rate last shown to the person, to say when automatic quality changes it.
+    last_effective_fps: Option<u32>,
+    /// The game window being recorded, when capture follows a window of a game.
+    game_window_id: Option<String>,
+    /// Game windows that delivered only black pictures, and when each may be tried again.
+    black_windows: std::collections::HashMap<String, Instant>,
     /// Windows the tests pretend the desktop lists.
     #[cfg(test)]
     test_owned_windows: Vec<clipcraft_platform::OwnedWindow>,
@@ -305,6 +326,18 @@ impl CaptureState {
         self.game_session.is_some() || self.desktop_fallback
     }
 
+    /// A clip is being written (or waiting for its post-roll).
+    pub fn is_saving(&self) -> bool {
+        self.saving.is_some()
+    }
+
+    /// Starts recording a synthetic picture, so tests can have a clipping session.
+    #[cfg(test)]
+    pub(crate) fn start_synthetic(&mut self, settings: &RecordingSettings) {
+        let source = Box::new(clipcraft_capture::SyntheticSource::new(160, 90, 30));
+        let _ = self.session.start(settings, source, None);
+    }
+
     pub fn targets_loaded(&self) -> bool {
         self.targets_loaded
     }
@@ -351,8 +384,10 @@ impl ClipCraftApp {
         self.poll_hotkey_status(context);
         // Hotkeys are read here, once per frame. Without the focus no input wakes the window (it
         // may be in the tray or behind a game), so look again often enough to feel instant.
+        // Not faster than needed: each look draws the whole window, and in the background that is
+        // a cost the game feels.
         if self.capture.listener.is_some() && !context.input(|input| input.focused) {
-            context.request_repaint_after(Duration::from_millis(50));
+            context.request_repaint_after(Duration::from_millis(100));
         }
         let mut actions = Vec::new();
         // Clip-length shortcuts pressed, as the length each asks for.
@@ -426,6 +461,7 @@ impl ClipCraftApp {
                 HotkeyAction::ToggleRecording,
                 HotkeyAction::ToggleMicrophone,
                 HotkeyAction::Screenshot,
+                HotkeyAction::TogglePause,
             ] {
                 if self
                     .recording
@@ -468,6 +504,7 @@ impl ClipCraftApp {
                     });
                 }
                 HotkeyAction::Screenshot => self.take_screenshot(),
+                HotkeyAction::TogglePause => self.toggle_pause(),
                 _ => {}
             }
         }
@@ -478,6 +515,22 @@ impl ClipCraftApp {
             .as_ref()
             .map(|status| status.buffer_resets);
         self.capture.status = self.capture.session.status();
+        self.capture.game_audio_process.store(
+            self.capture
+                .game_session
+                .as_ref()
+                .map_or(0, |game| game.process_id),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        self.rescue_black_window();
+        self.report_quality_change();
+        self.watch_resources();
+        self.settings_state.live_audio = self
+            .capture
+            .status
+            .as_ref()
+            .map(|status| status.audio.clone())
+            .unwrap_or_default();
         if should_report_reset(
             previous_resets,
             self.capture
@@ -814,7 +867,7 @@ impl ClipCraftApp {
             &self.recording,
             source,
             hardware,
-            Some(audio_provider()),
+            Some(audio_provider(self.capture.game_audio_process.clone())),
         ) {
             Ok(()) => {
                 // In game-only mode a closing game window does not end the recording: the buffer
@@ -845,7 +898,8 @@ impl ClipCraftApp {
     /// While clipping the program runs a little below normal priority, so a game that wants the
     /// processor gets it before the encoder does; back to normal when clipping stops.
     fn yield_to_the_game(&mut self) {
-        let clipping = self.capture.session.is_active();
+        // Also while an export runs, so a long encode never makes the rest of the computer crawl.
+        let clipping = self.capture.session.is_active() || clipcraft_engine::HeavyWork::running();
         if clipping != self.capture.background_priority {
             clipcraft_platform::set_background_priority(clipping);
             self.capture.background_priority = clipping;
@@ -909,6 +963,32 @@ impl ClipCraftApp {
         self.capture.desktop_fallback = false;
         self.capture.pending_transition = None;
         self.capture.game_arming.capture_stopped_automatically();
+    }
+
+    /// Pauses clipping, or resumes it where it stopped: the replay buffer is kept, nothing is
+    /// added while paused, and the clock stands still so a clip has no frozen gap.
+    pub(crate) fn toggle_pause(&mut self) {
+        let Some(status) = self.capture.session.status() else {
+            self.capture.notice = notice("Start clipping first, then pause it.", false, None);
+            return;
+        };
+        let pause = !status.paused;
+        self.capture.session.set_paused(pause);
+        self.capture.status = self.capture.session.status();
+        self.cue(if pause {
+            Cue::ClippingStopped
+        } else {
+            Cue::ClippingStarted
+        });
+        self.capture.notice = notice(
+            if pause {
+                "Clipping paused. The replay is kept; press the key again to carry on."
+            } else {
+                "Clipping resumed."
+            },
+            false,
+            None,
+        );
     }
 
     fn toggle_capture(&mut self) {
@@ -1231,13 +1311,21 @@ impl ClipCraftApp {
         let game_name = self.capture.game_recording_name().map(str::to_owned);
         let (dot, text) = match self.capture.status.as_ref() {
             Some(status) => match status.state {
+                RecordState::Running if status.paused => {
+                    (MUTED, "Paused \u{b7} replay kept".to_owned())
+                }
                 RecordState::Running => {
                     let encoder = status.encoder.split([' ', '(']).next().unwrap_or("");
                     let tag = status
                         .output
                         .map(|(_, height)| {
+                            let lowered = if status.effective_fps < status.target_fps {
+                                format!("\u{2193}{}", status.effective_fps)
+                            } else {
+                                String::new()
+                            };
                             format!(
-                                " \u{00b7} {height}p{} \u{00b7} {encoder}",
+                                " \u{00b7} {height}p{}{lowered} \u{00b7} {encoder}",
                                 status.target_fps
                             )
                         })
@@ -1293,6 +1381,27 @@ impl ClipCraftApp {
             .clicked()
         {
             self.toggle_capture();
+        }
+        if active {
+            let paused = self.capture.status.as_ref().is_some_and(|s| s.paused);
+            let key = self.recording.hotkeys.toggle_pause.replace('+', " + ");
+            let hint = if key.is_empty() {
+                "Pause or resume clipping. Set a key under Settings \u{203a} Hotkeys.".to_owned()
+            } else {
+                format!("Pause or resume clipping ({key})")
+            };
+            ui.add_space(crate::kit::space::XS);
+            let (icon, label) = if paused {
+                (Icon::Play, "Resume")
+            } else {
+                (Icon::Pause, "Pause")
+            };
+            if kit::labelled_button(ui, icon, label, false, true)
+                .on_hover_text(hint)
+                .clicked()
+            {
+                self.toggle_pause();
+            }
         }
         ui.add_space(crate::kit::space::XS);
         let saving = self.capture.saving.is_some();
@@ -1829,6 +1938,162 @@ mod tests {
         assert!(app.capture.is_active());
         assert!(!app.capture.game_on_screen);
         wait_for_frames(&app);
+        drop(app);
+        remove_scratch(root);
+    }
+
+    #[test]
+    fn the_safety_verdicts_lighten_then_stop_and_a_stop_is_not_undone_by_game_capture() {
+        use clipcraft_engine::{StopReason, Verdict};
+        let (mut app, root) = automatic_app(DesktopCaptureMode::Never);
+        let settings = app.recording.clone();
+        app.capture.start_synthetic(&settings);
+        assert!(app.capture.is_active());
+        let target = app.capture.session.status().unwrap().target_fps;
+        app.apply_safety_verdict(Verdict::Lighten);
+        // The recorder takes the lowest rate within a second, and keeps the replay.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while app
+            .capture
+            .session
+            .status()
+            .is_some_and(|status| status.effective_fps >= target)
+        {
+            assert!(Instant::now() < deadline, "the rate was never lowered");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let status = app.capture.session.status().unwrap();
+        assert_eq!(status.buffer_resets, 0);
+        assert!(
+            app.capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.error)
+        );
+
+        app.apply_safety_verdict(Verdict::Stop(StopReason::Processor));
+        assert!(!app.capture.is_active());
+        assert!(app.capture.notice.as_ref().is_some_and(
+            |notice| notice.error && notice.text.contains("almost all of your processor")
+        ));
+        // Game capture does not start it again behind the person's back.
+        app.apply_game_observation(observation(Some(42)));
+        assert!(!app.capture.is_active());
+        drop(app);
+        remove_scratch(root);
+    }
+
+    #[test]
+    fn protection_can_be_turned_off_and_is_not_watching_while_not_clipping() {
+        let (mut app, root) = automatic_app(DesktopCaptureMode::Never);
+        // Not clipping: nothing is watched or started.
+        app.watch_resources();
+        assert!(app.capture.meter_read_at.is_none());
+        let settings = app.recording.clone();
+        app.capture.start_synthetic(&settings);
+        app.watch_resources();
+        assert!(app.capture.meter_read_at.is_some(), "clipping is watched");
+        app.recording.protect_computer = false;
+        app.watch_resources();
+        assert!(app.capture.meter_read_at.is_none(), "unless turned off");
+        drop(app);
+        remove_scratch(root);
+    }
+
+    #[test]
+    fn a_change_of_picture_rate_by_automatic_quality_is_said_once_each_way() {
+        let (mut app, root) = automatic_app(DesktopCaptureMode::Never);
+        let settings = app.recording.clone();
+        app.capture.start_synthetic(&settings);
+        let mut status = app.capture.session.status().unwrap();
+        status.effective_fps = status.target_fps;
+        app.capture.status = Some(status.clone());
+        app.report_quality_change();
+        assert!(app.capture.notice.is_none(), "nothing changed yet");
+        status.effective_fps = status.target_fps / 2;
+        app.capture.status = Some(status.clone());
+        app.report_quality_change();
+        assert!(
+            app.capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.text.contains("struggling to keep up"))
+        );
+        app.capture.notice = None;
+        app.report_quality_change();
+        assert!(
+            app.capture.notice.is_none(),
+            "the same rate is not said again"
+        );
+        status.effective_fps = status.target_fps;
+        app.capture.status = Some(status.clone());
+        app.report_quality_change();
+        assert!(
+            app.capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.text.contains("room again"))
+        );
+        // Lowered before anything was lost, because the game took more of the computer: it says so.
+        status.effective_fps = status.target_fps / 2;
+        status.squeezed = true;
+        app.capture.status = Some(status);
+        app.report_quality_change();
+        assert!(
+            app.capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.text.contains("started using more"))
+        );
+        drop(app);
+        remove_scratch(root);
+    }
+
+    #[test]
+    fn a_game_window_that_only_gives_black_is_swapped_for_the_screen_without_losing_the_buffer() {
+        let (mut app, root) = automatic_app(DesktopCaptureMode::Never);
+        app.capture.test_black = vec!["test-game:42".into()];
+        app.apply_game_observation(observation(Some(42)));
+        assert!(app.capture.is_active());
+        assert!(!app.capture.game_on_screen);
+        assert_eq!(app.capture.game_window_id.as_deref(), Some("test-game:42"));
+        // The window stays black long enough to be noticed.
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            app.capture.status = app.capture.session.status();
+            if app.capture.status.as_ref().is_some_and(|s| s.source_black) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the black window was not noticed"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        app.rescue_black_window();
+        assert!(app.capture.game_on_screen, "capture moved to the screen");
+        assert!(
+            app.capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.text.contains("black")),
+            "{:?}",
+            app.capture
+                .notice
+                .as_ref()
+                .map(|notice| notice.text.clone())
+        );
+        let after = app.capture.session.status().unwrap();
+        assert_eq!(after.buffer_resets, 0, "{after:?}");
+        wait_for_frames(&app);
+        // The window is not gone back to while it is on the black list.
+        app.apply_game_observation(observation(Some(42)));
+        assert!(app.capture.game_on_screen);
+        // After the wait it may be tried again.
+        app.capture.black_windows.clear();
+        app.capture.game_retry_after = None;
+        app.apply_game_observation(observation(Some(42)));
+        assert!(!app.capture.game_on_screen);
         drop(app);
         remove_scratch(root);
     }

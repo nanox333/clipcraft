@@ -169,6 +169,7 @@ pub struct SyntheticSource {
     next: u64,
     fail_after: Option<u64>,
     resize_after: Option<(u64, u32, u32)>,
+    black_after: Option<u64>,
 }
 
 impl SyntheticSource {
@@ -186,7 +187,22 @@ impl SyntheticSource {
             next: 0,
             fail_after: None,
             resize_after: None,
+            black_after: None,
         }
+    }
+
+    /// Makes this a window, not a monitor (some behaviour only applies to windows).
+    pub fn as_window(mut self) -> Self {
+        self.target.kind = TargetKind::Window;
+        self.target.id = "synthetic-window".to_owned();
+        self
+    }
+
+    /// Makes every picture after the first `frames` pure black, as when a protected or hooked
+    /// window delivers nothing.
+    pub fn black_after(mut self, frames: u64) -> Self {
+        self.black_after = Some(frames);
+        self
     }
 
     /// Makes `capture` return [`CaptureError::TargetGone`] after `frames` frames.
@@ -236,10 +252,15 @@ impl CaptureSource for SyntheticSource {
             .filter(|size| *size <= 512 * 1024 * 1024)
             .ok_or(CaptureError::BadFrame)?;
         let mut bgra = vec![255_u8; size];
+        let black = self.black_after.is_some_and(|limit| self.next >= limit);
         for y in 0..height {
             let row = y as usize * stride;
             for x in 0..width {
-                let [b, g, r] = Self::sample(self.next, x, y);
+                let [b, g, r] = if black {
+                    [0, 0, 0]
+                } else {
+                    Self::sample(self.next, x, y)
+                };
                 let at = row + x as usize * 4;
                 if let Some(pixel) = bgra.get_mut(at..at + 4) {
                     pixel.copy_from_slice(&[b, g, r, 255]);

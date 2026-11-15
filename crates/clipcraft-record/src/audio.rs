@@ -186,6 +186,9 @@ pub enum AudioKind {
     Microphone,
     /// What the computer is playing.
     SystemOutput,
+    /// What one application is playing. The device text says which: `game` for the game being
+    /// recorded, or `exe:<program name>`.
+    Application,
 }
 
 type OpenAudio = dyn Fn(AudioKind, &str) -> Result<Box<dyn AudioSource>, String> + Send + Sync;
@@ -771,6 +774,15 @@ impl AudioEngine {
             self.emitted += frames;
         }
         out
+    }
+
+    /// Reads every source and throws the sound away, for a paused recording: the devices keep
+    /// being emptied so nothing from the pause is mixed in when recording resumes.
+    pub fn discard(&mut self, elapsed: Duration) {
+        for lane in &mut self.lanes {
+            Self::read_lane(lane, elapsed, &mut self.scratch);
+            lane.lane.fifo.clear();
+        }
     }
 
     fn read_lane(lane: &mut LaneState, elapsed: Duration, scratch: &mut Vec<f32>) {

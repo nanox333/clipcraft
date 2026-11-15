@@ -21,6 +21,73 @@
 - **Smaller software-encoded desktop clips:** the built-in H.264 encoder now uses split-block motion
   prediction, making screen recordings about a third smaller at the same quality for roughly 1.5x
   the encoding time on desktop content (game footage is unchanged).
+
+## 0.3.0 — 2026-11-13
+
+- **Automatic quality notices a game taking the computer:** besides dropped pictures, it now lowers
+  the rate when the encoder is busy more than 60% of the time and each picture takes at least 1.5
+  times longer than the quickest in the last minute, before anything is lost, and says "Your game
+  started using more of your computer" instead of the general message.
+- **Start quietly at sign-in:** the setup's last page has a switch (on) to start ClipCraft when you
+  sign in, in the tray on Windows, with no window, pop-ups or sounds. It is registered only when
+  the setup is finished, and Settings → General still controls it.
+
+- **Releases:** Windows now has a portable zip (`clipcraft-<version>-windows-x86_64-portable.zip`) next to the
+  setup program (unzip anywhere, run `bin\clipcraft.exe`), and the command line tool is its own release (`cli-v<version>`) instead of
+  files inside the app's release. Each release has its own checksum list.
+
+- **Sound mixer (Windows and Linux):** Settings → Audio → Applications records the game, Discord, a music
+  player or any program on a track of its own, with its own level and a live meter, picked up
+  whenever it starts playing (even if it was opened after you began clipping). Needs Windows 10
+  (version 2004) or newer, or on Linux PulseAudio or PipeWire with `pactl` and `parec` installed
+  (`pulseaudio-utils`); elsewhere, or without the tools, the section says why it is not available. Turn off "Record game
+  and system sound" to keep those programs only on their own tracks.
+- **Quiet by default:** new profiles start with sound effects and the save pop-up off (existing
+  settings are kept), and the setup's last page says so.
+- **Updates never close ClipCraft mid-recording:** a downloaded update installs once clipping has
+  stopped and no clip is being written.
+- **Measured numbers in the README** (from `docs/windows-performance.md`, with their limits).
+- **Signed updates (ready, switched on by a key):** an update can now be checked against an ed25519
+  signature of the release's checksum list, not only against the checksum published beside it, so a
+  compromised download page cannot push a changed installer. It needs a key: `cargo xtask
+  sign-keygen`, then the steps in `docs/release-checklist.md`. Until a key is set, nothing changes.
+- **Hostile-file test:** damaged and truncated MP4 and MKV files (176 variants of a real clip)
+  go through the header probe, thumbnail maker and player; none panics or hangs.
+- **Safety review:** updated two dependencies with known problems (`rustix`, which had a
+  memory-safety advisory in functions ClipCraft does not call, and the yanked `clipboard-win`
+  and `async-executor`); the clipboard tools used by Copy file can no longer hang the window (they
+  are ended after three seconds); only one drag runs at a time and none lasts over five minutes; the
+  `Shared` folder of Discord-sized copies is kept to 24 files and 2 GB, and a copy is not started
+  without room for it.
+- **Protects your computer from a runaway:** while clipping, ClipCraft now watches its own use of the
+  processor and memory. If it uses nearly all of the processor for 20 seconds it records fewer
+  pictures a second at once; if that does not help within a minute it stops clipping and tells you
+  why (and automatic game capture does not start it again behind your back). Far too much memory
+  (6 GB) stops it immediately. Exports are exempt, but now use half the cores instead of all but
+  one and run at below-normal priority (Windows). In the background the window no longer redraws
+  twenty times a second just to listen for hotkeys (ten now). Settings → Video → *Protect my
+  computer*, on by default.
+- **Automatic quality:** when the computer cannot keep up (the encoder is dropping pictures), ClipCraft
+  now records every second picture, then every third, instead of dropping them at random, and goes
+  back after half a minute of calm with room to spare. The size, the bitrate and your replay are
+  never touched. It says so when it changes, and the bar shows the lowered rate (for example
+  `1080p60↓30`). On by default; Settings → Video → *Adjust automatically*.
+- **Drag a clip into Discord:** drag a card in the library (or the **Drag into Discord** button on
+  the clip page) into a chat. Clips over the size chosen in Settings → Replay → *Size for sharing*
+  (10, 25, 50 or 500 MB) are made into a smaller copy first, kept in a `Shared` folder beside the
+  clip and reused; the copy starts when the pointer rests on the clip, so the drag is instant
+  afterwards. Windows and Linux (X11). On Wayland and macOS, Copy file still works.
+- **Share-ready exports:** Large (50 MB) and Largest (500 MB) size presets next to 10 and 25 MB, so
+  a clip fits Discord with or without Nitro, and **Copy file** (clip page and right-click menu,
+  `clipcraft-cli library copy-file`) puts the clip itself on the clipboard to paste into a chat or
+  folder. Windows and macOS use the system clipboard; Linux needs `wl-copy` or `xclip`, and
+  otherwise the path is copied and the message says so.
+- **Black-window rescue:** when a game's window gives only black pictures for three seconds,
+  capture switches to the screen in the same recording and tries the window again a minute later.
+- **Start the replay over after each save (optional):** Settings → Replay. The saved footage is
+  forgotten so the next clip never repeats it.
+- **Pause and resume clipping:** a hotkey (Settings → Hotkeys, no key by default) and a Pause
+  button. The replay is kept, nothing is added while paused, and the clip has no frozen gap.
 - **Hear the sound effects:** `cargo run -p clipcraft-audio-out --example cues` plays each one;
   add `-- --wav NEW_FOLDER` to save them as WAV files instead.
 - **Docs:** a new `docs/how-it-works.md` explains how recording, saving, game detection, the

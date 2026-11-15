@@ -790,6 +790,8 @@ mod tests {
                 None,
                 Some(ExportPreset::Small),
                 Some(ExportPreset::Medium),
+                Some(ExportPreset::Large),
+                Some(ExportPreset::Largest),
                 Some(ExportPreset::Custom { megabytes: 10 }),
             ] {
                 let context = egui::Context::default();

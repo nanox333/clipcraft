@@ -36,6 +36,10 @@ pub enum ExportPreset {
     Small,
     /// Estimated 25 MB file.
     Medium,
+    /// Estimated 50 MB file.
+    Large,
+    /// Estimated 500 MB file.
+    Largest,
     /// Estimated size from 1 to 500 MB.
     Custom { megabytes: u16 },
 }
@@ -46,6 +50,8 @@ impl ExportPreset {
         let megabytes = match self {
             Self::Small => 10,
             Self::Medium => 25,
+            Self::Large => 50,
+            Self::Largest => 500,
             Self::Custom { megabytes } => megabytes,
         };
         if !(1..=500).contains(&megabytes) {
@@ -338,11 +344,12 @@ fn scale_yuv420(
     Some((y, u, v))
 }
 
-/// Encoder threads: every core but one (so the app and a running game keep responding), 2 to 8.
+/// Encoder threads: half the cores, 2 to 6. An export is something the person waits for, but the
+/// rest of the computer (and a game) has to stay usable while it runs.
 pub(crate) fn worker_threads() -> usize {
     std::thread::available_parallelism()
-        .map_or(2, |cores| cores.get().saturating_sub(1))
-        .clamp(2, 8)
+        .map_or(2, |cores| cores.get() / 2)
+        .clamp(2, 6)
 }
 
 pub(crate) fn check_cancel(cancel: &AtomicBool) -> Result<(), ExportError> {
@@ -1104,6 +1111,9 @@ mod tests {
     #[test]
     fn targets_and_audio_budget_are_bounded() {
         assert_eq!(ExportPreset::Small.target_bytes(), Ok(10_000_000));
+        // The sizes Discord takes: 10 MB for everyone, 50 MB and 500 MB with Nitro.
+        assert_eq!(ExportPreset::Large.target_bytes(), Ok(50_000_000));
+        assert_eq!(ExportPreset::Largest.target_bytes(), Ok(500_000_000));
         assert!(
             ExportPreset::Custom { megabytes: 0 }
                 .target_bytes()

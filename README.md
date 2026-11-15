@@ -5,7 +5,7 @@ with a hotkey, then play, search, trim and export your clips.** It works fully o
 account, server, telemetry, upload or share-link service, and everything you record stays on your
 computer.
 
-> **Status: early release.** Version 0.2.1 is the latest published release.
+> **Status: early release.** Version 0.3.0 is the latest published release.
 > The current source has Windows/AMD and Linux/X11 generated-capture evidence, while real games,
 > other devices and Wayland remain incompletely tested. macOS capture is not implemented. See
 > [`docs/gaps.md`](docs/gaps.md) for current evidence and limits.
@@ -14,17 +14,20 @@ Automated checks run on Linux and Windows; they do not replace testing on real c
 
 ## Download
 
-Download [ClipCraft 0.2.1](https://github.com/nanox333/clipcraft/releases/tag/v0.2.1) as a Windows
+Download [ClipCraft 0.3.0](https://github.com/nanox333/clipcraft/releases/tag/v0.3.0) as a Windows
 **ClipCraft-Setup** installer or a Linux x86_64 tarball. The command-line tool is available as a
 separate download. The Windows installer works for the current user and needs no administrator
-rights or account.
+rights or account. Windows also has a **portable zip** (`…-windows-x86_64-portable.zip`: unzip anywhere and run
+`bin\clipcraft.exe`; nothing is installed), and the command-line tool is its own release
+(`cli-v<version>`) rather than a file in the app's release.
 
 Check a download against `SHA256SUMS.txt` if you like. Downloads are not code-signed, so Windows
 SmartScreen may warn: choose *More info*, then *Run anyway*. ClipCraft can tell you when a newer
 version is published and install it for you (Settings → About); turn the automatic check off under
 Settings → General and it never goes online. See [`CHANGELOG.md`](CHANGELOG.md) for each release.
 
-New profiles get a short setup for storage, capture, audio and shortcuts. Each hotkey action
+New profiles get a short setup for storage, capture, audio and shortcuts; its last page offers
+to start ClipCraft quietly (in the tray on Windows, no window, pop-ups or sounds) when you sign in. Each hotkey action
 supports up to five shortcuts: use **+** in Settings → Hotkeys. **Clip-length shortcuts** give
 keys their own clip length, for example Shift + F8 for the last 2 minutes next to F8 for the
 whole replay.
@@ -34,7 +37,15 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
 
 ## What it does
 
-- **Record and replay:** capture a screen or game window into a bounded replay buffer and save the
+- **Record and replay:** a safety watchdog (on by default) lightens and, if needed, stops clipping if
+  ClipCraft itself uses nearly all of the processor for a long time or far too much memory, so it
+  cannot starve the computer. Automatic quality (on by default) records half, then a third, of the
+  pictures per second when the computer cannot keep up, and goes back when there is room, without
+  clearing the replay. It also steps down before anything is lost when a game starts taking the
+  computer and each picture suddenly takes much longer to encode. Pause and resume clipping with a hotkey or the Pause button, and an optional
+  setting that starts the replay over after each save so clips never repeat footage. If a game
+  window delivers only black, ClipCraft switches to recording the screen in the same recording.
+  Capture a screen or game window into a bounded replay buffer and save the
   last moments with a global hotkey. Game-only mode waits until a recognized game is running and
   follows it to the window it actually draws in, even when a launcher starts the game process;
   if no window can be found it records the screen until one appears.
@@ -49,8 +60,16 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
 - **One copy at a time:** a second launch (a Desktop copy next to an installed one, both set to start
   with Windows) exits instead of recording twice; started by hand, it brings the running window
   forward.
-- **Audio:** system sound and microphone, mixed or on separate tracks, with optional offline
+- **Audio:** per-application sound (Windows 10 2004 or newer, or Linux with PulseAudio or PipeWire
+  and the `pactl`/`parec` tools): record the game, Discord or a music
+  player on a track of its own, each with its own level, picked up when it starts playing. System sound and microphone, mixed or on separate tracks, with optional offline
   microphone noise suppression and a mic test.
+- **Share:** drag a clip from the library (or the **Drag into Discord** button on its page) straight
+  into a Discord chat or any program that takes files. A clip bigger than the size chosen in
+  Settings (10, 25, 50 or 500 MB) is first made into a smaller copy, which starts when the pointer
+  rests on the clip. Works on Windows and Linux under X11; elsewhere use **Copy file**, which
+  puts the clip on the clipboard to paste (Linux needs `wl-copy` or `xclip`). Exports can also be
+  sized for Discord (10, 50 or 500 MB).
 - **Library:** a searchable local clip library with favorites, collections and game labels.
   Rename a clip (F2) without losing its favorite, collections or game, and delete clips to the
   Recycle Bin from a right-click menu. A focused card opens with Enter and favorites with F.
@@ -67,6 +86,21 @@ For a bug report without the desktop UI, pass JSON such as
 `clipcraft-cli bug-report` on standard input. It prints the report locally and does not submit it.
 
 Details and known limits for every feature are in [`docs/features.md`](docs/features.md).
+
+## Measured performance
+
+Numbers from real runs, with their limits, in [`docs/windows-performance.md`](docs/windows-performance.md)
+and [`docs/performance.md`](docs/performance.md). They use a generated workload (a moving window and a
+tone), not a real game, on one AMD Ryzen 7 5700X3D with an AMD graphics card, so read them as what
+ClipCraft itself costs, not as FPS in your game:
+
+| Run (Windows, graphics-card encoder) | Result |
+| --- | --- |
+| 1080p60, one minute | 31.5% of one logical core on average (including the generated workload), about 169 MiB of memory, 13 of 3,602 pictures dropped (0.36%), no frame copied back to the processor |
+| 1080p30, two hours | 8 of 216,000 pictures dropped (0.0037%), memory peak 178 MiB, 24 of 24 saved checkpoints decoded cleanly |
+
+On a processor-only Linux test machine the built-in encoder reached about 53 pictures a second at
+1440x900 on two threads. Not measured: a real game, other graphics cards, power use.
 
 ## Screenshots
 
@@ -97,6 +131,13 @@ open-source [FilmCraft](docs/adr/0004-filmcraft-crates.md) crates for media. Cap
 settings, thumbnails and the library index stay on the device, and source clips are never
 overwritten by trim or export. FFmpeg is used only as an external test tool. Source boundaries are
 in [`docs/upstream-ports.md`](docs/upstream-ports.md).
+
+ClipCraft guards the computer it runs on: it caps its own memory use and file growth, ends clipboard
+tools that hang, only ever contacts GitHub (for the optional update check), and a watchdog lightens
+and then stops clipping if ClipCraft itself would starve the processor. Dependencies are checked
+against the RustSec advisory list before each release (`cargo deny check advisories`). Updates
+are verified against a published checksum and, once a release key is configured, an ed25519
+signature (see `docs/release-checklist.md`).
 
 To recognize games, ClipCraft reads the list of running programs and Steam's local game-list
 files on your computer; nothing from them leaves the device. Steam's files are re-read only when

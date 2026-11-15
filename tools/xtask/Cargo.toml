@@ -13,6 +13,8 @@ layer = 6
 [dependencies]
 serde_json.workspace = true
 clipcraft-engine.workspace = true
+ed25519-dalek.workspace = true
+getrandom.workspace = true
 
 [lints]
 workspace = true

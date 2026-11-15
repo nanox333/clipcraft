@@ -40,14 +40,17 @@ mod recording;
 mod recovery;
 mod relink;
 mod rename;
+mod safety;
 mod scan;
 mod screenshot;
+mod share;
 pub use scan::MAX_SCAN_DEPTH;
 pub mod installation;
 mod session;
 mod startup;
 mod steam_games;
 pub mod update;
+mod update_key;
 pub use steam_games::{
     MAX_STEAM_GAMES, SteamFingerprint, SteamGame, SteamGames, steam_app_id_in_window_class,
     steam_fingerprint,
@@ -87,19 +90,21 @@ pub use library_meta::{
     clean_name, game_of, games, guess_game_from_file_name,
 };
 pub use recording::{
-    AUDIO_KBPS, CaptureSource, Container, DesktopCaptureMode, EncoderPreset, FRAME_RATES, HEIGHTS,
-    KEYFRAME_SECONDS, POST_ROLL_SECONDS, QualityMode, REPLAY_SECONDS, RateControl,
-    RecordingSettings, SAMPLE_RATES, VIDEO_KBPS, VideoCodec, VideoEncoder, default_settings_path,
-    estimated_bytes, format_bytes,
+    AUDIO_KBPS, AppAudioRow, AppAudioTarget, CaptureSource, Container, DesktopCaptureMode,
+    EncoderPreset, FRAME_RATES, HEIGHTS, KEYFRAME_SECONDS, MAX_AUDIO_APPS, POST_ROLL_SECONDS,
+    QualityMode, REPLAY_SECONDS, RateControl, RecordingSettings, SAMPLE_RATES, VIDEO_KBPS,
+    VideoCodec, VideoEncoder, default_settings_path, estimated_bytes, format_bytes,
 };
 pub use recovery::{Recovery, recover_interrupted};
 pub use relink::{SearchResult, find_moved_file};
 pub use rename::{MAX_CLIP_NAME_CHARS, RenamedClip, clean_clip_name};
+pub use safety::{HOGGING_SHARE, HeavyWork, MEMORY_LIMIT_BYTES, StopReason, Verdict, Watchdog};
 pub use screenshot::{ScreenshotJob, screenshot_name};
 pub use session::{
     CLIP_PREFIX, CaptureSession, MicrophoneTestPlan, SaveJob, SavedClipReport, clip_format,
     clip_stem, folder_name_for, game_clip_stem, is_clip_file_name, record_config,
 };
+pub use share::{SHARE_FOLDER, SharePlan, SharedCopy, make_share_copy, share_plan};
 pub use storage::{
     StorageUsage, StoredClip, cleanup_plan, default_capture_folder, list_clips, storage_usage,
 };
@@ -264,6 +269,16 @@ pub enum Command {
     TrashClip {
         path: PathBuf,
     },
+    /// Makes (or finds) a copy of a clip small enough to share at `megabytes`: Discord takes 10,
+    /// 50 or 500. A clip that already fits is returned as it is.
+    MakeShareCopy {
+        path: PathBuf,
+        megabytes: u16,
+    },
+    /// Puts a clip's file on the clipboard, so it can be pasted into a chat or a folder.
+    CopyClipFile {
+        path: PathBuf,
+    },
     /// Renames a clip in its folder (keeping its extension); with an index, its favorite,
     /// collections and game label follow it.
     RenameClip {
@@ -345,6 +360,8 @@ impl Command {
             Self::RevealInFileManager { .. } => "library.reveal",
             Self::TrashClip { .. } => "library.trash",
             Self::RenameClip { .. } => "library.rename",
+            Self::CopyClipFile { .. } => "library.copy_file",
+            Self::MakeShareCopy { .. } => "clip.share_copy",
             Self::CheckForUpdate { .. } => "app.check_for_update",
             Self::DownloadUpdate { .. } => "app.download_update",
             Self::RefreshLibrary { .. } => "library.refresh",
@@ -499,6 +516,7 @@ pub fn normalize_clip(
     progress: &mut dyn FnMut(f32),
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<NormalizedClip, EngineError> {
+    let _heavy = HeavyWork::begin();
     if input.as_os_str().is_empty() || output.as_os_str().is_empty() {
         return Err(EngineError::EmptyMediaPath);
     }
@@ -623,6 +641,7 @@ pub fn export_sequence(
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
 ) -> Result<ExportedSequence, EngineError> {
+    let _heavy = HeavyWork::begin();
     let hardware = export_hardware();
     let report =
         clipcraft_export::sequence_to_mp4_with(request, hardware.as_ref(), progress, cancel)
@@ -649,6 +668,7 @@ pub fn export_clip(
     progress: &mut dyn FnMut(f32),
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<ExportedClip, EngineError> {
+    let _heavy = HeavyWork::begin();
     if request.input.as_os_str().is_empty() || request.output.as_os_str().is_empty() {
         return Err(EngineError::EmptyMediaPath);
     }
@@ -689,6 +709,7 @@ pub fn export_gif_clip(
     progress: &mut dyn FnMut(f32),
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<TrimmedClip, EngineError> {
+    let _heavy = HeavyWork::begin();
     if input.as_os_str().is_empty() || output.as_os_str().is_empty() {
         return Err(EngineError::EmptyMediaPath);
     }
@@ -834,6 +855,12 @@ pub enum CommandOutput {
     },
     /// A clip was renamed.
     Renamed(Box<rename::RenamedClip>),
+    /// A copy of a clip that is small enough to share.
+    ShareCopy(share::SharedCopy),
+    /// A clip's file was put on the clipboard.
+    Copied {
+        path: String,
+    },
     /// Whether a newer version exists.
     Update(update::UpdateStatus),
     /// A setup program was downloaded and matched its checksum.
@@ -908,6 +935,8 @@ pub enum EngineError {
     NotAClip,
     /// There is no Recycle Bin to put the clip in, or the system refused. Nothing was deleted.
     TrashUnavailable,
+    /// The system could not put the file on the clipboard.
+    ClipboardUnavailable,
     /// The update service could not be reached, or this system cannot check for updates.
     UpdateUnavailable,
     /// The update service answered with something that is not a release.
@@ -1007,6 +1036,9 @@ impl fmt::Display for EngineError {
             }
             Self::TrashUnavailable => formatter.write_str(
                 "The clip could not be moved to the Recycle Bin, so it was left where it is.",
+            ),
+            Self::ClipboardUnavailable => formatter.write_str(
+                "This computer would not take the file on its clipboard. Use Copy file path instead.",
             ),
             Self::UpdateUnavailable => formatter.write_str(
                 "ClipCraft could not check for updates. You may be offline; nothing has changed.",
@@ -1339,6 +1371,13 @@ pub fn execute_cancellable(
         Command::TrashClip { path } => {
             trash_clip(&path).map(|path| CommandOutput::Trashed { path })
         }
+        Command::MakeShareCopy { path, megabytes } => {
+            let never = std::sync::atomic::AtomicBool::new(false);
+            make_share_copy(&path, megabytes, &mut |_| {}, &never).map(CommandOutput::ShareCopy)
+        }
+        Command::CopyClipFile { path } => {
+            copy_clip_file(&path).map(|path| CommandOutput::Copied { path })
+        }
         Command::RenameClip {
             path,
             name,
@@ -1421,9 +1460,23 @@ pub fn set_trash_handler(handler: TrashHandler) {
     }
 }
 
-/// Moves one clip to the Recycle Bin. Only an existing regular file with a video extension is
-/// accepted, so the command cannot be pointed at anything else.
-fn trash_clip(path: &Path) -> Result<String, EngineError> {
+/// Puts a file on the clipboard. Like the Recycle Bin, this needs the operating system, so the
+/// program registers how once at start-up.
+type ClipboardHandler = fn(&Path) -> Result<(), String>;
+
+static CLIPBOARD_HANDLER: std::sync::Mutex<Option<ClipboardHandler>> = std::sync::Mutex::new(None);
+
+/// Registers how this program puts a file on the clipboard. Without it copying fails and
+/// nothing changes.
+pub fn set_clipboard_files_handler(handler: ClipboardHandler) {
+    if let Ok(mut slot) = CLIPBOARD_HANDLER.lock() {
+        *slot = Some(handler);
+    }
+}
+
+/// The absolute path of an existing regular video file, so these commands cannot be pointed at
+/// anything else.
+fn existing_clip(path: &Path) -> Result<PathBuf, EngineError> {
     if path.as_os_str().is_empty() {
         return Err(EngineError::EmptyMediaPath);
     }
@@ -1438,6 +1491,25 @@ fn trash_clip(path: &Path) -> Result<String, EngineError> {
     if !metadata.is_file() || !is_video {
         return Err(EngineError::NotAClip);
     }
+    Ok(absolute)
+}
+
+/// Puts one clip's file on the clipboard.
+fn copy_clip_file(path: &Path) -> Result<String, EngineError> {
+    let absolute = existing_clip(path)?;
+    let handler = CLIPBOARD_HANDLER
+        .lock()
+        .ok()
+        .and_then(|slot| *slot)
+        .ok_or(EngineError::ClipboardUnavailable)?;
+    handler(&absolute).map_err(|_| EngineError::ClipboardUnavailable)?;
+    Ok(absolute.to_string_lossy().into_owned())
+}
+
+/// Moves one clip to the Recycle Bin. Only an existing regular file with a video extension is
+/// accepted, so the command cannot be pointed at anything else.
+fn trash_clip(path: &Path) -> Result<String, EngineError> {
+    let absolute = existing_clip(path)?;
     let handler = TRASH_HANDLER
         .lock()
         .ok()
@@ -1521,6 +1593,8 @@ pub const fn command_ids() -> &'static [&'static str] {
         "library.reveal",
         "library.trash",
         "library.rename",
+        "library.copy_file",
+        "clip.share_copy",
         "app.check_for_update",
         "app.download_update",
         "library.refresh",
@@ -1546,6 +1620,7 @@ pub const fn command_ids() -> &'static [&'static str] {
         "clip.normalize",
         "library.find_file",
         "capture.toggle_microphone",
+        "capture.pause",
         "capture.push_to_talk",
         "recording.save_settings",
         "recording.test_microphone",
@@ -1579,6 +1654,51 @@ mod tests {
 
     fn bin_that_lies(_: &std::path::Path) -> Result<(), String> {
         Ok(())
+    }
+
+    static COPIED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+    fn clipboard_that_remembers(path: &std::path::Path) -> Result<(), String> {
+        COPIED.lock().unwrap().push(path.to_path_buf());
+        Ok(())
+    }
+
+    fn clipboard_that_refuses(_: &std::path::Path) -> Result<(), String> {
+        Err("no clipboard".to_owned())
+    }
+
+    /// One test, because the handler is process-wide and tests run side by side.
+    #[test]
+    fn copying_a_clip_file_only_accepts_video_files_and_reports_a_clipboard_that_refuses() {
+        let directory = std::env::temp_dir().join(format!(
+            "clipcraft-copy-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::SeqCst)
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let clip = directory.join("ClipCraft test.mp4");
+        let notes = directory.join("notes.txt");
+        fs::write(&clip, b"clip").unwrap();
+        fs::write(&notes, b"notes").unwrap();
+        let copy = |path: &PathBuf| super::execute(Command::CopyClipFile { path: path.clone() });
+
+        super::set_clipboard_files_handler(clipboard_that_refuses);
+        assert_eq!(copy(&clip).unwrap_err(), EngineError::ClipboardUnavailable);
+        super::set_clipboard_files_handler(clipboard_that_remembers);
+        assert_eq!(copy(&notes).unwrap_err(), EngineError::NotAClip);
+        assert_eq!(
+            copy(&directory.join("gone.mp4")).unwrap_err(),
+            EngineError::FileUnavailable
+        );
+        assert!(COPIED.lock().unwrap().is_empty());
+        let CommandOutput::Copied { path } = copy(&clip).unwrap() else {
+            panic!("expected a copy result");
+        };
+        assert!(path.ends_with("ClipCraft test.mp4"));
+        assert_eq!(COPIED.lock().unwrap().len(), 1);
+        assert!(clip.exists(), "copying never touches the file");
+        assert!(super::command_ids().contains(&"library.copy_file"));
+        let _ = fs::remove_dir_all(&directory);
     }
 
     /// One test, because the handler is process-wide and tests run side by side.

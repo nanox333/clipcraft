@@ -279,6 +279,125 @@ fn a_lost_source_can_be_replaced_without_losing_the_buffer() {
 }
 
 #[test]
+fn a_window_that_only_gives_black_is_reported_and_a_monitor_or_live_window_is_not() {
+    // A window that turns black is reported once it has stayed black for a few seconds.
+    let black = Recorder::start(
+        Box::new(
+            SyntheticSource::new(160, 90, 30)
+                .as_window()
+                .black_after(15),
+        ),
+        config(),
+    )
+    .unwrap();
+    wait_for(&black, "the black window to be noticed", |s| s.source_black);
+    // A moving window is not.
+    let live = Recorder::start(
+        Box::new(SyntheticSource::new(160, 90, 30).as_window()),
+        config(),
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(4_500));
+    assert!(!live.status().source_black);
+    // A black monitor is not reported: only windows are watched, since a screen can be dark.
+    let monitor = Recorder::start(
+        Box::new(SyntheticSource::new(160, 90, 30).black_after(0)),
+        config(),
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(4_500));
+    assert!(!monitor.status().source_black);
+    // Replacing the black window clears the report.
+    black.replace_source(Box::new(SyntheticSource::new(160, 90, 30)));
+    wait_for(&black, "the report to clear", |s| !s.source_black);
+}
+
+#[test]
+fn automatic_quality_lowers_the_picture_rate_when_the_encoder_cannot_keep_up_without_a_reset() {
+    // Full HD at 60 a second on one thread with the slowest encoder setting is more than any
+    // machine does in real time, so pictures are dropped.
+    let heavy = RecordConfig {
+        output_height: 1080,
+        fps: 60,
+        threads: 1,
+        speed: EncoderSpeed::Quality,
+        ..config()
+    };
+    let recorder = Recorder::start(Box::new(SyntheticSource::new(1920, 1080, 60)), heavy).unwrap();
+    recorder.adapt_to_load(true);
+    assert_eq!(recorder.status().effective_fps, 60);
+    wait_for(&recorder, "the rate to be lowered", |s| {
+        s.effective_fps < 60
+    });
+    let lowered = recorder.status();
+    assert_eq!(lowered.buffer_resets, 0, "{lowered:?}");
+    assert_eq!(lowered.restarts, 0, "{lowered:?}");
+    assert!(lowered.effective_fps == 30 || lowered.effective_fps == 20);
+    // Turning it off goes back to every picture.
+    recorder.adapt_to_load(false);
+    assert_eq!(recorder.status().effective_fps, 60);
+
+    // A light recording is left alone.
+    let calm = Recorder::start(Box::new(SyntheticSource::new(160, 90, 30)), config()).unwrap();
+    calm.adapt_to_load(true);
+    std::thread::sleep(Duration::from_secs(8));
+    // A busy shared machine can stall the encoder for a moment and lose pictures, and lowering
+    // the rate then is right. What must never happen is lowering it with nothing lost: that would
+    // be the "squeezed" rule firing on a recording that has plenty of room.
+    let status = calm.status();
+    assert!(
+        status.effective_fps == 30 || status.frames_dropped > 0,
+        "lowered to {} with no pictures dropped: {status:?}",
+        status.effective_fps
+    );
+}
+
+#[test]
+fn pausing_keeps_the_buffer_adds_nothing_and_leaves_no_gap_in_the_clip() {
+    let scratch = Scratch::new("pause");
+    let recorder = Recorder::start(Box::new(SyntheticSource::new(160, 90, 30)), config()).unwrap();
+    wait_for(&recorder, "some video", |s| s.buffered_seconds >= 1.5);
+    recorder.set_paused(true);
+    // Let a frame in flight land, then note what is there.
+    std::thread::sleep(Duration::from_millis(300));
+    let paused = recorder.status();
+    assert!(paused.paused);
+    std::thread::sleep(Duration::from_millis(2_500));
+    let still = recorder.status();
+    assert_eq!(
+        still.frames_captured, paused.frames_captured,
+        "nothing is captured while paused"
+    );
+    assert_eq!(still.buffered_frames, paused.buffered_frames);
+    assert_eq!(still.buffer_resets, 0);
+
+    recorder.set_paused(false);
+    wait_for(&recorder, "video after the pause", |s| {
+        !s.paused && s.buffered_seconds >= paused.buffered_seconds + 1.5
+    });
+    let after = recorder.status();
+    assert_eq!(after.buffer_resets, 0, "{after:?}");
+    assert_eq!(after.restarts, 0, "{after:?}");
+    // The two stretches follow each other: the 2.5 s pause is not inside the buffer's span.
+    assert!(
+        after.buffered_seconds < paused.buffered_seconds + 3.0,
+        "{} vs {}",
+        after.buffered_seconds,
+        paused.buffered_seconds
+    );
+    let path = scratch.file("paused.mkv");
+    let saved = recorder.save_clip(60, ClipFormat::Mkv, &path).unwrap();
+    if tool("ffprobe") && tool("ffmpeg") {
+        decodes_cleanly(&path);
+    }
+    let seconds = saved.duration_frames as f32 / 30.0;
+    assert!(
+        seconds < paused.buffered_seconds + 3.0 && seconds > paused.buffered_seconds + 1.0,
+        "{seconds}"
+    );
+}
+
+#[test]
 fn a_changing_picture_size_restarts_the_stream_with_matching_clips() {
     let scratch = Scratch::new("resize");
     let source = SyntheticSource::new(160, 90, 30).resizing_after(30, 240, 120);
