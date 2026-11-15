@@ -18,6 +18,7 @@ mod editor_media;
 mod editor_recovery;
 mod game_data;
 mod game_scan;
+mod gpu_restart;
 mod kit;
 mod library_grid;
 mod library_scan;
@@ -31,6 +32,7 @@ mod rows;
 mod saved_toast;
 mod settings;
 mod settings_page;
+mod single_instance;
 mod svg;
 mod thumbs;
 mod tray;
@@ -52,6 +54,21 @@ use settings::{card, setting_row};
 use window_chrome::{WindowButton, nav_button, resize_from_the_edges, window_button};
 
 fn main() -> eframe::Result<()> {
+    // One copy per user. A later copy leaves a note for the running one (unless Windows started
+    // it at login) and exits; a lock that cannot be made never stops ClipCraft from starting.
+    let minimized_launch = std::env::args().any(|argument| argument == "--minimized");
+    let _instance = match clipcraft_engine::default_instance_lock_path()
+        .map(|path| single_instance::claim(&path))
+    {
+        Some(single_instance::Claim::AlreadyRunning) => {
+            if !minimized_launch && let Some(note) = clipcraft_engine::default_show_request_path() {
+                single_instance::ask_running_copy_to_show(&note);
+            }
+            return Ok(());
+        }
+        Some(single_instance::Claim::First(held)) => Some(held),
+        None => None,
+    };
     clipcraft_engine::set_trash_handler(clipcraft_platform::move_to_trash);
     clipcraft_engine::update::set_http_fetcher(clipcraft_platform::https_get);
     let launch_settings = clipcraft_engine::default_settings_path()
@@ -93,6 +110,9 @@ fn main() -> eframe::Result<()> {
             }
             let mut app = ClipCraftApp::restored();
             app.tray = tray::Tray::new(&creation.egui_ctx);
+            app.show_requests = clipcraft_engine::default_show_request_path()
+                .map(|path| single_instance::watch_show_requests(path, creation.egui_ctx.clone()));
+            app.gpu_session = Some(gpu_restart::GpuSession::begin());
             if let Some(path) = clipcraft_engine::default_editor_draft_path() {
                 app.editor.enable_recovery(path, &creation.egui_ctx);
             }
@@ -103,6 +123,10 @@ fn main() -> eframe::Result<()> {
 
 #[derive(Default)]
 struct ClipCraftApp {
+    /// Set when a later launch asked this copy to bring its window forward.
+    show_requests: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// The safety net for graphics-card encoding (see `gpu_restart`).
+    gpu_session: Option<gpu_restart::GpuSession>,
     /// The window icon was set again after the window opened.
     icon_sent: bool,
     directory_text: String,
@@ -373,6 +397,13 @@ impl eframe::App for ClipCraftApp {
     }
 
     fn update(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
+        if self
+            .show_requests
+            .as_ref()
+            .is_some_and(|flag| flag.swap(false, std::sync::atomic::Ordering::SeqCst))
+        {
+            single_instance::show_window(context);
+        }
         // Some desktops end up with an empty icon from the window's first creation (the taskbar
         // then shows a blank or generic icon), so the icon is set again once the window exists.
         if !self.icon_sent {
@@ -401,6 +432,7 @@ impl eframe::App for ClipCraftApp {
         self.poll_thumbnails();
         self.thumbs.begin_frame();
         self.capture_frame(context);
+        self.sync_gpu_session(context);
         self.game_data.sync(
             &self.recording.game_integrations,
             self.settings_path.as_deref(),
@@ -440,6 +472,9 @@ impl eframe::App for ClipCraftApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.presence.shutdown();
+        if let Some(session) = self.gpu_session.as_mut() {
+            session.finish();
+        }
         self.editor.flush_recovery();
         self.index_store.finish();
     }
@@ -696,6 +731,7 @@ impl ClipCraftApp {
                 }
             });
         self.delete_dialog(context);
+        self.gpu_restart_dialog(context);
         self.rename_dialog(context);
         self.bug_report_dialog(context);
         self.thumbs.end_frame();

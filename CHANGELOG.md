@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Only one ClipCraft runs:** a second copy (for example one from the Desktop and one installed,
+  both set to start with Windows) no longer starts a second capture and a second graphics-card
+  encoder. It exits; started by hand it brings the running window forward. Windows' own login
+  start (`--minimized`) exits silently.
+- **Safer after an unexpected restart (Windows):** while the graphics card's encoder is working,
+  ClipCraft keeps a tiny heartbeat file. If Windows then logs an unexpected restart (Kernel-Power
+  event 41) after the last heartbeat, the next start asks whether to record with the processor
+  instead. It does not claim a cause, asks once, and only when the card encoder is selected.
 - **Encoder benchmark on real footage:** `encoder_bench` can read raw pictures (`BENCH_RGBA`) and
   choose the codec, bitrate and effort, and `docs/windows-performance.md` compares the software
   encoder, Media Foundation and Vulkan Video (`gpu-video`) on an AMD card. Developer tooling only;

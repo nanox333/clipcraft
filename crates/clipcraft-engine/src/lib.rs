@@ -27,6 +27,12 @@ pub mod game_state;
 pub mod presence;
 pub mod presence_art;
 pub use game_catalog::{BuiltInGame, MAX_BUILT_IN_GAMES, built_in_games};
+mod gpu_session;
+pub use gpu_session::{
+    HEARTBEAT_SECONDS, PreviousRun, SessionMarker, SessionTracker, default_gpu_session_path,
+    default_instance_lock_path, default_show_request_path, judge_previous_run, needs_restart_check,
+    unix_now,
+};
 mod hotkeys;
 mod index;
 mod library_meta;

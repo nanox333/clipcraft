@@ -33,6 +33,8 @@ Where things are stored:
 | Settings | `recording-settings.json` in the per-user data folder |
 | Library index (favorites, collections, game labels, probes) | `library-index.json`, same folder |
 | Thumbnails | `thumbnails/`, same folder |
+| One copy at a time | `instance.lock` (held while ClipCraft runs; a second launch exits) and `show-window.request` (the note a second launch leaves), same folder |
+| Graphics-card safety net | `gpu-session.json`, same folder: whether the card's encoder was working at the last heartbeat; no paths or names |
 
 The data folder is `%APPDATA%` on Windows, `~/Library/Application Support` on macOS and
 `$XDG_DATA_HOME` (or `~/.local/share`) on Linux.
@@ -199,6 +201,8 @@ and saves it once. A damaged settings file is reported and kept, not overwritten
 | Library out of date | `library_scan.rs`, `library_store.rs`, `index.rs` |
 | Export too big / wrong | `clipcraft-export/src/compress.rs` |
 | A setting resets | `RecordingSettings::sanitized` in `recording.rs` |
+| A second copy runs, or does not come forward | `single_instance.rs` (file lock; `--minimized` launches stay quiet) |
+| Asked to switch to the processor after a restart | `gpu_restart.rs`, `gpu_session.rs` (engine), `unexpected_restart.rs` (platform) |
 
 Every command, its ID and its behaviour: `clipcraft-cli commands`. Tests and how to run them:
 [testing.md](testing.md).

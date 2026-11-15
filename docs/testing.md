@@ -1241,3 +1241,16 @@ Normal close can wait on a non-preemptible filesystem operation. Failed-close di
 quit/crash can lose unacknowledged **metadata**; source clips and the last published index remain.
 Startup index reads, JPEG loading and settings writes have not all moved off the UI. Remaining
 performance proposals are not declared complete by these tests.
+
+## Single instance and the restart safety net
+
+Focused tests: `cargo test -p clipcraft-engine --lib gpu_session`, `cargo test -p clipcraft-platform
+--lib unexpected_restart` and `cargo test -p clipcraft --bin clipcraft -- gpu_restart single_instance`.
+By hand on Windows, in a throwaway profile (`APPDATA` pointed at an empty folder, game detection and
+update checks off): start one copy, start a second (it must exit and the first must keep running),
+start one with `--minimized` (silent exit), record for a few seconds on the card encoder and read
+`gpu-session.json` (`gpu_encoding` true while recording, false after stopping, `clean_exit` true
+after closing), then write `{"version":1,"gpu_encoding":true,"last_seen_unix":1,"clean_exit":false}`
+into it and start again: the box appears when the computer has any Kernel-Power event 41 on record.
+Evidence and what was not run are in [gaps.md](gaps.md#one-copy-at-a-time-and-a-restart-safety-net-follow-up-2026-11-15).
+

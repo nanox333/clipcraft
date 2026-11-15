@@ -83,6 +83,48 @@ build dependency still needs an ADR. The remaining case for it is Linux (replaci
 path that has never run on a real driver) and NVIDIA without the NVENC SDK. Measured on one
 5-second clip from one game and one card; no NVIDIA, Intel or Linux Vulkan device was available.
 
+## One copy at a time and a restart safety net (follow-up, 2026-11-15)
+
+Triggered by a tester's report of repeated hard freezes on an AMD computer, with two copies of
+ClipCraft running at start-up. **Nothing here shows ClipCraft caused any freeze**; a hang without a
+blue screen is typical of a graphics driver or hardware problem and many programs can set one off.
+The two changes limit what ClipCraft can add to the load and make the coincidence visible.
+
+- **Single instance** (`apps/clipcraft/src/single_instance.rs`): an exclusive lock on
+  `instance.lock` in the data folder (std `File::try_lock`, no `unsafe`, no server). A second copy
+  exits; started by hand it leaves `show-window.request`, which the running copy polls twice a
+  second to bring its window forward; `--minimized` (Windows' login start) exits silently. If the
+  lock cannot be made, ClipCraft starts anyway. Copies with different data folders (another
+  account, or a changed `APPDATA`) are separate on purpose.
+- **Restart safety net** (`gpu_session.rs`, `unexpected_restart.rs`, `gpu_restart.rs`): while the
+  recorder reports the graphics-card encoder (`GPU (…)`), `gpu-session.json` is rewritten at most
+  every 30 s (atomic, no paths or names, damaged files ignored); a normal exit marks it clean. At
+  the next start, only if the last run ended on the card without a clean exit, Windows' `wevtutil`
+  is asked for the newest Kernel-Power event 41 (on a worker thread, 8 s limit); if it is later
+  than the last heartbeat and the card encoder is still selected, a box offers "Record with the
+  processor" (saved as the Video encoder setting) or "Keep the graphics card". It asks once per
+  incident and never claims a cause.
+
+Verified: unit tests for the lock (second copy refused, released when the first ends, impossible
+lock does not block start), the note (counts once, old notes ignored), the marker (written on
+change and each heartbeat only, crash leaves an unclean marker, hostile or oversized or
+other-version files ignored, missing folder harmless), the restart time parser (calendar-checked
+values and hostile strings) and the box (draws, both answers). On Windows with the real program in
+a throwaway profile: a second copy exited with code 0 and its note was consumed by the first; a
+`--minimized` copy exited without a note; a normal close wrote a clean marker; a 7-second desktop
+recording on an AMD Radeon RX 7900 GRE turned `gpu_encoding` on and stopping turned it off (nothing
+was saved); a marker faked as "unclean while encoding" made the real program run `wevtutil`, find
+this computer's newest event 41 (2026-11-01) and show the box; Keep left the encoder on the card
+and Record with the processor saved `cpu`; a normal launch showed nothing.
+
+Not verified: a real freeze or power loss followed by a restart; whether it helps the tester or
+changes anything about the freezes; the check with a standard (non-administrator) Windows account;
+non-English Windows (the query uses the event number and the `SystemTime` field, not text); Linux
+and macOS (the lock and note tests are portable but were run on Windows only; the restart check is
+Windows only, elsewhere it never asks). A restart with no event 41 (for example a normal shutdown)
+or an app crash never triggers the box, by design. With an H.265 setting, "Record with the
+processor" records H.264 as before (the processor encoder has no H.265).
+
 ## Documentation (follow-up)
 
 `docs/how-it-works.md` is a start-to-finish walkthrough (recording, saving, hotkeys, game-only

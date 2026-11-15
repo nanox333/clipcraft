@@ -43,7 +43,12 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
   encoder, frame counts, output size, and audio-source status.
 - **Encoding:** hardware H.264 and H.265 on supported GPUs (Windows), or a built-in software H.264
   encoder tuned for screen recording (desktop clips are about a third smaller than before). If the graphics-card encoder fails or is busy, recording
-  continues on the processor and the card is tried again every 20 s or longer.
+  continues on the processor and the card is tried again every 20 s or longer. On Windows, if the
+  computer restarts unexpectedly while the card was encoding, ClipCraft asks at the next start
+  whether to record with the processor instead (it cannot tell what caused the restart).
+- **One copy at a time:** a second launch (a Desktop copy next to an installed one, both set to start
+  with Windows) exits instead of recording twice; started by hand, it brings the running window
+  forward.
 - **Audio:** system sound and microphone, mixed or on separate tracks, with optional offline
   microphone noise suppression and a mic test.
 - **Library:** a searchable local clip library with favorites, collections and game labels.

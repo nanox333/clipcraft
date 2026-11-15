@@ -40,6 +40,7 @@ mod pulse;
 mod screen;
 mod timer;
 mod trash;
+mod unexpected_restart;
 #[cfg(target_os = "linux")]
 mod vaapi;
 #[cfg(target_os = "linux")]
@@ -73,6 +74,7 @@ pub use process::{
 pub use screen::{make_window_passive, set_taskbar_button, window_minimized, work_area};
 pub use timer::set_fine_timer;
 pub use trash::move_to_trash;
+pub use unexpected_restart::last_unexpected_restart;
 
 /// Process-local counters for measuring the Windows native path without media/path logging.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
