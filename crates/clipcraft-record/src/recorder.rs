@@ -705,14 +705,42 @@ impl Recorder {
         status
     }
 
+    /// How long stopping waits for the recording threads before it gives up on a stuck one.
+    const STOP_WAIT: Duration = Duration::from_secs(5);
+
+    /// As [`Recorder::stop`], but waiting at most `wait` for the threads. For tests.
+    #[doc(hidden)]
+    pub fn stop_within(mut self, wait: Duration) -> RecordStatus {
+        self.shutdown_within(wait);
+        let mut status = self.status();
+        if status.state == RecordState::Running {
+            status.state = RecordState::Stopped;
+        }
+        status
+    }
+
     fn shutdown(&mut self) {
+        self.shutdown_within(Self::STOP_WAIT);
+    }
+
+    /// Stops the threads and waits for them, but not forever: a graphics driver or a window call
+    /// that hangs inside capture or encode must not hang the program's Stop button (or its exit)
+    /// too. A thread still running at the deadline is left behind, and the recorder says so.
+    fn shutdown_within(&mut self, wait: Duration) {
         self.shared.stop.store(true, Ordering::SeqCst);
         self.shared.wake.notify_all();
+        let deadline = Instant::now() + wait;
         for handle in [self.capture.take(), self.encode.take(), self.audio.take()]
             .into_iter()
             .flatten()
         {
-            if handle.join().is_err() {
+            while !handle.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if !handle.is_finished() {
+                // Dropping the handle lets it run on; it holds nothing the program needs to stop.
+                self.shared.fail(RecordError::Internal);
+            } else if handle.join().is_err() {
                 self.shared.fail(RecordError::ThreadFailed);
             }
         }

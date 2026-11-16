@@ -767,3 +767,48 @@ fn a_panic_in_a_recording_thread_is_reported_at_once_and_the_buffer_can_still_be
     assert!(saved.is_ok(), "{saved:?}");
     assert!(path.exists());
 }
+
+/// A source whose capture call never comes back, as a hung driver or window can do.
+struct HungSource {
+    inner: SyntheticSource,
+    taken: u32,
+}
+
+impl clipcraft_capture::CaptureSource for HungSource {
+    fn target(&self) -> &clipcraft_capture::CaptureTarget {
+        self.inner.target()
+    }
+
+    fn capture(&mut self) -> Result<clipcraft_capture::CaptureFrame, CaptureError> {
+        self.taken += 1;
+        if self.taken > 20 {
+            std::thread::sleep(Duration::from_secs(3_600));
+        }
+        self.inner.capture()
+    }
+}
+
+#[test]
+fn stopping_does_not_wait_forever_for_a_capture_call_that_never_returns() {
+    let recorder = Recorder::start(
+        Box::new(HungSource {
+            inner: SyntheticSource::new(160, 90, 30),
+            taken: 0,
+        }),
+        config(),
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(1_500));
+    let begin = Instant::now();
+    let status = recorder.stop_within(Duration::from_millis(500));
+    assert!(
+        begin.elapsed() < Duration::from_secs(5),
+        "stopping took {:?}",
+        begin.elapsed()
+    );
+    // It reports that a thread was left behind, rather than pretending all was well.
+    assert!(
+        matches!(status.state, RecordState::Failed(RecordError::Internal)),
+        "{status:?}"
+    );
+}

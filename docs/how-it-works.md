@@ -67,7 +67,7 @@ The data folder is `%APPDATA%` on Windows, `~/Library/Application Support` on ma
    is room. The stream is unchanged, so the buffer is kept.
 5. **Safety.** The window is drawn through `crash::FrameGuard`, so a panic in one frame is caught
    (a note goes to `crash-reports.log`; after three in a row a plain fallback screen is shown) and
-   the recorder, which runs on its own threads, is untouched. Each recording thread runs inside `guarded`: a panic marks the recording failed at
+   the recorder, which runs on its own threads, is untouched. Stopping waits at most five seconds for them. Each recording thread runs inside `guarded`: a panic marks the recording failed at
    once (the buffer is kept and can still be saved). The app reads ClipCraft's own processor and memory use once a second while it
    records; a runaway first lowers the picture rate and then stops clipping (`safety.rs`).
 6. **Pause.** The recorder's clock can stop (`set_paused`): nothing is captured or kept, sound is

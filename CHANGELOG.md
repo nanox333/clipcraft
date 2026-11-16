@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Stopping cannot hang forever:** if a graphics driver or window call hangs inside capture or
+  encoding, the Stop button and closing ClipCraft now give up waiting for that thread after five
+  seconds (and say the recording hit an internal error) instead of freezing the window.
 - **A slow sound device no longer stalls the others:** reopening a microphone, headset or output
   that was unplugged, and looking for a program for a mixer row (the process list on Windows,
   `pactl` on Linux), used to happen on the one thread that serves every sound source, so a device

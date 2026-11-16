@@ -197,7 +197,11 @@ rows search for their program on a helper thread too; `app_audio_problem` no lon
 on the window's thread. Tested: a source that sleeps 600 ms in `recover` leaves the longest tick
 under 200 ms while a healthy source keeps flowing; a `pactl` that sleeps for 20 s never holds up
 `recover` or `read` (each under 100 ms) and the source then says the tool did not answer; the
-real-PulseAudio test still records a program's stream. **Limit:** a source whose helper never
+real-PulseAudio test still records a program's stream. (7) stopping a recording joined its threads without a limit, so a driver or window call that hung
+inside capture or encode froze Stop and the program's exit; `shutdown_within` now waits at most five
+seconds, leaves a stuck thread behind and reports `RecordError::Internal` (test: a source whose
+capture sleeps for an hour; stopping returns and says so). A left-behind thread may still hold the
+capture device until the program exits. **Limit:** a source whose helper never
 returns stays lost (silent, with a message) until the recording is restarted. The Windows version
 of the mixer change is type-checked only. **Checked, nothing
 to change:** the single-copy lock and note file (user-only folder, the lock goes with the process,
