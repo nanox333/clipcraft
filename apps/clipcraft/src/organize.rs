@@ -99,10 +99,10 @@ pub enum RailAction {
     },
 }
 
-/// The colours offered for a game.
-const SWATCHES: [&str; 12] = [
+/// The colours offered for a game, before the picker for any other.
+const SWATCHES: [&str; 11] = [
     "#bfff2b", "#ff6b6b", "#ff9f43", "#ffd93d", "#6bcb77", "#00f5d4", "#00bbf9", "#4d96ff",
-    "#9b5de5", "#f15bb5", "#e8e8ee", "#8a8a98",
+    "#9b5de5", "#f15bb5", "#e8e8ee",
 ];
 
 fn parse_hex(text: &str) -> Option<egui::Color32> {
@@ -137,88 +137,212 @@ fn badge_look(
     (colour, mark, chosen.is_some())
 }
 
-/// The menu on a game: its colour and its mark.
+/// How a game's badge is drawn: a soft square in its colour with the mark in the colour itself.
+fn paint_badge(painter: &egui::Painter, square: egui::Rect, colour: egui::Color32, mark: &str) {
+    painter.rect_filled(
+        square,
+        6.0,
+        egui::Color32::from_rgba_unmultiplied(colour.r(), colour.g(), colour.b(), 46),
+    );
+    painter.text(
+        square.center(),
+        egui::Align2::CENTER_CENTER,
+        mark,
+        egui::FontId::new(crate::kit::text_size::CAPTION, kit::semibold()),
+        colour,
+    );
+}
+
+/// The menu on a game: how its badge looks now, a palette ending in a picker for any colour, and
+/// the mark.
 fn badge_menu(
     ui: &mut egui::Ui,
     game: &str,
     badges: &std::collections::BTreeMap<String, clipcraft_engine::GameBadge>,
     actions: &mut Vec<RailAction>,
 ) {
-    let current = badges
-        .get(&game.trim().to_lowercase())
-        .cloned()
-        .unwrap_or_default();
-    ui.set_min_width(230.0);
+    use crate::colour_picker;
+    let key = game.trim().to_lowercase();
+    let current = badges.get(&key).cloned().unwrap_or_default();
+    let (shown, shown_mark, _) = badge_look(game, badges);
+    // What the badge shows without a choice, as the hint of the field.
+    let auto_mark = badge_look(game, &std::collections::BTreeMap::new()).1;
+    ui.set_min_width(220.0);
+    ui.set_max_width(220.0);
+
+    let picker_open_id = egui::Id::new(("game-picker-open", &key));
+    let picker_colour_id = egui::Id::new(("game-picker-colour", &key));
+    let picker_hex_id = egui::Id::new(("game-picker-hex", &key));
+    let mark_id = egui::Id::new(("game-mark", &key));
+    let mut picker_open =
+        ui.data_mut(|data| data.get_temp::<bool>(picker_open_id).unwrap_or(false));
+    let mut dragged: Option<egui::ecolor::Hsva> =
+        ui.data_mut(|data| data.get_temp(picker_colour_id));
+
+    // How it looks right now, following the picker while it is being dragged.
+    let preview = dragged.map_or(shown, |hsva| egui::Color32::from(hsva));
+    ui.horizontal(|ui| {
+        let (square, _) = ui.allocate_exact_size(Vec2::splat(30.0), egui::Sense::hover());
+        paint_badge(ui.painter(), square, preview, &shown_mark);
+        ui.add(
+            egui::Label::new(
+                RichText::new(game)
+                    .color(TEXT)
+                    .size(crate::kit::text_size::BODY)
+                    .family(kit::semibold()),
+            )
+            .truncate(),
+        );
+    });
+    ui.add_space(crate::kit::space::MD);
+
     ui.label(
         RichText::new("Colour")
             .color(MUTED)
             .size(crate::kit::text_size::CAPTION),
     );
     ui.add_space(crate::kit::space::XS);
+    let is_swatch = SWATCHES.iter().any(|hex| *hex == current.color);
     ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::splat(8.0);
+        ui.spacing_mut().item_spacing = Vec2::splat(10.0);
         for hex in SWATCHES {
             let Some(colour) = parse_hex(hex) else {
                 continue;
             };
-            let (rect, response) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::click());
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(26.0), egui::Sense::click());
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Colour {hex}"))
             });
-            ui.painter().circle_filled(rect.center(), 10.0, colour);
-            if current.color == hex || response.hovered() {
+            ui.painter().circle_filled(rect.center(), 10.5, colour);
+            let chosen = current.color == hex;
+            if chosen || response.hovered() {
                 ui.painter().circle_stroke(
                     rect.center(),
-                    12.0,
-                    egui::Stroke::new(1.5_f32, if current.color == hex { TEXT } else { MUTED }),
+                    12.5,
+                    egui::Stroke::new(1.5_f32, if chosen { TEXT } else { MUTED }),
                 );
             }
             if response.clicked() {
+                picker_open = false;
+                dragged = None;
+                ui.data_mut(|data| data.remove::<egui::ecolor::Hsva>(picker_colour_id));
                 actions.push(RailAction::SetBadge {
                     game: game.to_owned(),
                     badge: Some(clipcraft_engine::GameBadge {
-                        color: hex.to_owned(),
+                        color: (*hex).to_owned(),
                         mark: current.mark.clone(),
                     }),
                 });
             }
         }
-    });
-    ui.add_space(crate::kit::space::SM);
-    ui.label(
-        RichText::new("Mark (a letter, number or emoji)")
-            .color(MUTED)
-            .size(crate::kit::text_size::CAPTION),
-    );
-    let key = egui::Id::new(("game-mark", game.to_lowercase()));
-    let mut text: String = ui
-        .data_mut(|data| data.get_temp::<String>(key))
-        .unwrap_or_else(|| current.mark.clone());
-    let field = ui.add(
-        egui::TextEdit::singleline(&mut text)
-            .char_limit(2)
-            .hint_text("First letter")
-            .desired_width(80.0),
-    );
-    if field.changed() {
-        actions.push(RailAction::SetBadge {
-            game: game.to_owned(),
-            badge: Some(clipcraft_engine::GameBadge {
-                color: current.color.clone(),
-                mark: text.clone(),
-            }),
+        // Any other colour: opens the picker.
+        let (rect, response) = ui.allocate_exact_size(Vec2::splat(26.0), egui::Sense::click());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Pick any colour")
         });
+        colour_picker::rainbow_swatch(ui.painter(), rect.center(), 10.5);
+        let custom = !current.color.is_empty() && !is_swatch;
+        if picker_open || custom || response.hovered() {
+            ui.painter().circle_stroke(
+                rect.center(),
+                12.5,
+                egui::Stroke::new(1.5_f32, if picker_open || custom { TEXT } else { MUTED }),
+            );
+        }
+        if response.on_hover_text("Any colour").clicked() {
+            picker_open = !picker_open;
+            if picker_open && dragged.is_none() {
+                let start = parse_hex(&current.color).unwrap_or(shown);
+                dragged = Some(egui::ecolor::Hsva::from(start));
+            }
+        }
+    });
+
+    if picker_open {
+        ui.add_space(crate::kit::space::MD);
+        let mut hsva = dragged.unwrap_or_else(|| egui::ecolor::Hsva::from(shown));
+        let mut hex = ui
+            .data_mut(|data| data.get_temp::<String>(picker_hex_id))
+            .unwrap_or_else(|| colour_picker::to_hex(hsva));
+        let picked = colour_picker::show(ui, &mut hsva, &mut hex);
+        dragged = Some(hsva);
+        ui.data_mut(|data| data.insert_temp(picker_hex_id, hex));
+        if picked.settled {
+            actions.push(RailAction::SetBadge {
+                game: game.to_owned(),
+                badge: Some(clipcraft_engine::GameBadge {
+                    color: colour_picker::to_hex(hsva),
+                    mark: current.mark.clone(),
+                }),
+            });
+        }
     }
-    ui.data_mut(|data| data.insert_temp(key, text));
-    ui.add_space(crate::kit::space::SM);
+    ui.data_mut(|data| {
+        data.insert_temp(picker_open_id, picker_open);
+        match dragged {
+            Some(hsva) if picker_open => data.insert_temp(picker_colour_id, hsva),
+            _ => data.remove::<egui::ecolor::Hsva>(picker_colour_id),
+        }
+    });
+
+    ui.add_space(crate::kit::space::LG);
+    let mut text: String = ui
+        .data_mut(|data| data.get_temp::<String>(mark_id))
+        .unwrap_or_else(|| current.mark.clone());
+    // The mark: a small centred slot, like the badge it fills.
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("Mark")
+                .color(MUTED)
+                .size(crate::kit::text_size::SMALL),
+        );
+        ui.add_space(crate::kit::space::SM);
+        let changed = kit::field_frame()
+            .inner_margin(egui::Margin::symmetric(
+                crate::kit::space::SM as i8,
+                crate::kit::space::XS as i8,
+            ))
+            .show(ui, |ui| {
+                ui.set_min_height(crate::kit::control::FIELD_INNER);
+                ui.add(
+                    egui::TextEdit::singleline(&mut text)
+                        .frame(false)
+                        .char_limit(2)
+                        .hint_text(auto_mark.as_str())
+                        .horizontal_align(egui::Align::Center)
+                        .desired_width(36.0),
+                )
+                .on_hover_text("A letter, number or emoji")
+                .changed()
+            })
+            .inner;
+        if changed {
+            actions.push(RailAction::SetBadge {
+                game: game.to_owned(),
+                badge: Some(clipcraft_engine::GameBadge {
+                    color: current.color.clone(),
+                    mark: text.clone(),
+                }),
+            });
+        }
+    });
+    ui.data_mut(|data| data.insert_temp(mark_id, text));
+
+    ui.add_space(crate::kit::space::LG);
+    let customised = badges.contains_key(&key);
     if ui
         .add_enabled(
-            !badges.get(&game.trim().to_lowercase()).is_none(),
-            egui::Button::new("Back to automatic"),
+            customised,
+            egui::Button::new(RichText::new("Back to automatic").color(MUTED)).frame(false),
         )
         .clicked()
     {
-        ui.data_mut(|data| data.remove::<String>(key));
+        ui.data_mut(|data| {
+            data.remove::<String>(mark_id);
+            data.remove::<String>(picker_hex_id);
+            data.remove::<egui::ecolor::Hsva>(picker_colour_id);
+            data.remove::<bool>(picker_open_id);
+        });
         actions.push(RailAction::SetBadge {
             game: game.to_owned(),
             badge: None,
@@ -299,18 +423,7 @@ fn rail_row_with_badge(
             egui::pos2(left + 9.0, rect.center().y),
             Vec2::splat(20.0),
         );
-        ui.painter().rect_filled(
-            square,
-            6.0,
-            egui::Color32::from_rgba_unmultiplied(colour.r(), colour.g(), colour.b(), 46),
-        );
-        ui.painter().text(
-            square.center(),
-            egui::Align2::CENTER_CENTER,
-            mark,
-            egui::FontId::new(crate::kit::text_size::CAPTION, kit::semibold()),
-            colour,
-        );
+        paint_badge(ui.painter(), square, colour, &mark);
         left += 28.0;
     }
     let count_text = count.to_string();

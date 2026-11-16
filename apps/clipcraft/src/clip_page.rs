@@ -6,17 +6,19 @@ use super::*;
 impl ClipCraftApp {
     pub(crate) fn clip_details(&mut self, ui: &mut egui::Ui, entry: &MediaEntry) {
         let mut back = false;
+        // The header keeps its own rhythm: the title row, a small step to the date, a larger step
+        // to the technical facts, and room before the player. Nothing leans on the default spacing.
+        ui.spacing_mut().item_spacing.y = 0.0;
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
             if kit::labelled_button(ui, Icon::ChevronLeft, "Clips", false, true).clicked() {
                 back = true;
             }
-            ui.add_space(crate::kit::space::SM);
             if kit::labelled_button(ui, Icon::Scissors, "Send to editor", false, !entry.offline)
                 .clicked()
             {
                 self.send_to_editor(entry.clone());
             }
-
             ui.add(
                 egui::Label::new(
                     RichText::new(crate::clip_label::title(&entry.title, &entry.extension))
@@ -33,6 +35,7 @@ impl ClipCraftApp {
         }
 
         // When it was recorded, on a line of its own: apart from the technical facts below it.
+        ui.add_space(crate::kit::space::MD);
         ui.label(
             RichText::new(crate::clip_label::long_when(
                 &entry.title,
@@ -42,9 +45,9 @@ impl ClipCraftApp {
             .color(MUTED)
             .size(crate::kit::text_size::BODY),
         );
-        ui.add_space(crate::kit::space::XS);
+        ui.add_space(crate::kit::space::MD);
         ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.y = crate::kit::space::SM;
+            ui.spacing_mut().item_spacing = Vec2::new(crate::kit::space::SM, crate::kit::space::SM);
             if !entry.extension.eq_ignore_ascii_case("mp4") {
                 kit::chip(ui, &entry.extension.to_uppercase());
             }
@@ -62,7 +65,9 @@ impl ClipCraftApp {
             }
             kit::chip(ui, &format_bytes(entry.size_bytes));
         });
-        ui.add_space(crate::kit::space::SM);
+        ui.add_space(crate::kit::space::LG);
+        // Below the header the page uses the usual spacing again.
+        ui.spacing_mut().item_spacing.y = 8.0;
 
         let side = 340.0_f32;
         let gap = 22.0_f32;

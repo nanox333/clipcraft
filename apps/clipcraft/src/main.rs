@@ -14,6 +14,7 @@ mod clip_delete;
 mod clip_label;
 mod clip_page;
 mod clip_rename;
+mod colour_picker;
 mod crash;
 mod editor;
 mod editor_media;
