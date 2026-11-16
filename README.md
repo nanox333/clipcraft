@@ -163,7 +163,10 @@ cargo run --package clipcraft
 `cargo xtask ci` runs the same checks as GitHub Actions on Linux and Windows; tests clean their scratch
 folders with a retry so a finishing capture worker cannot make them flaky, and timing checks are tied
 to the behaviour they test (for example the post-roll length) instead of a tight wall clock, so a busy
-CI machine does not fail them. Run the Windows lint from Linux before pushing:
+CI machine does not fail them (a test that a slow sound device does not hold up the others times
+every step and compares with the 600 ms the device sleeps, not with a tight limit). Longer
+robustness runs are described in [`docs/testing.md`](docs/testing.md): thousands of damaged media,
+settings and draft files, and a ten-minute soak. Run the Windows lint from Linux before pushing:
 `cargo clippy --workspace --target x86_64-pc-windows-gnu --all-targets -- -D warnings`.
 
 Useful local CLI commands:

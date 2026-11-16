@@ -201,7 +201,9 @@ real-PulseAudio test still records a program's stream. (7) stopping a recording 
 inside capture or encode froze Stop and the program's exit; `shutdown_within` now waits at most five
 seconds, leaves a stuck thread behind and reports `RecordError::Internal` (test: a source whose
 capture sleeps for an hour; stopping returns and says so). A left-behind thread may still hold the
-capture device until the program exits. **Limit:** a source whose helper never
+capture device until the program exits. (The first version of the slow-device test timed a tick that legitimately had two seconds of
+sound to encode and failed on slow CI machines; it now ticks in small steps, times every tick and
+was checked to fail, at 601 ms, when recovery is made blocking again.) **Limit:** a source whose helper never
 returns stays lost (silent, with a message) until the recording is restarted. The Windows version
 of the mixer change is type-checked only. **Checked, nothing
 to change:** the single-copy lock and note file (user-only folder, the lock goes with the process,
