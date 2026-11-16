@@ -75,6 +75,7 @@ impl ClipCraftApp {
                     SettingsTab::General,
                     SettingsTab::Storage,
                     SettingsTab::Hotkeys,
+                    SettingsTab::Experimental,
                     SettingsTab::About,
                 ],
             ),
@@ -414,6 +415,7 @@ impl ClipCraftApp {
             SettingsTab::Video => settings::video_tab(ui, &mut working, &self.capture.gpu),
             SettingsTab::Audio => settings::audio_tab(ui, &mut working, &mut self.settings_state),
             SettingsTab::Replay => settings::replay_tab(ui, &mut working),
+            SettingsTab::Experimental => settings::experimental_tab(ui, &mut working),
             SettingsTab::About => {
                 settings::about_tab(ui);
                 self.bug_report_card(ui);

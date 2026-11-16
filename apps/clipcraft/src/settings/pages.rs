@@ -841,6 +841,11 @@ pub(crate) fn replay_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut RecordingS
     rows.finish(ui);
 }
 
+pub fn experimental_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
+    let mut rows = crate::rows::Rows::new("");
+    experimental_rows(&mut rows, ui, settings);
+}
+
 pub fn replay_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings) {
     // Say how the pieces fit together, since what is recorded is chosen on another page.
     kit::card_frame()
@@ -1387,16 +1392,6 @@ pub(crate) fn capture_rows(
         ui,
         s,
         Meta::new(
-            "Pause for password managers",
-            "While a password manager (1Password, Bitwarden, KeePass and similar) is open on a recorded screen, nothing is added to the replay. Websites in a browser are not recognized.",
-            "privacy private password manager pause banking secret hide",
-        ),
-        |s| &mut s.pause_for_private_programs,
-    );
-    rows.toggle(
-        ui,
-        s,
-        Meta::new(
             "Show the mouse cursor",
             "Draw the pointer in your clips.",
             "mouse pointer cursor hide show",
@@ -1547,6 +1542,23 @@ pub(crate) fn storage_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut Recording
     rows.finish(ui);
 }
 
+/// Things that work but have not been tried on enough computers: off until you turn them on.
+pub(crate) fn experimental_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut RecordingSettings) {
+    rows.page(ui, "Experimental");
+    rows.section(ui, "Privacy");
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
+            "Pause for password managers",
+            "While a password manager (1Password, Bitwarden, KeePass and similar) is open on a recorded screen, nothing is added to the replay. Websites in a browser are not recognized. Experimental: not yet tried with real password managers.",
+            "privacy private password manager pause banking secret hide",
+        ),
+        |s| &mut s.pause_for_private_programs,
+    );
+    rows.finish(ui);
+}
+
 pub(crate) fn app_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut RecordingSettings) {
     rows.page(ui, "General");
     rows.section(ui, "Startup and window");
@@ -1609,5 +1621,6 @@ pub(crate) fn search_results(
     capture_rows(&mut rows, ui, s, env);
     storage_rows(&mut rows, ui, s);
     app_rows(&mut rows, ui, s);
+    experimental_rows(&mut rows, ui, s);
     rows.shown
 }

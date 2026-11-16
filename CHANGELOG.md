@@ -11,7 +11,7 @@
   clips in an open edit, and moves old clips to the Recycle Bin instead of deleting them for good;
   every saved clip is reopened and checked; a warning when the disk is getting full; three rolling
   backups of the settings and library, used if a file is damaged; the recording pauses while a
-  password manager is open (Settings, on by default); discarding the editor draft asks first; and
+  password manager is open (Settings → Experimental, off by default); discarding the editor draft asks first; and
   after three failed starts ClipCraft offers to start with default settings.
 - **A redesigned window:** a calmer capture bar (a status capsule with a replay meter and one
   lime action: *Save last 30 s* while clipping, *Start clipping* when idle); notifications that

@@ -18,7 +18,7 @@ The full, detailed feature list and known limits. The [README](../README.md) has
   checked once a minute, with a notice under 2 GB and a stronger one under 500 MB. The settings and
   the library index keep three rolling backups (made at most once a day, beside the files as
   `.bak1` to `.bak3`); a damaged file is set aside as `.damaged` and the newest readable backup is
-  used, with a notice. With **Pause for password managers** (Settings, on by default) nothing is
+  used, with a notice. With **Pause for password managers** (Settings → Experimental, off until you turn it on) nothing is
   added to the replay while 1Password, Bitwarden, KeePass, KeePassXC, Dashlane, Enpass, Keeper,
   LastPass, NordPass, Proton Pass, RoboForm or Authy has a window open on a recorded screen; a
   pause or resume you chose is left alone. Discarding the editor's saved draft asks first. After

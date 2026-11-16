@@ -35,7 +35,7 @@ never goes online if you turn that off.
   a collection or clips in an open edit.
 - Every saved clip is reopened and checked for missing footage, and you are warned when the disk is getting full.
 - Settings and the library keep rolling backups and recover from a damaged file.
-- Recording pauses while a password manager is open (you can turn this off).
+- Experimental, off by default (Settings → Experimental): recording pauses while a password manager is open.
 - If ClipCraft keeps failing to start, it opens with default settings and keeps your old ones.
 - A watchdog slows down or stops clipping if it would starve your computer, and an internal error
   never closes the program or loses the replay.

@@ -300,6 +300,7 @@ enum SettingsTab {
     Video,
     Audio,
     Replay,
+    Experimental,
     About,
 }
 
@@ -315,6 +316,7 @@ impl SettingsTab {
             Self::Video => "Video",
             Self::Audio => "Audio",
             Self::Replay => "Replay",
+            Self::Experimental => "Experimental",
             Self::About => "About",
         }
     }
@@ -335,6 +337,9 @@ impl SettingsTab {
             Self::Audio => "What sound is recorded and how well.",
             Self::Replay => {
                 "How the replay buffer works: how far back a clip reaches and what happens when you save."
+            }
+            Self::Experimental => {
+                "Things that work but have not been tried on enough computers. Off until you turn them on."
             }
             Self::About => {
                 "What ClipCraft is, which version you have, and where to find the project."
@@ -2882,6 +2887,7 @@ mod tests {
                 SettingsTab::Video,
                 SettingsTab::Audio,
                 SettingsTab::Replay,
+                SettingsTab::Experimental,
                 SettingsTab::About,
             ] {
                 app.settings_tab = tab;
@@ -2997,6 +3003,7 @@ mod tests {
             SettingsTab::Video,
             SettingsTab::Audio,
             SettingsTab::Replay,
+            SettingsTab::Experimental,
             SettingsTab::About,
         ] {
             app.settings_tab = tab;

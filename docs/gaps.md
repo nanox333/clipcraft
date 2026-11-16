@@ -37,7 +37,7 @@ Safety measures that came with it:
 - **Low disk space** is reported while recording (under 2 GB, and again under 500 MB).
 - **Rolling backups** (three, at most one a day) of the settings and the library index. A damaged
   file is set aside and the newest backup that reads takes its place, with a notice.
-- **A password manager pauses the recording** (Settings, on by default) while one of a built-in list
+- **A password manager pauses the recording** (Settings → Experimental, off by default) while one of a built-in list
   has a window open on a recorded screen, and the recording carries on when it is closed. A pause
   or resume you chose yourself is never undone.
 - **Discarding the editor's saved draft asks first.**
