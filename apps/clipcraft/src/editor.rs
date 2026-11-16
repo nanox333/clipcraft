@@ -132,6 +132,8 @@ pub struct EditorState {
     text_drag: Option<(u64, Tick, Tick)>,
     tab: LibraryTab,
     effect_tab: bool,
+    /// Which page of the Text tab is open: Style, Font, Look or Timing (0 to 3).
+    text_page: u8,
     library_width: Option<f32>,
     /// Height the person dragged the preview row to; `None` gives it all the room there is.
     top_height: Option<f32>,
@@ -182,6 +184,7 @@ impl Default for EditorState {
             text_drag: None,
             tab: LibraryTab::Library,
             effect_tab: false,
+            text_page: 0,
             library_width: None,
             top_height: None,
             text_geometry: None,
@@ -3317,6 +3320,35 @@ mod tests {
             assert!(state.snap_to_frame(Tick(i64::MAX / 4)) <= state.session.duration());
         }
     }
+    #[test]
+    fn every_page_of_the_text_tab_draws_at_any_window_size_and_a_damaged_page_is_clamped() {
+        let context = crate::kit::test_context();
+        let mut state = state();
+        state.edit(EditorAction::AddText {
+            start: Tick::ZERO,
+            duration: Tick::from_units(2, 1),
+            text: "Your title".into(),
+        });
+        state.selected_text = state.session.texts().last().map(|layer| layer.id);
+        state.selected = None;
+        state.tab = LibraryTab::Text;
+        for page in [0_u8, 1, 2, 3, 200] {
+            state.text_page = page;
+            for size in [
+                Vec2::new(1.0, 1.0),
+                Vec2::new(320.0, 500.0),
+                Vec2::new(900.0, 650.0),
+                Vec2::new(1440.0, 900.0),
+                Vec2::new(6000.0, 4000.0),
+            ] {
+                frame(&mut state, &context, vec![], size);
+            }
+        }
+        // With nothing selected the tab says what text is for, whatever the page.
+        state.selected_text = None;
+        frame(&mut state, &context, vec![], Vec2::new(1440.0, 900.0));
+    }
+
     #[test]
     fn zoom_keys_step_the_timeline_and_fit_returns_to_the_whole_edit() {
         let mut state = state();

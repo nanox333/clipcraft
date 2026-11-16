@@ -301,45 +301,31 @@ impl EditorState {
             next.text = text;
         }
         let total = self.session.duration();
+        // Four short pages instead of one long panel.
+        let page = usize::from(self.text_page.min(3));
+        if let Some(index) = sub_tabs(ui, &["Style", "Font", "Look", "Timing"], page) {
+            self.text_page = index as u8;
+        }
+        let page = usize::from(self.text_page.min(3));
+        ui.add_space(crate::kit::space::XS);
         egui::ScrollArea::vertical()
             .id_salt("editor-text")
             .auto_shrink([false, false])
-            .max_height((height - 114.0).max(100.0))
+            .max_height((height - 150.0).max(100.0))
             .show(ui, |ui| {
                 ui.add_enabled_ui(enabled, |ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(crate::kit::space::SM, 8.0);
+                    ui.spacing_mut().item_spacing = Vec2::new(crate::kit::space::SM, 10.0);
                     let mut panel = TextPanel {
                         layer: &layer,
                         next: &mut next,
                         total,
                         id,
                     };
-                    // The essentials first: a look, a colour and a size. The rest is one click away.
-                    panel.styles(ui);
-                    panel.colour_and_size(ui);
-                    let more_id = egui::Id::new("text-more-options");
-                    let mut more =
-                        ui.data_mut(|data| data.get_temp::<bool>(more_id).unwrap_or(false));
-                    let fold = ui
-                        .add(
-                            egui::Label::new(
-                                RichText::new(if more {
-                                    "Fewer options"
-                                } else {
-                                    "More options"
-                                })
-                                .size(crate::kit::text_size::SMALL)
-                                .color(MUTED),
-                            )
-                            .sense(Sense::click()),
-                        )
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
-                    if fold.clicked() {
-                        more = !more;
-                    }
-                    ui.data_mut(|data| data.insert_temp(more_id, more));
-                    if more {
-                        panel.more_options(ui);
+                    match page {
+                        0 => panel.style_page(ui),
+                        1 => panel.font_page(ui),
+                        2 => panel.look_page(ui),
+                        _ => panel.timing_page(ui),
                     }
                 });
             });
@@ -349,8 +335,8 @@ impl EditorState {
     }
 }
 
-/// The options of the selected text layer. Each part writes its changes to `next`; the layer
-/// itself (`layer`) is only read.
+/// The options of the selected text layer, as four pages. Each part writes its changes to `next`;
+/// the layer itself (`layer`) is only read.
 struct TextPanel<'a> {
     layer: &'a SequenceText,
     next: &'a mut SequenceText,
@@ -359,22 +345,33 @@ struct TextPanel<'a> {
 }
 
 impl TextPanel<'_> {
-    /// Ready-made looks, as a row of small tiles.
-    fn styles(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+    /// Style: ready-made looks, colour and size.
+    fn style_page(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
             for preset in STYLE_PRESETS {
                 if style_tile(ui, &preset, preset.matches(self.layer)) {
                     preset.apply(self.next);
                 }
             }
         });
+        self.colour_row(ui);
+        option_row(ui, "Size", |ui| {
+            if let Some(value) = value_slider(
+                ui,
+                (f32::from(self.layer.size) - 20.0) / 230.0,
+                "Letter height",
+                &self.layer.size.to_string(),
+            ) {
+                self.next.size = (20.0 + value * 230.0).round().clamp(20.0, 250.0) as u16;
+            }
+        });
     }
 
-    /// Typeface and weight.
-    fn font_row(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.set_min_height(ROW_HEIGHT);
+    /// Font: typeface and weight, the letters' switches and the space between them.
+    fn font_page(&mut self, ui: &mut egui::Ui) {
+        option_row(ui, "Font", |ui| {
+            ui.spacing_mut().item_spacing.x = crate::kit::space::MD;
             let names: Vec<&str> = TextFont::ALL.iter().map(|font| font.name()).collect();
             let current = TextFont::ALL
                 .iter()
@@ -392,12 +389,7 @@ impl TextPanel<'_> {
                 self.next.weight = TextWeight::ALL[index];
             }
         });
-    }
-
-    /// Italic, underline and capitals.
-    fn letters_row(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.set_min_height(ROW_HEIGHT);
+        option_row(ui, "Letters", |ui| {
             if mini_toggle(ui, "Italic", self.layer.italic, "Slanted letters") {
                 self.next.italic = !self.layer.italic;
             }
@@ -413,36 +405,21 @@ impl TextPanel<'_> {
                 self.next.caps = !self.layer.caps;
             }
         });
-    }
-
-    /// Letter spacing and opacity.
-    fn fine_tune_row(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.set_min_height(ROW_HEIGHT);
-            ui.spacing_mut().item_spacing.x = crate::kit::space::LG;
-            if let Some(value) = mini_slider(
+        option_row(ui, "Spacing", |ui| {
+            if let Some(value) = value_slider(
                 ui,
-                "Spacing",
                 (f32::from(self.layer.tracking) + 50.0) / 450.0,
-                &format!("Space between the letters: {}", self.layer.tracking),
+                "Space between the letters",
+                &self.layer.tracking.to_string(),
             ) {
                 self.next.tracking = (value * 450.0 - 50.0).round().clamp(-50.0, 400.0) as i16;
-            }
-            if let Some(value) = mini_slider(
-                ui,
-                "Opacity",
-                (f32::from(self.layer.opacity) - 10.0) / 90.0,
-                &format!("How solid the text is: {}%", self.layer.opacity),
-            ) {
-                self.next.opacity = (10.0 + value * 90.0).round().clamp(10.0, 100.0) as u8;
             }
         });
     }
 
-    /// What makes the letters stand out from the picture.
-    fn look_row(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.set_min_height(ROW_HEIGHT);
+    /// Look: what makes the letters stand out from the picture, and how solid they are.
+    fn look_page(&mut self, ui: &mut egui::Ui) {
+        option_row(ui, "Effects", |ui| {
             if mini_toggle(
                 ui,
                 "Shadow",
@@ -458,130 +435,22 @@ impl TextPanel<'_> {
                 self.next.backdrop = !self.layer.backdrop;
             }
         });
-    }
-
-    /// The rest, in labelled rows that line up.
-    fn more_options(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(crate::kit::space::XS);
-        option_row(ui, "Font", |ui| self.font_row(ui));
-        option_row(ui, "Letters", |ui| self.letters_row(ui));
-        option_row(ui, "Fine tune", |ui| self.fine_tune_row(ui));
-        option_row(ui, "Look", |ui| self.look_row(ui));
-        option_row(ui, "Timing", |ui| self.timing_row(ui));
-        option_row(ui, "Position", |ui| {
-            if let Some((x, y)) = position_grid(ui, self.layer.x, self.layer.y) {
-                (self.next.x, self.next.y) = (x, y);
-            }
-        });
-    }
-
-    /// A few good colours and any other, then the size.
-    fn colour_and_size(&mut self, ui: &mut egui::Ui) {
-        let picker_open_id = egui::Id::new(("text-picker-open", self.id));
-        let picker_colour_id = egui::Id::new(("text-picker-colour", self.id));
-        let picker_hex_id = egui::Id::new(("text-picker-hex", self.id));
-        let layer = self.layer;
-        let mut picker_open =
-            ui.data_mut(|data| data.get_temp::<bool>(picker_open_id).unwrap_or(false));
-        let mut picking: Option<egui::ecolor::Hsva> =
-            ui.data_mut(|data| data.get_temp(picker_colour_id));
-        let in_row = TEXT_COLORS.iter().any(|(_, rgb)| layer.color == *rgb);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
-            for (name, rgb) in TEXT_COLORS {
-                let (rect, response) =
-                    ui.allocate_exact_size(Vec2::splat(CONTROL_HEIGHT - 4.0), Sense::click());
-                response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name)
-                });
-                ui.painter().circle_filled(
-                    rect.center(),
-                    9.5,
-                    Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
-                );
-                if layer.color == rgb {
-                    ui.painter()
-                        .circle_stroke(rect.center(), 11.5, Stroke::new(1.5_f32, TEXT));
-                } else if response.hovered() {
-                    ui.painter()
-                        .circle_stroke(rect.center(), 11.5, Stroke::new(1.5_f32, MUTED));
-                }
-                if response
-                    .on_hover_text(name)
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
-                    self.next.color = rgb;
-                    picker_open = false;
-                    picking = None;
-                }
-            }
-            let (rect, response) =
-                ui.allocate_exact_size(Vec2::splat(CONTROL_HEIGHT - 4.0), Sense::click());
-            response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Pick any colour")
-            });
-            crate::colour_picker::rainbow_swatch(ui.painter(), rect.center(), 9.5);
-            if picker_open || !in_row || response.hovered() {
-                ui.painter().circle_stroke(
-                    rect.center(),
-                    11.5,
-                    Stroke::new(1.5_f32, if picker_open || !in_row { TEXT } else { MUTED }),
-                );
-            }
-            if response
-                .on_hover_text("Any colour")
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked()
-            {
-                picker_open = !picker_open;
-                if picker_open && picking.is_none() {
-                    picking = Some(egui::ecolor::Hsva::from_srgb(layer.color));
-                }
-            }
-            ui.add_space(crate::kit::space::LG);
-            if let Some(value) = mini_slider(
+        option_row(ui, "Opacity", |ui| {
+            if let Some(value) = value_slider(
                 ui,
-                "Size",
-                (f32::from(layer.size) - 20.0) / 230.0,
-                &format!("Letter height: {}", layer.size),
+                (f32::from(self.layer.opacity) - 10.0) / 90.0,
+                "How solid the text is",
+                &format!("{}%", self.layer.opacity),
             ) {
-                self.next.size = (20.0 + value * 230.0).round().clamp(20.0, 250.0) as u16;
-            }
-        });
-        if picker_open {
-            let mut hsva = picking.unwrap_or_else(|| egui::ecolor::Hsva::from_srgb(layer.color));
-            let mut hex = ui
-                .data_mut(|data| data.get_temp::<String>(picker_hex_id))
-                .unwrap_or_else(|| crate::colour_picker::to_hex(hsva));
-            ui.allocate_ui(
-                Vec2::new((ui.available_width() - 14.0).clamp(160.0, 260.0), 0.0),
-                |ui| {
-                    let picked = crate::colour_picker::show(ui, &mut hsva, &mut hex);
-                    // The colour is applied when it is let go, so one drag is one undo step.
-                    if picked.settled {
-                        self.next.color = hsva.to_srgb();
-                    }
-                },
-            );
-            picking = Some(hsva);
-            ui.data_mut(|data| data.insert_temp(picker_hex_id, hex));
-        }
-        ui.data_mut(|data| {
-            data.insert_temp(picker_open_id, picker_open);
-            match picking {
-                Some(hsva) if picker_open => data.insert_temp(picker_colour_id, hsva),
-                _ => data.remove::<egui::ecolor::Hsva>(picker_colour_id),
+                self.next.opacity = (10.0 + value * 90.0).round().clamp(10.0, 100.0) as u8;
             }
         });
     }
 
-    /// When it appears and for how long.
-    fn timing_row(&mut self, ui: &mut egui::Ui) {
+    /// Timing: when it appears and for how long, and where on the picture it sits.
+    fn timing_page(&mut self, ui: &mut egui::Ui) {
         let (layer, total) = (self.layer, self.total);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
-            ui.set_min_height(ROW_HEIGHT);
+        option_row(ui, "When", |ui| {
             ui.spacing_mut().interact_size.y = CONTROL_HEIGHT;
             let mut start = layer.start.seconds();
             if ui
@@ -617,6 +486,103 @@ impl TextPanel<'_> {
                 self.next.end = (layer.start + ticks).min(total.max(layer.start + MIN_TEXT));
             }
         });
+        option_row(ui, "Position", |ui| {
+            if let Some((x, y)) = position_grid(ui, layer.x, layer.y) {
+                (self.next.x, self.next.y) = (x, y);
+            }
+        });
+    }
+
+    /// A few good colours and any other, on a line of their own with the custom picker below.
+    fn colour_row(&mut self, ui: &mut egui::Ui) {
+        let picker_open_id = egui::Id::new(("text-picker-open", self.id));
+        let picker_colour_id = egui::Id::new(("text-picker-colour", self.id));
+        let picker_hex_id = egui::Id::new(("text-picker-hex", self.id));
+        let layer = self.layer;
+        let mut picker_open =
+            ui.data_mut(|data| data.get_temp::<bool>(picker_open_id).unwrap_or(false));
+        let mut picking: Option<egui::ecolor::Hsva> =
+            ui.data_mut(|data| data.get_temp(picker_colour_id));
+        let in_row = TEXT_COLORS.iter().any(|(_, rgb)| layer.color == *rgb);
+        option_row(ui, "Colour", |ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            for (name, rgb) in TEXT_COLORS {
+                let (rect, response) =
+                    ui.allocate_exact_size(Vec2::splat(CONTROL_HEIGHT - 2.0), Sense::click());
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name)
+                });
+                ui.painter().circle_filled(
+                    rect.center(),
+                    10.5,
+                    Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
+                );
+                if layer.color == rgb {
+                    ui.painter()
+                        .circle_stroke(rect.center(), 12.5, Stroke::new(1.5_f32, TEXT));
+                } else if response.hovered() {
+                    ui.painter()
+                        .circle_stroke(rect.center(), 12.5, Stroke::new(1.5_f32, MUTED));
+                }
+                if response
+                    .on_hover_text(name)
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    self.next.color = rgb;
+                    picker_open = false;
+                    picking = None;
+                }
+            }
+            let (rect, response) =
+                ui.allocate_exact_size(Vec2::splat(CONTROL_HEIGHT - 2.0), Sense::click());
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Pick any colour")
+            });
+            crate::colour_picker::rainbow_swatch(ui.painter(), rect.center(), 10.5);
+            if picker_open || !in_row || response.hovered() {
+                ui.painter().circle_stroke(
+                    rect.center(),
+                    12.5,
+                    Stroke::new(1.5_f32, if picker_open || !in_row { TEXT } else { MUTED }),
+                );
+            }
+            if response
+                .on_hover_text("Any colour")
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                picker_open = !picker_open;
+                if picker_open && picking.is_none() {
+                    picking = Some(egui::ecolor::Hsva::from_srgb(layer.color));
+                }
+            }
+        });
+        if picker_open {
+            let mut hsva = picking.unwrap_or_else(|| egui::ecolor::Hsva::from_srgb(layer.color));
+            let mut hex = ui
+                .data_mut(|data| data.get_temp::<String>(picker_hex_id))
+                .unwrap_or_else(|| crate::colour_picker::to_hex(hsva));
+            ui.horizontal(|ui| {
+                ui.add_space(OPTION_LABEL + crate::kit::space::SM);
+                ui.allocate_ui(Vec2::new(240.0, 0.0), |ui| {
+                    let picked = crate::colour_picker::show(ui, &mut hsva, &mut hex);
+                    // The colour is applied when it is let go, so one drag is one undo step.
+                    if picked.settled {
+                        self.next.color = hsva.to_srgb();
+                    }
+                });
+            });
+            picking = Some(hsva);
+            ui.data_mut(|data| data.insert_temp(picker_hex_id, hex));
+        }
+        ui.data_mut(|data| {
+            data.insert_temp(picker_open_id, picker_open);
+            match picking {
+                Some(hsva) if picker_open => data.insert_temp(picker_colour_id, hsva),
+                _ => data.remove::<egui::ecolor::Hsva>(picker_colour_id),
+            }
+        });
     }
 }
 
@@ -647,10 +613,11 @@ fn option_row(ui: &mut egui::Ui, name: &str, controls: impl FnOnce(&mut egui::Ui
     });
 }
 
-/// A small tile showing a ready-made look; its name is the tooltip. True when clicked.
+/// A tile showing a ready-made look, with its name under it. True when clicked.
 fn style_tile(ui: &mut egui::Ui, preset: &StylePreset, active: bool) -> bool {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(64.0, 40.0), Sense::click());
+    let (area, response) = ui.allocate_exact_size(Vec2::new(78.0, 64.0), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, preset.name));
+    let rect = egui::Rect::from_min_size(area.min, Vec2::new(area.width(), 44.0));
     preset.paint(&ui.painter().with_clip_rect(rect), rect);
     let corner = f32::from(crate::kit::radius::MD);
     round_corners(ui.painter(), rect, corner, PANEL);
@@ -669,8 +636,14 @@ fn style_tile(ui: &mut egui::Ui, preset: &StylePreset, active: bool) -> bool {
         ),
         egui::StrokeKind::Inside,
     );
+    ui.painter().text(
+        egui::pos2(area.center().x, area.bottom() - 7.0),
+        Align2::CENTER_CENTER,
+        preset.name,
+        FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
+        if active { LIME } else { MUTED },
+    );
     response
-        .on_hover_text(preset.name)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
 }
@@ -685,7 +658,7 @@ fn position_grid(ui: &mut egui::Ui, x: u16, y: u16) -> Option<(u16, u16)> {
         ["Left", "Middle", "Right"],
         ["Bottom left", "Lower third", "Bottom right"],
     ];
-    let (frame, _) = ui.allocate_exact_size(Vec2::new(64.0, 42.0), Sense::hover());
+    let (frame, _) = ui.allocate_exact_size(Vec2::new(96.0, 60.0), Sense::hover());
     ui.painter().rect_filled(frame, 6.0, CANVAS);
     ui.painter().rect_stroke(
         frame,
@@ -698,10 +671,10 @@ fn position_grid(ui: &mut egui::Ui, x: u16, y: u16) -> Option<(u16, u16)> {
         for (column, name) in name_row.iter().enumerate() {
             let spot = egui::Rect::from_center_size(
                 egui::pos2(
-                    frame.left() + 11.0 + column as f32 * 21.0,
-                    frame.top() + 9.0 + row as f32 * 12.0,
+                    frame.left() + 16.0 + column as f32 * 32.0,
+                    frame.top() + 12.0 + row as f32 * 18.0,
                 ),
-                Vec2::new(16.0, 10.0),
+                Vec2::new(26.0, 14.0),
             );
             let response = ui.interact(
                 spot,
@@ -725,7 +698,7 @@ fn position_grid(ui: &mut egui::Ui, x: u16, y: u16) -> Option<(u16, u16)> {
                     == Some(row);
             let lit = here && nearest;
             ui.painter().rect_filled(
-                spot.shrink2(Vec2::new(3.0, 2.0)),
+                spot.shrink2(Vec2::new(4.0, 3.0)),
                 2.0,
                 if lit {
                     LIME
@@ -786,16 +759,17 @@ fn mini_toggle(ui: &mut egui::Ui, label: &str, on: bool, tip: &str) -> bool {
         .clicked()
 }
 
-/// A label and a slim slider together, as two items of the row they are in (so they centre with
-/// everything else on it); the value is in the tooltip. Returns the new position (`0..=1`) while
-/// it is dragged.
-fn mini_slider(ui: &mut egui::Ui, label: &str, value: f32, tip: &str) -> Option<f32> {
+/// A slim slider with its value written beside it. Returns the new position (`0..=1`) while it
+/// is dragged.
+fn value_slider(ui: &mut egui::Ui, value: f32, tip: &str, readout: &str) -> Option<f32> {
+    let changed = kit::slim_slider(ui, 220.0, value, true, tip);
     ui.label(
-        RichText::new(label)
+        RichText::new(readout)
             .size(crate::kit::text_size::SMALL)
-            .color(MUTED),
+            .family(egui::FontFamily::Monospace)
+            .color(TEXT),
     );
-    kit::slim_slider(ui, 140.0, value, true, tip)
+    changed
 }
 
 /// A look for a text layer in one click: the letters, colour and extras, and where it sits.
