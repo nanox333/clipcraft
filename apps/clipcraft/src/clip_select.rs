@@ -20,8 +20,6 @@ use crate::{ClipCraftApp, Icon};
 
 /// Most clips that can be moved to the Recycle Bin in one go.
 pub(crate) const MAX_TRASH_AT_ONCE: usize = 500;
-/// How long deleted clips wait, untouched and out of sight, for an Undo.
-
 /// The clips chosen so far, and the group action in progress.
 #[derive(Default)]
 pub(crate) struct Selection {
