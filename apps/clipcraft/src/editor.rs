@@ -170,7 +170,7 @@ impl Default for EditorState {
             export_quality: SequenceQuality::default(),
             saved: None,
             selected_text: None,
-            segment_settings: false,
+            segment_settings: true,
             title_draft: (0, String::new()),
             title_drag: None,
             text_drag: None,
@@ -1078,7 +1078,13 @@ impl EditorState {
             });
         });
         ui.add_space(crate::kit::space::MD);
-        let status_height = if self.message.is_some() { 26.0 } else { 0.0 };
+        // The panel under the timeline for the selected segment takes room too.
+        let segment_height = match (self.selected, self.segment_settings) {
+            (None, _) => 0.0,
+            (Some(_), true) => 86.0,
+            (Some(_), false) => 52.0,
+        };
+        let status_height = segment_height + if self.message.is_some() { 26.0 } else { 0.0 };
         let full_top = (view - 432.0 - status_height).max(MIN_TOP + 40.0);
         let top = self
             .top_height

@@ -858,68 +858,91 @@ impl EditorState {
         else {
             return;
         };
-        ui.add_space(crate::kit::space::SM);
-        let label = if self.segment_settings {
-            "Hide segment settings"
-        } else {
-            "Segment settings: trim and volume"
-        };
-        if ui
-            .add(
-                egui::Label::new(
-                    RichText::new(label)
-                        .size(crate::kit::text_size::CAPTION)
-                        .color(MUTED),
-                )
-                .sense(Sense::click()),
-            )
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
-        {
-            self.segment_settings = !self.segment_settings;
-        }
-        if !self.segment_settings {
-            return;
-        }
-        ui.add_space(crate::kit::space::SM);
-        ui.add_enabled_ui(!self.busy(), |ui| {
-            egui::Frame::new()
-                .fill(CANVAS)
-                .corner_radius(crate::kit::radius::MD)
-                .inner_margin(egui::Margin::symmetric(12, 8))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
+        let number = self
+            .session
+            .clips()
+            .iter()
+            .position(|c| c.id == clip.id)
+            .map_or(1, |index| index + 1);
+        ui.add_space(crate::kit::space::MD);
+        egui::Frame::new()
+            .fill(CANVAS)
+            .stroke(Stroke::new(1.0_f32, BORDER))
+            .corner_radius(crate::kit::radius::MD)
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing =
+                    Vec2::new(crate::kit::space::MD, crate::kit::space::SM);
+                // The header: which segment, how long, and a way to fold the panel away.
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("Segment {number}"))
+                            .size(crate::kit::text_size::BODY)
+                            .family(kit::semibold())
+                            .color(TEXT),
+                    );
+                    ui.label(
+                        RichText::new(stamp_precise(clip.duration()))
+                            .size(crate::kit::text_size::SMALL)
+                            .family(egui::FontFamily::Monospace)
+                            .color(MUTED),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let fold = ui
+                            .add(
+                                egui::Label::new(
+                                    RichText::new(if self.segment_settings {
+                                        "Hide"
+                                    } else {
+                                        "Trim and volume"
+                                    })
+                                    .size(crate::kit::text_size::CAPTION)
+                                    .color(MUTED),
+                                )
+                                .sense(Sense::click()),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if fold.clicked() {
+                            self.segment_settings = !self.segment_settings;
+                        }
+                    });
+                });
+                if !self.segment_settings {
+                    return;
+                }
+                ui.add_enabled_ui(!self.busy(), |ui| {
                     ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing =
-                            Vec2::new(crate::kit::space::SM, crate::kit::space::SM);
                         let mut start = clip.start.seconds();
                         let mut end = clip.end.seconds();
-                        let mut volume = clip.volume_percent;
-                        ui.label(
-                            RichText::new("Source in / out")
+                        let caption = |text: &str| {
+                            RichText::new(text.to_owned())
                                 .size(crate::kit::text_size::SMALL)
-                                .color(MUTED),
-                        );
-                        let changed = ui
+                                .color(MUTED)
+                        };
+                        let changed_in = ui
                             .add(
                                 egui::DragValue::new(&mut start)
                                     .speed(1.0 / 30.0)
                                     .range(0.0..=clip.source_duration.seconds())
                                     .fixed_decimals(3)
+                                    .prefix("In  ")
                                     .suffix(" s"),
                             )
-                            .on_hover_text("Selected segment source start")
-                            .changed()
-                            | ui.add(
+                            .on_hover_text("Where this segment starts in the source clip")
+                            .changed();
+                        let changed_out = ui
+                            .add(
                                 egui::DragValue::new(&mut end)
                                     .speed(1.0 / 30.0)
                                     .range(0.0..=clip.source_duration.seconds())
                                     .fixed_decimals(3)
+                                    .prefix("Out  ")
                                     .suffix(" s"),
                             )
-                            .on_hover_text("Selected segment source end")
+                            .on_hover_text("Where this segment ends in the source clip")
                             .changed();
-                        if changed {
+                        if changed_in || changed_out {
                             self.edit(EditorAction::Trim {
                                 id: clip.id,
                                 start: Tick::from_units((start * 1000.0).round() as i64, 1000),
@@ -927,21 +950,25 @@ impl EditorState {
                             });
                         }
                         separator(ui);
-                        ui.label(
-                            RichText::new("Volume")
-                                .size(crate::kit::text_size::SMALL)
-                                .color(MUTED),
-                        );
-                        if ui
-                            .add(egui::DragValue::new(&mut volume).range(0..=100).suffix("%"))
-                            .on_hover_text("Selected segment audio volume")
-                            .changed()
-                        {
+                        ui.label(caption("Volume"));
+                        if let Some(next) = kit::slim_slider(
+                            ui,
+                            140.0,
+                            f32::from(clip.volume_percent) / 100.0,
+                            true,
+                            "Selected segment audio volume",
+                        ) {
                             self.edit(EditorAction::Volume {
                                 id: clip.id,
-                                percent: volume,
+                                percent: (next * 100.0).round() as u16,
                             });
                         }
+                        ui.label(
+                            RichText::new(format!("{}%", clip.volume_percent))
+                                .size(crate::kit::text_size::SMALL)
+                                .family(egui::FontFamily::Monospace)
+                                .color(TEXT),
+                        );
                         if button(
                             ui,
                             if clip.volume_percent == 0 {
@@ -961,7 +988,7 @@ impl EditorState {
                         }
                     });
                 });
-        });
+            });
     }
 }
 
