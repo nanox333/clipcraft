@@ -1032,6 +1032,7 @@ impl EditorState {
         }
         self.keys(ui);
         self.recovery_banner(ui);
+        self.discard_dialog(ui.ctx());
         ui.horizontal(|ui| {
             ui.set_min_height(44.0);
             // The edit's name is the page heading: type over it to rename the edit. Left empty it

@@ -34,6 +34,7 @@ mod organize;
 mod playback;
 mod presence;
 mod rows;
+mod safe_start;
 mod saved_toast;
 mod settings;
 mod settings_page;
@@ -80,7 +81,11 @@ fn main() -> eframe::Result<()> {
     clipcraft_engine::set_trash_handler(clipcraft_platform::move_to_trash);
     clipcraft_engine::set_clipboard_files_handler(clipcraft_platform::copy_file_to_clipboard);
     clipcraft_engine::update::set_http_fetcher(clipcraft_platform::https_get);
+    // Counts this start. If the last few never got going, the saved settings are left alone this
+    // time and the person is asked what to do (see `safe_start`).
+    let safe_start = safe_start::SafeStart::begin();
     let launch_settings = clipcraft_engine::default_settings_path()
+        .filter(|_| !safe_start.asking)
         .and_then(
             |path| match execute(Command::LoadRecordingSettings { path }) {
                 Ok(CommandOutput::RecordingSettings(settings)) => Some(settings),
@@ -118,7 +123,8 @@ fn main() -> eframe::Result<()> {
                         .egui_ctx
                         .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
-                let mut app = ClipCraftApp::restored();
+                let mut app = ClipCraftApp::restored_with(default_index_path(), safe_start.asking);
+                app.safe_start = Some(safe_start);
                 app.tray = tray::Tray::new(&creation.egui_ctx);
                 app.show_requests = clipcraft_engine::default_show_request_path().map(|path| {
                     single_instance::watch_show_requests(path, creation.egui_ctx.clone())
@@ -165,6 +171,8 @@ struct ClipCraftApp {
     show_requests: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// The safety net for graphics-card encoding (see `gpu_restart`).
     gpu_session: Option<gpu_restart::GpuSession>,
+    /// Notices a start that keeps failing and offers the default settings (see `safe_start`).
+    safe_start: Option<safe_start::SafeStart>,
     /// The window icon was set again after the window opened.
     icon_sent: bool,
     directory_text: String,
@@ -450,6 +458,9 @@ impl eframe::App for ClipCraftApp {
         }
         self.editor.flush_recovery();
         self.index_store.finish();
+        if let Some(safe_start) = &self.safe_start {
+            safe_start.finish();
+        }
     }
 }
 
@@ -497,6 +508,7 @@ impl ClipCraftApp {
         self.thumbs.begin_frame();
         self.capture_frame(context);
         self.sync_gpu_session(context);
+        self.tick_safe_start();
         self.game_data.sync(
             &self.recording.game_integrations,
             self.settings_path.as_deref(),
@@ -791,6 +803,7 @@ impl ClipCraftApp {
         self.delete_dialog(context);
         self.bulk_trash_dialog(context);
         self.gpu_restart_dialog(context);
+        self.safe_start_dialog(context);
         self.rename_dialog(context);
         self.bug_report_dialog(context);
         self.thumbs.end_frame();
@@ -798,11 +811,18 @@ impl ClipCraftApp {
     }
 
     /// Starts with the last scanned folder restored from the local index, if there is one.
+    #[cfg(test)]
     fn restored() -> Self {
         Self::restored_from(default_index_path())
     }
 
+    #[cfg(test)]
     fn restored_from(index_path: Option<PathBuf>) -> Self {
+        Self::restored_with(index_path, false)
+    }
+
+    /// As [`Self::restored_from`]; with `default_settings` the saved settings are not read.
+    fn restored_with(index_path: Option<PathBuf>, default_settings: bool) -> Self {
         let settings_path = index_path
             .as_ref()
             .map(|path| path.with_file_name("recording-settings.json"));
@@ -812,19 +832,8 @@ impl ClipCraftApp {
             thumbnail_dir: default_thumbnail_dir(),
             ..Self::default()
         };
-        if let Some(path) = app.settings_path.clone() {
-            match execute(Command::LoadRecordingSettings { path }) {
-                Ok(CommandOutput::RecordingSettings(settings)) => {
-                    app.recording = *settings;
-                    if app.recording.library_manual {
-                        app.sort = library_view::Sort::Manual;
-                        app.library_view
-                            .set_manual_order(&app.recording.library_order);
-                    }
-                }
-                Ok(_) => {}
-                Err(error) => app.error = Some(error.to_string()),
-            }
+        if !default_settings {
+            app.load_saved_settings();
         }
         let Some(index_path) = app.index_path.clone() else {
             if !app.recording.setup_completed {
@@ -850,6 +859,25 @@ impl ClipCraftApp {
             app.setup = Some(onboarding::Setup::new(app.recording.clone()));
         }
         app
+    }
+
+    /// Reads the saved settings file and uses what it holds.
+    fn load_saved_settings(&mut self) {
+        let Some(path) = self.settings_path.clone() else {
+            return;
+        };
+        match execute(Command::LoadRecordingSettings { path }) {
+            Ok(CommandOutput::RecordingSettings(settings)) => {
+                self.recording = *settings;
+                if self.recording.library_manual {
+                    self.sort = library_view::Sort::Manual;
+                    self.library_view
+                        .set_manual_order(&self.recording.library_order);
+                }
+            }
+            Ok(_) => {}
+            Err(error) => self.error = Some(error.to_string()),
+        }
     }
 
     /// The one folder clips live in: the library folder, which is also where new clips are saved.

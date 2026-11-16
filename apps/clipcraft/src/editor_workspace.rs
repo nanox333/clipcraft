@@ -26,6 +26,8 @@ pub(super) struct DraftState {
     pending: Option<Box<EditorDraft>>,
     blocked: bool,
     discarding: bool,
+    /// The "Discard draft?" question is on screen.
+    confirming_discard: bool,
     suppressed: bool,
     recovered: bool,
     error: Option<String>,
@@ -306,7 +308,7 @@ impl EditorState {
             });
         ui.add_space(crate::kit::space::SM);
         if discard {
-            self.discard_draft(ui.ctx());
+            self.draft.confirming_discard = true;
         } else if restore && let Some(draft) = self.draft.pending.take() {
             self.restore_draft(*draft, ui.ctx());
         } else if retry {
@@ -351,7 +353,64 @@ impl EditorState {
                 .on_hover_text("Delete the automatically saved copy of this edit")
                 .clicked()
         {
-            self.discard_draft(ui.ctx());
+            self.draft.confirming_discard = true;
+        }
+    }
+
+    /// Asks before the saved copy of the edit is deleted: it cannot be brought back.
+    pub(super) fn discard_dialog(&mut self, context: &egui::Context) {
+        if !self.draft.confirming_discard {
+            return;
+        }
+        let mut decision = None;
+        let modal = egui::Modal::new(egui::Id::new("discard-draft-dialog"))
+            .frame(
+                egui::Frame::new()
+                    .fill(kit::PANEL)
+                    .stroke(egui::Stroke::new(1.0_f32, kit::BORDER))
+                    .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
+                    .inner_margin(egui::Margin::same(24)),
+            )
+            .show(context, |ui| {
+                ui.set_width(380.0);
+                ui.label(
+                    RichText::new("Discard the saved draft?")
+                        .color(kit::TEXT)
+                        .size(crate::kit::text_size::LEAD)
+                        .family(kit::semibold()),
+                );
+                ui.add_space(crate::kit::space::SM);
+                ui.label(
+                    RichText::new(
+                        "The automatically saved copy of this edit is deleted and cannot be \
+                         brought back. Your clips and the edit open now are not touched.",
+                    )
+                    .color(MUTED)
+                    .size(crate::kit::text_size::SMALL),
+                );
+                ui.add_space(crate::kit::space::XL);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = crate::kit::space::MD;
+                    if crate::clip_delete::danger_button(ui, "Discard draft").clicked() {
+                        decision = Some(true);
+                    }
+                    if kit::labelled_button(ui, kit::Icon::Restart, "Keep it", false, true)
+                        .clicked()
+                    {
+                        decision = Some(false);
+                    }
+                });
+            });
+        if modal.should_close() {
+            decision = decision.or(Some(false));
+        }
+        match decision {
+            Some(true) => {
+                self.draft.confirming_discard = false;
+                self.discard_draft(context);
+            }
+            Some(false) => self.draft.confirming_discard = false,
+            None => {}
         }
     }
 }

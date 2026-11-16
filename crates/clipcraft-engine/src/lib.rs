@@ -15,6 +15,7 @@ mod diagnose;
 mod editor;
 mod editor_draft;
 pub mod privacy;
+pub mod safe_start;
 pub use editor::{
     EditorAction, EditorClip, EditorSession, EditorText, MAX_EDITOR_DURATION, MAX_EDITOR_HISTORY,
     MIN_EDITOR_CLIP, TransitionPreset,
