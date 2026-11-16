@@ -18,6 +18,44 @@ packages, and the downloaded files matched their checksums. Windows clean-machin
 install/update/uninstall, real game capture and real
 Wayland portal behavior remain unverified. The release packages are unsigned.
 
+## Window redesign round (2026-11-16)
+
+Built: the capture bar capsule and its one lime action; bottom notifications that slide in, stay
+30 seconds (paused while hovered) and fade; the first-run screen; **?** buttons for hard-to-grasp
+settings; a heading per day, drag-to-reorder with animation and drag-out, picture cards in three
+sizes or a list (remembered in the settings), readable clip names and dates (local time zone) and
+a colour and mark for each game; the clip page header, **Drag into Discord** tile and inline
+**New collection**; and in the editor: the transport row (loop, cut-to-cut, frame step by the
+clip's frame rate, hundredths on the time), timeline click snapping to frames, zoom keys and
+Ctrl-wheel zoom, the segment panel, a Library as cards or a list, the Text tab (three pages) with
+fonts, weights, italic, underline, capitals, spacing, outline, box, opacity and six styles, and
+picture shapes (twelve plus custom 1:4 to 4:1) with Fit, Blur, Fill and Stretch framing in the
+preview, the export window, saved edits and the command line.
+
+Checked here (Linux, Xvfb 1800×900, software OpenGL): screenshots of each screen and state; a
+recorded drag showing reorder and drag-out; unit tests for the layout maths, date grouping and time
+zone, settings limits, frame stepping at 24, 30, 60 and 59.94 FPS, frame snapping, text styling
+(each option changes the picture; old text looks the same; ranges enforced), every shape's output
+size and limits, the four framings' pixels, saved-edit and settings round trips, and every layout
+and window size drawing without a panic; and real MP4 exports at 9:16, 1:1, 4:5, 21:9 and
+Original, read back at the expected size, with the source clip unchanged.
+
+Not checked: any of it on Windows (the Windows code was type-checked and linted only) or on
+macOS; Wayland; a high-DPI display; a physical GPU running the shared compositor (Fill, Stretch
+and Blur change the picture before the compositor, so both paths receive the same input, but only
+the CPU path was run); dragging to reorder or out of the window from the **list** layout (the
+same code as cards, run only in unit tests); the notification's slide-in and fade on screen (the
+timing is tested, it was not recorded); an exported MP4 with Serif, Mono, Outline or Box text
+(checked in the preview and in unit tests); a vertical export played in other programs and sites;
+real games.
+
+Known limits: Fill always crops around the middle; text has no way to type an exact start time or
+position (drag in the preview, and move or trim on the timeline); the editor Library's layout is
+kept for the session only; frame stepping uses the frame rate in the clip's metadata and falls
+back to 1/30 s when it is missing; a custom shape is limited to whole numbers up to 99 and to
+1:4 to 4:1; the picture shapes and framings are not yet in the Settings pages (only in the editor
+and its export window).
+
 ## Local bug reports (M5.B1)
 
 Settings › About prepares a reviewable report locally, with optional basic recording settings. It

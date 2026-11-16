@@ -57,6 +57,8 @@ The full, detailed feature list and known limits. The [README](../README.md) has
   a cancellable desktop worker; the CLI uses the same bounded traversal. Game-managed saves remember
   the game active when Save was pressed. Manual labels override that captured game, followed by
   folder/filename guesses; labels survive rescans and restarts in the local index.
+  The Clips page shows picture cards (small, medium or large) or a list, remembered between runs,
+  with a heading per day when sorted by date, and clips can be dragged into a new order of your own.
   Search/sort results and sidebar counts are cached; the grid builds visible rows and supports
   keyboard navigation across offscreen clips. Static keyboard focus no longer keeps redrawing.
   Index writes run on one bounded background worker, with ordered edits and retry on failure.
@@ -83,7 +85,12 @@ The full, detailed feature list and known limits. The [README](../README.md) has
   app's charcoal/lime styling, SVG icons (`assets/icons`) and embedded Inter typefaces. Append, split, trim, reorder, duplicate
   or remove cuts, with 64-step undo/redo, linked audio volume/mute, black/white fades and seven colour
   effects. Independent text layers can be moved, trimmed, split, duplicated, faded and recoloured.
-  Preview and export share FilmCraft text rendering and the same audio fade envelope.
+  Preview and export share FilmCraft text rendering and the same audio fade envelope. Text layers
+  have three typefaces, four weights, italic, underline, capitals, letter spacing, shadow, outline,
+  a background box, opacity and six ready-made styles. The picture can be 16:9, 9:16, 1:1, 4:5 and
+  other shapes (or any shape from 1:4 to 4:1), with the clip fitted (bars or a blurred copy),
+  cropped to fill, or stretched. The transport has frame stepping at the clip's own frame rate,
+  cut-to-cut jumps and loop.
   They now also share a bounded compositor for aspect-fit scaling, colour effects, fades and text
   (M11.1i): compatible hardware uses wgpu, with automatic CPU fallback. Paused edits refresh on
   the decode worker; portrait/ultrawide sources keep their aspect ratio. Decode/font work and

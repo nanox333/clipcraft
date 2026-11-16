@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- **A redesigned window:** a calmer capture bar (a status capsule with a replay meter and one
+  lime action: *Save last 30 s* while clipping, *Start clipping* when idle); notifications that
+  slide in at the bottom, stay for 30 seconds and fade; a clearer first-run screen; short **?**
+  buttons instead of hint paragraphs where something is hard to grasp; and normal spacing between
+  controls inside the Clips and Settings pages.
+- **Clips page:** a heading for each day (Today, Yesterday, Earlier this week, then months),
+  your own order by dragging cards (with animation; drag one out of the window into Discord or a
+  folder), picture cards in three sizes or a **list**, remembered between runs. Clips show their
+  game and a readable date instead of the file name. The clip page has the date on its own line,
+  a clearer **Drag into Discord** tile, and a **New collection** button right where collections
+  are shown. Each game in the sidebar can have its own colour (swatches or any colour) and mark.
+  The clips folder not existing yet is an empty library, not an error.
+- **Editor, controls:** a transport row with loop, previous and next cut, frame back and forward
+  (by the frame rate of the clip under the playhead, so 24, 30, 60 and 59.94 FPS clips each step
+  by their own frames), a time that shows hundredths, Home and End, and clicks on the timeline
+  that land on a frame of the clip under the pointer; **+**, **−**, **0** and Ctrl and the mouse
+  wheel zoom the timeline. A panel for the selected segment (In, Out, volume slider, mute), an
+  Undo/Redo capsule, an Import button in the empty preview, and a Library that can show cards
+  (three sizes) or a list.
+- **Editor, picture shapes:** export and preview in 16:9, 21:9, 4:3, 3:2, 5:4, 1:1, 4:5, 2:3, 3:4,
+  9:16, 9:21 or any shape from 1:4 to 4:1 (a chip beside the transport, and the export window).
+  A clip that is not that shape is **fitted** (black bars), fitted over a **blurred** copy, cropped
+  to **fill**, or **stretched**. The command line accepts `"aspect"` and `"framing"` in `quality`;
+  old requests and saved edits are unchanged.
+- **Editor, text:** the Text tab is three short pages (Style, Font, Look). Text can now be Sans,
+  Serif or Mono in four weights, italic, underlined, in capitals, spaced out, with a shadow, an
+  outline or a dark box, and partly see-through, in any colour; six ready-made styles change only
+  how the text looks. Text saved before looks the same. Where text sits and when it shows are
+  set by dragging in the preview and on the timeline.
+
 - **Stopping cannot hang forever:** if a graphics driver or window call hangs inside capture or
   encoding, the Stop button and closing ClipCraft now give up waiting for that thread after five
   seconds (and say the recording hit an internal error) instead of freezing the window.

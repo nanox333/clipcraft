@@ -75,11 +75,16 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
   rests on the clip. Works on Windows and Linux under X11; elsewhere use **Copy file**, which
   puts the clip on the clipboard to paste (Linux needs `wl-copy` or `xclip`). Exports can also be
   sized for Discord (10, 50 or 500 MB).
-- **Library:** a searchable local clip library with favorites, collections and game labels.
+- **Library:** a searchable local clip library with favorites, collections and game labels, shown
+  as picture cards in three sizes or as a list, with a heading for each day. Drag clips into an
+  order of your own, and choose the colour and mark of each game in the sidebar.
   Rename a clip (F2) without losing its favorite, collections or game, and delete clips to the
   Recycle Bin from a right-click menu. A focused card opens with Enter and favorites with F.
 - **Playback and editing:** smooth playback, quick trims, small-file and GIF export, loudness
-  evening, and a small sequence editor with text, fades and colour effects.
+  evening, and a small sequence editor with styled text (fonts, weights, outline, background box),
+  fades, colour effects, frame-by-frame stepping at each clip's own frame rate, and export in the
+  picture shape you choose: 16:9, 9:16, 1:1, 4:5 and more, with the clip fitted, blurred behind,
+  cropped or stretched.
 - **Desktop:** one shared spacing, radius, type and control-height scale (`kit::space`, `kit::radius`, `kit::text_size`, `kit::control`) across every screen; searchable, categorized Settings; system tray (Windows); a "clip saved" pop-up that
   never takes focus from your game; optional Discord Rich Presence.
 - **Bug reports:** Settings → About lets you prepare and review a report locally, optionally add

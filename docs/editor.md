@@ -6,12 +6,15 @@ this does not immediately add it to the timeline or move the source file. The no
 quick trim remain in Clips. The workspace uses the same charcoal surfaces, lime actions,
 embedded Inter typefaces and keyboard focus styling as the rest of ClipCraft. Controls are
 icon-and-label pills like the rest of the app, with quiet outlined buttons for secondary actions
-and lime for the main one. The preview panel is kept minimal: a small title, the picture, a round Play/Pause button in the
-centre and the time at the right (scrub on the timeline ruler). Library cards show the file size;
-the toolbar keeps edit actions at the left and zoom, Fit and Reset at the right. The timeline has a ruler with minor ticks, a
+and lime for the main one. The preview panel is kept minimal: the picture, then one transport row (see
+[Transport and timeline keys](#transport-and-timeline-keys)): loop and the picture-shape chip at the
+left, previous cut, frame back, a round lime Play/Pause, frame forward and next cut in the middle,
+and the time at the right. The header has the editable title, an Undo/Redo capsule and the lime
+**Export video**. The toolbar keeps edit actions at the left and a zoom capsule (− + Fit) and
+Reset at the right. The timeline has a ruler with minor ticks, a
 triangular playhead, grips on the selected segment, and a bar under it with the source in/out,
 volume and mute for that segment. A footer lists the keyboard shortcuts. The preview panel is only as wide as a 16:9 picture needs, so the Library takes the rest and
-shows as many thumbnail columns as fit (2 to 6); the two panels always have exactly the same height, on every tab. Both can be resized: drag the gap between the Library and
+shows the clips as picture cards (small, medium or large, as many columns as fit) or as a list, chosen with the two switches beside the search box (the layout lasts for the session); the two panels always have exactly the same height, on every tab. Both can be resized: drag the gap between the Library and
 the preview to change their widths, and the gap above the timeline to trade preview height for a
 taller timeline (the preview row stops at 210 px). Double-click a gap to go back to the automatic
 layout. The sizes last for the session.
@@ -75,6 +78,22 @@ and a numeric suffix is used if a matching output already exists.
 
 Shortcuts remain active when a button is focused; text/numeric input retains normal typing.
 
+## Transport and timeline keys
+
+The row under the picture has, left to right: **Loop** (start over at the end), the picture-shape
+chip (opens the shapes and framings), **Previous cut**, **Back one frame**, **Play/Pause**,
+**Forward one frame**, **Next cut**, and the time (to a hundredth of a second, so a single frame
+step at 60 FPS shows). A frame step moves by the frame rate of the clip under the playhead
+(24, 30, 60 or 59.94 FPS clips step by their own frames) and stops playback; a click or drag on the
+timeline ruler snaps to the nearest frame of the clip under the pointer. A clip whose frame rate is
+not known steps by 1/30 s. Previous cut goes to the start of this segment (or the one before it
+when already at the start). Keys: Space play, ← → one frame, Home and End the start and end of the
+edit, S split, Delete delete, Ctrl/⌘ Z undo, **+** and **−** zoom the timeline, **0** fits the
+whole edit, and Ctrl and the mouse wheel (or a pinch) zoom from where the timeline is.
+
+A selected segment shows one panel under the timeline: its number and length, **In** and **Out**
+(seconds), a volume slider with its percentage, and **Mute**/**Unmute**.
+
 ## Preview and export
 
 Preview plays the original source range and its first audio track at the selected volume, with
@@ -122,7 +141,19 @@ are separate and can be much larger. Detailed decoder limits and remaining measu
 **Resolution** offers **720p**, **1080p** and **Source · up to 4K**. **Frame rate** offers
 **30 FPS** or **60 FPS**. The defaults are 720p/30. Source preserves the first clip's aspect ratio,
 including portrait/ultrawide, within a 3840×2160 landscape or 2160×3840 portrait box. The other
-two choices retain the existing 16:9 canvas; smaller source pictures are never enlarged.
+two choices retain the existing 16:9 canvas (unless a shape is chosen, below); smaller source pictures are never enlarged by Fit.
+
+**Shape** and **framing** choose the picture: *Original* (the earlier behaviour above), or one of
+16:9, 21:9, 4:3, 3:2, 5:4, 1:1, 4:5, 2:3, 3:4, 9:16 and 9:21, or any other whole-number shape from
+1:4 to 4:1 (the custom field in the picture-shape chip). With a shape chosen, the resolution is
+the short side: 720 or 1080 pixels (never longer than the first clip's own short side), or the
+clip's own short side for Source, within the same 3840×2160 / 2160×3840 box. **Framing** says what
+happens to a clip that is not that shape: *Fit* shows the whole clip in the middle with black
+bars; *Blur* does the same over a darkened, blurred copy of the picture; *Fill* crops the clip
+around its middle to cover the picture; *Stretch* pulls it out to every edge (so it looks
+stretched). The preview and the export use the same framing. Fill, Stretch and Blur happen before
+the shared compositor, so the CPU and GPU paths are unchanged. Not done: choosing where Fill
+crops (it always crops around the middle).
 
 The window shows actual dimensions, FPS and target video bitrate. File-size targets reserve the
 continuous AAC track and mux overhead, then can reduce bitrate and resolution while keeping the
@@ -189,20 +220,27 @@ layers (each half keeps its own end of the fades), **Duplicate** (Ctrl/⌘ D) pu
 after it, and Delete removes it; with a segment selected they act on the video as before.
 Anything it overlaps shows through as a normal layer: it sits above the video, is unaffected by the
 video segment's effect and fades, and can be longer or shorter than any one segment. Text layers
-are clipped to the length of the edit. Its settings are in the Text tab: the text (one line, up to
-120 characters; Enter or clicking away applies it), start and length in seconds, **Size**,
-**Colour**, and the *Title*, *Lower third*, *Top banner* and *Corner tag* position presets. Drag
-the text in the preview to move it anywhere (one undo step); the position is stored as a fraction
-of the picture, so the export puts it where the preview shows it, kept inside the frame. Preview and
-export share FilmCraft's Inter SemiBold text raster, layout, shadow, wrapping and placement at
-the chosen export canvas size. The shared compositor bakes them into the preview canvas before the UI scales it to its display area. Text rasters
+are clipped to the length of the edit. Its settings are in the Text tab. Beside **Add text** is the text itself (one line, up to
+120 characters; Enter or clicking away applies it), and a switcher with three short pages:
+**Style** (six ready-made looks, each changing only how the text looks and never what it says,
+where it is, when it shows or its fades; a colour from six or any colour from the colour picker;
+and the size), **Font** (Sans, Serif or Mono; Regular, Medium, Semibold or Bold; Italic, Underline
+and ALL CAPS; the space between letters) and **Look** (Shadow, Outline, Box, a dark box behind the
+text, and opacity from 10 to 100 %). Where the text sits is set by dragging it in the preview
+(one undo step), and when it shows by moving and trimming its block on the timeline, so the tab has
+no position or timing fields (there is no way to type an exact start time). The position is stored
+as a fraction of the picture, so the export puts it where the preview shows it, kept inside the
+frame. Preview and export share FilmCraft's text raster (Inter, Noto Serif and JetBrains Mono as
+bundled; a weight a typeface lacks is thickened to match), layout, shadow, outline, box, wrapping
+and placement at the chosen export canvas size. Text saved before these options existed looks as
+it did. The shared compositor bakes them into the preview canvas before the UI scales it to its display area. Text rasters
 are limited to 2,097,152 pixels per layer, with a canvas-height layout cap and separate 16 MiB
 preview-worker/export caches. Moving or fading a layer reuses its pixels. The UI holds only the
 selected active layer's geometry for dragging; it does not retain duplicate text pixels/textures.
 At most 256 text layers are accepted. Text layers share the video segments' undo history, and
 Reset clears both tracks.
 
-The Library shows each clip's resolution and file size under its name.
+A card in the Library shows the clip's name (the game, for a clip ClipCraft named) and when it was made with its size; a list row adds its resolution and length, and has a round **+** on the row under the pointer to add it to the timeline. Hover the name for the file name.
 
 ## Sessions and command line
 
@@ -268,7 +306,11 @@ values of the request's `preset` field, not separate commands. For example:
 ```
 
 Add `"quality":{"resolution":"1080p","fps":60}` for 1080p/60, or use `"source"` for
-source framing up to 4K. `"720p"` and 30 are the defaults. Invalid resolutions or rates fail
+source framing up to 4K. `"720p"` and 30 are the defaults. Add `"aspect":"9:16"` (`"source"`,
+`"16:9"`, `"21:9"`, `"4:3"`, `"3:2"`, `"5:4"`, `"1:1"`, `"4:5"`, `"2:3"`, `"3:4"`, `"9:21"` or any
+`"W:H"` from 1:4 to 4:1) and `"framing":"fit"|"blur"|"fill"|"stretch"` for a tall, square or other
+picture, for example `"quality":{"resolution":"1080p","fps":30,"aspect":"9:16","framing":"fill"}`;
+without them the picture is as before. Invalid resolutions or rates fail
 before source opening/output creation; the same typed settings drive UI, CLI and recovery.
 
 The `editor.export` JSON result preserves the existing top-level `path`, `duration_ms`,
@@ -327,8 +369,9 @@ the earlier icons painted by code.
 ### Shared composition and fallback (M11.1i)
 
 Preview and sequence export use the same bounded compositor for scaling, effects, black/white
-fades and text. Video fits the chosen canvas without upscaling or stretching; other aspect ratios
-get black bars. Paused edits refresh on the decode worker. Text dragging still shows selection
+fades and text. By default video fits the chosen canvas without upscaling or stretching, and other
+aspect ratios get black bars; the *Blur*, *Fill* and *Stretch* framings (above) change the picture to the canvas's
+shape first. Paused edits refresh on the decode worker. Text dragging still shows selection
 handles; the UI does not draw effects or glyphs a second time. Prepared clips carry their full
 look/text recipe into the next cut.
 
