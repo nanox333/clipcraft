@@ -544,6 +544,9 @@ pub struct RecordingSettings {
     pub capture_target_name: String,
     /// Start recording into the replay buffer when ClipCraft opens.
     pub record_on_launch: bool,
+    /// Pause the desktop recording while a password manager or similar private program has a
+    /// window open (see [`crate::privacy`]).
+    pub pause_for_private_programs: bool,
     /// Switch replay sources automatically using game recognition and the chosen desktop policy.
     pub game_only_capture: bool,
     /// When a recognized game is running but no window of it can be found (a protected or unusual
@@ -664,6 +667,7 @@ impl Default for RecordingSettings {
             capture_target: String::new(),
             capture_target_name: String::new(),
             record_on_launch: false,
+            pause_for_private_programs: true,
             game_only_capture: true,
             record_screen_when_game_window_missing: true,
             record_desktop_after_game: false,

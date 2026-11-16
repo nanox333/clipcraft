@@ -1387,6 +1387,16 @@ pub(crate) fn capture_rows(
         ui,
         s,
         Meta::new(
+            "Pause for password managers",
+            "While a password manager (1Password, Bitwarden, KeePass and similar) is open on a recorded screen, nothing is added to the replay. Websites in a browser are not recognized.",
+            "privacy private password manager pause banking secret hide",
+        ),
+        |s| &mut s.pause_for_private_programs,
+    );
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
             "Show the mouse cursor",
             "Draw the pointer in your clips.",
             "mouse pointer cursor hide show",

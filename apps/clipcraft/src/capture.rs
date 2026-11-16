@@ -244,6 +244,11 @@ pub struct CaptureState {
     last_effective_fps: Option<u32>,
     /// The game window being recorded, when capture follows a window of a game.
     game_window_id: Option<String>,
+    /// Pauses the recording while a private program is open.
+    privacy: clipcraft_engine::privacy::PrivacyPause,
+    /// A look at the open programs that is under way, and when the next one is due.
+    privacy_scan: Option<mpsc::Receiver<bool>>,
+    privacy_due: Option<Instant>,
     /// Game windows that delivered only black pictures, and when each may be tried again.
     black_windows: std::collections::HashMap<String, Instant>,
     /// Windows the tests pretend the desktop lists.
@@ -352,6 +357,27 @@ impl CaptureState {
 const NOTICE_SECONDS: f32 = 30.0;
 const NOTICE_FADE_SECONDS: f32 = 1.2;
 
+/// True if a private program (see [`clipcraft_engine::privacy`]) has a window on the screen.
+fn private_program_open() -> bool {
+    let Ok(windows) = clipcraft_platform::owned_windows() else {
+        return false;
+    };
+    let owners: std::collections::HashSet<u32> = windows
+        .iter()
+        .map(|window| window.process_id)
+        .filter(|process| *process != 0)
+        .collect();
+    if owners.is_empty() {
+        return false;
+    }
+    clipcraft_platform::running_processes(false)
+        .iter()
+        .any(|process| {
+            owners.contains(&process.process_id)
+                && clipcraft_engine::privacy::is_private_program(&process.executable)
+        })
+}
+
 pub(crate) fn notice(
     text: impl Into<String>,
     error: bool,
@@ -418,6 +444,86 @@ impl ClipCraftApp {
         }
     }
 
+    /// True when the recording shows the whole screen, so other programs' windows are in it.
+    fn records_whole_screen(&self) -> bool {
+        if self.capture.game_window_id.is_some() {
+            return false;
+        }
+        let chosen = self.recording.capture_target.as_str();
+        if chosen.is_empty() {
+            return true;
+        }
+        self.capture
+            .targets
+            .iter()
+            .find(|target| target.id == chosen)
+            .is_none_or(|target| target.kind == TargetKind::Display)
+    }
+
+    /// Pauses the recording while a password manager (or another private program) has a window
+    /// open on a recorded screen, and resumes it afterwards. Looks every few seconds, off the
+    /// window's thread.
+    fn watch_private_programs(&mut self) {
+        use clipcraft_engine::privacy::PrivacyStep;
+        let watching = self.recording.pause_for_private_programs
+            && self.capture.session.is_active()
+            && self.records_whole_screen();
+        if !watching {
+            if self.capture.privacy.holding() && self.capture.session.is_active() {
+                self.capture.session.set_paused(false);
+            }
+            self.capture.privacy.reset();
+            self.capture.privacy_scan = None;
+            self.capture.privacy_due = None;
+            return;
+        }
+        if let Some(receiver) = &self.capture.privacy_scan {
+            match receiver.try_recv() {
+                Ok(private_open) => {
+                    self.capture.privacy_scan = None;
+                    self.capture.privacy_due = Some(Instant::now() + Duration::from_secs(3));
+                    let paused = self
+                        .capture
+                        .session
+                        .status()
+                        .is_some_and(|status| status.paused);
+                    match self.capture.privacy.step(private_open, paused) {
+                        PrivacyStep::Pause => {
+                            self.capture.session.set_paused(true);
+                            self.capture.notice = notice(
+                                "Paused: a password manager is open. Clipping carries on when you close it.",
+                                false,
+                                None,
+                            );
+                        }
+                        PrivacyStep::Resume => {
+                            self.capture.session.set_paused(false);
+                            self.capture.notice = notice("Clipping resumed.", false, None);
+                        }
+                        PrivacyStep::Keep => {}
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.capture.privacy_scan = None;
+                    self.capture.privacy_due = Some(Instant::now() + Duration::from_secs(10));
+                }
+            }
+        }
+        if self.capture.privacy_scan.is_none()
+            && self
+                .capture
+                .privacy_due
+                .is_none_or(|due| Instant::now() >= due)
+        {
+            let (sender, receiver) = mpsc::channel();
+            self.capture.privacy_scan = Some(receiver);
+            std::thread::spawn(move || {
+                let _ = sender.send(private_program_open());
+            });
+        }
+    }
+
     /// Tells the person when a damaged settings or library file was replaced from a backup.
     fn report_restored_files(&mut self) {
         let restored = clipcraft_engine::backup::take_restore_notes();
@@ -437,6 +543,7 @@ impl ClipCraftApp {
     pub(crate) fn capture_frame(&mut self, context: &egui::Context) {
         self.report_restored_files();
         self.watch_disk_space();
+        self.watch_private_programs();
         clipcraft_engine::enable_export_hardware(
             self.recording.video_encoder == clipcraft_engine::VideoEncoder::Gpu,
         );
