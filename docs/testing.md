@@ -1266,3 +1266,50 @@ after closing), then write `{"version":1,"gpu_encoding":true,"last_seen_unix":1,
 into it and start again: the box appears when the computer has any Kernel-Power event 41 on record.
 Evidence and what was not run are in [gaps.md](gaps.md#one-copy-at-a-time-and-a-restart-safety-net-follow-up-2026-11-15).
 
+## Building, running and the command line (moved from the README)
+
+
+Install the pinned Rust toolchain with `rustfmt` and `clippy`, then install the license checker:
+
+```sh
+cargo install cargo-deny --version 0.20.2 --locked
+cargo xtask ci
+cargo run --package clipcraft
+```
+
+`cargo xtask ci` runs the same checks as GitHub Actions on Linux and Windows; tests clean their scratch
+folders with a retry so a finishing capture worker cannot make them flaky, and timing checks are tied
+to the behaviour they test (for example the post-roll length) instead of a tight wall clock, so a busy
+CI machine does not fail them (a test that a slow sound device does not hold up the others times
+every step and compares with the 600 ms the device sleeps, not with a tight limit). Longer
+robustness runs are described in [`docs/testing.md`](docs/testing.md): thousands of damaged media,
+settings and draft files, and a ten-minute soak. Run the Windows lint from Linux before pushing:
+`cargo clippy --workspace --target x86_64-pc-windows-gnu --all-targets -- -D warnings`.
+
+Useful local CLI commands:
+
+```sh
+cargo run --package clipcraft-cli -- help
+cargo run --package clipcraft-cli -- capture targets
+cargo run --package clipcraft-cli -- capture record --seconds 30
+cargo run --package clipcraft-cli -- library scan /path/to/clips
+cargo run --package clipcraft-cli -- library probe /path/to/clip.mp4
+cargo run --package clipcraft-cli -- library rename /path/to/clip.mp4 "Ace clutch"
+cargo run --package clipcraft-cli -- clip trim input.mp4 output.mp4 2 8
+cargo run --package clipcraft-cli -- clip export input.mp4 smaller.mp4 2 8 10
+cargo run --package clipcraft-cli -- clip gif input.mp4 clip.gif 2 8
+cargo run --package clipcraft-cli -- clip normalize input.mp4 even.mp4 0 30 -16
+cargo run --package clipcraft-cli -- diagnose
+```
+
+To compare video encoders on real footage, `cargo run --release -p clipcraft-platform --example
+encoder_bench` can read raw pictures (`BENCH_RGBA`) and pick the codec and bitrate; the method and
+a first comparison on an AMD card are in [`docs/windows-performance.md`](docs/windows-performance.md).
+
+The desktop app needs a graphical session and an available capture provider for recording. See
+[`docs/testing.md`](docs/testing.md) for focused test commands and platform evidence requirements.
+For compression, the last CLI argument is the estimated target in decimal MB. In the player, open
+Trim (T), choose an Export option, and save the new file beside the original. If the first encode
+comes out bigger than the target, it is encoded once more at a lower bitrate (and, for a big
+overshoot, a smaller picture) before anything is saved; the completion message and CLI JSON report
+the actual bytes and whether it was re-encoded (`retried`).

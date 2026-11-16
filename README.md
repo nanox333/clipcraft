@@ -1,225 +1,76 @@
 # ClipCraft
 
-**A local-first Rust desktop app for instant game clips: record a replay buffer, save the moment
-with a hotkey, then play, search, trim and export your clips.** It works fully offline. There is no
-account, server, telemetry, upload or share-link service, and everything you record stays on your
-computer.
+**Instant game clips that stay on your computer.** Record a replay buffer, press a key to save the
+moment, then trim, edit and share it. No account, no server, no upload.
 
-> **Status: early release.** Version 0.3.0 is the latest published release.
-> The current source has Windows/AMD and Linux/X11 generated-capture evidence, while real games,
-> other devices and Wayland remain incompletely tested. macOS capture is not implemented. See
-> [`docs/gaps.md`](docs/gaps.md) for current evidence and limits.
+> **Early release (0.3.0).** Tested on Windows/AMD and Linux/X11 with generated captures. Real
+> games, other graphics cards and Wayland are not fully tested, and macOS capture is not built yet.
+> [`docs/gaps.md`](docs/gaps.md) lists what is verified and what is not.
 
-Automated checks run on Linux and Windows; they do not replace testing on real capture hardware.
+## Get it
 
-## Download
+Download [ClipCraft 0.3.0](https://github.com/nanox333/clipcraft/releases/tag/v0.3.0): a Windows
+installer (or portable zip) or a Linux tarball. Downloads are not code-signed, so Windows may warn;
+choose *More info*, then *Run anyway*. ClipCraft can tell you about updates (Settings → About) and
+never goes online if you turn that off.
 
-Download [ClipCraft 0.3.0](https://github.com/nanox333/clipcraft/releases/tag/v0.3.0) as a Windows
-**ClipCraft-Setup** installer or a Linux x86_64 tarball. The command-line tool is available as a
-separate download. The Windows installer works for the current user and needs no administrator
-rights or account. Windows also has a **portable zip** (`…-windows-x86_64-portable.zip`: unzip anywhere and run
-`bin\clipcraft.exe`; nothing is installed), and the command-line tool is its own release
-(`cli-v<version>`) rather than a file in the app's release.
+## What you can do
 
-Check a download against `SHA256SUMS.txt` if you like. Downloads are not code-signed, so Windows
-SmartScreen may warn: choose *More info*, then *Run anyway*. ClipCraft can tell you when a newer
-version is published and install it for you (Settings → About); turn the automatic check off under
-Settings → General and it never goes online. See [`CHANGELOG.md`](CHANGELOG.md) for each release.
+- **Clip:** record a screen or game window into a replay buffer and save the last moments with a
+  hotkey. Game-only mode follows a recognized game by itself.
+- **Sound:** game, Discord, music and microphone on separate tracks, each with its own level.
+- **Browse:** a searchable library with favorites, collections, game labels, a list or picture
+  cards, and drag-to-reorder.
+- **Choose many:** **Select** clips, drag a box around them, then favorite, collect or delete them
+  together, with **Undo**.
+- **Edit:** trim, split, fade, add styled text, step frame by frame, and export in 16:9, 9:16, 1:1
+  and other shapes, or as a small file or GIF for Discord.
+- **Share:** drag a clip straight into Discord or any program that takes files.
+- **Script it:** `clipcraft-cli` runs the same commands as the app.
 
-New profiles get a short setup for storage, capture, audio and shortcuts; its last page offers
-to start ClipCraft quietly (in the tray on Windows, no window, pop-ups or sounds) when you sign in. Each hotkey action
-supports up to five shortcuts: use **+** in Settings → Hotkeys. **Clip-length shortcuts** give
-keys their own clip length, for example Shift + F8 for the last 2 minutes next to F8 for the
-whole replay.
-On Wayland, ClipCraft asks the desktop's Global Shortcuts portal to register keys. Settings →
-Hotkeys shows the desktop's assigned keys and offers an explicit, default-off keyboard-device
-fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
+## Your clips stay safe
 
-## What it does
-
-- **Record and replay:** a safety watchdog (on by default) lightens and, if needed, stops clipping if
-  ClipCraft itself uses nearly all of the processor for a long time or far too much memory, so it
-  cannot starve the computer, and an internal error inside a recording is reported at once with the
-  replay kept. A problem while drawing a screen no longer closes the program: it keeps recording,
-  shows a fallback screen and writes a local note (`crash-reports.log`); if the window cannot be
-  opened at all, or an internal error ends the program, a message box says so instead of the
-  program vanishing. Automatic quality (on by default) records half, then a third, of the
-  pictures per second when the computer cannot keep up, and goes back when there is room, without
-  clearing the replay. It also steps down before anything is lost when a game starts taking the
-  computer and each picture suddenly takes much longer to encode. Pause and resume clipping with a hotkey or the Pause button, and an optional
-  setting that starts the replay over after each save so clips never repeat footage. If a game
-  window delivers only black, ClipCraft switches to recording the screen in the same recording.
-  Capture a screen or game window into a bounded replay buffer and save the
-  last moments with a global hotkey. Game-only mode waits until a recognized game is running and
-  follows it to the window it actually draws in, even when a launcher starts the game process;
-  if no window can be found it records the screen until one appears.
-  The capture bar shows the available replay against the requested clip length and reports when
-  buffered footage is cleared by a source or recording-stream change. Hover over it for the
-  encoder, frame counts, output size, and audio-source status.
-- **Encoding:** hardware H.264 and H.265 on supported GPUs (Windows), or a built-in software H.264
-  encoder tuned for screen recording (desktop clips are about a third smaller than before). If the graphics-card encoder fails or is busy, recording
-  continues on the processor and the card is tried again every 20 s or longer. On Windows, if the
-  computer restarts unexpectedly while the card was encoding, ClipCraft asks at the next start
-  whether to record with the processor instead (it cannot tell what caused the restart).
-- **One copy at a time:** a second launch (a Desktop copy next to an installed one, both set to start
-  with Windows) exits instead of recording twice; started by hand, it brings the running window
-  forward.
-- **Audio:** per-application sound (Windows 10 2004 or newer, or Linux with PulseAudio or PipeWire
-  and the `pactl`/`parec` tools): record the game, Discord or a music
-  player on a track of its own, each with its own level, picked up when it starts playing. A device that is unplugged and comes back (or a program that starts playing later) is picked up
-  without holding up the other sources. System sound and microphone, mixed or on separate tracks, with optional offline
-  microphone noise suppression and a mic test.
-- **Share:** drag a clip from the library (or the **Drag into Discord** button on its page) straight
-  into a Discord chat or any program that takes files. A clip bigger than the size chosen in
-  Settings (10, 25, 50 or 500 MB) is first made into a smaller copy, which starts when the pointer
-  rests on the clip. Works on Windows and Linux under X11; elsewhere use **Copy file**, which
-  puts the clip on the clipboard to paste (Linux needs `wl-copy` or `xclip`). Exports can also be
-  sized for Discord (10, 50 or 500 MB).
-- **Library:** a searchable local clip library with favorites, collections and game labels, shown
-  as picture cards in three sizes or as a list, with a heading for each day. Drag clips into an
-  order of your own, and choose the colour and mark of each game in the sidebar.
-  Rename a clip (F2) without losing its favorite, collections or game, and delete clips to the
-  Recycle Bin from a right-click menu. A focused card opens with Enter and favorites with F.
-- **Playback and editing:** smooth playback, quick trims, small-file and GIF export, loudness
-  evening, and a small sequence editor with styled text (fonts, weights, outline, background box),
-  fades, colour effects, frame-by-frame stepping at each clip's own frame rate, and export in the
-  picture shape you choose: 16:9, 9:16, 1:1, 4:5 and more, with the clip fitted, blurred behind,
-  cropped or stretched.
-- **Desktop:** one shared spacing, radius, type and control-height scale (`kit::space`, `kit::radius`, `kit::text_size`, `kit::control`) across every screen; searchable, categorized Settings; system tray (Windows); a "clip saved" pop-up that
-  never takes focus from your game; optional Discord Rich Presence.
-- **Bug reports:** Settings → About lets you prepare and review a report locally, optionally add
-  basic recording settings, and copy it. Open the GitHub form separately if you choose to share it.
-- **Command line:** `clipcraft-cli` runs the same commands as the app.
-
-For a bug report without the desktop UI, pass JSON such as
-`{"observed":"Clipping stopped","steps":"Press F8","include_settings":false}` to
-`clipcraft-cli bug-report` on standard input. It prints the report locally and does not submit it.
-
-Details and known limits for every feature are in [`docs/features.md`](docs/features.md).
-
-## Measured performance
-
-Numbers from real runs, with their limits, in [`docs/windows-performance.md`](docs/windows-performance.md)
-and [`docs/performance.md`](docs/performance.md). They use a generated workload (a moving window and a
-tone), not a real game, on one AMD Ryzen 7 5700X3D with an AMD graphics card, so read them as what
-ClipCraft itself costs, not as FPS in your game:
-
-| Run (Windows, graphics-card encoder) | Result |
-| --- | --- |
-| 1080p60, one minute | 31.5% of one logical core on average (including the generated workload), about 169 MiB of memory, 13 of 3,602 pictures dropped (0.36%), no frame copied back to the processor |
-| 1080p30, two hours | 8 of 216,000 pictures dropped (0.0037%), memory peak 178 MiB, 24 of 24 saved checkpoints decoded cleanly |
-
-On a processor-only Linux test machine the built-in encoder reached about 53 pictures a second at
-1440x900 on two threads. Not measured: a real game, other graphics cards, power use.
+- Everything stays on your computer. Original clips are never overwritten by trim or export.
+- Deleting goes to the Recycle Bin, with an Undo. The storage limit never touches favorites, clips in
+  a collection or clips in an open edit.
+- Every saved clip is reopened and checked, and you are warned when the disk is getting full.
+- Settings and the library keep rolling backups and recover from a damaged file.
+- Recording pauses while a password manager is open (you can turn this off).
+- If ClipCraft keeps failing to start, it opens with default settings and keeps your old ones.
+- A watchdog slows down or stops clipping if it would starve your computer, and an internal error
+  never closes the program or loses the replay.
 
 ## Screenshots
 
-ClipCraft 0.2.0 on Linux, shown with generated sample clips.
+![The clip library](docs/screenshots/library.png)
+![The editor](docs/screenshots/editor.png)
+![Capture settings](docs/screenshots/capture-settings.png)
 
-**Clip library** — browse, search, and send a clip to the editor.
-
-![ClipCraft's local clip library with three sample clips](docs/screenshots/library.png)
-
-**Editor** — arrange clips, split them on the timeline, and export the result.
-
-![ClipCraft's editor showing sample clips and a split timeline](docs/screenshots/editor.png)
-
-**Capture settings** — choose a game or desktop source and configure recording.
-
-![ClipCraft's capture settings showing desktop recording options](docs/screenshots/capture-settings.png)
-
-## Planned, not built
-
-Windows/Linux/macOS game-only capture evidence, a low-copy GPU capture path, opt-in client-side
-encrypted backups, controller shortcuts and overlays. Voice/video calls, social feeds and sharing
-links are not planned. See the [roadmap](ROADMAP.md) and [backlog](docs/backlog.md).
-
-## Privacy and design
-
-The app, engine, capture, playback, CLI and tooling are Rust workspace crates, using pinned
-open-source [FilmCraft](docs/adr/0004-filmcraft-crates.md) crates for media. Captured media,
-settings, thumbnails and the library index stay on the device, and source clips are never
-overwritten by trim or export. FFmpeg is used only as an external test tool. Source boundaries are
-in [`docs/upstream-ports.md`](docs/upstream-ports.md).
-
-ClipCraft guards the computer it runs on: it caps its own memory use and file growth, ends clipboard
-tools that hang, only ever contacts GitHub (for the optional update check), and a watchdog lightens
-and then stops clipping if ClipCraft itself would starve the processor. Dependencies are checked
-against the RustSec advisory list before each release (`cargo deny check advisories`). Updates
-are verified against a published checksum and, once a release key is configured, an ed25519
-signature (see `docs/release-checklist.md`).
-
-To recognize games, ClipCraft reads the list of running programs and Steam's local game-list
-files on your computer; nothing from them leaves the device. Steam's files are re-read only when
-a game is installed or removed (or on Refresh, or every 30 minutes). On Windows it finds Steam's
-folder from the registry, so Steam installed on another drive works too. Turn off **Switch recording
-automatically** in Settings → Games to stop both.
-
-## Build, run, and test
-
-Install the pinned Rust toolchain with `rustfmt` and `clippy`, then install the license checker:
+## Build and run
 
 ```sh
 cargo install cargo-deny --version 0.20.2 --locked
-cargo xtask ci
+cargo xtask ci            # the same checks as GitHub Actions
 cargo run --package clipcraft
 ```
 
-`cargo xtask ci` runs the same checks as GitHub Actions on Linux and Windows; tests clean their scratch
-folders with a retry so a finishing capture worker cannot make them flaky, and timing checks are tied
-to the behaviour they test (for example the post-roll length) instead of a tight wall clock, so a busy
-CI machine does not fail them (a test that a slow sound device does not hold up the others times
-every step and compares with the 600 ms the device sleeps, not with a tight limit). Longer
-robustness runs are described in [`docs/testing.md`](docs/testing.md): thousands of damaged media,
-settings and draft files, and a ten-minute soak. Run the Windows lint from Linux before pushing:
-`cargo clippy --workspace --target x86_64-pc-windows-gnu --all-targets -- -D warnings`.
+More on the command line, tests and benchmarks is in [`docs/testing.md`](docs/testing.md).
 
-Useful local CLI commands:
+## Learn more
 
-```sh
-cargo run --package clipcraft-cli -- help
-cargo run --package clipcraft-cli -- capture targets
-cargo run --package clipcraft-cli -- capture record --seconds 30
-cargo run --package clipcraft-cli -- library scan /path/to/clips
-cargo run --package clipcraft-cli -- library probe /path/to/clip.mp4
-cargo run --package clipcraft-cli -- library rename /path/to/clip.mp4 "Ace clutch"
-cargo run --package clipcraft-cli -- clip trim input.mp4 output.mp4 2 8
-cargo run --package clipcraft-cli -- clip export input.mp4 smaller.mp4 2 8 10
-cargo run --package clipcraft-cli -- clip gif input.mp4 clip.gif 2 8
-cargo run --package clipcraft-cli -- clip normalize input.mp4 even.mp4 0 30 -16
-cargo run --package clipcraft-cli -- diagnose
-```
+| | |
+| --- | --- |
+| [`docs/features.md`](docs/features.md) | every feature, with platform limits |
+| [`docs/how-it-works.md`](docs/how-it-works.md) | recording, saving, the library and export, start to finish |
+| [`docs/gaps.md`](docs/gaps.md) | what is verified, what is not |
+| [`CHANGELOG.md`](CHANGELOG.md) | what each release contains |
+| [`ROADMAP.md`](ROADMAP.md), [`docs/backlog.md`](docs/backlog.md) | what is planned |
+| [`docs/architecture.md`](docs/architecture.md), [`docs/testing.md`](docs/testing.md) | how it is built and checked |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md), [`AGENTS.md`](AGENTS.md) | contributor rules |
+| [`ATTRIBUTION.md`](ATTRIBUTION.md), [`docs/upstream-ports.md`](docs/upstream-ports.md) | assets, licenses and ports |
 
-To compare video encoders on real footage, `cargo run --release -p clipcraft-platform --example
-encoder_bench` can read raw pictures (`BENCH_RGBA`) and pick the codec and bitrate; the method and
-a first comparison on an AMD card are in [`docs/windows-performance.md`](docs/windows-performance.md).
+Not planned: voice or video calls, social feeds, share links. Planned: opt-in encrypted backups,
+controller shortcuts and overlays.
 
-The desktop app needs a graphical session and an available capture provider for recording. See
-[`docs/testing.md`](docs/testing.md) for focused test commands and platform evidence requirements.
-For compression, the last CLI argument is the estimated target in decimal MB. In the player, open
-Trim (T), choose an Export option, and save the new file beside the original. If the first encode
-comes out bigger than the target, it is encoded once more at a lower bitrate (and, for a big
-overshoot, a smaller picture) before anything is saved; the completion message and CLI JSON report
-the actual bytes and whether it was re-encoded (`retried`).
-
-## Project docs
-
-- [`CHANGELOG.md`](CHANGELOG.md) — what each release contains.
-- [`docs/how-it-works.md`](docs/how-it-works.md) — how recording, saving, game detection, the
-  library, export and the editor work, start to finish.
-- [`docs/features.md`](docs/features.md) — detailed features and platform limits.
-- [`ROADMAP.md`](ROADMAP.md) — milestone status and release gates.
-- [`PLAN.md`](PLAN.md) — product direction, architecture choices, and intended MVP.
-- [`docs/gaps.md`](docs/gaps.md) — ranked limitations and the evidence behind each status.
-- [`docs/backlog.md`](docs/backlog.md) — stable work IDs, requirements, and acceptance evidence.
-- [`AGENTS.md`](AGENTS.md), [`CLAUDE.md`](CLAUDE.md), and [`CONTRIBUTING.md`](CONTRIBUTING.md) —
-  contributor rules and workflow.
-- [`docs/architecture.md`](docs/architecture.md), [`docs/testing.md`](docs/testing.md), and
-  [`docs/issue-requirements.md`](docs/issue-requirements.md) — implementation boundaries and
-  verification requirements.
-- [`ATTRIBUTION.md`](ATTRIBUTION.md) — shipped assets and licenses.
-- [`docs/upstream-ports.md`](docs/upstream-ports.md) — the scope, source, and revisions of Rust ports from reference projects.
-
-Documentation is part of every implementation change. The PR gate requires changes under `apps/`,
-`crates/`, or `tools/` to update both this README and [`docs/gaps.md`](docs/gaps.md); update the
-roadmap, backlog, architecture, and testing docs when their status or guidance changes.
+Documentation ships with code: changes under `apps/`, `crates/` or `tools/` must update this file and
+[`docs/gaps.md`](docs/gaps.md).

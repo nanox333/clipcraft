@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Choose many clips at once:** a **Select** button on the Clips page. Click, Shift-click for a
+  range, drag a box over empty space (Ctrl or Shift adds), Ctrl or ⌘ and A for all, Esc to leave.
+  Then **Favorite**, put in a **Collection** (or a new one) or **Delete**. Delete names the clips,
+  leaves favorites out unless you say otherwise, sends them to the Recycle Bin and keeps an **Undo**
+  on screen for 10 seconds.
+- **Safer by default:** the storage limit no longer touches favorites, clips in a collection or
+  clips in an open edit, and moves old clips to the Recycle Bin instead of deleting them for good;
+  every saved clip is reopened and checked; a warning when the disk is getting full; three rolling
+  backups of the settings and library, used if a file is damaged; the recording pauses while a
+  password manager is open (Settings, on by default); discarding the editor draft asks first; and
+  after three failed starts ClipCraft offers to start with default settings.
 - **A redesigned window:** a calmer capture bar (a status capsule with a replay meter and one
   lime action: *Save last 30 s* while clipping, *Start clipping* when idle); notifications that
   slide in at the bottom, stay for 30 seconds and fade; a clearer first-run screen; short **?**

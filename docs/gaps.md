@@ -18,6 +18,49 @@ packages, and the downloaded files matched their checksums. Windows clean-machin
 install/update/uninstall, real game capture and real
 Wayland portal behavior remain unverified. The release packages are unsigned.
 
+## Choosing many clips, and keeping them safe (2026-11-16)
+
+Built: a **Select** button on the Clips page. Click clips to choose them, Shift-click for a range,
+drag a box over empty space like on a desktop (Ctrl or Shift adds to what is chosen), Ctrl or ⌘ and
+A for all shown clips, Esc to leave. A bar then offers **Favorite**, **Collection** (a tick or a
+dash for each collection, and a field for a new one) and **Delete**. Delete asks first, names the
+clips and the space they use, leaves favorites out unless the box for them is ticked, and moves the
+clips to the Recycle Bin with a 10-second **Undo** notice. At most 500 clips go in one delete.
+
+Safety measures that came with it:
+
+- **Favorites and collections are protected from the storage limit.** The oldest-first clean-up
+  skips favorites, clips in a collection and clips used in an open edit, and says how many it moved
+  (to the Recycle Bin, no longer deleted for good).
+- **Each saved clip is reopened and checked** (size, picture, length, sound). A clip that may be
+  damaged is reported at once instead of discovered later.
+- **Low disk space** is reported while recording (under 2 GB, and again under 500 MB).
+- **Rolling backups** (three, at most one a day) of the settings and the library index. A damaged
+  file is set aside and the newest backup that reads takes its place, with a notice.
+- **A password manager pauses the recording** (Settings, on by default) while one of a built-in list
+  has a window open on a recorded screen, and the recording carries on when it is closed. A pause
+  or resume you chose yourself is never undone.
+- **Discarding the editor's saved draft asks first.**
+- **After three starts in a row that never got going,** ClipCraft opens with default settings and
+  asks whether to keep them (the saved settings are kept beside them) or go back to the saved ones.
+
+Checked here (Linux): unit tests for the selection maths (ranges, box, the 500 limit, favorite and
+collection edits), the delete summary (favorites left out, missing files), the undo window, the
+storage clean-up skipping protected clips, the clip check on good, truncated and picture-less files,
+the disk levels, the backup rotation and restore (settings and index), the pause rules, the start
+counter and the settings copy.
+
+Not checked: any of it on Windows (type-checked and linted only), including the Recycle Bin, drag
+selection with a mouse and the process list the password-manager pause reads; a clip check on
+hardware-encoded files; a low disk on a real full disk (the thresholds are unit-tested; the free
+space call was run on Linux only); the three-starts safe start with a real crash.
+
+Known limits: the pause only knows programs on its list (1Password, Bitwarden, KeePass, KeePassXC,
+Dashlane, Enpass, Keeper, LastPass, NordPass, Proton Pass, RoboForm, Authy), not websites in a
+browser, and it does not react to the screen lock; an Undo works only while the notice is shown;
+deleting one clip from its own page still uses the older dialog without the 10-second Undo; a backup
+can be up to a day old.
+
 ## Window redesign round (2026-11-16)
 
 Built: the capture bar capsule and its one lime action; bottom notifications that slide in, stay
