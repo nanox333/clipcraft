@@ -1392,7 +1392,8 @@ impl ClipCraftApp {
             .corner_radius(egui::CornerRadius::same(22))
             .inner_margin(egui::Margin::symmetric(14, 2))
             .show(ui, |ui| {
-                ui.set_min_height(32.0);
+                // Exactly one control row tall: it must not stretch to the height of the bar.
+                ui.set_height(28.0);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
                     // The dot breathes while clipping.

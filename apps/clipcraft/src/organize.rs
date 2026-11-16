@@ -340,19 +340,32 @@ fn rail_row_with_badge(
     response
 }
 
-fn section_header(ui: &mut egui::Ui, title: &str) -> egui::Response {
+fn section_header(ui: &mut egui::Ui, title: &str, help: Option<&str>) -> egui::Response {
     ui.add_space(crate::kit::space::MD);
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(ui.available_width().max(0.0), 22.0),
         egui::Sense::click(),
     );
-    ui.painter().text(
-        egui::pos2(rect.left() + 10.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
+    let galley = ui.painter().layout_no_wrap(
         title.to_uppercase(),
         egui::FontId::new(crate::kit::text_size::CAPTION, kit::semibold()),
         FAINT,
     );
+    let width = galley.size().x;
+    ui.painter().galley(
+        egui::pos2(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        FAINT,
+    );
+    if let Some(help) = help {
+        // The "?" explains the section, so no sentence has to sit under it.
+        kit::help_at(
+            ui,
+            egui::pos2(rect.left() + 10.0 + width + 14.0, rect.center().y),
+            response.id.with("help"),
+            help,
+        );
+    }
     response
 }
 
@@ -380,7 +393,11 @@ pub fn rail(
             }
 
             // Collections, with a "+" to start a new one.
-            let header = section_header(ui, "Collections");
+            let header = section_header(
+                ui,
+                "Collections",
+                Some("Group clips your way. Press + to make a collection, or make one from a clip's page."),
+            );
             let plus = egui::Rect::from_center_size(
                 egui::pos2(header.rect.right() - 16.0, header.rect.center().y),
                 Vec2::splat(22.0),
@@ -420,24 +437,15 @@ pub fn rail(
             }
             if edit.as_ref().is_some_and(|edit| edit.original.is_none()) {
                 edit_row(ui, edit, &mut actions);
-            } else if result.collections.is_empty() {
-                ui.label(
-                    RichText::new("Group clips your way. Press + to make one.")
-                        .color(FAINT)
-                        .size(crate::kit::text_size::CAPTION),
-                );
             }
 
             // Games.
             let groups = &view.games;
-            section_header(ui, "Games");
-            if groups.is_empty() {
-                ui.label(
-                    RichText::new("Games appear from recordings, folders and file names.")
-                        .color(FAINT)
-                        .size(crate::kit::text_size::CAPTION),
-                );
-            }
+            section_header(
+                ui,
+                "Games",
+                Some("Games appear from recordings, folders and file names. Right-click a game to change its colour or mark."),
+            );
             for group in groups {
                 let selected = matches!(filter, LibraryFilter::Game(open) if open.to_lowercase() == group.name.to_lowercase());
                 let look = badge_look(&group.name, badges);

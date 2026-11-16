@@ -195,11 +195,22 @@ impl ClipCraftApp {
                     favorite = Some(!entry.favorite);
                 }
                 ui.add_space(crate::kit::space::MD);
-                ui.label(
-                    RichText::new("Game")
-                        .color(MUTED)
-                        .size(crate::kit::text_size::CAPTION),
-                );
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.label(
+                        RichText::new("Game")
+                            .color(MUTED)
+                            .size(crate::kit::text_size::CAPTION),
+                    );
+                    kit::help(
+                        ui,
+                        if entry.game.is_some() {
+                            "Set by you. Clear the box to use the detected game."
+                        } else {
+                            "Detected from the folder or file name. Type to change it."
+                        },
+                    );
+                });
                 if let Some((_, text)) = self.game_draft.as_mut() {
                     let field = kit::field_frame()
                         .show(ui, |ui| {
@@ -221,21 +232,19 @@ impl ClipCraftApp {
                         }
                     }
                 }
-                ui.label(
-                    RichText::new(if entry.game.is_some() {
-                        "Set by you. Clear the box to use the detected game."
-                    } else {
-                        "Detected from the folder or file name. Type to change it."
-                    })
-                    .color(FAINT)
-                    .size(crate::kit::text_size::CAPTION),
-                );
                 ui.add_space(crate::kit::space::MD);
-                ui.label(
-                    RichText::new("Collections")
-                        .color(MUTED)
-                        .size(crate::kit::text_size::CAPTION),
-                );
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.label(
+                        RichText::new("Collections")
+                            .color(MUTED)
+                            .size(crate::kit::text_size::CAPTION),
+                    );
+                    kit::help(
+                        ui,
+                        "Group clips your way. A collection shows in the Clips sidebar, and a clip can be in several.",
+                    );
+                });
                 ui.add_space(crate::kit::space::XS);
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing =
@@ -283,11 +292,6 @@ impl ClipCraftApp {
                         }
                         cancel_draft = true;
                     }
-                    ui.label(
-                        RichText::new("Enter to create and add this clip. Escape to cancel.")
-                            .color(FAINT)
-                            .size(crate::kit::text_size::CAPTION),
-                    );
                 }
             });
         if cancel_draft {
@@ -436,12 +440,6 @@ impl ClipCraftApp {
                         self.ask_to_delete(entry.clone());
                     }
                 });
-                ui.add_space(crate::kit::space::XS);
-                ui.label(
-                    RichText::new("Quick trim and export is available below the player.")
-                        .color(MUTED)
-                        .size(crate::kit::text_size::CAPTION),
-                );
             });
     }
 

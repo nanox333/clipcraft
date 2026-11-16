@@ -522,6 +522,37 @@ pub fn labelled_button_sensing(
     response
 }
 
+/// A small "?" that explains something when the pointer rests on it (or it has the keyboard focus),
+/// so a sentence of help does not have to take up room on the page.
+pub fn help_at(ui: &mut egui::Ui, center: Pos2, id: egui::Id, text: &str) {
+    let rect = Rect::from_center_size(center, Vec2::splat(20.0));
+    let response = ui.interact(rect, id, Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Help"));
+    let hot = response.hovered() || response.has_focus();
+    let ink = if hot { LIME } else { FAINT };
+    ui.painter()
+        .circle_stroke(center, 8.0, Stroke::new(1.0_f32, ink));
+    ui.painter().text(
+        center,
+        Align2::CENTER_CENTER,
+        "?",
+        FontId::new(10.5, semibold()),
+        if hot { LIME } else { MUTED },
+    );
+    response
+        .on_hover_cursor(egui::CursorIcon::Help)
+        .on_hover_ui(|ui| {
+            ui.set_max_width(270.0);
+            ui.label(egui::RichText::new(text).color(TEXT).size(text_size::SMALL));
+        });
+}
+
+/// A "?" in the flow of a row, after what it explains.
+pub fn help(ui: &mut egui::Ui, text: &str) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
+    help_at(ui, rect.center(), ui.id().with(("help", text)), text);
+}
+
 /// The heading over a group of settings, with a short lime tick ahead of it.
 pub fn section_heading(ui: &mut egui::Ui, title: &str) {
     ui.horizontal(|ui| {
@@ -535,6 +566,23 @@ pub fn section_heading(ui: &mut egui::Ui, title: &str) {
                 .size(text_size::LEAD)
                 .family(semibold()),
         );
+    });
+    ui.add_space(space::MD);
+}
+
+/// `section_heading` with a "?" after the title.
+pub fn section_heading_with_help(ui: &mut egui::Ui, title: &str, help_text: &str) {
+    ui.horizontal(|ui| {
+        let (tick, _) = ui.allocate_exact_size(Vec2::new(3.0, 16.0), egui::Sense::hover());
+        ui.painter().rect_filled(tick, 1.5, LIME);
+        ui.add_space(space::XS);
+        ui.label(
+            egui::RichText::new(title)
+                .color(TEXT)
+                .size(text_size::LEAD)
+                .family(semibold()),
+        );
+        help(ui, help_text);
     });
     ui.add_space(space::MD);
 }

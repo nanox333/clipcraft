@@ -464,7 +464,11 @@ pub(crate) fn overview(
         ui.add_space(crate::kit::space::SM);
     }
     ui.add_space(crate::kit::space::XL);
-    section_heading(ui, "Profiles");
+    kit::section_heading_with_help(
+        ui,
+        "Profiles",
+        "A profile sets quality, encoder and effort together. You can still change each one in Video.",
+    );
     let width = ((ui.available_width() - gap * 2.0) / 3.0).max(80.0);
     let mut chosen = None;
     ui.horizontal(|ui| {
@@ -478,12 +482,6 @@ pub(crate) fn overview(
     if let Some(apply) = chosen {
         apply(settings);
     }
-    ui.add_space(crate::kit::space::SM);
-    ui.label(
-        RichText::new("A profile sets quality, encoder and effort together. You can still change each one in Video.")
-            .color(FAINT)
-            .size(crate::kit::text_size::CAPTION),
-    );
     ui.add_space(crate::kit::space::XXL);
     let changed = changed_count(settings);
     ui.label(
