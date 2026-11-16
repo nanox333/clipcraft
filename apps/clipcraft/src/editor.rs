@@ -94,6 +94,8 @@ pub struct EditorState {
     selected: Option<u64>,
     playhead: Tick,
     playing: bool,
+    /// Start again from the beginning when the edit ends.
+    looping: bool,
     preview: Option<crate::playback::Playback>,
     preview_id: Option<u64>,
     preview_source: Option<PreviewSource>,
@@ -145,6 +147,7 @@ impl Default for EditorState {
             selected: None,
             playhead: Tick::ZERO,
             playing: false,
+            looping: false,
             preview: None,
             preview_id: None,
             preview_source: None,
@@ -385,6 +388,36 @@ impl EditorState {
         self.invalidate_preload();
         self.clock = None;
     }
+    /// Where each segment starts, then where the edit ends.
+    fn cuts(&self) -> Vec<Tick> {
+        let mut at = Tick::ZERO;
+        let mut cuts = vec![at];
+        for clip in self.session.clips() {
+            at = at + clip.duration();
+            cuts.push(at);
+        }
+        cuts
+    }
+    /// The start of this segment, or of the one before when already at its start.
+    fn previous_cut(&mut self) {
+        let before = self.playhead - RATE.frame_duration();
+        let target = self
+            .cuts()
+            .into_iter()
+            .rev()
+            .find(|cut| *cut < before)
+            .unwrap_or(Tick::ZERO);
+        self.seek(target);
+    }
+    /// The start of the next segment, or the end of the edit.
+    fn next_cut(&mut self) {
+        let target = self
+            .cuts()
+            .into_iter()
+            .find(|cut| *cut > self.playhead)
+            .unwrap_or_else(|| self.session.duration());
+        self.seek(target);
+    }
     fn toggle(&mut self) {
         if !self.has_clips() {
             return;
@@ -455,8 +488,12 @@ impl EditorState {
                     .min(self.session.duration());
             }
             if self.playhead >= self.session.duration() {
-                self.playing = false;
-                self.clock = None;
+                if self.looping {
+                    self.seek(Tick::ZERO);
+                } else {
+                    self.playing = false;
+                    self.clock = None;
+                }
             }
         }
         let Some((clip, source_time)) = self
@@ -845,6 +882,12 @@ impl EditorState {
         if pressed(none, egui::Key::Space) {
             self.toggle();
         }
+        if pressed(none, egui::Key::Home) {
+            self.seek(Tick::ZERO);
+        }
+        if pressed(none, egui::Key::End) {
+            self.seek(self.session.duration());
+        }
         if pressed(none, egui::Key::ArrowLeft) {
             self.playing = false;
             self.seek(self.playhead - RATE.frame_duration());
@@ -1159,6 +1202,71 @@ impl EditorState {
                                 && any
                             {
                                 self.toggle();
+                            }
+                            // Around play: a frame at a time, and from cut to cut.
+                            let mut step = |dx: f32, id: &str, glyph: Glyph, tip: &str| {
+                                transport_button(
+                                    ui,
+                                    row.center() + Vec2::new(dx, 0.0),
+                                    id,
+                                    glyph,
+                                    false,
+                                    any,
+                                    tip,
+                                )
+                            };
+                            let previous = step(
+                                -88.0,
+                                "cut-back",
+                                Glyph::Icon(kit::Icon::StepBack),
+                                "Previous cut",
+                            );
+                            let back = step(
+                                -46.0,
+                                "frame-back",
+                                Glyph::Chevron(-1.0),
+                                "Back one frame (\u{2190})",
+                            );
+                            let forward = step(
+                                46.0,
+                                "frame-forward",
+                                Glyph::Chevron(1.0),
+                                "Forward one frame (\u{2192})",
+                            );
+                            let next = step(
+                                88.0,
+                                "cut-forward",
+                                Glyph::Icon(kit::Icon::StepForward),
+                                "Next cut",
+                            );
+                            if transport_button(
+                                ui,
+                                egui::pos2(row.left() + 14.0, row.center().y),
+                                "loop",
+                                Glyph::Icon(kit::Icon::Loop),
+                                self.looping,
+                                any,
+                                if self.looping {
+                                    "Loop is on: playback starts over at the end"
+                                } else {
+                                    "Loop: start over at the end"
+                                },
+                            ) {
+                                self.looping = !self.looping;
+                            }
+                            if previous {
+                                self.previous_cut();
+                            }
+                            if back {
+                                self.playing = false;
+                                self.seek(self.playhead - RATE.frame_duration());
+                            }
+                            if forward {
+                                self.playing = false;
+                                self.seek(self.playhead + RATE.frame_duration());
+                            }
+                            if next {
+                                self.next_cut();
                             }
                             // The time passed in the text colour, the total beside it quieter.
                             let total = ui.painter().layout_no_wrap(
@@ -1827,6 +1935,71 @@ const TRANSITIONS: [TransitionItem; 8] = [
         kind: TransitionKind::All(TransitionPreset::None),
     },
 ];
+
+/// What a transport button shows.
+#[derive(Clone, Copy)]
+enum Glyph {
+    Icon(kit::Icon),
+    /// A chevron pointing left (-1) or right (1).
+    Chevron(f32),
+}
+
+/// A small round-cornered icon button centred on `centre`, placed without moving the layout cursor.
+/// Lime while it is switched on.
+fn transport_button(
+    ui: &mut egui::Ui,
+    centre: egui::Pos2,
+    id: &str,
+    glyph: Glyph,
+    on: bool,
+    enabled: bool,
+    tip: &str,
+) -> bool {
+    let rect = egui::Rect::from_center_size(centre, Vec2::splat(30.0));
+    let response = ui.interact(
+        rect,
+        egui::Id::new(("editor-transport", id)),
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tip));
+    if response.hovered() && enabled {
+        ui.painter().rect_filled(
+            rect,
+            f32::from(crate::kit::radius::MD),
+            Color32::from_white_alpha(16),
+        );
+    }
+    let colour = if !enabled {
+        FAINT
+    } else if on {
+        LIME
+    } else if response.hovered() {
+        TEXT
+    } else {
+        MUTED
+    };
+    match glyph {
+        Glyph::Icon(icon) => kit::draw_icon(ui.painter(), centre, icon, colour, 0.8),
+        // A plain chevron: one frame at a time.
+        Glyph::Chevron(way) => {
+            let stroke = Stroke::new(2.0_f32, colour);
+            let tip = centre + Vec2::new(4.0 * way, 0.0);
+            let wing = Vec2::new(-5.0 * way, 6.0);
+            ui.painter().line_segment([tip + wing, tip], stroke);
+            ui.painter()
+                .line_segment([tip, tip + Vec2::new(wing.x, -wing.y)], stroke);
+        }
+    }
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(tip)
+        .clicked()
+        && enabled
+}
 
 /// A pill tab like the ones above the Library.
 fn tab_pill(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
@@ -2866,6 +3039,49 @@ mod tests {
         assert!(state.has_clips());
         state.open = true;
         assert_eq!(state.session.duration(), Tick::from_units(2, 1));
+    }
+    #[test]
+    fn transport_jumps_between_cuts_steps_frames_and_loops() {
+        let mut state = state();
+        let context = crate::kit::test_context();
+        frame(&mut state, &context, vec![], Vec2::new(1440.0, 900.0));
+        // Cut at one second and again at three: segments of 1, 2 and 1 seconds.
+        state.seek(Tick::from_units(1, 1));
+        key(&mut state, &context, egui::Key::S, egui::Modifiers::NONE);
+        state.seek(Tick::from_units(3, 1));
+        key(&mut state, &context, egui::Key::S, egui::Modifiers::NONE);
+        assert_eq!(
+            state.cuts(),
+            [0, 1, 3, 4]
+                .map(|seconds| Tick::from_units(seconds, 1))
+                .to_vec()
+        );
+        state.seek(Tick::from_units(2, 1));
+        state.previous_cut();
+        assert_eq!(state.playhead, Tick::from_units(1, 1));
+        state.previous_cut();
+        assert_eq!(state.playhead, Tick::ZERO);
+        state.previous_cut();
+        assert_eq!(state.playhead, Tick::ZERO, "stays at the start");
+        state.next_cut();
+        assert_eq!(state.playhead, Tick::from_units(1, 1));
+        state.next_cut();
+        state.next_cut();
+        assert_eq!(state.playhead, Tick::from_units(4, 1));
+        state.next_cut();
+        assert_eq!(state.playhead, Tick::from_units(4, 1), "stays at the end");
+        // Home and End, and a frame at a time.
+        key(&mut state, &context, egui::Key::Home, egui::Modifiers::NONE);
+        assert_eq!(state.playhead, Tick::ZERO);
+        key(
+            &mut state,
+            &context,
+            egui::Key::ArrowRight,
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(state.playhead, RATE.frame_duration());
+        key(&mut state, &context, egui::Key::End, egui::Modifiers::NONE);
+        assert_eq!(state.playhead, state.session.duration());
     }
     #[test]
     fn split_and_duplicate_act_on_the_selected_text_layer_not_the_video() {
