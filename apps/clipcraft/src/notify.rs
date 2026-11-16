@@ -101,7 +101,7 @@ impl Kind {
         self.with_alpha(80)
     }
 
-    /// The faint fill of a banner and of the badge.
+    /// The faint fill of a banner.
     pub(crate) fn wash(self) -> Color32 {
         self.with_alpha(22)
     }
@@ -113,7 +113,7 @@ pub(crate) const EXIT_SECONDS: f32 = 0.22;
 /// How far a floating card rises as it comes in, and sinks as it goes, in points.
 pub(crate) const RISE: f32 = 16.0;
 /// The round badge's width.
-pub(crate) const BADGE: f32 = 24.0;
+pub(crate) const BADGE: f32 = 28.0;
 /// Widest a floating message grows before its text wraps.
 pub(crate) const CARD_MAX_WIDTH: f32 = 440.0;
 
@@ -135,26 +135,39 @@ pub(crate) fn presence(age: f32, leaving: f32) -> f32 {
         * (1.0 - ease_in((leaving / EXIT_SECONDS).clamp(0.0, 1.0)))
 }
 
-/// The frame of a floating message: the panel colour, a hairline in the kind's colour, round
-/// corners and a soft shadow.
-pub(crate) fn card(kind: Kind) -> egui::Frame {
+/// The quiet outline of a floating card: the kind shows in the badge and the time-left line, not
+/// in a coloured border.
+pub(crate) const CARD_OUTLINE: Color32 = Color32::from_rgba_premultiplied(30, 30, 30, 30);
+
+/// The frame of a floating message: the panel colour, a quiet outline, round corners and a soft
+/// shadow. There is room under the content for the time-left line.
+pub(crate) fn card(_kind: Kind) -> egui::Frame {
     egui::Frame::new()
         .fill(PANEL)
-        .stroke(Stroke::new(1.0_f32, kind.hairline()))
+        .stroke(Stroke::new(1.0_f32, CARD_OUTLINE))
         .corner_radius(CornerRadius::same(kit::radius::LG))
-        .inner_margin(Margin::symmetric(16, 12))
+        .inner_margin(Margin {
+            left: 14,
+            right: 12,
+            top: 13,
+            bottom: 15,
+        })
         .shadow(egui::Shadow {
-            offset: [0, 4],
-            blur: 16,
+            offset: [0, 8],
+            blur: 28,
             spread: 0,
-            color: Color32::from_black_alpha(120),
+            color: Color32::from_black_alpha(150),
         })
 }
 
-/// Paints the round badge for `kind` centred on `center`.
+/// The ink of a glyph on a badge: nearly black, which reads on all four kind colours.
+const BADGE_INK: Color32 = Color32::from_rgb(16, 16, 18);
+
+/// Paints the round badge for `kind` centred on `center`: a solid disc in the kind's colour with
+/// its glyph in dark ink, so the kind is known at a glance.
 pub(crate) fn paint_badge(painter: &Painter, center: Pos2, kind: Kind) {
-    painter.circle_filled(center, BADGE / 2.0, kind.with_alpha(40));
-    kit::draw_icon(painter, center, kind.icon(), kind.accent(), 0.62);
+    painter.circle_filled(center, BADGE / 2.0, kind.accent());
+    kit::draw_icon(painter, center, kind.icon(), BADGE_INK, 0.9);
 }
 
 /// The round badge as a widget.
@@ -179,7 +192,7 @@ pub(crate) fn paint_close(painter: &Painter, rect: Rect, hovered: bool) {
         rect.center(),
         Icon::Close,
         if hovered { TEXT } else { MUTED },
-        0.5,
+        1.0,
     );
 }
 
@@ -198,18 +211,21 @@ pub(crate) fn close_button(ui: &mut egui::Ui) -> egui::Response {
 /// The thin line along the bottom of a floating card that shows how much of its stay is left.
 pub(crate) fn paint_time_left(painter: &Painter, card: Rect, fraction: f32, kind: Kind) {
     let inset = f32::from(kit::radius::LG);
-    let width = ((card.width() - 2.0 * inset) * fraction.clamp(0.0, 1.0)).max(0.0);
-    if width <= 0.0 {
-        return;
-    }
+    let full = card.width() - 2.0 * inset;
+    let top = card.bottom() - 7.0;
     painter.rect_filled(
-        Rect::from_min_size(
-            Pos2::new(card.left() + inset, card.bottom() - 3.0),
-            Vec2::new(width, 2.0),
-        ),
-        1.0,
-        kind.with_alpha(150),
+        Rect::from_min_size(Pos2::new(card.left() + inset, top), Vec2::new(full, 3.0)),
+        1.5,
+        Color32::from_white_alpha(14),
     );
+    let width = (full * fraction.clamp(0.0, 1.0)).max(0.0);
+    if width >= 3.0 {
+        painter.rect_filled(
+            Rect::from_min_size(Pos2::new(card.left() + inset, top), Vec2::new(width, 3.0)),
+            1.5,
+            kind.with_alpha(220),
+        );
+    }
 }
 
 /// 0 to 1: how far into its entrance a banner with this `id` is. The first frame it is drawn
@@ -274,7 +290,7 @@ pub(crate) fn banner_actions(
             actions(ui);
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 ui.add(
-                    egui::Label::new(RichText::new(text).color(TEXT).size(kit::text_size::SMALL))
+                    egui::Label::new(RichText::new(text).color(TEXT).size(kit::text_size::BODY))
                         .wrap(),
                 );
             });
@@ -288,14 +304,8 @@ pub(crate) fn banner_actions(
 pub(crate) fn inline(ui: &mut egui::Ui, kind: Kind, text: &str) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = kit::space::SM;
-        let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
-        kit::draw_icon(
-            ui.painter(),
-            rect.center(),
-            kind.icon(),
-            kind.accent(),
-            0.62,
-        );
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
+        kit::draw_icon(ui.painter(), rect.center(), kind.icon(), kind.accent(), 0.9);
         ui.label(
             RichText::new(text)
                 .size(kit::text_size::CAPTION)

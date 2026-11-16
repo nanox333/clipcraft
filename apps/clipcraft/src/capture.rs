@@ -1997,7 +1997,7 @@ Encoder: {}",
                             egui::Label::new(
                                 RichText::new(&text)
                                     .color(TEXT)
-                                    .size(crate::kit::text_size::SMALL),
+                                    .size(crate::kit::text_size::BODY),
                             )
                             .wrap(),
                         );

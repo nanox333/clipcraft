@@ -29,16 +29,19 @@ closed. Time spent with the pointer on a message does not count.
 
 All three use the same parts:
 
-- a round **badge** (24 px) with the kind's glyph, tinted in the kind's colour;
-- the message in the normal text colour at 13 px (**never** coloured text in a card or banner;
+- a round **badge** (28 px): a solid disc in the kind's colour with the kind's glyph in dark ink, so
+  the kind is known at a glance (an inline line uses just the glyph, in the kind's colour);
+- the message in the normal text colour at 14 px (**never** coloured text in a card or banner;
   only an inline line writes errors and warnings in the kind's colour);
-- a **hairline** border in the kind's colour at the large corner radius (14 px);
+- the large corner radius (14 px);
 - buttons on the right, in the standard pill style: at most **Show**, **Undo** and **Delete now**
   on a card, and the page's own few actions on a banner; the primary action is lime;
 - a round **close button** (cross) on every card and on every banner the person can ignore.
 
-A card also has a soft shadow and a thin line along its bottom edge that shrinks as its time runs
-out. A banner has a faint wash of the kind's colour instead of the panel colour and no shadow.
+A card is the panel colour with a quiet grey outline (the kind is shown by the badge and the time
+line, not by a coloured border), a deep soft shadow and, along its bottom edge, a thin track with
+a line in the kind's colour that shrinks as its time runs out. A banner has a faint wash of the
+kind's colour and an outline in the kind's colour instead, and no shadow.
 
 ## Motion
 
@@ -47,7 +50,7 @@ One entrance and one exit, the same length everywhere:
 - **in:** 0.28 s, ease-out (fast, then settling), rising 16 px while fading in;
 - **out:** 0.22 s, ease-in (slow, then quick), sinking while fading out;
 - a banner fades in the first time a message appears and does not move;
-- the saved-clip pop-up is a window of its own, so it slides in from the screen's right edge
+- the saved-clip pop-up is a window of its own (with rounded corners from the window system on Windows 11, a plain outline elsewhere), so it slides in from the screen's right edge
   (80 px) instead of rising and fading; its timing and easing are the same.
 
 Nothing bounces, flashes or repeats. Reduced work for the computer: a card asks for a new frame

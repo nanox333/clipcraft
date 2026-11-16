@@ -15,8 +15,8 @@ use eframe::egui::{
 use crate::kit::{self, DANGER, Icon, LIME, MUTED, PANEL, TEXT, medium, semibold};
 use crate::notify::{self, Kind, ease_in, ease_out};
 
-const WIDTH: f32 = 408.0;
-const HEIGHT: f32 = 116.0;
+const WIDTH: f32 = 432.0;
+const HEIGHT: f32 = 136.0;
 /// Gap to the edges of the free part of the screen.
 const MARGIN: f32 = 18.0;
 /// How far the card travels when it slides in and out. It is a window of its own, so it slides
@@ -49,6 +49,8 @@ pub(crate) struct SavedToast {
     picture: Option<mpsc::Receiver<Option<egui::ColorImage>>>,
     sure_to_delete: Option<Instant>,
     deleted: bool,
+    /// The window system rounds the window's corners (Windows 11), so no outline is painted.
+    rounded: bool,
 }
 
 impl SavedToast {
@@ -77,6 +79,7 @@ impl SavedToast {
             picture: Some(receiver),
             sure_to_delete: None,
             deleted: false,
+            rounded: false,
         }
     }
 
@@ -147,18 +150,22 @@ impl SavedToast {
                 // the marking is already there.
                 if self.frames >= 2 {
                     clipcraft_platform::make_window_passive(TITLE);
+                    // Rounded corners, like every other card; where the system cannot do that the
+                    // card paints its own plain outline instead.
+                    self.rounded = clipcraft_platform::round_window_corners(TITLE, [62, 62, 68]);
                 }
                 if self.frames == 3 {
                     context.send_viewport_cmd(ViewportCommand::Visible(true));
                 }
                 context.send_viewport_cmd(ViewportCommand::OuterPosition(position));
                 hovered = context.input(|input| input.pointer.hover_pos().is_some());
+                let outline = if self.rounded {
+                    Stroke::NONE
+                } else {
+                    Stroke::new(1.0_f32, notify::CARD_OUTLINE)
+                };
                 egui::CentralPanel::default()
-                    .frame(
-                        egui::Frame::new()
-                            .fill(PANEL)
-                            .stroke(Stroke::new(1.0_f32, Kind::Success.hairline())),
-                    )
+                    .frame(egui::Frame::new().fill(PANEL).stroke(outline))
                     .show(context, |ui| {
                         let rect = ui.max_rect();
                         self.paint(ui, rect, &mut action, &mut dismiss);
@@ -202,8 +209,8 @@ impl SavedToast {
 
         // The clip's picture.
         let picture = Rect::from_min_size(
-            Pos2::new(rect.left() + 20.0, rect.center().y - 36.0),
-            Vec2::new(128.0, 72.0),
+            Pos2::new(rect.left() + 16.0, rect.top() + 28.0),
+            Vec2::new(144.0, 81.0),
         );
         match &self.texture {
             Some(texture) => {
@@ -236,9 +243,9 @@ impl SavedToast {
         } else {
             Kind::Success
         };
-        notify::paint_badge(&painter, Pos2::new(left + 10.0, rect.top() + 24.0), kind);
+        notify::paint_badge(&painter, Pos2::new(left + 14.0, rect.top() + 30.0), kind);
         painter.text(
-            Pos2::new(left + 30.0, rect.top() + 24.0),
+            Pos2::new(left + 36.0, rect.top() + 30.0),
             Align2::LEFT_CENTER,
             if self.deleted {
                 "MOVED TO THE RECYCLE BIN"
@@ -248,9 +255,9 @@ impl SavedToast {
             FontId::new(crate::kit::text_size::CAPTION, semibold()),
             kind.accent(),
         );
-        let room = rect.right() - left - 34.0;
+        let room = rect.right() - left - 20.0;
         painter.text(
-            Pos2::new(left, rect.top() + 46.0),
+            Pos2::new(left, rect.top() + 60.0),
             Align2::LEFT_CENTER,
             fit(
                 &painter,
@@ -262,7 +269,7 @@ impl SavedToast {
             TEXT,
         );
         painter.text(
-            Pos2::new(left, rect.top() + 66.0),
+            Pos2::new(left, rect.top() + 80.0),
             Align2::LEFT_CENTER,
             fit(
                 &painter,
@@ -276,8 +283,8 @@ impl SavedToast {
 
         // The close button.
         let close = Rect::from_center_size(
-            Pos2::new(rect.right() - 20.0, rect.top() + 20.0),
-            Vec2::splat(24.0),
+            Pos2::new(rect.right() - 26.0, rect.top() + 30.0),
+            Vec2::splat(notify::BADGE),
         );
         let response = ui.interact(close, ui.id().with("close"), Sense::click());
         response.widget_info(|| {
@@ -292,7 +299,7 @@ impl SavedToast {
             return;
         }
         // The buttons: play, show in folder, delete.
-        let top = rect.bottom() - 40.0;
+        let top = rect.top() + 92.0;
         let play = Rect::from_min_size(Pos2::new(left, top), Vec2::new(72.0, 28.0));
         let response = ui.interact(play, ui.id().with("play"), Sense::click());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Play"));
