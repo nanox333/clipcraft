@@ -429,6 +429,18 @@ impl EditorState {
         let offset = self.session.offset_of(clip.id).unwrap_or(Tick::ZERO);
         (offset + (target - clip.start)).clamp(Tick::ZERO, self.session.duration())
     }
+    /// `position` moved to the nearest frame of the clip under it, so a click on the timeline lands
+    /// on a frame of that clip whatever its frame rate.
+    fn snap_to_frame(&self, position: Tick) -> Tick {
+        let Some((clip, source)) = self.session.at(position) else {
+            return position.clamp(Tick::ZERO, self.session.duration());
+        };
+        let rate = self.rate_at(position);
+        let nearest = rate.frame_at(source + Tick(rate.frame_duration().0 / 2));
+        let snapped = rate.tick_of(nearest).clamp(clip.start, clip.end);
+        let offset = self.session.offset_of(clip.id).unwrap_or(Tick::ZERO);
+        (offset + (snapped - clip.start)).clamp(Tick::ZERO, self.session.duration())
+    }
     fn step_frame(&mut self, forward: bool) {
         self.playing = false;
         let target = self.stepped(forward);
@@ -3124,6 +3136,38 @@ mod tests {
             state.seek(state.session.duration());
             state.step_frame(true);
             assert_eq!(state.playhead, state.session.duration());
+        }
+    }
+    #[test]
+    fn timeline_clicks_land_on_frames_of_the_clip_under_the_pointer() {
+        for rate in [
+            FrameRate { num: 24, den: 1 },
+            FrameRate { num: 60, den: 1 },
+            FrameRate {
+                num: 60_000,
+                den: 1_001,
+            },
+        ] {
+            let mut state = state();
+            let mut entry = media();
+            entry.probe.as_mut().unwrap().frame_rate = Some(rate);
+            state.media = Arc::new(vec![entry]);
+            // Just under half a frame past frame 7 snaps back to it; just over snaps to frame 8.
+            let half = rate.frame_duration().0 / 2;
+            assert_eq!(
+                state.snap_to_frame(rate.tick_of(7) + Tick(half - 10)),
+                rate.tick_of(7),
+                "{rate:?}"
+            );
+            assert_eq!(
+                state.snap_to_frame(rate.tick_of(7) + Tick(half + 10)),
+                rate.tick_of(8),
+                "{rate:?}"
+            );
+            // The ends hold.
+            assert_eq!(state.snap_to_frame(Tick::ZERO), Tick::ZERO);
+            assert!(state.snap_to_frame(state.session.duration()) <= state.session.duration());
+            assert!(state.snap_to_frame(Tick(i64::MAX / 4)) <= state.session.duration());
         }
     }
     #[test]

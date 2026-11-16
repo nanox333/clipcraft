@@ -623,15 +623,12 @@ impl EditorState {
                 if (response.clicked() || response.dragged())
                     && let Some(point) = response.interact_pointer_pos()
                 {
-                    let frame = ((point.x - rect.left()) / width * (RATE.frame_at(total) as f32))
-                        .round()
-                        .max(0.0) as i64;
-                    seek = Some(RATE.tick_of(frame));
+                    // Where the pointer is, snapped to the nearest frame of the clip under it.
+                    let fraction = f64::from(((point.x - rect.left()) / width).clamp(0.0, 1.0));
+                    let at = self.snap_to_frame(Tick((fraction * total.0 as f64) as i64));
+                    seek = Some(at);
                     text_select = Some(None);
-                    selection = self
-                        .session
-                        .at(RATE.tick_of(frame))
-                        .map(|(clip, _)| clip.id);
+                    selection = self.session.at(at).map(|(clip, _)| clip.id);
                 }
                 if let Some(entry) = response.dnd_release_payload::<MediaEntry>() {
                     dropped = Some((*entry).clone());
