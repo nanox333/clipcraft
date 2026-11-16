@@ -1390,9 +1390,10 @@ impl ClipCraftApp {
                 },
             ))
             .corner_radius(egui::CornerRadius::same(22))
-            .inner_margin(egui::Margin::symmetric(14, 4))
+            .inner_margin(egui::Margin::symmetric(14, 2))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.set_min_height(32.0);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
                     // The dot breathes while clipping.
                     let (dot_rect, _) =

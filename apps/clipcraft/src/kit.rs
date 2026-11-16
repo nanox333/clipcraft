@@ -494,7 +494,10 @@ pub fn labelled_button_sensing(
             ),
             Vec2::new(width, 22.0),
         );
-        let plate_fill = if enabled {
+        // On the lime button the plate is darker and the key light, so the shortcut is readable.
+        let plate_fill = if enabled && primary {
+            Color32::from_black_alpha(165)
+        } else if enabled {
             Color32::from_black_alpha(70)
         } else {
             Color32::from_black_alpha(30)
@@ -507,7 +510,13 @@ pub fn labelled_button_sensing(
                 plate.center().y - hint.size().y / 2.0,
             ),
             hint,
-            if enabled { MUTED } else { FAINT },
+            if enabled && primary {
+                Color32::from_rgb(235, 255, 190)
+            } else if enabled {
+                MUTED
+            } else {
+                FAINT
+            },
         );
     }
     response
