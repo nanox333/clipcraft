@@ -212,7 +212,7 @@ fn share_words(state: &ShareState, megabytes: u16) -> (String, String) {
     match state {
         ShareState::Ready => (
             "Drag this into Discord".to_owned(),
-            format!("Hold, drag and drop it into a chat \u{b7} {megabytes} MB"),
+            format!("Hold, drag, drop in a chat \u{b7} {megabytes} MB"),
         ),
         ShareState::Making(done) => (
             format!("Making a {megabytes} MB copy\u{2026} {:.0}%", done * 100.0),

@@ -183,6 +183,24 @@ impl ClipCraftApp {
             Ok(None) => {}
             Err(EngineError::ScanCancelled) => {}
             Err(error) => {
+                // A new person's clips folder does not exist until the first clip is saved. That
+                // is an empty library, not something to report in red.
+                if error == EngineError::DirectoryUnavailable
+                    && !std::path::Path::new(&job.directory).exists()
+                    && clipcraft_engine::default_capture_folder()
+                        .is_some_and(|folder| folder.to_string_lossy() == job.directory)
+                    && self.library.as_ref().is_none_or(|library| {
+                        library.directory != job.directory || library.entries.is_empty()
+                    })
+                {
+                    self.apply_library_scan(LibraryScanResult {
+                        directory: job.directory.clone(),
+                        entries: Vec::new(),
+                        persisted: true,
+                        collections: Vec::new(),
+                    });
+                    return;
+                }
                 if error == EngineError::DirectoryUnavailable
                     && let Some(library) = self
                         .library

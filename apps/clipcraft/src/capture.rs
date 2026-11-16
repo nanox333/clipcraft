@@ -991,7 +991,7 @@ impl ClipCraftApp {
         );
     }
 
-    fn toggle_capture(&mut self) {
+    pub(crate) fn toggle_capture(&mut self) {
         if self.capture.is_active() {
             if self.recording.game_only_capture {
                 self.capture.game_arming.capture_stopped_by_user();
@@ -1539,10 +1539,26 @@ Encoder: {}",
         };
         let mut show = false;
         let mut dismiss = false;
+        // It rises into place from the bottom of the window (so it never sits on the controls at
+        // the top of a page) and fades in; a coloured dot says at a glance whether it is good news.
+        let age = self
+            .capture
+            .notice
+            .as_ref()
+            .map_or(1.0, |current| current.at.elapsed().as_secs_f32());
+        let arrive = (age / 0.22).clamp(0.0, 1.0);
+        let eased = 1.0 - (1.0 - arrive) * (1.0 - arrive);
+        if arrive < 1.0 {
+            context.request_repaint();
+        }
         egui::Area::new(egui::Id::new("notice-toast"))
-            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 62.0))
+            .anchor(
+                egui::Align2::CENTER_BOTTOM,
+                egui::vec2(0.0, -28.0 + 14.0 * (1.0 - eased)),
+            )
             .order(egui::Order::Foreground)
             .show(context, |ui| {
+                ui.set_opacity(eased);
                 egui::Frame::new()
                     .fill(kit::PANEL)
                     .stroke(Stroke::new(
@@ -1564,6 +1580,13 @@ Encoder: {}",
                     .show(ui, |ui| {
                         ui.set_max_width(420.0);
                         ui.horizontal(|ui| {
+                            let (dot, _) =
+                                ui.allocate_exact_size(Vec2::new(12.0, 22.0), egui::Sense::hover());
+                            ui.painter().circle_filled(
+                                dot.center(),
+                                4.5,
+                                if error { DANGER } else { kit::LIME },
+                            );
                             ui.add(
                                 egui::Label::new(
                                     RichText::new(&text)

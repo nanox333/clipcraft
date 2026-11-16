@@ -6,9 +6,9 @@ use std::collections::HashMap;
 /// How the clips grid is ordered.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) enum Sort {
-    #[default]
     Name,
     NameReverse,
+    #[default]
     Newest,
     Oldest,
     Largest,

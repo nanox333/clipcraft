@@ -18,6 +18,7 @@ mod crash;
 mod editor;
 mod editor_media;
 mod editor_recovery;
+mod empty_hero;
 mod game_data;
 mod game_scan;
 mod gpu_restart;
@@ -1695,14 +1696,11 @@ impl ClipCraftApp {
     }
 
     fn empty_state(&mut self, ui: &mut egui::Ui) {
-        if empty_panel(
-            ui,
-            Icon::Folder,
-            "No clips in this folder",
-            "Pick another folder, or come back once capture can save recordings here.",
-            Some("Choose another folder"),
-        ) {
-            self.choose_library_folder();
+        let folder = self.directory_text.trim().to_owned();
+        match self.empty_hero(ui, &folder) {
+            Some(empty_hero::HeroAction::StartClipping) => self.toggle_capture(),
+            Some(empty_hero::HeroAction::ChooseFolder) => self.choose_library_folder(),
+            None => {}
         }
     }
 

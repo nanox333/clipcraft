@@ -94,12 +94,50 @@ pub enum RailAction {
     Cancel,
 }
 
+/// A colour for a name, the same every time: a fixed saturation and lightness that read on the dark
+/// window, with the hue taken from the letters.
+fn name_colour(name: &str) -> egui::Color32 {
+    let hash = name
+        .to_lowercase()
+        .bytes()
+        .fold(2_166_136_261_u32, |hash, byte| {
+            (hash ^ u32::from(byte)).wrapping_mul(16_777_619)
+        });
+    let hue = (hash % 360) as f32 / 60.0;
+    let (saturation, lightness) = (0.55_f32, 0.62_f32);
+    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+    let x = chroma * (1.0 - (hue % 2.0 - 1.0).abs());
+    let (r, g, b) = match hue as u32 {
+        0 => (chroma, x, 0.0),
+        1 => (x, chroma, 0.0),
+        2 => (0.0, chroma, x),
+        3 => (0.0, x, chroma),
+        4 => (x, 0.0, chroma),
+        _ => (chroma, 0.0, x),
+    };
+    let m = lightness - chroma / 2.0;
+    let channel = |value: f32| ((value + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    egui::Color32::from_rgb(channel(r), channel(g), channel(b))
+}
+
 fn rail_row(
     ui: &mut egui::Ui,
     label: &str,
     count: usize,
     selected: bool,
     icon: Option<kit::Icon>,
+) -> egui::Response {
+    rail_row_with_badge(ui, label, count, selected, icon, None)
+}
+
+/// A row of the rail; `badge` is a name to show as a coloured initial (a game).
+fn rail_row_with_badge(
+    ui: &mut egui::Ui,
+    label: &str,
+    count: usize,
+    selected: bool,
+    icon: Option<kit::Icon>,
+    badge: Option<&str>,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(ui.available_width().max(0.0), 32.0),
@@ -122,6 +160,28 @@ fn rail_row(
             0.7,
         );
         left += 24.0;
+    }
+    if let Some(name) = badge {
+        let colour = name_colour(name);
+        let square = egui::Rect::from_center_size(
+            egui::pos2(left + 9.0, rect.center().y),
+            Vec2::splat(20.0),
+        );
+        ui.painter().rect_filled(
+            square,
+            6.0,
+            egui::Color32::from_rgba_unmultiplied(colour.r(), colour.g(), colour.b(), 46),
+        );
+        ui.painter().text(
+            square.center(),
+            egui::Align2::CENTER_CENTER,
+            name.chars()
+                .find(|c| c.is_alphanumeric())
+                .map_or_else(|| "?".to_owned(), |c| c.to_uppercase().to_string()),
+            egui::FontId::new(crate::kit::text_size::CAPTION, kit::semibold()),
+            colour,
+        );
+        left += 28.0;
     }
     let count_text = count.to_string();
     let count_width = 8.0 + count_text.len() as f32 * 7.5;
@@ -249,7 +309,16 @@ pub fn rail(
             }
             for group in groups {
                 let selected = matches!(filter, LibraryFilter::Game(open) if open.to_lowercase() == group.name.to_lowercase());
-                if rail_row(ui, &group.name, group.clips, selected, None).clicked() {
+                if rail_row_with_badge(
+                    ui,
+                    &group.name,
+                    group.clips,
+                    selected,
+                    None,
+                    Some(&group.name),
+                )
+                .clicked()
+                {
                     actions.push(RailAction::Select(LibraryFilter::Game(group.name.clone())));
                 }
             }
@@ -286,4 +355,21 @@ fn edit_row(ui: &mut egui::Ui, edit: &mut Option<CollectionEdit>, actions: &mut 
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod avatar_tests {
+    use super::name_colour;
+
+    #[test]
+    fn a_games_colour_is_stable_readable_and_differs_between_games() {
+        let a = name_colour("Counter-Strike 2");
+        assert_eq!(a, name_colour("counter-strike 2"), "case does not matter");
+        assert_ne!(a, name_colour("Valorant"));
+        for name in ["", "x", "Counter-Strike 2", "Valorant", "\u{1f3ae}"] {
+            let colour = name_colour(name);
+            let brightest = colour.r().max(colour.g()).max(colour.b());
+            assert!(brightest > 120, "{name:?} is too dark to read: {colour:?}");
+        }
+    }
 }
