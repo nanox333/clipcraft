@@ -1,6 +1,7 @@
 //! A running recording: starting it from the settings, saving a clip into the capture folder, and
 //! keeping the folder inside the storage limit.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -526,6 +527,7 @@ impl CaptureSession {
             path: free_clip_path(folder, format, None, unix)?,
             folder: folder.to_path_buf(),
             trim_to: (limit > 0 && settings.delete_oldest_when_full).then_some(limit),
+            protected: HashSet::new(),
             restart_replay: settings.restart_replay_after_save,
         })
     }
@@ -542,6 +544,9 @@ pub struct SaveJob {
     path: PathBuf,
     folder: PathBuf,
     trim_to: Option<u64>,
+    /// Clips the storage limit must never remove (favorites, clips in collections, clips open in
+    /// the editor). They still count towards the limit.
+    protected: HashSet<PathBuf>,
     /// Forget the saved footage afterwards (the "restart the replay after each save" setting).
     restart_replay: bool,
 }
@@ -606,6 +611,12 @@ impl SaveJob {
         self
     }
 
+    /// Clips that the storage limit may never remove, however old.
+    pub fn protecting(mut self, paths: HashSet<PathBuf>) -> Self {
+        self.protected = paths;
+        self
+    }
+
     /// How long [`SaveJob::run`] keeps recording before it writes the clip.
     pub fn post_roll(&self) -> Duration {
         self.post_roll
@@ -629,7 +640,15 @@ impl SaveJob {
         };
         let clip = saved.map_err(EngineError::Record)?;
         let deleted = match self.trim_to {
-            Some(limit) => trim_to_limit(&self.folder, &clip.path, limit),
+            // Old clips go to the Recycle Bin, never straight to oblivion; if the Recycle Bin is
+            // not available the clip stays.
+            Some(limit) => trim_to_limit_with(
+                &self.folder,
+                &clip.path,
+                limit,
+                &self.protected,
+                &mut |path| crate::trash_clip(path).is_ok(),
+            ),
             None => Vec::new(),
         };
         Ok(SavedClipReport {
@@ -769,9 +788,17 @@ fn free_clip_path(
     Err(EngineError::Record(RecordError::AlreadyExists))
 }
 
-/// Deletes the oldest ClipCraft clips, never `keep`, until the folder fits `limit` bytes. Files
-/// ClipCraft did not make are counted but never deleted.
-fn trim_to_limit(folder: &Path, keep: &Path, limit: u64) -> Vec<PathBuf> {
+/// Removes the oldest ClipCraft clips, never `keep` and never a `protected` one, until the folder
+/// fits `limit` bytes. Files ClipCraft did not make, and protected clips, are counted but never
+/// removed. `remove` does the removing and says whether it worked (the app moves the file to the
+/// Recycle Bin); a clip it fails on stays.
+fn trim_to_limit_with(
+    folder: &Path,
+    keep: &Path,
+    limit: u64,
+    protected: &HashSet<PathBuf>,
+    remove: &mut dyn FnMut(&Path) -> bool,
+) -> Vec<PathBuf> {
     let (clips, truncated) = list_clips(folder);
     // A listing cut short by the entry limit is an arbitrary subset: deleting "the oldest" of it
     // could remove newer clips while older ones survive, so nothing is deleted.
@@ -784,6 +811,7 @@ fn trim_to_limit(folder: &Path, keep: &Path, limit: u64) -> Vec<PathBuf> {
             .and_then(|name| name.to_str())
             .is_some_and(is_clip_file_name)
             && clip.path != keep
+            && !protected.contains(&clip.path)
     };
     let others: u64 = clips
         .iter()
@@ -793,11 +821,20 @@ fn trim_to_limit(folder: &Path, keep: &Path, limit: u64) -> Vec<PathBuf> {
     let ours: Vec<StoredClip> = clips.iter().filter(|clip| is_ours(clip)).cloned().collect();
     let mut deleted = Vec::new();
     for path in cleanup_plan(&ours, limit.saturating_sub(others)) {
-        if fs::remove_file(&path).is_ok() {
+        if remove(&path) {
             deleted.push(path);
         }
     }
     deleted
+}
+
+/// The same with the files really deleted and nothing protected: what the tests of the choice of
+/// clips use.
+#[cfg(test)]
+fn trim_to_limit(folder: &Path, keep: &Path, limit: u64) -> Vec<PathBuf> {
+    trim_to_limit_with(folder, keep, limit, &HashSet::new(), &mut |path| {
+        fs::remove_file(path).is_ok()
+    })
 }
 
 #[cfg(test)]
@@ -1844,5 +1881,46 @@ mod tests {
         assert!(is_clip_file_name(
             "ClipCraft Screenshot 2026-10-19 21-04-55.png"
         ));
+    }
+
+    #[test]
+    fn the_storage_limit_never_removes_a_protected_clip_and_keeps_what_it_cannot_remove() {
+        let dir = std::env::temp_dir().join(format!("clipcraft-trim-safe-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let make = |name: &str, age: u64| {
+            let path = dir.join(name);
+            fs::write(&path, vec![0_u8; 100]).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(SystemTime::now() - Duration::from_secs(age))
+                .unwrap();
+            path
+        };
+        // The oldest is a favorite: it stays, and the next oldest goes instead.
+        let favorite = make("ClipCraft 2019-01-01 00-00-00.mp4", 9_000);
+        let second = make("ClipCraft 2020-01-01 00-00-00.mp4", 5_000);
+        let third = make("ClipCraft 2021-01-01 00-00-00.mp4", 3_000);
+        let fresh = make("ClipCraft 2022-01-01 00-00-00.mp4", 0);
+        let protected: HashSet<PathBuf> = [favorite.clone()].into_iter().collect();
+        let mut asked = Vec::new();
+        let gone = trim_to_limit_with(&dir, &fresh, 250, &protected, &mut |path| {
+            asked.push(path.to_path_buf());
+            true
+        });
+        // 400 bytes against 250: the favorite and the new clip are 200, so only 50 is left for the
+        // others, and both of them go; the favorite is never offered for removal.
+        assert!(!asked.contains(&favorite) && !gone.contains(&favorite));
+        assert_eq!(gone, vec![second.clone(), third.clone()]);
+        // A removal that fails (no Recycle Bin) leaves the clip alone and does not report it.
+        let kept = trim_to_limit_with(&dir, &fresh, 250, &protected, &mut |_| false);
+        assert!(kept.is_empty());
+        assert!(favorite.exists() && second.exists() && third.exists() && fresh.exists());
+        // Without a protected set the oldest is the first to go, as it always was.
+        let plain = trim_to_limit_with(&dir, &fresh, 350, &HashSet::new(), &mut |_| true);
+        assert_eq!(plain.first(), Some(&favorite));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

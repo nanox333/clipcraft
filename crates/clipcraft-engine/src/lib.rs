@@ -1510,7 +1510,7 @@ fn copy_clip_file(path: &Path) -> Result<String, EngineError> {
 
 /// Moves one clip to the Recycle Bin. Only an existing regular file with a video extension is
 /// accepted, so the command cannot be pointed at anything else.
-fn trash_clip(path: &Path) -> Result<String, EngineError> {
+pub(crate) fn trash_clip(path: &Path) -> Result<String, EngineError> {
     let absolute = existing_clip(path)?;
     let handler = TRASH_HANDLER
         .lock()

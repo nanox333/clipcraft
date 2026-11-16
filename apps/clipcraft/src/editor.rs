@@ -317,6 +317,15 @@ impl EditorState {
     pub fn has_clips(&self) -> bool {
         !self.session.clips().is_empty()
     }
+    /// The clips the editor holds: those in its library and those on the timeline. The storage
+    /// limit leaves them alone, since an edit may be using them.
+    pub fn library_paths(&self) -> Vec<PathBuf> {
+        self.media
+            .iter()
+            .map(|entry| PathBuf::from(&entry.path))
+            .chain(self.session.clips().iter().map(|clip| clip.input.clone()))
+            .collect()
+    }
     fn busy(&self) -> bool {
         self.job.is_some()
     }

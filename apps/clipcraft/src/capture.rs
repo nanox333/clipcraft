@@ -1075,7 +1075,25 @@ impl ClipCraftApp {
         }
     }
 
+    /// Clips the storage limit must never remove: favorites, clips in a collection, and clips in
+    /// the editor's library (an edit may be using them).
+    pub(crate) fn protected_clip_paths(&self) -> std::collections::HashSet<PathBuf> {
+        let mut protected = std::collections::HashSet::new();
+        if let Some(result) = self.library.as_ref() {
+            protected.extend(
+                result
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.favorite || !entry.collections.is_empty())
+                    .map(|entry| PathBuf::from(&entry.path)),
+            );
+        }
+        protected.extend(self.editor.library_paths());
+        protected
+    }
+
     fn launch_save(&mut self, job: clipcraft_engine::SaveJob, folder: PathBuf) {
+        let job = job.protecting(self.protected_clip_paths());
         self.capture.saving_path = Some(job.path().to_path_buf());
         let wait = job.post_roll();
         self.capture.saving_at = (!wait.is_zero()).then(|| Instant::now() + wait);
@@ -1135,8 +1153,9 @@ impl ClipCraftApp {
                     String::new()
                 } else {
                     format!(
-                        " ({} older clips removed to stay under the limit)",
-                        report.deleted.len()
+                        " ({} older clip{} moved to the Recycle Bin to stay under your storage limit)",
+                        report.deleted.len(),
+                        if report.deleted.len() == 1 { "" } else { "s" }
                     )
                 };
                 if self.recording.show_save_notification {

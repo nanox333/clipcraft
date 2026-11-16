@@ -337,11 +337,27 @@ impl ClipCraftApp {
                     } else {
                         format!("{count} selected")
                     };
-                    ui.label(
-                        RichText::new(status)
-                            .size(crate::kit::text_size::BODY)
-                            .family(kit::semibold())
-                            .color(TEXT),
+                    // The count sits on the same line as the buttons, centred on them.
+                    let text = RichText::new(status)
+                        .size(crate::kit::text_size::BODY)
+                        .family(kit::semibold())
+                        .color(TEXT);
+                    let width = ui
+                        .painter()
+                        .layout_no_wrap(
+                            text.text().to_owned(),
+                            egui::FontId::new(crate::kit::text_size::BODY, kit::semibold()),
+                            TEXT,
+                        )
+                        .size()
+                        .x
+                        + 4.0;
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(width, crate::kit::control::STANDARD),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label(text);
+                        },
                     );
                     ui.add_space(crate::kit::space::SM);
                     favorite_click = kit::labelled_button(
@@ -947,5 +963,33 @@ mod tests {
         let gone = [&clips[2]];
         assert!(summarize(&gone, true).paths.is_empty());
         assert!(summarize(&[], true).paths.is_empty());
+    }
+
+    #[test]
+    fn the_storage_limit_is_told_to_spare_favorites_collections_and_clips_in_the_editor() {
+        let mut app = ClipCraftApp::default();
+        let mut plain = clip("Plain");
+        let mut favorite = clip("Favorite");
+        favorite.favorite = true;
+        let mut collected = clip("Collected");
+        collected.collections = vec!["Best plays".into()];
+        let in_editor = clip("In editor");
+        plain.size_bytes = 10;
+        app.library = Some(clipcraft_engine::LibraryScanResult {
+            directory: "/clips".into(),
+            entries: vec![
+                plain.clone(),
+                favorite.clone(),
+                collected.clone(),
+                in_editor.clone(),
+            ],
+            persisted: false,
+            collections: vec!["Best plays".into()],
+        });
+        app.editor.receive(in_editor.clone());
+        let protected = app.protected_clip_paths();
+        let has = |entry: &MediaEntry| protected.contains(&PathBuf::from(&entry.path));
+        assert!(has(&favorite) && has(&collected) && has(&in_editor));
+        assert!(!has(&plain), "an ordinary clip stays eligible");
     }
 }
