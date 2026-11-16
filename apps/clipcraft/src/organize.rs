@@ -141,16 +141,50 @@ fn badge_look(
 fn paint_badge(painter: &egui::Painter, square: egui::Rect, colour: egui::Color32, mark: &str) {
     painter.rect_filled(
         square,
-        6.0,
+        if square.width() > 24.0 { 8.0 } else { 6.0 },
         egui::Color32::from_rgba_unmultiplied(colour.r(), colour.g(), colour.b(), 46),
     );
     painter.text(
         square.center(),
         egui::Align2::CENTER_CENTER,
         mark,
-        egui::FontId::new(crate::kit::text_size::CAPTION, kit::semibold()),
+        egui::FontId::new(
+            (square.width() * 0.48).max(crate::kit::text_size::CAPTION),
+            kit::semibold(),
+        ),
         colour,
     );
+}
+
+/// Marks offered besides the first letter.
+const MARKS: [&str; 10] = [
+    "\u{2605}", "\u{2665}", "\u{2694}", "\u{26a1}", "\u{25cf}", "\u{25b2}", "\u{25c6}", "\u{2660}",
+    "\u{2663}", "\u{2620}",
+];
+/// Size of one tile of the mark row.
+const MARK_TILE: f32 = 30.0;
+
+/// One mark as a small badge in the game's colour; ringed when it is the one in use.
+fn mark_tile(
+    ui: &mut egui::Ui,
+    mark: &str,
+    selected: bool,
+    colour: egui::Color32,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(MARK_TILE), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Mark {mark}"))
+    });
+    paint_badge(ui.painter(), rect, colour, mark);
+    if selected || response.hovered() {
+        ui.painter().rect_stroke(
+            rect,
+            8.0,
+            egui::Stroke::new(1.5_f32, if selected { TEXT } else { MUTED }),
+            egui::StrokeKind::Inside,
+        );
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// The menu on a game: how its badge looks now, a palette ending in a picker for any colour, and
@@ -286,46 +320,71 @@ fn badge_menu(
     });
 
     ui.add_space(crate::kit::space::LG);
+    ui.label(
+        RichText::new("Mark")
+            .color(MUTED)
+            .size(crate::kit::text_size::CAPTION),
+    );
+    ui.add_space(crate::kit::space::XS);
     let mut text: String = ui
         .data_mut(|data| data.get_temp::<String>(mark_id))
         .unwrap_or_else(|| current.mark.clone());
-    // The mark: a small centred slot, like the badge it fills.
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new("Mark")
-                .color(MUTED)
-                .size(crate::kit::text_size::SMALL),
+    let picked_mark = current.mark.clone();
+    let is_quick = MARKS.contains(&picked_mark.as_str());
+    let custom = !picked_mark.is_empty() && !is_quick;
+    let mut chosen: Option<String> = None;
+    // The marks as a row of small badges in the game's colour, like the colours above them.
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::splat(8.0);
+        if mark_tile(ui, &auto_mark, picked_mark.is_empty(), preview)
+            .on_hover_text("Automatic: the first letter")
+            .clicked()
+        {
+            chosen = Some(String::new());
+        }
+        for mark in MARKS {
+            if mark_tile(ui, mark, picked_mark == mark, preview).clicked() {
+                chosen = Some((*mark).to_owned());
+            }
+        }
+        // Anything else: a slot to type a letter, number or emoji into.
+        let (slot, _) = ui.allocate_exact_size(Vec2::splat(MARK_TILE), egui::Sense::hover());
+        let focused = ui.memory(|memory| memory.has_focus(mark_id.with("field")));
+        ui.painter().rect_stroke(
+            slot,
+            8.0,
+            egui::Stroke::new(1.0_f32, if focused || custom { TEXT } else { kit::BORDER }),
+            egui::StrokeKind::Inside,
         );
-        ui.add_space(crate::kit::space::SM);
-        let changed = kit::field_frame()
-            .inner_margin(egui::Margin::symmetric(
-                crate::kit::space::SM as i8,
-                crate::kit::space::XS as i8,
-            ))
-            .show(ui, |ui| {
-                ui.set_min_height(crate::kit::control::FIELD_INNER);
-                ui.add(
-                    egui::TextEdit::singleline(&mut text)
-                        .frame(false)
-                        .char_limit(2)
-                        .hint_text(auto_mark.as_str())
-                        .horizontal_align(egui::Align::Center)
-                        .desired_width(36.0),
-                )
-                .on_hover_text("A letter, number or emoji")
-                .changed()
-            })
-            .inner;
-        if changed {
-            actions.push(RailAction::SetBadge {
-                game: game.to_owned(),
-                badge: Some(clipcraft_engine::GameBadge {
-                    color: current.color.clone(),
-                    mark: text.clone(),
-                }),
-            });
+        let field = ui
+            .put(
+                slot.shrink(2.0),
+                egui::TextEdit::singleline(&mut text)
+                    .id(mark_id.with("field"))
+                    .frame(false)
+                    .char_limit(2)
+                    .hint_text("Aa")
+                    .horizontal_align(egui::Align::Center)
+                    .vertical_align(egui::Align::Center),
+            )
+            .on_hover_text("Type a letter, number or emoji");
+        if field.changed() {
+            chosen = Some(text.clone());
         }
     });
+    if let Some(mark) = chosen {
+        actions.push(RailAction::SetBadge {
+            game: game.to_owned(),
+            badge: Some(clipcraft_engine::GameBadge {
+                color: current.color.clone(),
+                mark: mark.clone(),
+            }),
+        });
+        // A picked tile clears what was typed; typing keeps its own text.
+        if MARKS.contains(&mark.as_str()) || mark.is_empty() {
+            text.clear();
+        }
+    }
     ui.data_mut(|data| data.insert_temp(mark_id, text));
 
     ui.add_space(crate::kit::space::LG);
