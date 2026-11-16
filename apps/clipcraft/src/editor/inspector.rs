@@ -304,23 +304,43 @@ impl EditorState {
         egui::ScrollArea::vertical()
             .id_salt("editor-text")
             .auto_shrink([false, false])
-            .max_height((height - 100.0).max(100.0))
+            .max_height((height - 114.0).max(100.0))
             .show(ui, |ui| {
                 ui.add_enabled_ui(enabled, |ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(crate::kit::space::SM, 5.0);
+                    ui.spacing_mut().item_spacing = Vec2::new(crate::kit::space::SM, 8.0);
                     let mut panel = TextPanel {
                         layer: &layer,
                         next: &mut next,
                         total,
                         id,
                     };
-                    // Compact rows, top to bottom: ready-made styles, the letters, the sliders,
-                    // colour and look, then when and where.
+                    // The essentials first: a look, a colour and a size. The rest is one click away.
                     panel.styles(ui);
-                    panel.font_row(ui);
-                    panel.sliders_row(ui);
-                    panel.colour_and_look(ui);
-                    panel.timing_and_position(ui);
+                    panel.colour_and_size(ui);
+                    let more_id = egui::Id::new("text-more-options");
+                    let mut more =
+                        ui.data_mut(|data| data.get_temp::<bool>(more_id).unwrap_or(false));
+                    let fold = ui
+                        .add(
+                            egui::Label::new(
+                                RichText::new(if more {
+                                    "Fewer options"
+                                } else {
+                                    "More options"
+                                })
+                                .size(crate::kit::text_size::SMALL)
+                                .color(MUTED),
+                            )
+                            .sense(Sense::click()),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if fold.clicked() {
+                        more = !more;
+                    }
+                    ui.data_mut(|data| data.insert_temp(more_id, more));
+                    if more {
+                        panel.more_options(ui);
+                    }
                 });
             });
         if next != layer {
@@ -341,7 +361,7 @@ struct TextPanel<'a> {
 impl TextPanel<'_> {
     /// Ready-made looks, as a row of small tiles.
     fn styles(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
+        ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
             for preset in STYLE_PRESETS {
                 if style_tile(ui, &preset, preset.matches(self.layer)) {
@@ -351,9 +371,10 @@ impl TextPanel<'_> {
         });
     }
 
-    /// Typeface, weight and the three switches for the letters, on one line.
+    /// Typeface and weight.
     fn font_row(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
+        ui.horizontal(|ui| {
+            ui.set_min_height(ROW_HEIGHT);
             let names: Vec<&str> = TextFont::ALL.iter().map(|font| font.name()).collect();
             let current = TextFont::ALL
                 .iter()
@@ -370,30 +391,35 @@ impl TextPanel<'_> {
             if let Some(index) = sub_tabs(ui, &weights, current) {
                 self.next.weight = TextWeight::ALL[index];
             }
-            if mini_toggle(ui, "I", self.layer.italic, "Italic") {
+        });
+    }
+
+    /// Italic, underline and capitals.
+    fn letters_row(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.set_min_height(ROW_HEIGHT);
+            if mini_toggle(ui, "Italic", self.layer.italic, "Slanted letters") {
                 self.next.italic = !self.layer.italic;
             }
-            if mini_toggle(ui, "U", self.layer.underline, "Underline") {
+            if mini_toggle(
+                ui,
+                "Underline",
+                self.layer.underline,
+                "A line under the text",
+            ) {
                 self.next.underline = !self.layer.underline;
             }
-            if mini_toggle(ui, "AA", self.layer.caps, "All capitals") {
+            if mini_toggle(ui, "ALL CAPS", self.layer.caps, "Every letter a capital") {
                 self.next.caps = !self.layer.caps;
             }
         });
     }
 
-    /// Size, letter spacing and opacity as three small sliders on one line.
-    fn sliders_row(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
+    /// Letter spacing and opacity.
+    fn fine_tune_row(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.set_min_height(ROW_HEIGHT);
             ui.spacing_mut().item_spacing.x = crate::kit::space::LG;
-            if let Some(value) = mini_slider(
-                ui,
-                "Size",
-                (f32::from(self.layer.size) - 20.0) / 230.0,
-                &format!("Letter height: {}", self.layer.size),
-            ) {
-                self.next.size = (20.0 + value * 230.0).round().clamp(20.0, 250.0) as u16;
-            }
             if let Some(value) = mini_slider(
                 ui,
                 "Spacing",
@@ -413,8 +439,44 @@ impl TextPanel<'_> {
         });
     }
 
-    /// A few good colours and any other, then what makes the letters stand out.
-    fn colour_and_look(&mut self, ui: &mut egui::Ui) {
+    /// What makes the letters stand out from the picture.
+    fn look_row(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.set_min_height(ROW_HEIGHT);
+            if mini_toggle(
+                ui,
+                "Shadow",
+                self.layer.shadow,
+                "A soft shadow under the letters",
+            ) {
+                self.next.shadow = !self.layer.shadow;
+            }
+            if mini_toggle(ui, "Outline", self.layer.outline, "A thin dark outline") {
+                self.next.outline = !self.layer.outline;
+            }
+            if mini_toggle(ui, "Box", self.layer.backdrop, "A dark box behind the text") {
+                self.next.backdrop = !self.layer.backdrop;
+            }
+        });
+    }
+
+    /// The rest, in labelled rows that line up.
+    fn more_options(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(crate::kit::space::XS);
+        option_row(ui, "Font", |ui| self.font_row(ui));
+        option_row(ui, "Letters", |ui| self.letters_row(ui));
+        option_row(ui, "Fine tune", |ui| self.fine_tune_row(ui));
+        option_row(ui, "Look", |ui| self.look_row(ui));
+        option_row(ui, "Timing", |ui| self.timing_row(ui));
+        option_row(ui, "Position", |ui| {
+            if let Some((x, y)) = position_grid(ui, self.layer.x, self.layer.y) {
+                (self.next.x, self.next.y) = (x, y);
+            }
+        });
+    }
+
+    /// A few good colours and any other, then the size.
+    fn colour_and_size(&mut self, ui: &mut egui::Ui) {
         let picker_open_id = egui::Id::new(("text-picker-open", self.id));
         let picker_colour_id = egui::Id::new(("text-picker-colour", self.id));
         let picker_hex_id = egui::Id::new(("text-picker-hex", self.id));
@@ -427,21 +489,22 @@ impl TextPanel<'_> {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
             for (name, rgb) in TEXT_COLORS {
-                let (rect, response) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
+                let (rect, response) =
+                    ui.allocate_exact_size(Vec2::splat(CONTROL_HEIGHT - 4.0), Sense::click());
                 response.widget_info(|| {
                     egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name)
                 });
                 ui.painter().circle_filled(
                     rect.center(),
-                    8.5,
+                    9.5,
                     Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
                 );
                 if layer.color == rgb {
                     ui.painter()
-                        .circle_stroke(rect.center(), 10.5, Stroke::new(1.5_f32, TEXT));
+                        .circle_stroke(rect.center(), 11.5, Stroke::new(1.5_f32, TEXT));
                 } else if response.hovered() {
                     ui.painter()
-                        .circle_stroke(rect.center(), 10.5, Stroke::new(1.5_f32, MUTED));
+                        .circle_stroke(rect.center(), 11.5, Stroke::new(1.5_f32, MUTED));
                 }
                 if response
                     .on_hover_text(name)
@@ -453,15 +516,16 @@ impl TextPanel<'_> {
                     picking = None;
                 }
             }
-            let (rect, response) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
+            let (rect, response) =
+                ui.allocate_exact_size(Vec2::splat(CONTROL_HEIGHT - 4.0), Sense::click());
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Pick any colour")
             });
-            crate::colour_picker::rainbow_swatch(ui.painter(), rect.center(), 8.5);
+            crate::colour_picker::rainbow_swatch(ui.painter(), rect.center(), 9.5);
             if picker_open || !in_row || response.hovered() {
                 ui.painter().circle_stroke(
                     rect.center(),
-                    10.5,
+                    11.5,
                     Stroke::new(1.5_f32, if picker_open || !in_row { TEXT } else { MUTED }),
                 );
             }
@@ -475,20 +539,14 @@ impl TextPanel<'_> {
                     picking = Some(egui::ecolor::Hsva::from_srgb(layer.color));
                 }
             }
-            ui.add_space(crate::kit::space::SM);
-            if mini_toggle(
+            ui.add_space(crate::kit::space::LG);
+            if let Some(value) = mini_slider(
                 ui,
-                "Shadow",
-                layer.shadow,
-                "A soft shadow under the letters",
+                "Size",
+                (f32::from(layer.size) - 20.0) / 230.0,
+                &format!("Letter height: {}", layer.size),
             ) {
-                self.next.shadow = !layer.shadow;
-            }
-            if mini_toggle(ui, "Outline", layer.outline, "A thin dark outline") {
-                self.next.outline = !layer.outline;
-            }
-            if mini_toggle(ui, "Box", layer.backdrop, "A dark box behind the text") {
-                self.next.backdrop = !layer.backdrop;
+                self.next.size = (20.0 + value * 230.0).round().clamp(20.0, 250.0) as u16;
             }
         });
         if picker_open {
@@ -518,11 +576,13 @@ impl TextPanel<'_> {
         });
     }
 
-    /// When it appears and for how long, and where on the picture it sits.
-    fn timing_and_position(&mut self, ui: &mut egui::Ui) {
+    /// When it appears and for how long.
+    fn timing_row(&mut self, ui: &mut egui::Ui) {
         let (layer, total) = (self.layer, self.total);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
+            ui.set_min_height(ROW_HEIGHT);
+            ui.spacing_mut().interact_size.y = CONTROL_HEIGHT;
             let mut start = layer.start.seconds();
             if ui
                 .add(
@@ -556,22 +616,40 @@ impl TextPanel<'_> {
                 let ticks = Tick::from_units((length * 1000.0).round() as i64, 1000);
                 self.next.end = (layer.start + ticks).min(total.max(layer.start + MIN_TEXT));
             }
-            ui.add_space(crate::kit::space::SM);
-            ui.label(
-                RichText::new("Position")
-                    .size(crate::kit::text_size::SMALL)
-                    .color(MUTED),
-            );
-            if let Some((x, y)) = position_grid(ui, layer.x, layer.y) {
-                (self.next.x, self.next.y) = (x, y);
-            }
         });
     }
 }
 
+/// Height of every small control in the text options: toggles, switches, sliders and fields.
+const CONTROL_HEIGHT: f32 = 28.0;
+/// Height of one option row: the name and every control are centred on its line.
+const ROW_HEIGHT: f32 = 32.0;
+/// Width of the name at the left of an option row.
+const OPTION_LABEL: f32 = 76.0;
+
+/// One line of the extra options: a name at the left, then the controls, all on one centre line.
+fn option_row(ui: &mut egui::Ui, name: &str, controls: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
+        ui.set_min_height(ROW_HEIGHT);
+        ui.allocate_ui_with_layout(
+            Vec2::new(OPTION_LABEL, ROW_HEIGHT),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                ui.label(
+                    RichText::new(name)
+                        .size(crate::kit::text_size::SMALL)
+                        .color(MUTED),
+                );
+            },
+        );
+        controls(ui);
+    });
+}
+
 /// A small tile showing a ready-made look; its name is the tooltip. True when clicked.
 fn style_tile(ui: &mut egui::Ui, preset: &StylePreset, active: bool) -> bool {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(56.0, 36.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(64.0, 40.0), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, preset.name));
     preset.paint(&ui.painter().with_clip_rect(rect), rect);
     let corner = f32::from(crate::kit::radius::MD);
@@ -671,14 +749,14 @@ fn position_grid(ui: &mut egui::Ui, x: u16, y: u16) -> Option<(u16, u16)> {
 
 /// A small square or pill switch for the letters and look. Lime when on.
 fn mini_toggle(ui: &mut egui::Ui, label: &str, on: bool, tip: &str) -> bool {
-    const HEIGHT: f32 = 24.0;
-    let font = FontId::new(crate::kit::text_size::CAPTION, kit::medium());
+    const HEIGHT: f32 = CONTROL_HEIGHT;
+    let font = FontId::new(crate::kit::text_size::SMALL, kit::medium());
     let width = (ui
         .painter()
         .layout_no_wrap(label.to_owned(), font.clone(), Color32::PLACEHOLDER)
         .size()
         .x
-        + 18.0)
+        + 24.0)
         .max(HEIGHT + 2.0);
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, HEIGHT), Sense::click());
     response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, tip));
@@ -708,20 +786,16 @@ fn mini_toggle(ui: &mut egui::Ui, label: &str, on: bool, tip: &str) -> bool {
         .clicked()
 }
 
-/// A label and a slim slider together; the value is in the tooltip. Returns the new position
-/// (`0..=1`) while it is dragged.
+/// A label and a slim slider together, as two items of the row they are in (so they centre with
+/// everything else on it); the value is in the tooltip. Returns the new position (`0..=1`) while
+/// it is dragged.
 fn mini_slider(ui: &mut egui::Ui, label: &str, value: f32, tip: &str) -> Option<f32> {
-    let mut changed = None;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
-        ui.label(
-            RichText::new(label)
-                .size(crate::kit::text_size::SMALL)
-                .color(MUTED),
-        );
-        changed = kit::slim_slider(ui, 96.0, value, true, tip);
-    });
-    changed
+    ui.label(
+        RichText::new(label)
+            .size(crate::kit::text_size::SMALL)
+            .color(MUTED),
+    );
+    kit::slim_slider(ui, 140.0, value, true, tip)
 }
 
 /// A look for a text layer in one click: the letters, colour and extras, and where it sits.

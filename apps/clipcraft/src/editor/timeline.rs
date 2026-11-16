@@ -225,21 +225,23 @@ impl EditorState {
                             Layout::left_to_right(Align::Center),
                             |ui| {
                                 if segment(ui, "\u{2212}", false, 30.0)
-                                    .on_hover_text("Zoom out")
+                                    .on_hover_text(
+                                        "Zoom out (\u{2212}, or Ctrl and the mouse wheel)",
+                                    )
                                     .clicked()
                                 {
                                     self.fit = false;
                                     self.zoom = (self.zoom / 1.5).max(4.0);
                                 }
                                 if segment(ui, "+", false, 30.0)
-                                    .on_hover_text("Zoom in")
+                                    .on_hover_text("Zoom in (+, or Ctrl and the mouse wheel)")
                                     .clicked()
                                 {
                                     self.fit = false;
                                     self.zoom = (self.zoom * 1.5).min(160.0);
                                 }
                                 if segment(ui, "Fit", self.fit, 44.0)
-                                    .on_hover_text("Show the whole edit")
+                                    .on_hover_text("Show the whole edit (0)")
                                     .clicked()
                                 {
                                     self.fit = true;
@@ -282,6 +284,19 @@ impl EditorState {
                     Vec2::new(width, 142.0 + TEXT_LANE + lift),
                     Sense::click_and_drag(),
                 );
+                // Ctrl and the mouse wheel (or a pinch) zoom from where the timeline is now.
+                if response.hovered() {
+                    let pinch = ui.input(|input| input.zoom_delta());
+                    if pinch.is_finite() && (pinch - 1.0).abs() > 0.001 {
+                        let now = if self.fit {
+                            width / total.seconds().max(0.001) as f32
+                        } else {
+                            self.zoom
+                        };
+                        self.fit = false;
+                        self.zoom = (now * pinch).clamp(4.0, 160.0);
+                    }
+                }
                 let painter = ui.painter();
                 painter.rect_filled(rect, f32::from(crate::kit::radius::MD), CANVAS);
                 painter.line_segment(

@@ -947,6 +947,18 @@ impl EditorState {
         if pressed(none, egui::Key::Space) {
             self.toggle();
         }
+        // Zoom the timeline: + and - by steps, 0 to fit the whole edit.
+        if pressed(none, egui::Key::Plus) || pressed(none, egui::Key::Equals) {
+            self.fit = false;
+            self.zoom = (self.zoom * 1.5).min(160.0);
+        }
+        if pressed(none, egui::Key::Minus) {
+            self.fit = false;
+            self.zoom = (self.zoom / 1.5).max(4.0);
+        }
+        if pressed(none, egui::Key::Num0) {
+            self.fit = true;
+        }
         if pressed(none, egui::Key::Home) {
             self.seek(Tick::ZERO);
         }
@@ -3304,6 +3316,41 @@ mod tests {
             assert!(state.snap_to_frame(state.session.duration()) <= state.session.duration());
             assert!(state.snap_to_frame(Tick(i64::MAX / 4)) <= state.session.duration());
         }
+    }
+    #[test]
+    fn zoom_keys_step_the_timeline_and_fit_returns_to_the_whole_edit() {
+        let mut state = state();
+        let context = crate::kit::test_context();
+        frame(&mut state, &context, vec![], Vec2::new(1440.0, 900.0));
+        assert!(state.fit);
+        key(&mut state, &context, egui::Key::Plus, egui::Modifiers::NONE);
+        assert!(!state.fit);
+        let in_once = state.zoom;
+        key(&mut state, &context, egui::Key::Plus, egui::Modifiers::NONE);
+        assert!(state.zoom > in_once);
+        key(
+            &mut state,
+            &context,
+            egui::Key::Minus,
+            egui::Modifiers::NONE,
+        );
+        assert!((state.zoom - in_once).abs() < 1e-3);
+        // The ends hold, however many times the key is pressed.
+        for _ in 0..40 {
+            key(&mut state, &context, egui::Key::Plus, egui::Modifiers::NONE);
+        }
+        assert!((state.zoom - 160.0).abs() < 1e-3);
+        for _ in 0..40 {
+            key(
+                &mut state,
+                &context,
+                egui::Key::Minus,
+                egui::Modifiers::NONE,
+            );
+        }
+        assert!((state.zoom - 4.0).abs() < 1e-3);
+        key(&mut state, &context, egui::Key::Num0, egui::Modifiers::NONE);
+        assert!(state.fit);
     }
     #[test]
     fn transport_jumps_between_cuts_steps_frames_and_loops() {

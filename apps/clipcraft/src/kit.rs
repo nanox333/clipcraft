@@ -998,9 +998,9 @@ mod icon_tests {
 /// with the chosen part raised, so it reads as a sub-choice next to the lime tabs above it.
 /// Returns the part that was clicked.
 pub fn sub_tabs(ui: &mut egui::Ui, items: &[&str], active: usize) -> Option<usize> {
-    const HEIGHT: f32 = 26.0;
-    const PAD: f32 = 12.0;
-    let font = FontId::new(text_size::CAPTION, medium());
+    const HEIGHT: f32 = 28.0;
+    const PAD: f32 = 13.0;
+    let font = FontId::new(text_size::SMALL, medium());
     let widths: Vec<f32> = items
         .iter()
         .map(|label| {

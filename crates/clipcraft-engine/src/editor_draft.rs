@@ -422,6 +422,41 @@ mod tests {
     }
 
     #[test]
+    fn the_picture_shape_and_framing_come_back_with_a_saved_draft() {
+        let dir = Scratch::new();
+        let quality = SequenceQuality {
+            aspect: crate::SequenceAspect::VERTICAL,
+            framing: crate::SequenceFraming::Blur,
+            ..Default::default()
+        };
+        let value = draft(&dir).with_quality(quality).unwrap();
+        save_editor_draft(&dir.path(), &value).unwrap();
+        let back = load_editor_draft(&dir.path()).unwrap().unwrap().quality;
+        assert_eq!(back, quality);
+        // A custom shape too, and the file keeps it as plain text.
+        let custom = SequenceQuality {
+            aspect: crate::SequenceAspect::Ratio(21, 9),
+            framing: crate::SequenceFraming::Stretch,
+            ..Default::default()
+        };
+        save_editor_draft(&dir.path(), &draft(&dir).with_quality(custom).unwrap()).unwrap();
+        let text = fs::read_to_string(dir.path()).unwrap();
+        assert!(
+            text.contains("\"21:9\"") && text.contains("\"stretch\""),
+            "{text}"
+        );
+        assert_eq!(
+            load_editor_draft(&dir.path()).unwrap().unwrap().quality,
+            custom
+        );
+        // A shape that cannot be rendered is not accepted from a damaged file.
+        let mut damaged = serde_json::to_value(&value).unwrap();
+        damaged["quality"]["aspect"] = serde_json::json!("1:9");
+        fs::write(dir.path(), serde_json::to_vec(&damaged).unwrap()).unwrap();
+        assert!(load_editor_draft(&dir.path()).is_err());
+    }
+
+    #[test]
     fn recovery_round_trip_keeps_cuts_text_and_choices_but_starts_new_history() {
         let dir = Scratch::new();
         let original = session(&dir);
