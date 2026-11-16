@@ -119,10 +119,10 @@ impl ClipCraftApp {
         } else if saved {
             self.load_saved_settings();
         }
-        if defaults || saved {
-            if let Some(start) = self.safe_start.as_mut() {
-                start.asking = false;
-            }
+        if (defaults || saved)
+            && let Some(start) = self.safe_start.as_mut()
+        {
+            start.asking = false;
         }
     }
 

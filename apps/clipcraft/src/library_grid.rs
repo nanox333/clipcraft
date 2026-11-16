@@ -203,6 +203,7 @@ fn build_layout(
 impl GridState {
     /// Draws the grid. `by_date` puts a heading before each day's clips (only meaningful when the
     /// clips are in date order). The answer is what the person asked for this frame, if anything.
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -1192,6 +1193,7 @@ mod box_tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn drag(
         context: &egui::Context,
         grid: &mut GridState,

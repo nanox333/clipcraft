@@ -2042,6 +2042,66 @@ mod tests {
     }
 
     #[test]
+    fn only_a_recorded_screen_can_show_a_password_manager() {
+        let mut app = ClipCraftApp::restored_from(None);
+        // The first screen (nothing chosen) is a whole screen.
+        assert!(app.records_whole_screen());
+        app.capture.targets = vec![
+            CaptureTarget {
+                id: "screen".into(),
+                name: "Screen".into(),
+                kind: TargetKind::Display,
+                width: 1920,
+                height: 1080,
+            },
+            CaptureTarget {
+                id: "window".into(),
+                name: "Game".into(),
+                kind: TargetKind::Window,
+                width: 1280,
+                height: 720,
+            },
+        ];
+        app.recording.capture_target = "screen".into();
+        assert!(app.records_whole_screen());
+        app.recording.capture_target = "window".into();
+        assert!(!app.records_whole_screen());
+        // A window the game is followed into never shows the rest of the desktop.
+        app.recording.capture_target = "screen".into();
+        app.capture.game_window_id = Some("game:1".into());
+        assert!(!app.records_whole_screen());
+    }
+
+    #[test]
+    fn a_damaged_file_that_a_backup_replaced_is_told_once() {
+        let mut app = ClipCraftApp::restored_from(None);
+        // Drain anything an earlier test left behind.
+        let _ = clipcraft_engine::backup::take_restore_notes();
+        app.report_restored_files();
+        assert!(app.capture.notice.is_none());
+        let dir = std::env::temp_dir().join(format!("clipcraft-told-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("recording-settings.json");
+        std::fs::write(&file, b"{}").unwrap();
+        let copy = dir.join("recording-settings.json.bak1");
+        std::fs::write(&copy, b"{}").unwrap();
+        assert!(clipcraft_engine::backup::restore_from(&copy, &file));
+        clipcraft_engine::backup::note_restored("settings");
+        app.report_restored_files();
+        let text = app
+            .capture
+            .notice
+            .as_ref()
+            .map(|notice| notice.text.clone());
+        assert!(text.is_some_and(|text| text.contains("settings") && text.contains("backup")));
+        app.capture.notice = None;
+        app.report_restored_files();
+        assert!(app.capture.notice.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn talking_stays_open_until_every_alternative_is_released() {
         let mut keys = clipcraft_engine::Hotkeys::default();
         keys.set_binding(HotkeyAction::PushToTalk, 0, "F1").unwrap();

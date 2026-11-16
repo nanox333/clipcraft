@@ -67,12 +67,12 @@ pub(crate) fn backups(path: &Path) -> Vec<PathBuf> {
 
 /// Puts `copy` back in place of `path` (which the caller has already set aside). Best effort: the
 /// copy stays where it is.
-pub(crate) fn restore_from(copy: &Path, path: &Path) -> bool {
+pub fn restore_from(copy: &Path, path: &Path) -> bool {
     fs::copy(copy, path).is_ok()
 }
 
 /// Remembers that something was restored from a copy, for the app to tell the person.
-pub(crate) fn note_restored(what: &str) {
+pub fn note_restored(what: &str) {
     if let Ok(mut notes) = NOTES.lock()
         && notes.len() < 8
     {

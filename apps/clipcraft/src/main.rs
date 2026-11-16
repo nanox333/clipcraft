@@ -812,11 +812,6 @@ impl ClipCraftApp {
 
     /// Starts with the last scanned folder restored from the local index, if there is one.
     #[cfg(test)]
-    fn restored() -> Self {
-        Self::restored_from(default_index_path())
-    }
-
-    #[cfg(test)]
     fn restored_from(index_path: Option<PathBuf>) -> Self {
         Self::restored_with(index_path, false)
     }
