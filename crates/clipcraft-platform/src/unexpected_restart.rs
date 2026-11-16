@@ -6,10 +6,9 @@
 //! (no administrator rights needed to read the System log); nothing is installed or changed, and
 //! only the time of the event is read.
 
-use std::time::Duration;
-
 /// How long to wait for `wevtutil` before giving up.
-const QUERY_LIMIT: Duration = Duration::from_secs(8);
+#[cfg(windows)]
+const QUERY_LIMIT: std::time::Duration = std::time::Duration::from_secs(8);
 
 /// Unix seconds of the newest unexpected restart Windows has on record, or `None` when there is
 /// none, the log cannot be read in time, or this is not Windows. Blocks until it has an answer
@@ -79,46 +78,64 @@ fn iso_utc_to_unix(text: &str) -> Option<u64> {
 #[cfg(windows)]
 mod imp {
     use super::{QUERY_LIMIT, event_time_unix};
+    use std::io::Read;
     use std::os::windows::process::CommandExt;
     use std::path::PathBuf;
     use std::process::{Command, Stdio};
-    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
 
     /// More than a single event needs; the rest is ignored.
-    const MAX_OUTPUT_BYTES: usize = 64 * 1024;
+    const MAX_OUTPUT_BYTES: u64 = 64 * 1024;
 
     pub fn query() -> Option<u64> {
         // The system folder, not the search path, so a program of the same name cannot stand in.
         let system = std::env::var_os("SystemRoot").filter(|value| !value.is_empty())?;
         let program = PathBuf::from(system).join("System32").join("wevtutil.exe");
-        let (sender, receiver) = mpsc::channel();
-        std::thread::Builder::new()
-            .name("restart-check".into())
-            .spawn(move || {
-                let output = Command::new(program)
-                    .args([
-                        "qe",
-                        "System",
-                        "/q:*[System[Provider[@Name='Microsoft-Windows-Kernel-Power'] and (EventID=41)]]",
-                        "/c:1",
-                        "/rd:true",
-                        "/f:xml",
-                    ])
-                    .stdin(Stdio::null())
-                    .stderr(Stdio::null())
-                    .creation_flags(0x0800_0000)
-                    .output();
-                let _ = sender.send(output);
-            })
+        let mut child = Command::new(program)
+            .args([
+                "qe",
+                "System",
+                "/q:*[System[Provider[@Name='Microsoft-Windows-Kernel-Power'] and (EventID=41)]]",
+                "/c:1",
+                "/rd:true",
+                "/f:xml",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .creation_flags(0x0800_0000)
+            .spawn()
             .ok()?;
-        let output = receiver.recv_timeout(QUERY_LIMIT).ok()?.ok()?;
-        if !output.status.success() {
+        let mut stdout = child.stdout.take()?;
+        // Read at most `MAX_OUTPUT_BYTES`; closing the pipe after that ends a tool that talks on.
+        let reader = std::thread::Builder::new()
+            .name("restart-read".into())
+            .spawn(move || {
+                let mut bytes = Vec::new();
+                let _ = (&mut stdout).take(MAX_OUTPUT_BYTES).read_to_end(&mut bytes);
+                bytes
+            })
+            .ok();
+        let started = Instant::now();
+        let finished = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status.success(),
+                Ok(None) if started.elapsed() < QUERY_LIMIT => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                // Too slow, or it cannot be asked: end it so nothing is left running.
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break false;
+                }
+            }
+        };
+        if !finished {
             return None;
         }
-        let bytes = output
-            .stdout
-            .get(..output.stdout.len().min(MAX_OUTPUT_BYTES))?;
-        event_time_unix(&String::from_utf8_lossy(bytes))
+        let bytes = reader?.join().ok()?;
+        event_time_unix(&String::from_utf8_lossy(&bytes))
     }
 }
 

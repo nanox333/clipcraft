@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A crash inside a recording is reported at once:** if the capture, encode or sound thread hits
+  an internal error, ClipCraft now says "Clipping stopped" immediately instead of showing
+  "Clipping" over a replay that has quietly stopped growing. What was already recorded stays and
+  can still be saved.
+- **Safer helper programs and files:** Windows' `reg` (sign-in entry, installer) is run from the
+  system folder by its full path; the restart check ends a stuck `wevtutil` instead of leaving it
+  running; the Wayland screen-share token file is read only up to the size a token can be.
+
 - **Only one ClipCraft runs:** a second copy (for example one from the Desktop and one installed,
   both set to start with Windows) no longer starts a second capture and a second graphics-card
   encoder. It exits; started by hand it brings the running window forward. Windows' own login

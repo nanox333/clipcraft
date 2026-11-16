@@ -64,6 +64,19 @@ fn home() -> Result<PathBuf, EngineError> {
         .ok_or(EngineError::StartupFailed)
 }
 
+/// A program in Windows' own `System32` folder, by its full path, so that a file of the same name
+/// next to ClipCraft (a portable copy unpacked into a shared folder, say) or earlier on the search
+/// path cannot stand in for it.
+fn windows_system_tool(name: &str) -> std::path::PathBuf {
+    let root = std::env::var_os("SystemRoot")
+        .filter(|value| !value.is_empty())
+        .map_or_else(
+            || std::path::PathBuf::from(r"C:\Windows"),
+            std::path::PathBuf::from,
+        );
+    root.join("System32").join(name)
+}
+
 /// Turns launching at sign-in on or off for this person.
 pub(crate) fn set_launch_at_startup(enabled: bool, executable: &Path) -> Result<(), EngineError> {
     if enabled && !executable.is_absolute() {
@@ -71,7 +84,7 @@ pub(crate) fn set_launch_at_startup(enabled: bool, executable: &Path) -> Result<
     }
     if cfg!(target_os = "windows") {
         let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-        let mut command = Command::new("reg");
+        let mut command = Command::new(windows_system_tool("reg.exe"));
         if enabled {
             command.args(["add", key, "/v", "ClipCraft", "/t", "REG_SZ", "/f", "/d"]);
             command.arg(format!("\"{}\" --minimized", executable.display()));
@@ -111,6 +124,13 @@ pub(crate) fn set_launch_at_startup(enabled: bool, executable: &Path) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_tools_are_named_by_their_full_system_path() {
+        let tool = windows_system_tool("reg.exe");
+        assert!(tool.ends_with("System32/reg.exe") || tool.ends_with(r"System32\reg.exe"));
+        assert!(tool.components().count() > 2, "{tool:?}");
+    }
 
     #[test]
     fn the_desktop_entry_quotes_the_program_and_starts_minimized() {

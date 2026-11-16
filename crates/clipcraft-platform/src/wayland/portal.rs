@@ -42,7 +42,14 @@ type Results = HashMap<String, OwnedValue>;
 /// The saved restore token, if there is a sane one. A token lets the desktop skip its chooser and
 /// share the screen or window the person picked last time.
 pub fn read_token(path: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
+    // Only as much as a token can be: a file that is large, or never ends, is not one.
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(std::fs::File::open(path).ok()?, (MAX_TOKEN as u64) + 16),
+        &mut bytes,
+    )
+    .ok()?;
+    let text = String::from_utf8(bytes).ok()?;
     let token = text.trim();
     (!token.is_empty() && token.len() <= MAX_TOKEN && token.chars().all(|c| c.is_ascii_graphic()))
         .then(|| token.to_owned())
@@ -336,6 +343,8 @@ mod tests {
         write_token(&path, "");
         write_token(&path, &"y".repeat(MAX_TOKEN + 1));
         assert_eq!(read_token(&path), None);
+        // A file that never ends is read only as far as a token could be, and refused.
+        assert_eq!(read_token(Path::new("/dev/zero")), None);
         write_token(&path, "again");
         forget_token(&path);
         assert_eq!(read_token(&path), None);

@@ -128,7 +128,15 @@ fn known_folder(id: &windows::core::GUID) -> Result<std::path::PathBuf, String> 
 #[cfg(windows)]
 fn reg(arguments: &[&std::ffi::OsStr]) -> Result<std::process::Output, String> {
     use std::os::windows::process::CommandExt;
-    std::process::Command::new("reg.exe")
+    // The full path in Windows' own folder, so a file named reg.exe beside ClipCraft or earlier on
+    // the search path cannot stand in for it.
+    let root = std::env::var_os("SystemRoot")
+        .filter(|value| !value.is_empty())
+        .map_or_else(
+            || std::path::PathBuf::from(r"C:\Windows"),
+            std::path::PathBuf::from,
+        );
+    std::process::Command::new(root.join("System32").join("reg.exe"))
         .args(arguments)
         .creation_flags(0x08000000)
         .output()

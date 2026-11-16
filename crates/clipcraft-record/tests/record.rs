@@ -727,3 +727,43 @@ fn a_long_silence_in_the_pictures_starts_the_buffer_over_instead_of_freezing_eve
     assert!(widest < 0.5, "a {widest} s freeze is still in the clip");
     decodes_cleanly(&path);
 }
+
+/// A source that panics on its 90th picture, as a buggy driver or a bug of ours might.
+struct PanickingSource {
+    inner: SyntheticSource,
+    taken: u32,
+}
+
+impl clipcraft_capture::CaptureSource for PanickingSource {
+    fn target(&self) -> &clipcraft_capture::CaptureTarget {
+        self.inner.target()
+    }
+
+    fn capture(&mut self) -> Result<clipcraft_capture::CaptureFrame, CaptureError> {
+        self.taken += 1;
+        assert!(self.taken < 90, "the capture driver blew up");
+        self.inner.capture()
+    }
+}
+
+#[test]
+fn a_panic_in_a_recording_thread_is_reported_at_once_and_the_buffer_can_still_be_saved() {
+    let scratch = Scratch::new("panic");
+    let recorder = Recorder::start(
+        Box::new(PanickingSource {
+            inner: SyntheticSource::new(160, 90, 30),
+            taken: 0,
+        }),
+        config(),
+    )
+    .unwrap();
+    // The state turns to failed while the recorder is still held, not only when it is stopped.
+    wait_for(&recorder, "the failure to be reported", |s| {
+        matches!(s.state, RecordState::Failed(RecordError::Internal))
+    });
+    // The pictures taken before the panic are still there to save.
+    let path = scratch.file("after-panic.mp4");
+    let saved = recorder.save_clip(10, ClipFormat::Mp4, &path);
+    assert!(saved.is_ok(), "{saved:?}");
+    assert!(path.exists());
+}

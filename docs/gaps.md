@@ -158,6 +158,28 @@ drag on Windows blocks the window until the drop.
   stay in `deny.toml` with reasons.
 - *Windows drag blocking:* inherent to OLE's `DoDragDrop`; not changed.
 
+## Safety review, second pass (2026-11-16)
+
+Read for the code added since the first review (single copy lock, unexpected-restart check,
+graphics-card heartbeat file, Linux per-program sound) and re-checked: panics, unbounded reads and
+helper programs. **Found and fixed:** (1) a panic in a recording thread was only noticed when the
+recording was stopped, so the app showed "Clipping" over a buffer that had stopped growing; each
+thread now runs in `guarded`, which marks the recording failed (`RecordError::Internal`) and keeps
+the buffer saveable (test: a source that panics on its 90th picture); (2) `reg`/`reg.exe` was found
+through the search path, so a file of that name beside a portable copy could run instead of
+Windows' own; both uses now name `System32` in full; (3) the restart check left a hung `wevtutil`
+running after its eight-second limit and collected its whole output; it is now ended and read to
+64 KiB; (4) the Wayland restore-token file was read without a size limit (a device or huge file
+would hang or fill memory); now read to the size of a token (test: `/dev/zero`). **Checked, nothing
+to change:** the single-copy lock and note file (user-only folder, the lock goes with the process,
+a second copy exits before it can touch the heartbeat file); heartbeat and settings files (size
+caps, atomic replace, damaged ones ignored); no `unwrap`, `expect` or `panic!` outside test code;
+allocations sized from file contents in the MP4 reader are checked against caps first. **Known and
+accepted:** the path to `System32` comes from the `SystemRoot` environment variable (a program that
+can set it already runs as the user); on Linux `pactl`, `parec` and the clipboard tools are found
+through the user's search path; the Windows-only changes compile and lint under the
+`x86_64-pc-windows-msvc` target but have not been run on Windows.
+
 ## Safety watchdog (a report of 100% processor use and a near-crash)
 
 **The cause of that report was not found**: it was one report without details, and no runaway loop

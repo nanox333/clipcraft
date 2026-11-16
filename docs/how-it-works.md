@@ -65,7 +65,8 @@ The data folder is `%APPDATA%` on Windows, `~/Library/Application Support` on ma
    encoder is busy more than 60% of the time (a game started taking the computer: "squeezed");
    if so it takes every second or third picture instead, and goes back when there
    is room. The stream is unchanged, so the buffer is kept.
-5. **Safety.** The app reads ClipCraft's own processor and memory use once a second while it
+5. **Safety.** Each recording thread runs inside `guarded`: a panic marks the recording failed at
+   once (the buffer is kept and can still be saved). The app reads ClipCraft's own processor and memory use once a second while it
    records; a runaway first lowers the picture rate and then stops clipping (`safety.rs`).
 6. **Pause.** The recorder's clock can stop (`set_paused`): nothing is captured or kept, sound is
    read and discarded, and later pictures carry on from the same time so a clip has no frozen gap.

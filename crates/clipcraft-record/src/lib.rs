@@ -64,6 +64,8 @@ pub enum RecordError {
     ThreadFailed,
     /// The sound could not be set up.
     AudioFailed,
+    /// A recording thread hit an internal error and stopped the recording.
+    Internal,
 }
 
 impl fmt::Display for RecordError {
@@ -89,6 +91,9 @@ impl fmt::Display for RecordError {
             Self::BadConfig => formatter.write_str("These recording settings cannot be used."),
             Self::ThreadFailed => formatter.write_str("Recording could not be started."),
             Self::AudioFailed => formatter.write_str("The sound could not be set up."),
+            Self::Internal => formatter.write_str(
+                "ClipCraft hit an internal error. What was already recorded can still be saved; start clipping again to continue.",
+            ),
         }
     }
 }

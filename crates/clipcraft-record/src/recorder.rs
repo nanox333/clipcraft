@@ -346,6 +346,18 @@ impl Shared {
     }
 }
 
+/// Runs the work of one recording thread. If it panics (a bug, or a driver that misbehaves) the
+/// recording is marked failed at once, so the app says so instead of showing "Clipping" over a
+/// buffer that has quietly stopped growing, and the other threads are told to stop. What is
+/// already buffered stays, and can still be saved.
+fn guarded(shared: &Shared, work: impl FnOnce()) {
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).is_err() {
+        shared.fail(RecordError::Internal);
+        shared.stop.store(true, Ordering::SeqCst);
+        shared.wake.notify_all();
+    }
+}
+
 /// A running recording. Dropping it stops it.
 pub struct Recorder {
     shared: Arc<Shared>,
@@ -424,13 +436,21 @@ impl Recorder {
         let encode_config = config.clone();
         let encode = std::thread::Builder::new()
             .name("clipcraft-encode".to_owned())
-            .spawn(move || encode_loop(&encode_shared, &encode_config))
+            .spawn(move || {
+                guarded(&encode_shared, || {
+                    encode_loop(&encode_shared, &encode_config)
+                })
+            })
             .map_err(|_| RecordError::ThreadFailed)?;
         let capture_shared = shared.clone();
         let fps = config.fps;
         let capture = std::thread::Builder::new()
             .name("clipcraft-capture".to_owned())
-            .spawn(move || capture_loop(&capture_shared, source, fps))
+            .spawn(move || {
+                guarded(&capture_shared, || {
+                    capture_loop(&capture_shared, source, fps)
+                })
+            })
             .map_err(|_| {
                 shared.stop.store(true, Ordering::SeqCst);
                 RecordError::ThreadFailed
@@ -440,7 +460,7 @@ impl Recorder {
                 let audio_shared = shared.clone();
                 let handle = std::thread::Builder::new()
                     .name("clipcraft-audio".to_owned())
-                    .spawn(move || audio_loop(&audio_shared, engine))
+                    .spawn(move || guarded(&audio_shared, || audio_loop(&audio_shared, engine)))
                     .map_err(|_| {
                         shared.stop.store(true, Ordering::SeqCst);
                         RecordError::ThreadFailed
