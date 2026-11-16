@@ -388,6 +388,52 @@ impl EditorState {
         self.invalidate_preload();
         self.clock = None;
     }
+    /// The frame rate of the segment at `position`: the clip's own, or 30 when it is not known.
+    fn rate_at(&self, position: Tick) -> FrameRate {
+        self.session
+            .at(position)
+            .and_then(|(clip, _)| {
+                self.media
+                    .iter()
+                    .find(|entry| entry.path == clip.input.to_string_lossy())
+            })
+            .and_then(|entry| entry.probe.as_ref())
+            .and_then(|probe| probe.frame_rate)
+            .unwrap_or(RATE)
+    }
+    /// The playhead one frame later or earlier, on the frames of the clip being shown: a 60 FPS
+    /// clip steps by 1/60 s, a 24 FPS one by 1/24 s. From between two frames it goes to the next
+    /// (or the start of this) frame.
+    fn stepped(&self, forward: bool) -> Tick {
+        let position = if forward {
+            self.playhead
+        } else {
+            // The instant just before: the segment and frame the playhead is leaving.
+            (self.playhead - Tick(1)).max(Tick::ZERO)
+        };
+        let Some((clip, source)) = self.session.at(position) else {
+            return self.playhead;
+        };
+        let rate = self.rate_at(position);
+        let frame = rate.frame_at(source);
+        let target = if forward {
+            let next = rate.tick_of(frame + 1);
+            if next > source {
+                next
+            } else {
+                rate.tick_of(frame + 2)
+            }
+        } else {
+            rate.tick_of(frame)
+        };
+        let offset = self.session.offset_of(clip.id).unwrap_or(Tick::ZERO);
+        (offset + (target - clip.start)).clamp(Tick::ZERO, self.session.duration())
+    }
+    fn step_frame(&mut self, forward: bool) {
+        self.playing = false;
+        let target = self.stepped(forward);
+        self.seek(target);
+    }
     /// Where each segment starts, then where the edit ends.
     fn cuts(&self) -> Vec<Tick> {
         let mut at = Tick::ZERO;
@@ -400,7 +446,7 @@ impl EditorState {
     }
     /// The start of this segment, or of the one before when already at its start.
     fn previous_cut(&mut self) {
-        let before = self.playhead - RATE.frame_duration();
+        let before = self.playhead - self.rate_at(self.playhead).frame_duration();
         let target = self
             .cuts()
             .into_iter()
@@ -889,12 +935,10 @@ impl EditorState {
             self.seek(self.session.duration());
         }
         if pressed(none, egui::Key::ArrowLeft) {
-            self.playing = false;
-            self.seek(self.playhead - RATE.frame_duration());
+            self.step_frame(false);
         }
         if pressed(none, egui::Key::ArrowRight) {
-            self.playing = false;
-            self.seek(self.playhead + RATE.frame_duration());
+            self.step_frame(true);
         }
         // The worker owns an immutable request. Preview transport remains available, while edits
         // and a second export stay blocked until the worker acknowledges completion/cancellation.
@@ -1258,24 +1302,22 @@ impl EditorState {
                                 self.previous_cut();
                             }
                             if back {
-                                self.playing = false;
-                                self.seek(self.playhead - RATE.frame_duration());
+                                self.step_frame(false);
                             }
                             if forward {
-                                self.playing = false;
-                                self.seek(self.playhead + RATE.frame_duration());
+                                self.step_frame(true);
                             }
                             if next {
                                 self.next_cut();
                             }
                             // The time passed in the text colour, the total beside it quieter.
                             let total = ui.painter().layout_no_wrap(
-                                format!(" / {}", stamp(self.session.duration())),
+                                format!(" / {}", stamp_precise(self.session.duration())),
                                 FontId::monospace(13.0),
                                 MUTED,
                             );
                             let passed = ui.painter().layout_no_wrap(
-                                stamp(self.playhead),
+                                stamp_precise(self.playhead),
                                 FontId::monospace(13.0),
                                 if any { TEXT } else { MUTED },
                             );
@@ -2342,6 +2384,12 @@ fn cover_uv(size: Vec2, aspect: f32) -> egui::Rect {
     egui::Rect::from_center_size(egui::pos2(0.5, 0.5), Vec2::new(w, h))
 }
 
+/// Minutes, seconds and hundredths: fine enough to see a frame go by at 60 FPS.
+fn stamp_precise(time: Tick) -> String {
+    let ms = time.to_units_floor(1000).max(0);
+    format!("{}:{:02}.{:02}", ms / 60_000, ms / 1000 % 60, ms / 10 % 100)
+}
+
 fn stamp(time: Tick) -> String {
     let ms = time.to_units_floor(1000).max(0);
     format!("{}:{:02}.{:01}", ms / 60_000, ms / 1000 % 60, ms / 100 % 10)
@@ -3039,6 +3087,44 @@ mod tests {
         assert!(state.has_clips());
         state.open = true;
         assert_eq!(state.session.duration(), Tick::from_units(2, 1));
+    }
+    #[test]
+    fn frame_step_follows_the_frame_rate_of_the_clip_being_shown() {
+        for rate in [
+            FrameRate { num: 24, den: 1 },
+            FrameRate { num: 30, den: 1 },
+            FrameRate { num: 60, den: 1 },
+            FrameRate {
+                num: 60_000,
+                den: 1_001,
+            },
+        ] {
+            let mut state = state();
+            let mut entry = media();
+            entry.probe.as_mut().unwrap().frame_rate = Some(rate);
+            state.media = Arc::new(vec![entry]);
+            state.seek(Tick::ZERO);
+            state.step_frame(true);
+            assert_eq!(state.playhead, rate.frame_duration(), "{rate:?}");
+            state.step_frame(true);
+            assert_eq!(state.playhead, rate.tick_of(2), "{rate:?}");
+            state.step_frame(false);
+            assert_eq!(state.playhead, rate.tick_of(1), "{rate:?}");
+            // From between two frames: forward to the next one, back to the start of this one.
+            state.seek(rate.tick_of(5) + Tick(1_000));
+            state.step_frame(true);
+            assert_eq!(state.playhead, rate.tick_of(6), "{rate:?}");
+            state.seek(rate.tick_of(5) + Tick(1_000));
+            state.step_frame(false);
+            assert_eq!(state.playhead, rate.tick_of(5), "{rate:?}");
+            // The edges hold.
+            state.seek(Tick::ZERO);
+            state.step_frame(false);
+            assert_eq!(state.playhead, Tick::ZERO);
+            state.seek(state.session.duration());
+            state.step_frame(true);
+            assert_eq!(state.playhead, state.session.duration());
+        }
     }
     #[test]
     fn transport_jumps_between_cuts_steps_frames_and_loops() {
