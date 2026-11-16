@@ -195,22 +195,11 @@ impl ClipCraftApp {
                     favorite = Some(!entry.favorite);
                 }
                 ui.add_space(crate::kit::space::MD);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    ui.label(
-                        RichText::new("Game")
-                            .color(MUTED)
-                            .size(crate::kit::text_size::CAPTION),
-                    );
-                    kit::help(
-                        ui,
-                        if entry.game.is_some() {
-                            "Set by you. Clear the box to use the detected game."
-                        } else {
-                            "Detected from the folder or file name. Type to change it."
-                        },
-                    );
-                });
+                ui.label(
+                    RichText::new("Game")
+                        .color(MUTED)
+                        .size(crate::kit::text_size::CAPTION),
+                );
                 if let Some((_, text)) = self.game_draft.as_mut() {
                     let field = kit::field_frame()
                         .show(ui, |ui| {

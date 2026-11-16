@@ -444,7 +444,7 @@ pub fn rail(
             section_header(
                 ui,
                 "Games",
-                Some("Games appear from recordings, folders and file names. Right-click a game to change its colour or mark."),
+                None,
             );
             for group in groups {
                 let selected = matches!(filter, LibraryFilter::Game(open) if open.to_lowercase() == group.name.to_lowercase());
