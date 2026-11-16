@@ -14,11 +14,14 @@ pub(crate) enum Sort {
     Largest,
     Smallest,
     Game,
+    /// The order the person made by dragging clips.
+    Manual,
 }
 
 impl Sort {
-    pub(crate) const ALL: [Sort; 7] = [
+    pub(crate) const ALL: [Sort; 8] = [
         Sort::Newest,
+        Sort::Manual,
         Sort::Oldest,
         Sort::Name,
         Sort::NameReverse,
@@ -36,6 +39,7 @@ impl Sort {
             Sort::Largest => "Largest first",
             Sort::Smallest => "Smallest first",
             Sort::Game => "Game A–Z",
+            Sort::Manual => "My order",
         }
     }
 }
@@ -60,6 +64,9 @@ pub(crate) struct ViewCache {
     rows: Vec<Row>,
     names: Vec<usize>,
     orders: HashMap<Sort, Vec<usize>>,
+    /// The place of each clip (by path) in the order the person made; clips not in it come first.
+    manual: HashMap<String, usize>,
+    manual_version: u64,
     key: Option<(LibraryFilter, String, Sort)>,
     pub indices: Vec<usize>,
     pub total: usize,
@@ -91,6 +98,9 @@ impl ViewCache {
         {
             self.rebuild(result);
         }
+        if sort == Sort::Manual {
+            self.ensure_manual(result);
+        }
         let key = (filter.clone(), query.trim().to_lowercase(), sort);
         if self.key.as_ref() == Some(&key) {
             return;
@@ -121,6 +131,40 @@ impl ViewCache {
         }
         self.key = Some(key);
     }
+    /// Sets the order the person made (paths, first to last). Clips not in it come first, newest
+    /// first, so a new clip is never hidden at the far end.
+    pub fn set_manual_order(&mut self, order: &[String]) {
+        self.manual = order
+            .iter()
+            .enumerate()
+            .map(|(place, path)| (path.clone(), place + 1))
+            .collect();
+        self.manual_version += 1;
+        self.orders.remove(&Sort::Manual);
+        self.key = None;
+    }
+
+    /// Builds the manual order from the newest-first one, which breaks ties and orders new clips.
+    fn ensure_manual(&mut self, result: &LibraryScanResult) {
+        if self.orders.contains_key(&Sort::Manual) {
+            return;
+        }
+        let mut order = self
+            .orders
+            .get(&Sort::Newest)
+            .cloned()
+            .unwrap_or_else(|| self.names.clone());
+        order.sort_by_key(|&index| {
+            result
+                .entries
+                .get(index)
+                .and_then(|entry| self.manual.get(&entry.path))
+                .copied()
+                .unwrap_or(0)
+        });
+        self.orders.insert(Sort::Manual, order);
+    }
+
     fn rebuild(&mut self, result: &LibraryScanResult) {
         self.directory.clone_from(&result.directory);
         self.rows.clear();

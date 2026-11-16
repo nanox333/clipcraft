@@ -322,6 +322,10 @@ pub const MAX_VIDEO_KBPS: u32 = 200_000;
 /// Most application rows in the sound mixer.
 pub const MAX_AUDIO_APPS: usize = 6;
 
+/// The most clips whose place in a hand-made order is remembered, and the longest path kept.
+pub const MAX_LIBRARY_ORDER: usize = 20_000;
+const MAX_ORDER_PATH_BYTES: usize = 4_096;
+
 /// The most games whose sidebar look can be changed.
 pub const MAX_GAME_BADGES: usize = 200;
 
@@ -613,6 +617,10 @@ pub struct RecordingSettings {
     pub audio_apps: Vec<AppAudioRow>,
     /// How games look in the library's sidebar (colour and mark), by lower-case game name.
     pub game_badges: std::collections::BTreeMap<String, GameBadge>,
+    /// The order of clips the person made by dragging them in the library (paths, first to last).
+    pub library_order: Vec<String>,
+    /// The library is shown in that order.
+    pub library_manual: bool,
 }
 
 impl Default for RecordingSettings {
@@ -684,6 +692,8 @@ impl Default for RecordingSettings {
             protect_computer: true,
             audio_apps: Vec::new(),
             game_badges: std::collections::BTreeMap::new(),
+            library_order: Vec::new(),
+            library_manual: false,
         }
     }
 }
@@ -834,6 +844,19 @@ impl RecordingSettings {
         self.replay_seconds = self.replay_seconds.clamp(5, 600);
         self.post_roll_seconds = self.post_roll_seconds.min(30);
         self.share_megabytes = self.share_megabytes.clamp(1, 500);
+        {
+            let mut seen = std::collections::HashSet::new();
+            self.library_order = std::mem::take(&mut self.library_order)
+                .into_iter()
+                .filter(|path| {
+                    !path.is_empty()
+                        && path.len() <= MAX_ORDER_PATH_BYTES
+                        && !path.chars().any(char::is_control)
+                        && seen.insert(path.clone())
+                })
+                .take(MAX_LIBRARY_ORDER)
+                .collect();
+        }
         self.game_badges = std::mem::take(&mut self.game_badges)
             .into_iter()
             .filter_map(|(name, badge)| {
@@ -996,6 +1019,31 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_hand_made_clip_order_is_kept_clean_unique_and_bounded() {
+        let mut settings = RecordingSettings {
+            library_manual: true,
+            library_order: vec![
+                "/clips/a.mp4".to_owned(),
+                "/clips/b.mp4".to_owned(),
+                "/clips/a.mp4".to_owned(),
+                String::new(),
+                "bad\u{7}.mp4".to_owned(),
+                "x".repeat(5_000),
+            ],
+            ..RecordingSettings::default()
+        };
+        settings = settings.sanitized();
+        assert_eq!(settings.library_order, ["/clips/a.mp4", "/clips/b.mp4"]);
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: RecordingSettings = serde_json::from_str(&json).unwrap();
+        assert!(back.library_manual);
+        assert_eq!(back.library_order, settings.library_order);
+        let mut flood = RecordingSettings::default();
+        flood.library_order = (0..30_000).map(|n| format!("/clips/{n}.mp4")).collect();
+        assert_eq!(flood.sanitized().library_order.len(), MAX_LIBRARY_ORDER);
+    }
 
     #[test]
     fn game_badges_are_kept_clean_bounded_and_survive_a_round_trip() {

@@ -24,6 +24,8 @@ pub(crate) enum ClipCardAction {
     Delete(Box<MediaEntry>),
     /// Start dragging the clip out of the window, into a chat.
     DragOut(Box<MediaEntry>),
+    /// The clips were put in a new order by dragging: the paths shown, in their new order.
+    Reordered(Vec<String>),
     /// The pointer has rested on the clip: get its share copy ready.
     Prepare(Box<MediaEntry>),
     /// Open the rename box for the clip.
@@ -389,8 +391,6 @@ pub(crate) fn clip_card(
         } else {
             ClipCardAction::Reveal(entry.path.clone())
         })
-    } else if response.drag_started() && !entry.offline {
-        Some(ClipCardAction::DragOut(Box::new(entry.clone())))
     } else if response.clicked() && !entry.offline {
         Some(ClipCardAction::Open(Box::new(entry.clone())))
     } else if rested_on(ui, &response) && !entry.offline {

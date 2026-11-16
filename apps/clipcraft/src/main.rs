@@ -807,7 +807,14 @@ impl ClipCraftApp {
         };
         if let Some(path) = app.settings_path.clone() {
             match execute(Command::LoadRecordingSettings { path }) {
-                Ok(CommandOutput::RecordingSettings(settings)) => app.recording = *settings,
+                Ok(CommandOutput::RecordingSettings(settings)) => {
+                    app.recording = *settings;
+                    if app.recording.library_manual {
+                        app.sort = library_view::Sort::Manual;
+                        app.library_view
+                            .set_manual_order(&app.recording.library_order);
+                    }
+                }
                 Ok(_) => {}
                 Err(error) => app.error = Some(error.to_string()),
             }
@@ -1643,9 +1650,16 @@ impl ClipCraftApp {
                 } else if entries.is_empty() {
                     self.no_search_results(ui);
                 } else {
-                    card_action = self
-                        .grid
-                        .show(ui, result, &self.library_view, &mut self.thumbs);
+                    card_action = self.grid.show(
+                        ui,
+                        result,
+                        &self.library_view,
+                        &mut self.thumbs,
+                        matches!(
+                            self.sort,
+                            library_view::Sort::Newest | library_view::Sort::Oldest
+                        ),
+                    );
                 }
             }
             None => self.first_scan_state(ui),
@@ -1671,6 +1685,7 @@ impl ClipCraftApp {
                 ClipCardAction::Delete(entry) => self.ask_to_delete(*entry),
                 ClipCardAction::Rename(entry) => self.ask_to_rename(*entry),
                 ClipCardAction::DragOut(entry) => self.drag_clip_out(ui.ctx(), &entry),
+                ClipCardAction::Reordered(paths) => self.apply_reorder(paths),
                 ClipCardAction::Prepare(entry) => self.prepare_share(&entry, false),
                 ClipCardAction::SetCollection { path, name, add } => {
                     self.edit_library(if add {
@@ -1683,6 +1698,88 @@ impl ClipCraftApp {
         }
     }
 
+    /// The clips were put in a new order by dragging. The order is kept (and remembered), and the
+    /// library switches to it if it was in another one.
+    fn apply_reorder(&mut self, shown: Vec<String>) {
+        let Some(result) = self.library.as_ref() else {
+            return;
+        };
+        let visible: std::collections::HashSet<String> = shown.iter().cloned().collect();
+        // Everything in the order it is now: what is shown first (as it was before the move for
+        // another sort), then what a filter hides.
+        let newest_first = |paths: &mut Vec<&clipcraft_engine::MediaEntry>| {
+            paths.sort_by(|a, b| {
+                b.modified_unix_seconds
+                    .cmp(&a.modified_unix_seconds)
+                    .then_with(|| a.path.cmp(&b.path))
+            });
+        };
+        let mut base: Vec<String> = if self.sort == library_view::Sort::Manual {
+            let present: std::collections::HashSet<&str> = result
+                .entries
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect();
+            let known: Vec<&str> = self
+                .recording
+                .library_order
+                .iter()
+                .map(String::as_str)
+                .filter(|path| present.contains(path))
+                .collect();
+            let known_set: std::collections::HashSet<&str> = known.iter().copied().collect();
+            let mut unknown: Vec<&clipcraft_engine::MediaEntry> = result
+                .entries
+                .iter()
+                .filter(|entry| !known_set.contains(entry.path.as_str()))
+                .collect();
+            newest_first(&mut unknown);
+            unknown
+                .into_iter()
+                .map(|entry| entry.path.clone())
+                .chain(known.into_iter().map(str::to_owned))
+                .collect()
+        } else {
+            let mut hidden: Vec<&clipcraft_engine::MediaEntry> = result
+                .entries
+                .iter()
+                .filter(|entry| !visible.contains(&entry.path))
+                .collect();
+            newest_first(&mut hidden);
+            // What was shown, in the order before the move.
+            self.library_view
+                .indices
+                .iter()
+                .filter_map(|&source| result.entries.get(source))
+                .map(|entry| entry.path.clone())
+                .chain(hidden.into_iter().map(|entry| entry.path.clone()))
+                .collect()
+        };
+        // The shown clips take their new order in the places the shown clips had.
+        let mut next = shown.into_iter();
+        for path in &mut base {
+            if visible.contains(path.as_str())
+                && let Some(replacement) = next.next()
+            {
+                *path = replacement;
+            }
+        }
+        let switched = self.sort != library_view::Sort::Manual;
+        self.recording.library_order = base;
+        self.recording.library_manual = true;
+        self.sort = library_view::Sort::Manual;
+        self.library_view
+            .set_manual_order(&self.recording.library_order);
+        self.save_recording_settings();
+        if switched {
+            self.capture.notice = capture::notice(
+                "Your clips are in your own order now. Pick another sort from the menu any time.",
+                false,
+                None,
+            );
+        }
+    }
+
     fn sort_menu(&mut self, ui: &mut egui::Ui) {
         let label = self.sort.label();
         kit::pill_menu(ui, label, "Sort clips", |ui| {
@@ -1692,6 +1789,11 @@ impl ClipCraftApp {
                     .clicked()
                 {
                     self.sort = sort;
+                    let manual = sort == library_view::Sort::Manual;
+                    if self.recording.library_manual != manual {
+                        self.recording.library_manual = manual;
+                        self.save_recording_settings();
+                    }
                     ui.close();
                 }
             }

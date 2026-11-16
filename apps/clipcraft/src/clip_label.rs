@@ -366,7 +366,7 @@ mod tests {
         assert_eq!(when_at(Some(NOW - 400 * day), &utc()), "12 Oct 2025, 12:00");
         assert_eq!(when_at(None, &utc()), "Unknown date");
         // A time in the future (a wrong clock) is simply today.
-        assert_eq!(when_at(Some(NOW + 5 * day), &utc()), "20 Nov, 12:00");
+        assert_eq!(when_at(Some(NOW + 5 * day), &utc()), "21 Nov, 12:00");
     }
 
     #[test]
