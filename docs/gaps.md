@@ -25,7 +25,7 @@ drag a box over empty space like on a desktop (Ctrl or Shift adds to what is cho
 A for all shown clips, Esc to leave. A bar then offers **Favorite**, **Collection** (a tick or a
 dash for each collection, and a field for a new one) and **Delete**. Delete asks first, names the
 clips and the space they use, leaves favorites out unless the box for them is ticked, and moves the
-clips to the Recycle Bin after 10 seconds, with **Undo** and **Delete now** buttons on the notice. At most 500 clips go in one delete.
+clips to the Recycle Bin when the message with **Undo** and **Delete now** buttons is closed (no countdown; it stays until closed, and comes back if another message replaced it). At most 500 clips go in one delete.
 
 Safety measures that came with it:
 
@@ -57,8 +57,8 @@ space call was run on Linux only); the three-starts safe start with a real crash
 
 Known limits: the pause only knows programs on its list (1Password, Bitwarden, KeePass, KeePassXC,
 Dashlane, Enpass, Keeper, LastPass, NordPass, Proton Pass, RoboForm, Authy), not websites in a
-browser, and it does not react to the screen lock; an Undo works only while the notice is shown;
-deleting one clip from its own page still uses the older dialog without the 10-second Undo; a backup
+browser, and it does not react to the screen lock; an Undo works only while the message is shown, and closing ClipCraft first leaves the waiting clips where they are;
+deleting one clip from its own page still uses the older dialog without Undo; a backup
 can be up to a day old; the clip check calls a clip doubtful for length only when it is under half as long as recorded (a slow computer drops pictures, and a stricter bar warned about healthy clips on a slow Windows test machine).
 
 ## Window redesign round (2026-11-16)

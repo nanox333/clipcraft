@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use clipcraft_engine::{EngineError, MediaEntry, MetaEdit, clean_name, format_bytes};
 use eframe::egui::{self, RichText};
@@ -21,7 +21,6 @@ use crate::{ClipCraftApp, Icon};
 /// Most clips that can be moved to the Recycle Bin in one go.
 pub(crate) const MAX_TRASH_AT_ONCE: usize = 500;
 /// How long deleted clips wait, untouched and out of sight, for an Undo.
-pub(crate) const UNDO_SECONDS: f32 = 10.0;
 
 /// The clips chosen so far, and the group action in progress.
 #[derive(Default)]
@@ -56,7 +55,6 @@ impl Selection {
 
 struct PendingTrash {
     paths: Vec<String>,
-    since: Instant,
 }
 
 enum TrashEvent {
@@ -606,11 +604,10 @@ impl ClipCraftApp {
                 }
                 ui.add_space(crate::kit::space::MD);
                 ui.label(
-                    RichText::new(format!(
-                        "They go to the Recycle Bin, after {} seconds in which you can undo. \
-                         You can also put them back from the Recycle Bin later.",
-                        UNDO_SECONDS as u32
-                    ))
+                    RichText::new(
+                        "They leave this page now. A message with Undo stays on screen; when you close \
+                         it, the clips move to the Recycle Bin, where you can still put them back.",
+                    )
                     .color(MUTED)
                     .size(crate::kit::text_size::SMALL),
                 );
@@ -649,14 +646,12 @@ impl ClipCraftApp {
                 // They leave the page now and wait: nothing is moved until the time is up.
                 self.selection.pending = Some(PendingTrash {
                     paths: summary.paths.clone(),
-                    since: Instant::now(),
                 });
                 self.library_view.invalidate();
                 let count = summary.paths.len();
                 self.capture.notice = notice_with_undo(format!(
-                    "{count} clip{} will move to the Recycle Bin in {} seconds",
+                    "{count} clip{} will move to the Recycle Bin when you close this",
                     if count == 1 { "" } else { "s" },
-                    UNDO_SECONDS as u32
                 ));
             }
             Some(false) => self.selection.confirm = false,
@@ -691,16 +686,22 @@ impl ClipCraftApp {
         }
     }
 
-    /// Moves the waiting clips once their time is up, and reports the outcome of a move.
+    /// Keeps the Undo message up while clips wait, and reports the outcome of a move.
     pub(crate) fn poll_bulk_trash(&mut self, context: &egui::Context) {
-        if let Some(pending) = self.selection.pending.as_ref() {
-            if pending.since.elapsed().as_secs_f32() >= UNDO_SECONDS {
-                if let Some(pending) = self.selection.pending.take() {
-                    self.start_bulk_trash(pending.paths);
-                }
-            } else {
-                context.request_repaint_after(Duration::from_millis(250));
-            }
+        // The message with Undo is the only way to the waiting clips: if another message took its
+        // place, it comes back, so the clips are never left waiting with no way to undo.
+        if let Some(pending) = self.selection.pending.as_ref()
+            && !self
+                .capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.undo)
+        {
+            let count = pending.paths.len();
+            self.capture.notice = notice_with_undo(format!(
+                "{count} clip{} will move to the Recycle Bin when you close this",
+                if count == 1 { "" } else { "s" },
+            ));
         }
         let Some(trashing) = self.selection.trashing.as_mut() else {
             return;
@@ -889,7 +890,6 @@ mod tests {
         let mut app = ClipCraftApp::restored_from(None);
         let waiting = || PendingTrash {
             paths: vec!["/clips/none.mp4".to_owned()],
-            since: Instant::now(),
         };
         app.selection.pending = Some(waiting());
         app.undo_pending_trash();
@@ -899,6 +899,19 @@ mod tests {
         app.delete_pending_now();
         assert!(app.selection.pending.is_none());
         assert!(app.selection.trashing.is_some(), "the move started");
+        // Waiting clips never wait without an Undo message: if another message took its place, it
+        // comes back, and it does not fade on its own.
+        app.selection.pending = Some(waiting());
+        app.capture.notice = crate::capture::notice("Something else", false, None);
+        app.poll_bulk_trash(&egui::Context::default());
+        assert!(
+            app.capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.undo)
+        );
+        app.selection.pending = None;
+        app.selection.trashing = None;
         // With nothing waiting, nothing happens.
         app.selection.trashing = None;
         app.delete_pending_now();

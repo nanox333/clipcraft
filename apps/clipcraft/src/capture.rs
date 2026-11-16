@@ -1874,7 +1874,12 @@ Encoder: {}",
             held_for = 0.0;
         }
         let on_screen = (age - held_for).max(0.0);
-        let leaving = ((on_screen - NOTICE_SECONDS) / NOTICE_FADE_SECONDS).clamp(0.0, 1.0);
+        // A message with Undo stays until it is closed.
+        let leaving = if undo {
+            0.0
+        } else {
+            ((on_screen - NOTICE_SECONDS) / NOTICE_FADE_SECONDS).clamp(0.0, 1.0)
+        };
         if leaving >= 1.0 {
             self.capture.notice = None;
             return;
@@ -1993,6 +1998,10 @@ Encoder: {}",
         }
         if dismiss {
             self.capture.notice = None;
+            // Closing the Undo message is what moves the waiting clips.
+            if undo {
+                self.delete_pending_now();
+            }
         }
     }
 }

@@ -31,7 +31,7 @@ never goes online if you turn that off.
 ## Your clips stay safe
 
 - Everything stays on your computer. Original clips are never overwritten by trim or export.
-- Deleting goes to the Recycle Bin, with an Undo. The storage limit never touches favorites, clips in
+- Deleting goes to the Recycle Bin, and an Undo message stays up until you close it. The storage limit never touches favorites, clips in
   a collection or clips in an open edit.
 - Every saved clip is reopened and checked for missing footage, and you are warned when the disk is getting full.
 - Settings and the library keep rolling backups and recover from a damaged file.
