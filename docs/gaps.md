@@ -170,7 +170,20 @@ through the search path, so a file of that name beside a portable copy could run
 Windows' own; both uses now name `System32` in full; (3) the restart check left a hung `wevtutil`
 running after its eight-second limit and collected its whole output; it is now ended and read to
 64 KiB; (4) the Wayland restore-token file was read without a size limit (a device or huge file
-would hang or fill memory); now read to the size of a token (test: `/dev/zero`). **Checked, nothing
+would hang or fill memory); now read to the size of a token (test: `/dev/zero`). (5) a panic while drawing the window used to end the whole program and with it the replay in
+memory; each frame now runs inside `crash::FrameGuard` (tested with injected panics, and looked at
+on screen), a panic hook appends a short note to `crash-reports.log` (64 KiB, local only), and a
+plain fallback screen replaces a screen that fails three frames in a row. State a half-finished
+frame left behind is not repaired, so a screen can look wrong until *Try again*; a panic inside
+the program's startup (before the first frame) still ends it. **Also run, with no failures:** the
+damaged-media pass at 2,500 rounds per format (5,000 files; set `CLIPCRAFT_HOSTILE_ROUNDS`); a new
+pass over damaged settings and editor-draft files (about 700 variants each, with every number
+replaced by extreme values; settings that load are sanitised, are a fixed point, and a recording
+started from them does not end in an internal error); and a soak (`tests/soak.rs`: save, pause,
+swap source, lighten, 30 s in the gate and `CLIPCRAFT_SOAK_SECONDS` for a long one) that checks
+memory and thread counts stay flat (a ten-minute run here: 10.5 MiB from the 20th second to
+the end, 7 threads, briefly 9 while a clip was written, 600 s on one core of a small VM at 320x180,
+so it says nothing about a real game's load). **Checked, nothing
 to change:** the single-copy lock and note file (user-only folder, the lock goes with the process,
 a second copy exits before it can touch the heartbeat file); heartbeat and settings files (size
 caps, atomic replace, damaged ones ignored); no `unwrap`, `expect` or `panic!` outside test code;

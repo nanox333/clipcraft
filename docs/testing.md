@@ -186,6 +186,18 @@ Long-run and release evidence is described in [`release-checklist.md`](release-c
 memory, processor time, dropped pictures, and clip validity over time, and can freeze the recorder
 to simulate sleep.
 
+Robustness passes that go beyond the gate (run them before a release):
+- `CLIPCRAFT_HOSTILE_ROUNDS=2500 cargo test -p clipcraft-engine --test hostile_files` runs 5,000
+  damaged MP4 and MKV files (cut, bit-flipped, zeroed) through the probe, thumbnail maker and
+  player; the gate runs 120 per format. About six minutes.
+- `cargo test -p clipcraft-engine --test hostile_state_files` damages the settings file and the
+  editor draft (cut, bit-flipped, every number replaced by extreme values) and records from every
+  distinct settings value that still loads; none may panic or end in an internal error.
+- `CLIPCRAFT_SOAK_SECONDS=600 cargo test -p clipcraft-record --test soak -- --ignored --nocapture`
+  cycles save, pause, source swap and lightening for ten minutes and checks memory and thread
+  counts stay flat (the gate runs the same for 30 seconds).
+- A panic in the window is caught by `crash::FrameGuard` (`cargo test -p clipcraft a_panic_while`).
+
 ## Linux speed measurements
 
 `cargo run --release -p clipcraft-platform --example capture_time` times screen capture on this computer

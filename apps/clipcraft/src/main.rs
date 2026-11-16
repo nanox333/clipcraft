@@ -13,6 +13,7 @@ mod clip_card;
 mod clip_delete;
 mod clip_page;
 mod clip_rename;
+mod crash;
 mod editor;
 mod editor_media;
 mod editor_recovery;
@@ -55,6 +56,8 @@ use settings::{card, setting_row};
 use window_chrome::{WindowButton, nav_button, resize_from_the_edges, window_button};
 
 fn main() -> eframe::Result<()> {
+    // First, so a panic anywhere after this leaves a note and is counted.
+    crash::install(crash::default_log_path());
     // One copy per user. A later copy leaves a note for the running one (unless Windows started
     // it at login) and exits; a lock that cannot be made never stops ClipCraft from starting.
     let minimized_launch = std::env::args().any(|argument| argument == "--minimized");
@@ -125,6 +128,13 @@ fn main() -> eframe::Result<()> {
 
 #[derive(Default)]
 struct ClipCraftApp {
+    /// Keeps one panicking frame from ending the program (see `crash`).
+    frame_guard: crash::FrameGuard,
+    /// Tests: this many frames panic on purpose.
+    #[cfg(test)]
+    inject_frame_panics: u32,
+    /// Panics already told to the person.
+    panics_told: u32,
     /// Set when a later launch asked this copy to bring its window forward.
     show_requests: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// The safety net for graphics-card encoding (see `gpu_restart`).
@@ -401,6 +411,28 @@ impl eframe::App for ClipCraftApp {
     }
 
     fn update(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
+        // One frame at a time, so a panic while drawing cannot end the program and the replay in it.
+        self.guarded_frame(context);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.presence.shutdown();
+        if let Some(session) = self.gpu_session.as_mut() {
+            session.finish();
+        }
+        self.editor.flush_recovery();
+        self.index_store.finish();
+    }
+}
+
+impl ClipCraftApp {
+    /// One frame of the window; called through [`crash::FrameGuard`].
+    pub(crate) fn update_frame(&mut self, context: &egui::Context) {
+        #[cfg(test)]
+        if self.inject_frame_panics > 0 {
+            self.inject_frame_panics -= 1;
+            panic!("a frame that panics on purpose");
+        }
         if self
             .show_requests
             .as_ref()
@@ -472,15 +504,6 @@ impl eframe::App for ClipCraftApp {
         self.saved_toast_frame(context);
         self.index_save_status(context);
         resize_from_the_edges(context);
-    }
-
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.presence.shutdown();
-        if let Some(session) = self.gpu_session.as_mut() {
-            session.finish();
-        }
-        self.editor.flush_recovery();
-        self.index_store.finish();
     }
 }
 
@@ -2062,6 +2085,39 @@ mod tests {
             delay > std::time::Duration::from_secs(1),
             "static ring requested repaint after {delay:?}"
         );
+    }
+
+    #[test]
+    fn a_panic_while_drawing_does_not_end_the_program_and_repeats_show_the_fallback() {
+        let context = crate::kit::test_context();
+        let mut app = ClipCraftApp {
+            inject_frame_panics: 1,
+            ..Default::default()
+        };
+        // One bad frame: caught, and the next frame is the normal one again.
+        let _ = context.run(egui::RawInput::default(), |ctx| app.guarded_frame(ctx));
+        assert!(!app.frame_guard.broken());
+        assert_eq!(app.inject_frame_panics, 0);
+        let _ = context.run(egui::RawInput::default(), |ctx| app.guarded_frame(ctx));
+        assert!(!app.frame_guard.broken());
+        // Frame after frame: the plain fallback screen takes over, and "try again" returns.
+        app.inject_frame_panics = 100;
+        for _ in 0..crate::crash::FALLBACK_AFTER {
+            let _ = context.run(egui::RawInput::default(), |ctx| app.guarded_frame(ctx));
+        }
+        assert!(app.frame_guard.broken());
+        let before = app.inject_frame_panics;
+        for _ in 0..5 {
+            let _ = context.run(egui::RawInput::default(), |ctx| app.guarded_frame(ctx));
+        }
+        assert_eq!(
+            app.inject_frame_panics, before,
+            "the fallback does not run the failing frame"
+        );
+        app.frame_guard.retry();
+        app.inject_frame_panics = 0;
+        let _ = context.run(egui::RawInput::default(), |ctx| app.guarded_frame(ctx));
+        assert!(!app.frame_guard.broken());
     }
 
     #[test]

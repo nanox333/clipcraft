@@ -74,7 +74,12 @@ fn variants(original: &[u8]) -> Vec<Vec<u8>> {
         out.push(original[..cut.min(length)].to_vec());
     }
     let mut random = Xorshift(0x9E37_79B9_7F4A_7C15);
-    for round in 0..120_u64 {
+    // 120 flipped copies in the normal run; `CLIPCRAFT_HOSTILE_ROUNDS=3000` for a long one.
+    let rounds = std::env::var("CLIPCRAFT_HOSTILE_ROUNDS")
+        .ok()
+        .and_then(|text| text.parse::<u64>().ok())
+        .map_or(120, |rounds| rounds.min(100_000));
+    for round in 0..rounds {
         let mut copy = original.to_vec();
         // Most damage lands in the first few kilobytes, where the headers are.
         let window = if round % 3 == 0 {

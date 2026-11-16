@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **The window survives a bad frame:** if drawing a screen panics, ClipCraft keeps running (and
+  keeps recording and answering shortcuts) instead of closing and losing the replay in memory. The
+  next frame is drawn normally; if screens keep failing, a plain fallback screen with *Try again*
+  and *Close ClipCraft* takes over. What happened is saved in `crash-reports.log` beside your
+  settings (kept to 64 KiB, never sent anywhere), and a panic on any thread shows a notice.
+
 - **A crash inside a recording is reported at once:** if the capture, encode or sound thread hits
   an internal error, ClipCraft now says "Clipping stopped" immediately instead of showing
   "Clipping" over a replay that has quietly stopped growing. What was already recorded stays and
