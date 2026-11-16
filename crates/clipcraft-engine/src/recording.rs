@@ -934,7 +934,8 @@ pub fn default_settings_path() -> Option<PathBuf> {
     Some(crate::index::default_index_path()?.with_file_name("recording-settings.json"))
 }
 
-/// Reads settings. A missing file yields the defaults; a damaged one is an error.
+/// Reads settings. A missing file yields the defaults. A damaged one is set aside and replaced by
+/// the newest readable backup; with no backup it is an error.
 pub(crate) fn load_settings(path: &Path) -> Result<RecordingSettings, EngineError> {
     let metadata = match fs::metadata(path) {
         Ok(metadata) => metadata,
@@ -945,21 +946,43 @@ pub(crate) fn load_settings(path: &Path) -> Result<RecordingSettings, EngineErro
     };
     if metadata.len() > MAX_SETTINGS_BYTES {
         set_aside(path);
-        return Err(EngineError::SettingsInvalid);
+        return restore_settings_from_backup(path);
     }
     let bytes = fs::read(path).map_err(|_| EngineError::SettingsUnavailable)?;
-    let file: SettingsFile = match serde_json::from_slice(&bytes) {
-        Ok(file) => file,
-        Err(_) => {
+    match parse_settings(&bytes) {
+        Some(settings) => Ok(settings),
+        None => {
             set_aside(path);
-            return Err(EngineError::SettingsInvalid);
+            restore_settings_from_backup(path)
         }
-    };
-    if file.version != SETTINGS_VERSION {
-        set_aside(path);
-        return Err(EngineError::SettingsInvalid);
     }
-    Ok(file.settings.sanitized())
+}
+
+/// The settings in `bytes`, if they are readable and of this version.
+fn parse_settings(bytes: &[u8]) -> Option<RecordingSettings> {
+    let file: SettingsFile = serde_json::from_slice(bytes).ok()?;
+    (file.version == SETTINGS_VERSION).then(|| file.settings.sanitized())
+}
+
+/// The settings file was damaged (and has been set aside): use the newest backup that reads, and
+/// put it back as the settings file.
+fn restore_settings_from_backup(path: &Path) -> Result<RecordingSettings, EngineError> {
+    for copy in crate::backup::backups(path) {
+        let Ok(metadata) = fs::metadata(&copy) else {
+            continue;
+        };
+        if metadata.len() > MAX_SETTINGS_BYTES {
+            continue;
+        }
+        if let Ok(bytes) = fs::read(&copy)
+            && let Some(settings) = parse_settings(&bytes)
+        {
+            crate::backup::restore_from(&copy, path);
+            crate::backup::note_restored("settings");
+            return Ok(settings);
+        }
+    }
+    Err(EngineError::SettingsInvalid)
 }
 
 /// Moves a settings file ClipCraft cannot read next to itself as `<name>.damaged`, so saving the
@@ -1002,6 +1025,8 @@ pub(crate) fn save_settings(
     let mut temporary = path.as_os_str().to_owned();
     temporary.push(".tmp");
     let temporary = PathBuf::from(temporary);
+    // The settings as they were are kept as a backup before they are replaced.
+    crate::backup::keep_backup(path);
     let result = (|| {
         let mut file = fs::File::create(&temporary)?;
         file.write_all(&bytes)?;
@@ -1475,6 +1500,30 @@ mod tests {
                 .expect("kept")
                 .starts_with(b"{\"version\":999")
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn damaged_settings_come_back_from_the_newest_backup() {
+        let dir =
+            std::env::temp_dir().join(format!("clipcraft-settings-bak-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("recording-settings.json");
+        let first = RecordingSettings {
+            library_card_size: 2,
+            ..RecordingSettings::default()
+        };
+        save_settings(&path, first.clone()).expect("first save");
+        // The second save keeps the first file as a backup before it replaces it.
+        save_settings(&path, RecordingSettings::default()).expect("second save");
+        assert!(dir.join("recording-settings.json.bak1").exists());
+        fs::write(&path, b"{ half a file").expect("damage");
+        let loaded = load_settings(&path).expect("the backup is used");
+        assert_eq!(loaded.library_card_size, 2);
+        // The damaged file is kept, and the backup is the settings file again.
+        assert!(dir.join("recording-settings.json.damaged").exists());
+        assert_eq!(load_settings(&path).expect("reads").library_card_size, 2);
         let _ = fs::remove_dir_all(&dir);
     }
 

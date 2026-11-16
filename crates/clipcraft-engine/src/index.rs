@@ -105,9 +105,17 @@ pub(crate) fn refresh_library(
         Err(EngineError::IndexMissing) => LibraryIndex::default(),
         // A damaged index is kept beside the new one rather than overwritten, so favorites and
         // collections in it are not destroyed by the rescan that replaces it.
+        // The newest backup that reads takes its place, so a damaged file does not cost the
+        // person their favorites and collections.
         Err(EngineError::IndexInvalid) => {
             crate::recording::set_aside(index_path);
-            LibraryIndex::default()
+            match restore_index_from_backup(index_path) {
+                Some(index) => {
+                    crate::backup::note_restored("library");
+                    index
+                }
+                None => LibraryIndex::default(),
+            }
         }
         // The index exists but cannot be read right now. Show the scan, but do not overwrite a
         // file that may still be valid once the problem clears.
@@ -366,6 +374,17 @@ pub(crate) fn edit_meta(
     })
 }
 
+/// The newest backup of the index that reads, put back as the index file. `None` when there is none.
+fn restore_index_from_backup(path: &Path) -> Option<LibraryIndex> {
+    for copy in crate::backup::backups(path) {
+        if let Ok(index) = read_index(&copy) {
+            crate::backup::restore_from(&copy, path);
+            return Some(index);
+        }
+    }
+    None
+}
+
 fn read_index(path: &Path) -> Result<LibraryIndex, EngineError> {
     let file = match fs::File::open(path) {
         Ok(file) => file,
@@ -449,6 +468,8 @@ fn write_index(path: &Path, index: &LibraryIndex) -> Result<(), EngineError> {
     ));
     let temporary = PathBuf::from(temporary);
 
+    // The index as it was is kept as a backup before it is replaced.
+    crate::backup::keep_backup(path);
     let result = (|| {
         let mut file = fs::File::create(&temporary)?;
         file.write_all(&bytes)?;
@@ -772,6 +793,34 @@ mod tests {
         aside.push(".damaged");
         assert_eq!(fs::read(aside).expect("kept"), b"not json at all");
         assert!(load_library(&scratch.index()).is_ok());
+    }
+
+    #[test]
+    fn a_damaged_index_comes_back_from_a_backup_with_its_favorites() {
+        let scratch = Scratch::new();
+        refresh_library(scan("/clips", &["/clips/a.mp4"]), &scratch.index()).expect("first");
+        edit_meta(
+            &scratch.index(),
+            "/clips",
+            &MetaEdit::SetFavorite {
+                path: "/clips/a.mp4".to_owned(),
+                favorite: true,
+            },
+        )
+        .expect("favorite");
+        // Backups are made at most once a day, so drop the one just made to let the next write
+        // keep the file that has the favorite.
+        let mut first_backup = scratch.index().into_os_string();
+        first_backup.push(".bak1");
+        fs::remove_file(first_backup).expect("a backup was kept");
+        refresh_library(scan("/clips", &["/clips/a.mp4"]), &scratch.index()).expect("second");
+        fs::write(scratch.index(), b"not json at all").expect("damage");
+        let result = refresh_library(scan("/clips", &["/clips/a.mp4"]), &scratch.index())
+            .expect("refresh uses the backup");
+        assert!(result.entries[0].favorite);
+        let mut aside = scratch.index().into_os_string();
+        aside.push(".damaged");
+        assert_eq!(fs::read(aside).expect("kept"), b"not json at all");
     }
 
     #[test]

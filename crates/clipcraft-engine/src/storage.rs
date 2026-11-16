@@ -266,6 +266,5 @@ mod tests {
             .join("clipcraft-not-made-yet")
             .join("clips");
         assert!(free_space(&missing).is_some());
-        assert!(free_space(Path::new("")).is_none() || free_space(Path::new("")).is_some());
     }
 }

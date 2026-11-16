@@ -418,7 +418,24 @@ impl ClipCraftApp {
         }
     }
 
+    /// Tells the person when a damaged settings or library file was replaced from a backup.
+    fn report_restored_files(&mut self) {
+        let restored = clipcraft_engine::backup::take_restore_notes();
+        if restored.is_empty() {
+            return;
+        }
+        self.capture.notice = notice(
+            format!(
+                "Your {} file was damaged, so ClipCraft went back to a recent backup. Your clips are untouched.",
+                restored.join(" and ")
+            ),
+            true,
+            None,
+        );
+    }
+
     pub(crate) fn capture_frame(&mut self, context: &egui::Context) {
+        self.report_restored_files();
         self.watch_disk_space();
         clipcraft_engine::enable_export_hardware(
             self.recording.video_encoder == clipcraft_engine::VideoEncoder::Gpu,
