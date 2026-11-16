@@ -620,11 +620,26 @@ impl Playback {
     ) -> egui::Response {
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         let corner = if rounded { 14 } else { 0 };
-        ui.painter()
-            .rect_filled(rect, egui::CornerRadius::same(corner), Color32::BLACK);
+        let frame = canvas.map_or(rect, |size| fit(size, rect));
+        // The edit's own frame is drawn so its shape is plain: a lighter surround, the frame in
+        // black, and a lime edge where the frame does not fill the area.
+        let framed = canvas.is_some()
+            && ((frame.width() - rect.width()).abs() >= 1.5
+                || (frame.height() - rect.height()).abs() >= 1.5);
+        if framed {
+            ui.painter().rect_filled(
+                rect,
+                egui::CornerRadius::same(corner),
+                Color32::from_rgb(33, 33, 38),
+            );
+            ui.painter().rect_filled(frame, 2.0, Color32::BLACK);
+        } else {
+            ui.painter()
+                .rect_filled(rect, egui::CornerRadius::same(corner), Color32::BLACK);
+        }
         let message = match (&self.texture, &self.error) {
             (Some(texture), _) => {
-                let canvas = canvas.map_or(rect, |size| fit(size, rect));
+                let canvas = frame;
                 let fitted = fit(texture.size_vec2(), canvas);
                 // Round the picture's corners only when it reaches the corners of its area.
                 let fills = (fitted.width() - rect.width()).abs() < 1.5
@@ -644,6 +659,14 @@ impl Playback {
             (None, Some(message)) => Some(message.as_str()),
             (None, None) => Some("Loading…"),
         };
+        if framed {
+            ui.painter().rect_stroke(
+                frame,
+                2.0,
+                egui::Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(190, 255, 43, 170)),
+                egui::StrokeKind::Outside,
+            );
+        }
         if let Some(message) = message {
             ui.painter().text(
                 rect.center(),
@@ -1051,7 +1074,7 @@ fn seek_bar(
 }
 
 /// Largest rectangle with `size`'s aspect ratio that fits in `bounds`, centered.
-fn fit(size: Vec2, bounds: egui::Rect) -> egui::Rect {
+pub(crate) fn fit(size: Vec2, bounds: egui::Rect) -> egui::Rect {
     if size.x <= 0.0 || size.y <= 0.0 {
         return bounds;
     }

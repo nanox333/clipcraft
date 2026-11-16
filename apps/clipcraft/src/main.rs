@@ -1928,11 +1928,11 @@ impl ClipCraftApp {
     fn sort_menu(&mut self, ui: &mut egui::Ui) {
         let label = self.sort.label();
         kit::pill_menu(ui, label, "Sort clips", |ui| {
+            ui.set_width(220.0);
+            ui.spacing_mut().item_spacing.y = 2.0;
+            kit::menu_heading(ui, "Sort by");
             for sort in library_view::Sort::ALL {
-                if ui
-                    .selectable_label(self.sort == sort, sort.label())
-                    .clicked()
-                {
+                if kit::menu_option(ui, sort.label(), self.sort == sort).clicked() {
                     self.sort = sort;
                     let manual = sort == library_view::Sort::Manual;
                     if self.recording.library_manual != manual {

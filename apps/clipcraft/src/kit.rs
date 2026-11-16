@@ -778,6 +778,51 @@ pub fn pill_menu(
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// A small heading at the top of a menu, such as "Sort by".
+pub fn menu_heading(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(space::XS);
+    ui.label(
+        egui::RichText::new(text.to_uppercase())
+            .size(text_size::CAPTION)
+            .family(semibold())
+            .color(FAINT),
+    );
+    ui.add_space(space::XS);
+}
+
+/// One choice in a menu: a full-width row with a soft hover and a lime tick on the chosen one.
+pub fn menu_option(ui: &mut egui::Ui, label: &str, chosen: bool) -> Response {
+    let font = FontId::new(text_size::BODY, if chosen { semibold() } else { medium() });
+    let width = ui.available_width().max(200.0);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 32.0), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, chosen, label)
+    });
+    if response.hovered() || response.has_focus() {
+        ui.painter().rect_filled(rect, 8.0, CONTROL_HOVER);
+    } else if chosen {
+        ui.painter()
+            .rect_filled(rect, 8.0, Color32::from_rgba_unmultiplied(190, 255, 43, 18));
+    }
+    ui.painter().text(
+        Pos2::new(rect.left() + 12.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        font,
+        if chosen { LIME } else { TEXT },
+    );
+    if chosen {
+        draw_icon(
+            ui.painter(),
+            Pos2::new(rect.right() - 16.0, rect.center().y),
+            Icon::Check,
+            LIME,
+            0.6,
+        );
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// A key-style label such as `F8`, painted at an exact size so it never stretches in a row.
 pub fn keycap(ui: &mut egui::Ui, text: &str) {
     let font = FontId::new(text_size::CAPTION, medium());

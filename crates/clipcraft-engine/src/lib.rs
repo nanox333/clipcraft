@@ -1453,6 +1453,46 @@ fn reveal_invocation(manager: FileManager, path: &Path) -> (&'static str, Vec<Os
     }
 }
 
+/// A path without the `\\?\` prefix that Windows' `canonicalize` adds. With the prefix the same
+/// file looks like a different one to every plain comparison, and the prefix shows in the
+/// interface. Kept as it is when the path is too long to work without it.
+pub fn plain_path(path: PathBuf) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        return path;
+    };
+    if text.len() >= 240 {
+        return path;
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        let bytes = rest.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] == b'\\'
+        {
+            return PathBuf::from(rest);
+        }
+    }
+    path
+}
+
+/// How Explorer must be given `/select,<path>`: the quotes go around the path alone. Passed as an
+/// ordinary argument, a path with a space makes Rust quote the whole `/select,...` text, which
+/// Explorer does not understand, and it opens Documents instead of the clip's folder.
+#[cfg(any(windows, test))]
+fn explorer_select_argument(argument: &std::ffi::OsStr) -> Option<OsString> {
+    let text = argument.to_str()?;
+    let path = text.strip_prefix("/select,")?;
+    // A Windows path cannot hold a quote; refusing one keeps the command line well-formed.
+    if path.is_empty() || path.contains('"') {
+        return None;
+    }
+    Some(OsString::from(format!("/select,\"{path}\"")))
+}
+
 /// Puts a file in the Recycle Bin. The engine cannot reach the operating system itself (that code
 /// lives a layer up), so the program registers it once at start-up.
 type TrashHandler = fn(&Path) -> Result<(), String>;
@@ -1538,8 +1578,21 @@ fn reveal_in_file_manager(path: &Path) -> Result<String, EngineError> {
     fs::metadata(&absolute).map_err(|_| EngineError::FileUnavailable)?;
 
     let (program, arguments) = reveal_invocation(FileManager::current(), &absolute);
-    let mut child = std::process::Command::new(program)
-        .args(arguments)
+    let mut command = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        for argument in &arguments {
+            match explorer_select_argument(argument) {
+                // Explorer wants the quotes around the path only, never around `/select,` too.
+                Some(raw) => command.raw_arg(raw),
+                None => command.arg(argument),
+            };
+        }
+    }
+    #[cfg(not(windows))]
+    command.args(arguments);
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -2107,6 +2160,55 @@ mod tests {
                 path: PathBuf::new()
             }),
             Err(EngineError::EmptyMediaPath)
+        );
+    }
+
+    #[test]
+    fn the_windows_verbatim_prefix_is_dropped_only_where_it_is_safe() {
+        let plain = |text: &str| crate::plain_path(PathBuf::from(text));
+        assert_eq!(
+            plain(r"\\?\C:\clips\a.mp4"),
+            PathBuf::from(r"C:\clips\a.mp4")
+        );
+        assert_eq!(
+            plain(r"\\?\UNC\nas\clips\a.mp4"),
+            PathBuf::from(r"\\nas\clips\a.mp4")
+        );
+        assert_eq!(plain(r"C:\clips\a.mp4"), PathBuf::from(r"C:\clips\a.mp4"));
+        assert_eq!(plain("/clips/a.mp4"), PathBuf::from("/clips/a.mp4"));
+        // A device path or a path too long for the old limit keeps its prefix.
+        assert_eq!(
+            plain(r"\\?\Volume{1}\a.mp4"),
+            PathBuf::from(r"\\?\Volume{1}\a.mp4")
+        );
+        let long = format!(r"\\?\C:\{}", "a".repeat(250));
+        assert_eq!(plain(&long), PathBuf::from(&long));
+    }
+
+    #[test]
+    fn explorer_gets_its_quotes_around_the_path_alone() {
+        use std::ffi::OsStr;
+        // Regression: a clip path with spaces opened Documents instead of the clip's folder.
+        assert_eq!(
+            crate::explorer_select_argument(OsStr::new(
+                r"/select,F:\clips\Counter-Strike 2\a b.mp4"
+            )),
+            Some(std::ffi::OsString::from(
+                r#"/select,"F:\clips\Counter-Strike 2\a b.mp4""#
+            ))
+        );
+        // Anything else is left as an ordinary argument.
+        assert_eq!(
+            crate::explorer_select_argument(OsStr::new(r"F:\clips")),
+            None
+        );
+        assert_eq!(
+            crate::explorer_select_argument(OsStr::new("/select,")),
+            None
+        );
+        assert_eq!(
+            crate::explorer_select_argument(OsStr::new("/select,a\"b")),
+            None
         );
     }
 

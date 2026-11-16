@@ -124,6 +124,8 @@ pub struct EditorState {
     export_dialog: bool,
     export_preset: Option<ExportPreset>,
     export_quality: SequenceQuality,
+    /// Where the finished video goes; `None` puts it beside the first clip.
+    export_folder: Option<PathBuf>,
     saved: Option<PathBuf>,
     /// Width the person dragged the Library to; `None` lets it follow the 16:9 preview.
     selected_text: Option<u64>,
@@ -177,6 +179,7 @@ impl Default for EditorState {
             export_dialog: false,
             export_preset: None,
             export_quality: SequenceQuality::default(),
+            export_folder: None,
             saved: None,
             selected_text: None,
             title_draft: (0, String::new()),
@@ -831,6 +834,16 @@ impl EditorState {
             self.job = None;
             match result {
                 Ok(report) => {
+                    let saved_to = std::path::Path::new(&report.clip.path)
+                        .parent()
+                        .map(|folder| {
+                            shorten_middle(
+                                &clipcraft_engine::plain_path(folder.to_path_buf())
+                                    .to_string_lossy(),
+                                48,
+                            )
+                        })
+                        .unwrap_or_default();
                     self.saved = Some(report.clip.path.into());
                     let target = report.target_bytes.map_or(String::new(), |target| {
                         format!(
@@ -845,7 +858,7 @@ impl EditorState {
                     });
                     self.message = Some((
                         format!(
-                            "Edit saved · {}{target} · {}×{} · {} FPS · {}",
+                            "Edit saved to {saved_to} · {}{target} · {}×{} · {} FPS · {}",
                             clipcraft_engine::format_bytes(report.clip.bytes),
                             report.width,
                             report.height,
@@ -863,29 +876,12 @@ impl EditorState {
         if self.busy() {
             return;
         }
-        let Some(first) = self.session.clips().first() else {
+        if self.session.clips().is_empty() {
             return;
-        };
-        let name: String = self
-            .title
-            .trim()
-            .chars()
-            .map(|c| {
-                if c.is_control() || "<>:\"/\\|?*".contains(c) {
-                    '_'
-                } else {
-                    c
-                }
-            })
-            .collect();
-        let base = if name.is_empty() {
-            first.input.clone()
-        } else {
-            first.input.with_file_name(format!("{name}.mp4"))
-        };
-        let Some(output) = clipcraft_engine::edited_path(&base) else {
+        }
+        let Some(output) = self.export_destination() else {
             self.message = Some((
-                "No unused output name is available beside the first clip.".into(),
+                "No unused output name is available in that folder.".into(),
                 true,
             ));
             return;
@@ -1229,6 +1225,7 @@ impl EditorState {
                                     Vec2::new(canvas.0 as f32, canvas.1 as f32),
                                 );
                                 self.paint_text_handles(ui, area);
+                                self.paint_frame_badge(ui, area, canvas);
                             } else {
                                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
                                 ui.painter().rect_filled(
@@ -1530,6 +1527,64 @@ impl EditorState {
         });
         self.show_export_dialog(ui.ctx());
     }
+    /// A label on the viewer that says which shape and size the edit is being made in, so it is
+    /// never a guess from the black bars.
+    fn paint_frame_badge(&self, ui: &egui::Ui, area: egui::Rect, canvas: (u32, u32)) {
+        let shape = self.export_quality.aspect;
+        let name = if shape == clipcraft_engine::SequenceAspect::Source {
+            "Original".to_owned()
+        } else {
+            shape.label()
+        };
+        let text = format!("{name}  \u{00b7}  {} \u{00d7} {}", canvas.0, canvas.1);
+        let galley = ui.painter().layout_no_wrap(
+            text,
+            FontId::new(crate::kit::text_size::CAPTION, kit::semibold()),
+            TEXT,
+        );
+        let icon = 14.0;
+        let size = Vec2::new(galley.size().x + icon + 28.0, 24.0);
+        let frame = crate::playback::fit(Vec2::new(canvas.0 as f32, canvas.1 as f32), area);
+        let origin = if frame.width() >= size.x + 16.0 {
+            frame.min + Vec2::splat(8.0)
+        } else {
+            area.min + Vec2::splat(6.0)
+        };
+        let pill = egui::Rect::from_min_size(origin, size);
+        ui.painter()
+            .rect_filled(pill, 12.0, Color32::from_rgba_unmultiplied(12, 12, 14, 215));
+        ui.painter().rect_stroke(
+            pill,
+            12.0,
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(190, 255, 43, 120)),
+            egui::StrokeKind::Inside,
+        );
+        // A tiny drawing of the shape at its own proportions.
+        let (across, down) = shape
+            .ratio()
+            .map_or((canvas.0 as f32, canvas.1 as f32), |(a, d)| {
+                (a as f32, d as f32)
+            });
+        let longest = across.max(down).max(1.0);
+        let drawn = Vec2::new(
+            (icon * across / longest).max(5.0),
+            (icon * down / longest).max(5.0),
+        );
+        ui.painter().rect_stroke(
+            egui::Rect::from_center_size(egui::pos2(pill.left() + 14.0, pill.center().y), drawn),
+            1.5,
+            Stroke::new(1.5_f32, LIME),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().galley(
+            egui::pos2(
+                pill.left() + 14.0 + icon / 2.0 + 8.0,
+                pill.center().y - galley.size().y / 2.0,
+            ),
+            galley,
+            TEXT,
+        );
+    }
     fn export_canvas(&self) -> Result<(u32, u32), String> {
         self.export_settings().map(|s| (s.width, s.height))
     }
@@ -1551,6 +1606,45 @@ impl EditorState {
         )
         .map_err(|error| error.to_string())
     }
+    /// The file the export would write right now: the edit's title (or the first clip's name) in the
+    /// chosen folder, or beside the first clip, with a free name.
+    fn export_destination(&self) -> Option<PathBuf> {
+        let first = self.session.clips().first()?;
+        let name: String = self
+            .title
+            .trim()
+            .chars()
+            .map(|c| {
+                if c.is_control() || "<>:\"/\\|?*".contains(c) {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let file = if name.is_empty() {
+            PathBuf::from(first.input.file_name()?)
+        } else {
+            PathBuf::from(format!("{name}.mp4"))
+        };
+        let base = match &self.export_folder {
+            Some(folder) => folder.join(file),
+            None => first.input.with_file_name(file),
+        };
+        clipcraft_engine::edited_path(&base)
+    }
+    fn choose_export_folder(&mut self) {
+        let mut dialog = rfd::FileDialog::new().set_title("Save the exported video in");
+        let current = self
+            .export_destination()
+            .and_then(|path| path.parent().map(PathBuf::from));
+        if let Some(folder) = current.filter(|folder| folder.is_dir()) {
+            dialog = dialog.set_directory(folder);
+        }
+        if let Some(folder) = dialog.pick_folder() {
+            self.export_folder = Some(folder);
+        }
+    }
     fn show_export_dialog(&mut self, context: &egui::Context) {
         if !self.export_dialog {
             return;
@@ -1559,168 +1653,290 @@ impl EditorState {
             self.export_dialog = false;
             return;
         }
-        let mut open = true;
         let mut start = false;
         let mut cancel = false;
+        let mut change_folder = false;
+        let mut reset_folder = false;
         let previous_preset = self.export_preset;
         let previous_quality = self.export_quality;
-        let window = egui::Window::new(
-            RichText::new("Export video")
-                .size(crate::kit::text_size::TITLE)
-                .family(kit::semibold()),
-        )
-        .id(egui::Id::new("editor-export-window"))
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .default_width(380.0)
-        .show(context, |ui| {
-            ui.spacing_mut().item_spacing.y = crate::kit::space::MD;
-            ui.label(
-                RichText::new("Choose quality and file size for the finished video.").color(MUTED),
-            );
-            ui.label(RichText::new("Export preset").family(kit::medium()));
-            egui::ComboBox::from_id_salt("editor-export-preset")
-                .width(ui.available_width())
-                .selected_text(kit::export_size_label(
-                    self.export_preset,
-                    "Standard quality",
-                ))
-                .show_ui(ui, |ui| {
+        let destination = self.export_destination();
+        let window = egui::Window::new("Export video")
+            .id(egui::Id::new("editor-export-window"))
+            .title_bar(false)
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .fixed_size(Vec2::new(500.0, 0.0))
+            .frame(
+                egui::Frame::new()
+                    .fill(PANEL)
+                    .stroke(Stroke::new(1.0_f32, BORDER))
+                    .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
+                    .inner_margin(egui::Margin::same(24))
+                    .shadow(egui::Shadow {
+                        offset: [0, 8],
+                        blur: 32,
+                        spread: 0,
+                        color: Color32::from_black_alpha(140),
+                    }),
+            )
+            .show(context, |ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+                ui.label(
+                    RichText::new("Export video")
+                        .size(crate::kit::text_size::TITLE)
+                        .family(kit::semibold())
+                        .color(TEXT),
+                );
+                ui.label(
+                    RichText::new("Choose where it goes, how big the file is and how it looks.")
+                        .size(crate::kit::text_size::SMALL)
+                        .color(MUTED),
+                );
+                ui.add_space(crate::kit::space::SM);
+
+                // Where the file goes.
+                export_heading(ui, "Save to");
+                egui::Frame::new()
+                    .fill(kit::CARD)
+                    .stroke(Stroke::new(1.0_f32, BORDER))
+                    .corner_radius(egui::CornerRadius::same(crate::kit::radius::MD))
+                    .inner_margin(egui::Margin::symmetric(14, 12))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            let (icon, _) =
+                                ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
+                            kit::draw_icon(ui.painter(), icon.center(), kit::Icon::Folder, LIME, 0.9);
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 2.0;
+                                match &destination {
+                                    Some(path) => {
+                                        let folder = path
+                                            .parent()
+                                            .map(|p| {
+                                                clipcraft_engine::plain_path(p.to_path_buf())
+                                                    .to_string_lossy()
+                                                    .into_owned()
+                                            })
+                                            .unwrap_or_default();
+                                        let file = path
+                                            .file_name()
+                                            .map(|n| n.to_string_lossy().into_owned())
+                                            .unwrap_or_default();
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(file)
+                                                    .family(kit::semibold())
+                                                    .size(crate::kit::text_size::BODY)
+                                                    .color(TEXT),
+                                            )
+                                            .truncate(),
+                                        );
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(shorten_middle(&folder, 58))
+                                                    .size(crate::kit::text_size::SMALL)
+                                                    .color(MUTED),
+                                            )
+                                            .truncate(),
+                                        )
+                                        .on_hover_text(folder);
+                                    }
+                                    None => {
+                                        ui.label(
+                                            RichText::new("No free file name here")
+                                                .color(DANGER),
+                                        );
+                                    }
+                                }
+                            });
+                        });
+                        ui.add_space(crate::kit::space::SM);
+                        ui.horizontal(|ui| {
+                            change_folder =
+                                kit::labelled_button(ui, kit::Icon::Folder, "Change folder", false, true)
+                                    .clicked();
+                            if self.export_folder.is_some() {
+                                reset_folder = button(ui, "Use the clip's folder", false, true).clicked();
+                            }
+                        });
+                        ui.label(
+                            RichText::new(if self.export_folder.is_some() {
+                                "The name comes from the edit's title. If it is taken, a number is added."
+                            } else {
+                                "Saved beside the first clip. The name comes from the edit's title; if it is taken, a number is added."
+                            })
+                            .size(crate::kit::text_size::CAPTION)
+                            .color(kit::FAINT),
+                        );
+                    });
+
+                // File size.
+                export_heading(ui, "File size");
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
                     for (value, label) in
                         kit::export_size_choices(self.export_preset, "Standard quality")
                     {
-                        ui.selectable_value(&mut self.export_preset, value, label);
+                        let short = match value {
+                            None => "Standard",
+                            Some(ExportPreset::Small) => "10 MB",
+                            Some(ExportPreset::Medium) => "25 MB",
+                            Some(ExportPreset::Large) => "50 MB",
+                            Some(ExportPreset::Largest) => "500 MB",
+                            Some(ExportPreset::Custom { .. }) => "Custom",
+                        };
+                        let on = std::mem::discriminant(&value)
+                            == std::mem::discriminant(&self.export_preset);
+                        if tab_pill(ui, short, on).on_hover_text(label).clicked() {
+                            self.export_preset = value;
+                        }
                     }
                 });
-            if let Some(ExportPreset::Custom { megabytes }) = &mut self.export_preset {
+                if let Some(ExportPreset::Custom { megabytes }) = &mut self.export_preset {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Target size").color(MUTED));
+                        ui.add(egui::DragValue::new(megabytes).range(1..=500).suffix(" MB"))
+                            .on_hover_text("Estimated output size, from 1 to 500 MB");
+                    });
+                }
+
+                // How it looks.
+                export_heading(ui, "Picture");
                 ui.horizontal(|ui| {
-                    ui.label("Target size");
-                    ui.add(egui::DragValue::new(megabytes).range(1..=500).suffix(" MB"))
-                        .on_hover_text("Estimated output size, from 1 to 500 MB");
-                });
-            }
-            ui.horizontal(|ui| {
-                ui.label("Resolution");
-                egui::ComboBox::from_id_salt("editor-export-resolution")
-                    .selected_text(match self.export_quality.resolution {
-                        SequenceResolution::Hd720 => "720p",
-                        SequenceResolution::FullHd1080 => "1080p",
-                        SequenceResolution::Source => "Source · up to 4K",
-                    })
-                    .show_ui(ui, |ui| {
-                        for (value, name) in [
-                            (SequenceResolution::Hd720, "720p"),
-                            (SequenceResolution::FullHd1080, "1080p"),
-                            (SequenceResolution::Source, "Source · up to 4K"),
-                        ] {
-                            ui.selectable_value(&mut self.export_quality.resolution, value, name);
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    export_label(ui, "Quality");
+                    for (value, name) in [
+                        (SequenceResolution::Hd720, "720p"),
+                        (SequenceResolution::FullHd1080, "1080p"),
+                        (SequenceResolution::Source, "Source"),
+                    ] {
+                        let on = self.export_quality.resolution == value;
+                        if tab_pill(ui, name, on).clicked() {
+                            self.export_quality.resolution = value;
                         }
-                    });
-            });
-            ui.horizontal(|ui| {
-                ui.label("Shape");
-                egui::ComboBox::from_id_salt("editor-export-shape")
-                    .selected_text(self.export_quality.aspect.label())
-                    .show_ui(ui, |ui| {
-                        for aspect in clipcraft_engine::SequenceAspect::PRESETS {
-                            ui.selectable_value(
-                                &mut self.export_quality.aspect,
-                                aspect,
-                                aspect.label(),
-                            );
-                        }
-                    });
-                egui::ComboBox::from_id_salt("editor-export-framing")
-                    .selected_text(self.export_quality.framing.name())
-                    .show_ui(ui, |ui| {
-                        for framing in clipcraft_engine::SequenceFraming::ALL {
-                            ui.selectable_value(
-                                &mut self.export_quality.framing,
-                                framing,
-                                framing.name(),
-                            )
-                            .on_hover_text(framing.about());
-                        }
-                    });
-            });
-            ui.horizontal(|ui| {
-                ui.label("Frame rate");
-                egui::ComboBox::from_id_salt("editor-export-fps")
-                    .selected_text(format!("{} FPS", self.export_quality.fps))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.export_quality.fps, 30, "30 FPS");
-                        ui.selectable_value(&mut self.export_quality.fps, 60, "60 FPS");
-                    });
-            });
-            let settings = self.export_settings();
-            match &settings {
-                Ok(settings) => {
-                    ui.label(
-                        RichText::new(format!(
-                            "{} × {} · {} FPS · H.264 MP4",
-                            settings.width, settings.height, settings.fps
-                        ))
-                        .family(kit::medium()),
-                    );
-                    if settings.resolution_limited {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new("Resolution reduced to fit the file-size target.")
-                                    .color(LIME),
-                            )
-                            .wrap(),
-                        );
                     }
-                    if !settings.resolution_limited && settings.bitrate_limited {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new("Video bitrate reduced to fit the file-size target.")
-                                    .color(LIME),
-                            )
-                            .wrap(),
-                        );
-                    }
-                    ui.label(
-                        RichText::new(format!("Video target: {} kbps", settings.video_kbps))
-                            .small()
-                            .color(MUTED),
-                    );
-                    ui.label(
-                        RichText::new("Stereo AAC audio. Saved beside the first source clip.")
-                            .small()
-                            .color(MUTED),
-                    );
-                }
-                Err(error) => {
-                    ui.label(RichText::new(error).color(DANGER));
-                }
-            }
-            ui.label(
-                RichText::new("File sizes are estimates. The saved result shows its actual size.")
-                    .size(crate::kit::text_size::CAPTION)
-                    .color(MUTED),
-            );
-            ui.separator();
-            ui.horizontal(|ui| {
-                cancel = button(ui, "Cancel", false, true).clicked();
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    start = button(
-                        ui,
-                        "Export",
-                        true,
-                        settings.is_ok() && self.has_clips() && !self.busy(),
-                    )
-                    .clicked();
                 });
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    export_label(ui, "Frame rate");
+                    for fps in [30, 60] {
+                        let on = self.export_quality.fps == fps;
+                        if tab_pill(ui, &format!("{fps} FPS"), on).clicked() {
+                            self.export_quality.fps = fps;
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    export_label(ui, "Shape");
+                    egui::ComboBox::from_id_salt("editor-export-shape")
+                        .selected_text(self.export_quality.aspect.label())
+                        .show_ui(ui, |ui| {
+                            for aspect in clipcraft_engine::SequenceAspect::PRESETS {
+                                ui.selectable_value(
+                                    &mut self.export_quality.aspect,
+                                    aspect,
+                                    aspect.label(),
+                                );
+                            }
+                        });
+                    egui::ComboBox::from_id_salt("editor-export-framing")
+                        .selected_text(self.export_quality.framing.name())
+                        .show_ui(ui, |ui| {
+                            for framing in clipcraft_engine::SequenceFraming::ALL {
+                                ui.selectable_value(
+                                    &mut self.export_quality.framing,
+                                    framing,
+                                    framing.name(),
+                                )
+                                .on_hover_text(framing.about());
+                            }
+                        });
+                });
+
+                // What will be written.
+                let settings = self.export_settings();
+                ui.add_space(crate::kit::space::XS);
+                egui::Frame::new()
+                    .fill(Color32::from_rgba_unmultiplied(190, 255, 43, 14))
+                    .stroke(Stroke::new(
+                        1.0_f32,
+                        Color32::from_rgba_unmultiplied(190, 255, 43, 60),
+                    ))
+                    .corner_radius(egui::CornerRadius::same(crate::kit::radius::MD))
+                    .inner_margin(egui::Margin::symmetric(14, 10))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        match &settings {
+                            Ok(settings) => {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} \u{00d7} {}  \u{00b7}  {} FPS  \u{00b7}  H.264 MP4",
+                                        settings.width, settings.height, settings.fps
+                                    ))
+                                    .family(kit::semibold())
+                                    .size(crate::kit::text_size::BODY)
+                                    .color(TEXT),
+                                );
+                                let mut notes = vec![format!(
+                                    "Video target {} kbps, stereo AAC audio. Sizes are estimates.",
+                                    settings.video_kbps
+                                )];
+                                if settings.resolution_limited {
+                                    notes.push(
+                                        "Resolution reduced to fit the file-size target.".into(),
+                                    );
+                                } else if settings.bitrate_limited {
+                                    notes.push(
+                                        "Video bitrate reduced to fit the file-size target.".into(),
+                                    );
+                                }
+                                for note in notes {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(note)
+                                                .size(crate::kit::text_size::CAPTION)
+                                                .color(MUTED),
+                                        )
+                                        .wrap(),
+                                    );
+                                }
+                            }
+                            Err(error) => {
+                                ui.label(RichText::new(error).color(DANGER));
+                            }
+                        }
+                    });
+
+                ui.add_space(crate::kit::space::SM);
+                let can_export =
+                    settings.is_ok() && destination.is_some() && self.has_clips() && !self.busy();
+                egui::Sides::new().show(
+                    ui,
+                    |ui| {
+                        cancel = kit::labelled_button(ui, kit::Icon::ChevronLeft, "Cancel", false, true)
+                            .clicked();
+                    },
+                    |ui| {
+                        start = kit::labelled_button(ui, kit::Icon::Import, "Export", true, can_export)
+                            .clicked();
+                    },
+                );
             });
-        });
         if let Some(window) = window {
             // Keep keyboard navigation in the dialog and its popups, not the editor behind it.
             context.memory_mut(|memory| memory.set_modal_layer(window.response.layer_id));
         }
-        self.export_dialog = open && !cancel && !start;
+        if change_folder {
+            self.choose_export_folder();
+            context.request_repaint();
+        }
+        if reset_folder {
+            self.export_folder = None;
+        }
+        self.export_dialog = !cancel && !start;
         if self.export_preset != previous_preset || self.export_quality != previous_quality {
             self.dirty_recovery();
         }
@@ -2139,6 +2355,46 @@ fn transport_button(
         && enabled
 }
 
+/// `text` cut to at most `max` characters by replacing the middle with an ellipsis, so both the
+/// start of a long path and the folder it ends in stay readable.
+fn shorten_middle(text: &str, max: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= max || max < 8 {
+        return text.to_owned();
+    }
+    let keep = max - 1;
+    let head = keep / 3;
+    let tail = keep - head;
+    let start: String = chars[..head].iter().collect();
+    let end: String = chars[chars.len() - tail..].iter().collect();
+    format!("{start}\u{2026}{end}")
+}
+
+/// A small heading above a group of export choices.
+fn export_heading(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(crate::kit::space::XS);
+    ui.label(
+        RichText::new(text.to_uppercase())
+            .size(crate::kit::text_size::CAPTION)
+            .family(kit::semibold())
+            .color(kit::FAINT),
+    );
+}
+
+/// The name of a row of export choices, at a fixed width so the choices line up.
+fn export_label(ui: &mut egui::Ui, text: &str) {
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(84.0, crate::kit::control::COMPACT),
+        Sense::hover(),
+    );
+    ui.painter().text(
+        rect.left_center(),
+        Align2::LEFT_CENTER,
+        text,
+        FontId::new(crate::kit::text_size::SMALL, kit::medium()),
+        MUTED,
+    );
+}
 /// A pill tab like the ones above the Library.
 fn tab_pill(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
@@ -2530,6 +2786,19 @@ fn stamp(time: Tick) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_paths_keep_their_start_and_end() {
+        assert_eq!(shorten_middle("C:\\short", 58), "C:\\short");
+        let long = format!("C:\\Users\\someone\\{}\\clips", "deep\\".repeat(30));
+        let cut = shorten_middle(&long, 58);
+        assert_eq!(cut.chars().count(), 58);
+        assert!(cut.starts_with("C:\\Users"));
+        assert!(cut.ends_with("\\clips"));
+        assert!(cut.contains('\u{2026}'));
+        // Multi-byte characters are counted, never split.
+        assert_eq!(shorten_middle(&"é".repeat(100), 20).chars().count(), 20);
+    }
 
     #[test]
     fn export_progress_wakes_are_bounded_and_completion_is_immediate() {

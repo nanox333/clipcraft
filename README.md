@@ -24,7 +24,9 @@ never goes online if you turn that off.
 - **Choose many:** **Select** clips, drag a box around them, then favorite, collect or delete them
   together, with **Undo** (or **Delete now**).
 - **Edit:** trim, split, fade, add styled text, step frame by frame, and export in 16:9, 9:16, 1:1
-  and other shapes, or as a small file or GIF for Discord.
+  and other shapes, or as a small file or GIF for Discord. The viewer draws the output shape as a
+  framed picture with a badge ("Original · 1280 × 720", "9:16 · 1080 × 1920"), and the Export
+  video window shows where the file will be saved and lets you pick another folder.
 - **Share:** drag a clip straight into Discord or any program that takes files.
 - **Script it:** `clipcraft-cli` runs the same commands as the app.
 
