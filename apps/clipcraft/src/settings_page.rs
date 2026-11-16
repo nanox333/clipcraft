@@ -12,13 +12,19 @@ impl ClipCraftApp {
             ui.allocate_ui_with_layout(
                 Vec2::new(nav_width, height),
                 Layout::top_down(Align::Min),
-                |ui| self.settings_nav(ui),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
+                    self.settings_nav(ui);
+                },
             );
             let content_width = ui.available_width().max(0.0);
             ui.allocate_ui_with_layout(
                 Vec2::new(content_width, height),
                 Layout::top_down(Align::Min),
                 |ui| {
+                    // The row around the list and the page has no spacing so the two sit flush;
+                    // inside the page, things need their usual room between them.
+                    ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
                     egui::ScrollArea::vertical()
                         .id_salt(("settings-content", self.settings_tab.label()))
                         .auto_shrink([false, false])

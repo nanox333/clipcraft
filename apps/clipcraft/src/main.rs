@@ -1243,7 +1243,12 @@ impl ClipCraftApp {
                 ui.allocate_ui_with_layout(
                     Vec2::new(width, height),
                     Layout::top_down(Align::Min),
-                    |ui| self.library_content(ui),
+                    |ui| {
+                        // The row around the rail and the content has no spacing so the two sit
+                        // flush; inside the content, things need their usual room between them.
+                        ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
+                        self.library_content(ui);
+                    },
                 );
             });
         } else {
