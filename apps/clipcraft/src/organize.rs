@@ -92,6 +92,139 @@ pub enum RailAction {
     Commit,
     /// Throw the name being typed away.
     Cancel,
+    /// Change how a game looks in the rail; `None` goes back to the automatic look.
+    SetBadge {
+        game: String,
+        badge: Option<clipcraft_engine::GameBadge>,
+    },
+}
+
+/// The colours offered for a game.
+const SWATCHES: [&str; 12] = [
+    "#bfff2b", "#ff6b6b", "#ff9f43", "#ffd93d", "#6bcb77", "#00f5d4", "#00bbf9", "#4d96ff",
+    "#9b5de5", "#f15bb5", "#e8e8ee", "#8a8a98",
+];
+
+fn parse_hex(text: &str) -> Option<egui::Color32> {
+    let digits = text.strip_prefix('#')?;
+    (digits.len() == 6).then_some(())?;
+    let value = u32::from_str_radix(digits, 16).ok()?;
+    Some(egui::Color32::from_rgb(
+        (value >> 16) as u8,
+        (value >> 8) as u8,
+        value as u8,
+    ))
+}
+
+/// A game's colour and mark in the rail: what the person chose, else the automatic colour and the
+/// first letter.
+fn badge_look(
+    name: &str,
+    badges: &std::collections::BTreeMap<String, clipcraft_engine::GameBadge>,
+) -> (egui::Color32, String, bool) {
+    let chosen = badges.get(&name.trim().to_lowercase());
+    let colour = chosen
+        .and_then(|badge| parse_hex(&badge.color))
+        .unwrap_or_else(|| name_colour(name));
+    let mark = chosen
+        .map(|badge| badge.mark.clone())
+        .filter(|mark| !mark.is_empty())
+        .unwrap_or_else(|| {
+            name.chars()
+                .find(|c| c.is_alphanumeric())
+                .map_or_else(|| "?".to_owned(), |c| c.to_uppercase().to_string())
+        });
+    (colour, mark, chosen.is_some())
+}
+
+/// The menu on a game: its colour and its mark.
+fn badge_menu(
+    ui: &mut egui::Ui,
+    game: &str,
+    badges: &std::collections::BTreeMap<String, clipcraft_engine::GameBadge>,
+    actions: &mut Vec<RailAction>,
+) {
+    let current = badges
+        .get(&game.trim().to_lowercase())
+        .cloned()
+        .unwrap_or_default();
+    ui.set_min_width(230.0);
+    ui.label(
+        RichText::new("Colour")
+            .color(MUTED)
+            .size(crate::kit::text_size::CAPTION),
+    );
+    ui.add_space(crate::kit::space::XS);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::splat(8.0);
+        for hex in SWATCHES {
+            let Some(colour) = parse_hex(hex) else {
+                continue;
+            };
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::click());
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Colour {hex}"))
+            });
+            ui.painter().circle_filled(rect.center(), 10.0, colour);
+            if current.color == hex || response.hovered() {
+                ui.painter().circle_stroke(
+                    rect.center(),
+                    12.0,
+                    egui::Stroke::new(1.5_f32, if current.color == hex { TEXT } else { MUTED }),
+                );
+            }
+            if response.clicked() {
+                actions.push(RailAction::SetBadge {
+                    game: game.to_owned(),
+                    badge: Some(clipcraft_engine::GameBadge {
+                        color: hex.to_owned(),
+                        mark: current.mark.clone(),
+                    }),
+                });
+            }
+        }
+    });
+    ui.add_space(crate::kit::space::SM);
+    ui.label(
+        RichText::new("Mark (a letter, number or emoji)")
+            .color(MUTED)
+            .size(crate::kit::text_size::CAPTION),
+    );
+    let key = egui::Id::new(("game-mark", game.to_lowercase()));
+    let mut text: String = ui
+        .data_mut(|data| data.get_temp::<String>(key))
+        .unwrap_or_else(|| current.mark.clone());
+    let field = ui.add(
+        egui::TextEdit::singleline(&mut text)
+            .char_limit(2)
+            .hint_text("First letter")
+            .desired_width(80.0),
+    );
+    if field.changed() {
+        actions.push(RailAction::SetBadge {
+            game: game.to_owned(),
+            badge: Some(clipcraft_engine::GameBadge {
+                color: current.color.clone(),
+                mark: text.clone(),
+            }),
+        });
+    }
+    ui.data_mut(|data| data.insert_temp(key, text));
+    ui.add_space(crate::kit::space::SM);
+    if ui
+        .add_enabled(
+            !badges.get(&game.trim().to_lowercase()).is_none(),
+            egui::Button::new("Back to automatic"),
+        )
+        .clicked()
+    {
+        ui.data_mut(|data| data.remove::<String>(key));
+        actions.push(RailAction::SetBadge {
+            game: game.to_owned(),
+            badge: None,
+        });
+        ui.close();
+    }
 }
 
 /// A colour for a name, the same every time: a fixed saturation and lightness that read on the dark
@@ -137,7 +270,7 @@ fn rail_row_with_badge(
     count: usize,
     selected: bool,
     icon: Option<kit::Icon>,
-    badge: Option<&str>,
+    badge: Option<(egui::Color32, String, bool)>,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(ui.available_width().max(0.0), 32.0),
@@ -161,8 +294,7 @@ fn rail_row_with_badge(
         );
         left += 24.0;
     }
-    if let Some(name) = badge {
-        let colour = name_colour(name);
+    if let Some((colour, mark, _)) = badge {
         let square = egui::Rect::from_center_size(
             egui::pos2(left + 9.0, rect.center().y),
             Vec2::splat(20.0),
@@ -175,9 +307,7 @@ fn rail_row_with_badge(
         ui.painter().text(
             square.center(),
             egui::Align2::CENTER_CENTER,
-            name.chars()
-                .find(|c| c.is_alphanumeric())
-                .map_or_else(|| "?".to_owned(), |c| c.to_uppercase().to_string()),
+            mark,
             egui::FontId::new(crate::kit::text_size::CAPTION, kit::semibold()),
             colour,
         );
@@ -233,6 +363,7 @@ pub fn rail(
     view: &crate::library_view::ViewCache,
     filter: &LibraryFilter,
     edit: &mut Option<CollectionEdit>,
+    badges: &std::collections::BTreeMap<String, clipcraft_engine::GameBadge>,
 ) -> Vec<RailAction> {
     let mut actions = Vec::new();
     let favorites = view.favorites;
@@ -309,18 +440,20 @@ pub fn rail(
             }
             for group in groups {
                 let selected = matches!(filter, LibraryFilter::Game(open) if open.to_lowercase() == group.name.to_lowercase());
-                if rail_row_with_badge(
+                let look = badge_look(&group.name, badges);
+                let row = rail_row_with_badge(
                     ui,
                     &group.name,
                     group.clips,
                     selected,
                     None,
-                    Some(&group.name),
-                )
-                .clicked()
-                {
+                    Some(look),
+                );
+                if row.clicked() {
                     actions.push(RailAction::Select(LibraryFilter::Game(group.name.clone())));
                 }
+                row.on_hover_text("Right-click to change its colour")
+                    .context_menu(|ui| badge_menu(ui, &group.name, badges, &mut actions));
             }
             ui.add_space(crate::kit::space::MD);
         });

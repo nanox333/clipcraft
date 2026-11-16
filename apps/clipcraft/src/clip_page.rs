@@ -354,7 +354,14 @@ impl ClipCraftApp {
                 let state = self.share_state(entry);
                 let megabytes =
                     u16::try_from(self.recording.share_megabytes.clamp(1, 500)).unwrap_or(10);
-                match share::share_chip(ui, &state, megabytes, !entry.offline) {
+                match share::share_chip(
+                    ui,
+                    &state,
+                    megabytes,
+                    !entry.offline,
+                    entry,
+                    &mut self.thumbs,
+                ) {
                     share::ShareChip::Drag => self.drag_clip_out(ui.ctx(), entry),
                     share::ShareChip::Press => self.prepare_share(entry, true),
                     share::ShareChip::Hover => self.prepare_share(entry, false),

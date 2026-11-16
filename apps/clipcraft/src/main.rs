@@ -1226,6 +1226,7 @@ impl ClipCraftApp {
                                 &self.library_view,
                                 &self.filter,
                                 &mut self.collection_edit,
+                                &self.recording.game_badges,
                             );
                         }
                     },
@@ -1263,6 +1264,18 @@ impl ClipCraftApp {
                     self.edit_library(MetaEdit::DeleteCollection { name });
                 }
                 RailAction::Cancel => self.collection_edit = None,
+                RailAction::SetBadge { game, badge } => {
+                    let key = game.trim().to_lowercase();
+                    match badge.and_then(clipcraft_engine::GameBadge::sanitized) {
+                        Some(badge) => {
+                            self.recording.game_badges.insert(key, badge);
+                        }
+                        None => {
+                            self.recording.game_badges.remove(&key);
+                        }
+                    }
+                    self.save_recording_settings();
+                }
                 RailAction::Commit => {
                     let Some(edit) = self.collection_edit.take() else {
                         continue;

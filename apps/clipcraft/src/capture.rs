@@ -1364,74 +1364,171 @@ impl ClipCraftApp {
             }
             None => (FAINT, "Not clipping".to_owned()),
         };
-        if dot == LIME {
-            kit::live_status_pill(ui, &text);
-        } else {
-            kit::status_pill(ui, dot, &text);
-        }
+        // One capsule says what is happening (a lit dot, the words, and while clipping how much
+        // replay is ready) and holds the quiet controls; the one action that matters now sits
+        // beside it in lime: Start clipping when idle, Save the last moments while clipping.
+        let live = dot == LIME;
+        let paused = self.capture.status.as_ref().is_some_and(|s| s.paused);
+        let (buffered, wanted) = self
+            .capture
+            .status
+            .as_ref()
+            .filter(|s| s.state == RecordState::Running)
+            .map_or((0.0, 0.0), |s| {
+                (s.buffered_seconds, self.recording.replay_seconds as f32)
+            });
+        let mut toggle = false;
+        let mut pause_clicked = false;
+        egui::Frame::new()
+            .fill(Color32::from_rgb(28, 28, 33))
+            .stroke(Stroke::new(
+                1.0_f32,
+                if live {
+                    Color32::from_rgba_unmultiplied(190, 255, 43, 70)
+                } else {
+                    kit::BORDER
+                },
+            ))
+            .corner_radius(egui::CornerRadius::same(22))
+            .inner_margin(egui::Margin::symmetric(14, 4))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
+                    // The dot breathes while clipping.
+                    let (dot_rect, _) =
+                        ui.allocate_exact_size(Vec2::new(16.0, 30.0), egui::Sense::hover());
+                    if live && !paused {
+                        let beat = (ui.input(|input| input.time) * 2.4).sin() as f32 * 0.5 + 0.5;
+                        ui.painter().circle_filled(
+                            dot_rect.center(),
+                            5.0 + 3.0 * beat,
+                            Color32::from_rgba_unmultiplied(
+                                190,
+                                255,
+                                43,
+                                (60.0 * (1.0 - beat)) as u8,
+                            ),
+                        );
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_millis(60));
+                    }
+                    ui.painter().circle_filled(dot_rect.center(), 4.5, dot);
+                    ui.label(
+                        RichText::new(&text)
+                            .color(if live { TEXT } else { MUTED })
+                            .size(crate::kit::text_size::SMALL)
+                            .family(if live { kit::semibold() } else { kit::medium() }),
+                    );
+                    if wanted > 0.0 {
+                        // How much of the replay is ready: a thin bar and the seconds.
+                        let ready = (buffered / wanted).clamp(0.0, 1.0);
+                        let (bar, _) =
+                            ui.allocate_exact_size(Vec2::new(64.0, 30.0), egui::Sense::hover());
+                        let track =
+                            egui::Rect::from_center_size(bar.center(), Vec2::new(64.0, 5.0));
+                        ui.painter()
+                            .rect_filled(track, 2.5, Color32::from_white_alpha(18));
+                        let mut filled = track;
+                        filled.set_right(track.left() + track.width() * ready);
+                        ui.painter().rect_filled(
+                            filled,
+                            2.5,
+                            if ready >= 0.999 {
+                                kit::LIME
+                            } else {
+                                Color32::from_rgba_unmultiplied(190, 255, 43, 150)
+                            },
+                        );
+                        ui.label(
+                            RichText::new(format!("{:.0} s", buffered.min(wanted)))
+                                .color(MUTED)
+                                .size(crate::kit::text_size::CAPTION),
+                        )
+                        .on_hover_text(format!(
+                            "{buffered:.0} of {wanted:.0} seconds of replay are ready to save"
+                        ));
+                    }
+                    if active {
+                        let key = self.recording.hotkeys.toggle_pause.replace('+', " + ");
+                        let tip = if key.is_empty() {
+                            if paused {
+                                "Resume clipping".to_owned()
+                            } else {
+                                "Pause clipping. Set a key under Settings \u{203a} Hotkeys."
+                                    .to_owned()
+                            }
+                        } else if paused {
+                            format!("Resume clipping ({key})")
+                        } else {
+                            format!("Pause clipping ({key})")
+                        };
+                        if kit::icon_button(
+                            ui,
+                            if paused { Icon::Play } else { Icon::Pause },
+                            30.0,
+                            false,
+                            true,
+                            &tip,
+                        )
+                        .clicked()
+                        {
+                            pause_clicked = true;
+                        }
+                        if kit::icon_button(
+                            ui,
+                            Icon::Stop,
+                            30.0,
+                            false,
+                            true,
+                            "Stop clipping and forget the replay buffer",
+                        )
+                        .clicked()
+                        {
+                            toggle = true;
+                        }
+                    }
+                });
+            });
         ui.add_space(crate::kit::space::SM);
-
-        let (icon, label) = if active {
-            (Icon::Stop, "Stop clipping")
-        } else {
-            (Icon::Record, "Start clipping")
-        };
-        if kit::labelled_button(ui, icon, label, !active, true)
-            .on_hover_text(if active {
-                "Stop clipping and forget the replay buffer"
+        let saving = self.capture.saving.is_some();
+        if active {
+            let seconds = self.recording.replay_seconds;
+            let length = if seconds >= 60 {
+                format!("{}m", seconds / 60)
             } else {
-                "Start clipping: keep the last moments in memory so you can save them as a clip. Nothing is written to disk until you save one."
+                format!("{seconds}s")
+            };
+            let key = self.recording.hotkeys.save_clip.replace('+', " + ");
+            if kit::labelled_button_hint(
+                ui,
+                Icon::Import,
+                &format!("Save last {length}"),
+                &key,
+                true,
+                !saving,
+            )
+            .on_hover_text(if key.is_empty() {
+                "Save a clip".to_owned()
+            } else {
+                format!("Save a clip ({key})")
             })
             .clicked()
+            {
+                self.save_clip();
+            }
+        } else if kit::labelled_button(ui, Icon::Record, "Start clipping", true, true)
+            .on_hover_text(
+                "Start clipping: keep the last moments in memory so you can save them as a clip. Nothing is written to disk until you save one.",
+            )
+            .clicked()
         {
+            toggle = true;
+        }
+        if toggle {
             self.toggle_capture();
         }
-        if active {
-            let paused = self.capture.status.as_ref().is_some_and(|s| s.paused);
-            let key = self.recording.hotkeys.toggle_pause.replace('+', " + ");
-            let hint = if key.is_empty() {
-                "Pause or resume clipping. Set a key under Settings \u{203a} Hotkeys.".to_owned()
-            } else {
-                format!("Pause or resume clipping ({key})")
-            };
-            ui.add_space(crate::kit::space::XS);
-            let (icon, label) = if paused {
-                (Icon::Play, "Resume")
-            } else {
-                (Icon::Pause, "Pause")
-            };
-            if kit::labelled_button(ui, icon, label, false, true)
-                .on_hover_text(hint)
-                .clicked()
-            {
-                self.toggle_pause();
-            }
-        }
-        ui.add_space(crate::kit::space::XS);
-        let saving = self.capture.saving.is_some();
-        let seconds = self.recording.replay_seconds;
-        let length = if seconds >= 60 {
-            format!("{}m", seconds / 60)
-        } else {
-            format!("{seconds}s")
-        };
-        let key = self.recording.hotkeys.save_clip.replace('+', " + ");
-        if kit::labelled_button_hint(
-            ui,
-            Icon::Import,
-            &format!("Save last {length}"),
-            &key,
-            false,
-            active && !saving,
-        )
-        .on_hover_text(if key.is_empty() {
-            "Save a clip".to_owned()
-        } else {
-            format!("Save a clip ({key})")
-        })
-        .clicked()
-        {
-            self.save_clip();
+        if pause_clicked {
+            self.toggle_pause();
         }
 
         if let Some(status) = self

@@ -91,7 +91,7 @@ impl ClipCraftApp {
         });
         ui.add_space(crate::kit::space::XXL);
         let room = ui.available_width().min(900.0);
-        let gap = 16.0;
+        let gap = 0.0;
         let card = ((room - gap * 2.0) / 3.0).max(180.0);
         ui.vertical_centered(|ui| {
             ui.allocate_ui_with_layout(
@@ -169,7 +169,8 @@ impl ClipCraftApp {
     }
 }
 
-/// One numbered step.
+/// One numbered step: no box, only a number, a heading and two lines, with a hairline before it
+/// (except the first) so the three read as a row.
 fn step_card(
     ui: &mut egui::Ui,
     width: f32,
@@ -178,47 +179,63 @@ fn step_card(
     body: &str,
     extra: impl FnOnce(&mut egui::Ui),
 ) {
-    kit::card_frame()
-        .inner_margin(egui::Margin::same(20))
-        .show(ui, |ui| {
-            // The row of cards runs left to right; what is inside each one stacks downward.
-            ui.set_width((width - 42.0).max(0.0));
-            ui.set_min_height(172.0);
-            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                let (badge, _) = ui.allocate_exact_size(Vec2::splat(30.0), egui::Sense::hover());
-                ui.painter().circle_filled(
-                    badge.center(),
-                    15.0,
-                    Color32::from_rgba_unmultiplied(190, 255, 43, 34),
+    let inner = (width - 40.0).max(0.0);
+    ui.allocate_ui_with_layout(
+        Vec2::new(width, 170.0),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            if number > 1 {
+                let line = egui::Rect::from_min_size(
+                    ui.max_rect().left_top() + Vec2::new(0.0, 6.0),
+                    Vec2::new(1.0, 150.0),
                 );
-                ui.painter().text(
-                    badge.center(),
-                    egui::Align2::CENTER_CENTER,
-                    number.to_string(),
-                    egui::FontId::new(crate::kit::text_size::BODY, kit::semibold()),
-                    kit::LIME,
-                );
-                ui.add_space(crate::kit::space::SM);
-                ui.label(
-                    RichText::new(title)
-                        .color(TEXT)
-                        .size(crate::kit::text_size::LEAD)
-                        .family(kit::semibold()),
-                );
-                ui.add_space(crate::kit::space::XS);
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(body)
-                            .color(MUTED)
-                            .size(crate::kit::text_size::SMALL),
-                    )
-                    .wrap(),
-                );
-                ui.add_space(crate::kit::space::SM);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    extra(ui);
+                ui.painter().rect_filled(line, 0.0, kit::BORDER);
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.vertical(|ui| {
+                    ui.set_width(inner);
+                    let (badge, _) =
+                        ui.allocate_exact_size(Vec2::splat(28.0), egui::Sense::hover());
+                    ui.painter().circle_stroke(
+                        badge.center(),
+                        13.0,
+                        egui::Stroke::new(
+                            1.0_f32,
+                            Color32::from_rgba_unmultiplied(190, 255, 43, 110),
+                        ),
+                    );
+                    ui.painter().text(
+                        badge.center(),
+                        egui::Align2::CENTER_CENTER,
+                        number.to_string(),
+                        egui::FontId::new(crate::kit::text_size::SMALL, kit::semibold()),
+                        kit::LIME,
+                    );
+                    ui.add_space(crate::kit::space::SM);
+                    ui.label(
+                        RichText::new(title)
+                            .color(TEXT)
+                            .size(crate::kit::text_size::LEAD)
+                            .family(kit::semibold()),
+                    );
+                    ui.add_space(crate::kit::space::XS);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(body)
+                                .color(MUTED)
+                                .size(crate::kit::text_size::SMALL),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(crate::kit::space::SM);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        extra(ui);
+                    });
                 });
             });
-        });
+        },
+    );
 }

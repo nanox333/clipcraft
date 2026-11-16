@@ -322,6 +322,43 @@ pub const MAX_VIDEO_KBPS: u32 = 200_000;
 /// Most application rows in the sound mixer.
 pub const MAX_AUDIO_APPS: usize = 6;
 
+/// The most games whose sidebar look can be changed.
+pub const MAX_GAME_BADGES: usize = 200;
+
+/// How one game looks in the library's sidebar. Both parts are optional: an empty colour is the
+/// automatic one, an empty mark is the game's first letter.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct GameBadge {
+    /// `#RRGGBB`, or empty.
+    pub color: String,
+    /// One or two characters (a letter, a number, an emoji), or empty.
+    pub mark: String,
+}
+
+impl GameBadge {
+    /// The badge with only what is valid kept, or `None` when nothing is left to keep.
+    pub fn sanitized(self) -> Option<Self> {
+        let color = self.color.trim();
+        let color = if color.len() == 7
+            && color.starts_with('#')
+            && color[1..].chars().all(|c| c.is_ascii_hexdigit())
+        {
+            color.to_ascii_lowercase()
+        } else {
+            String::new()
+        };
+        let mark: String = self
+            .mark
+            .trim()
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(2)
+            .collect();
+        (!color.is_empty() || !mark.is_empty()).then_some(Self { color, mark })
+    }
+}
+
 /// Which application a mixer row records.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "name", rename_all = "snake_case")]
@@ -574,6 +611,8 @@ pub struct RecordingSettings {
     pub protect_computer: bool,
     /// Applications recorded on their own (the sound mixer), each optionally on its own track.
     pub audio_apps: Vec<AppAudioRow>,
+    /// How games look in the library's sidebar (colour and mark), by lower-case game name.
+    pub game_badges: std::collections::BTreeMap<String, GameBadge>,
 }
 
 impl Default for RecordingSettings {
@@ -644,6 +683,7 @@ impl Default for RecordingSettings {
             automatic_quality: true,
             protect_computer: true,
             audio_apps: Vec::new(),
+            game_badges: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -794,6 +834,20 @@ impl RecordingSettings {
         self.replay_seconds = self.replay_seconds.clamp(5, 600);
         self.post_roll_seconds = self.post_roll_seconds.min(30);
         self.share_megabytes = self.share_megabytes.clamp(1, 500);
+        self.game_badges = std::mem::take(&mut self.game_badges)
+            .into_iter()
+            .filter_map(|(name, badge)| {
+                let name = name.trim().to_lowercase();
+                let usable = !name.is_empty()
+                    && name.chars().count() <= 100
+                    && !name.chars().any(char::is_control);
+                usable
+                    .then_some(())
+                    .and(badge.sanitized())
+                    .map(|badge| (name, badge))
+            })
+            .take(MAX_GAME_BADGES)
+            .collect();
         self.audio_apps = self
             .audio_apps
             .into_iter()
@@ -942,6 +996,51 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn game_badges_are_kept_clean_bounded_and_survive_a_round_trip() {
+        let mut settings = RecordingSettings::default();
+        let badge = |color: &str, mark: &str| GameBadge {
+            color: color.to_owned(),
+            mark: mark.to_owned(),
+        };
+        settings
+            .game_badges
+            .insert("Valorant ".to_owned(), badge("#FFAA00", "V"));
+        settings
+            .game_badges
+            .insert("cs2".to_owned(), badge("not a colour", "\u{1f3ae}x9"));
+        settings
+            .game_badges
+            .insert("empty".to_owned(), badge("", ""));
+        settings
+            .game_badges
+            .insert("bad\u{7}name".to_owned(), badge("#123456", ""));
+        settings
+            .game_badges
+            .insert(String::new(), badge("#123456", ""));
+        settings
+            .game_badges
+            .insert("x".repeat(200), badge("#123456", ""));
+        let clean = settings.sanitized();
+        assert_eq!(clean.game_badges.len(), 2, "{:?}", clean.game_badges);
+        assert_eq!(clean.game_badges["valorant"], badge("#ffaa00", "V"));
+        // A bad colour is dropped but the mark stays; the mark is cut to two characters.
+        assert_eq!(clean.game_badges["cs2"], badge("", "\u{1f3ae}x"));
+        let json = serde_json::to_string(&clean).unwrap();
+        let back: RecordingSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.game_badges, clean.game_badges);
+        // Older settings files have none; a flood is capped.
+        let old: RecordingSettings = serde_json::from_str("{}").unwrap();
+        assert!(old.game_badges.is_empty());
+        let mut flood = RecordingSettings::default();
+        for number in 0..500 {
+            flood
+                .game_badges
+                .insert(format!("game {number}"), badge("#112233", ""));
+        }
+        assert_eq!(flood.sanitized().game_badges.len(), MAX_GAME_BADGES);
+    }
     use clipcraft_capture::reframe::PixelRect;
 
     #[test]

@@ -91,9 +91,10 @@ pub use library_meta::{
 };
 pub use recording::{
     AUDIO_KBPS, AppAudioRow, AppAudioTarget, CaptureSource, Container, DesktopCaptureMode,
-    EncoderPreset, FRAME_RATES, HEIGHTS, KEYFRAME_SECONDS, MAX_AUDIO_APPS, POST_ROLL_SECONDS,
-    QualityMode, REPLAY_SECONDS, RateControl, RecordingSettings, SAMPLE_RATES, VIDEO_KBPS,
-    VideoCodec, VideoEncoder, default_settings_path, estimated_bytes, format_bytes,
+    EncoderPreset, FRAME_RATES, GameBadge, HEIGHTS, KEYFRAME_SECONDS, MAX_AUDIO_APPS,
+    MAX_GAME_BADGES, POST_ROLL_SECONDS, QualityMode, REPLAY_SECONDS, RateControl,
+    RecordingSettings, SAMPLE_RATES, VIDEO_KBPS, VideoCodec, VideoEncoder, default_settings_path,
+    estimated_bytes, format_bytes,
 };
 pub use recovery::{Recovery, recover_interrupted};
 pub use relink::{SearchResult, find_moved_file};
