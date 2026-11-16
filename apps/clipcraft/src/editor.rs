@@ -15,6 +15,7 @@ use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, RichText, Sense
 use crate::kit::{self, BORDER, CANVAS, CARD, CARD_HOVER, DANGER, FAINT, LIME, MUTED, PANEL, TEXT};
 
 mod inspector;
+mod library;
 mod timeline;
 #[path = "editor_workspace.rs"]
 mod workspace;
@@ -108,6 +109,9 @@ pub struct EditorState {
     clock: Option<(Instant, Tick)>,
     search: String,
     browser_search: crate::library_view::BrowserSearch,
+    /// Whether the Library shows picture cards or a list, and how big the cards are (0 to 2).
+    library_layout: library::LibraryLayout,
+    card_scale: u8,
     title: String,
     /// The "add clips" box, while it is open.
     picker: Option<ClipPicker>,
@@ -158,6 +162,8 @@ impl Default for EditorState {
             clock: None,
             search: String::new(),
             browser_search: crate::library_view::BrowserSearch::default(),
+            library_layout: library::LibraryLayout::default(),
+            card_scale: 1,
             title: String::new(),
             picker: None,
             zoom: 32.0,
@@ -1703,230 +1709,7 @@ impl EditorState {
                     }
                     LibraryTab::Library => {}
                 }
-                crate::settings::search_box(ui, &mut self.search, "Search clips");
-                ui.add_space(crate::kit::space::MD);
-                let filtered = self.browser_search.prepare(&media, &self.search);
-                let columns = (((ui.available_width() + 8.0) / 148.0).floor() as usize).clamp(2, 6);
-                let card_width = ((ui.available_width() - 8.0 * (columns - 1) as f32)
-                    / columns as f32)
-                    .max(20.0);
-                // Thumbnails are 16:9, so wider cards get taller ones.
-                let thumb_height = (card_width * 9.0 / 16.0).clamp(48.0, 150.0);
-                let card_height = thumb_height + 36.0;
-                egui::ScrollArea::vertical()
-                    .id_salt("editor-browser")
-                    .max_height((height - 174.0).max(30.0))
-                    .show_rows(
-                        ui,
-                        card_height + 6.0,
-                        filtered.len().div_ceil(columns),
-                        |ui, rows| {
-                            for row in rows {
-                                ui.horizontal_top(|ui| {
-                                    for entry in filtered
-                                        .iter()
-                                        .skip(row * columns)
-                                        .take(columns)
-                                        .filter_map(|&i| media.get(i))
-                                    {
-                                        ui.allocate_ui_with_layout(
-                                            Vec2::new(card_width, card_height),
-                                            Layout::top_down(Align::Min),
-                                            |ui| {
-                                                let ready = !entry.offline
-                                                    && entry
-                                                        .probe
-                                                        .as_ref()
-                                                        .and_then(|p| p.duration)
-                                                        .is_some();
-                                                // One response owns clicking, dragging and the menu;
-                                                // nested drag/thumbnail responses compete for pointer input.
-                                                let (card, _) = ui.allocate_exact_size(
-                                                    Vec2::new(card_width, card_height),
-                                                    Sense::hover(),
-                                                );
-                                                let response = ui.interact(
-                                                    card,
-                                                    egui::Id::new(("editor-source", &entry.path)),
-                                                    Sense::click_and_drag(),
-                                                );
-                                                response.widget_info(|| {
-                                                    egui::WidgetInfo::labeled(
-                                                        egui::WidgetType::Button,
-                                                        true,
-                                                        &entry.title,
-                                                    )
-                                                });
-                                                let rect = egui::Rect::from_min_size(
-                                                    card.min,
-                                                    Vec2::new(card_width, thumb_height),
-                                                );
-                                                ui.painter().rect_filled(
-                                                    rect,
-                                                    f32::from(crate::kit::radius::MD),
-                                                    CARD,
-                                                );
-                                                if let Some(texture) = thumbs.texture(
-                                                    ui.ctx(),
-                                                    &entry.path,
-                                                    ui.is_rect_visible(rect),
-                                                ) {
-                                                    egui::Image::from_texture(
-                                                        egui::load::SizedTexture::from_handle(
-                                                            texture,
-                                                        ),
-                                                    )
-                                                    .corner_radius(crate::kit::radius::MD)
-                                                    .paint_at(ui, rect);
-                                                }
-                                                if response.hovered() || response.has_focus() {
-                                                    ui.painter().rect_stroke(
-                                                        rect,
-                                                        8,
-                                                        Stroke::new(
-                                                            1.0_f32,
-                                                            if response.has_focus() {
-                                                                LIME
-                                                            } else {
-                                                                MUTED
-                                                            },
-                                                        ),
-                                                        egui::StrokeKind::Inside,
-                                                    );
-                                                }
-                                                let duration =
-                                                    crate::format_duration(entry.probe.as_ref());
-                                                let badge = egui::Rect::from_min_max(
-                                                    rect.right_bottom() - Vec2::new(44.0, 23.0),
-                                                    rect.right_bottom() - Vec2::splat(4.0),
-                                                );
-                                                ui.painter().rect_filled(
-                                                    badge,
-                                                    4,
-                                                    Color32::from_black_alpha(200),
-                                                );
-                                                ui.painter().text(
-                                                    badge.center(),
-                                                    Align2::CENTER_CENTER,
-                                                    duration,
-                                                    FontId::new(
-                                                        crate::kit::text_size::CAPTION,
-                                                        kit::medium(),
-                                                    ),
-                                                    TEXT,
-                                                );
-                                                let mut title_job =
-                                                    egui::text::LayoutJob::simple_singleline(
-                                                        crate::clip_label::title(
-                                                            &entry.title,
-                                                            &entry.extension,
-                                                        ),
-                                                        FontId::new(
-                                                            crate::kit::text_size::CAPTION,
-                                                            kit::medium(),
-                                                        ),
-                                                        TEXT,
-                                                    );
-                                                title_job.wrap.max_width = card_width;
-                                                title_job.wrap.max_rows = 1;
-                                                title_job.wrap.break_anywhere = true;
-                                                let title = ui.painter().layout_job(title_job);
-                                                ui.painter()
-                                                    .with_clip_rect(egui::Rect::from_min_max(
-                                                        rect.left_bottom(),
-                                                        card.right_bottom(),
-                                                    ))
-                                                    .galley(
-                                                        rect.left_bottom() + Vec2::new(0.0, 5.0),
-                                                        title,
-                                                        TEXT,
-                                                    );
-                                                let meta = format!(
-                                                    "{} \u{00b7} {}",
-                                                    crate::clip_label::when(
-                                                        &entry.title,
-                                                        &entry.extension,
-                                                        entry.modified_unix_seconds,
-                                                    ),
-                                                    crate::format_bytes(entry.size_bytes)
-                                                );
-                                                ui.painter()
-                                                    .with_clip_rect(egui::Rect::from_min_max(
-                                                        rect.left_bottom(),
-                                                        card.right_bottom(),
-                                                    ))
-                                                    .text(
-                                                        rect.left_bottom() + Vec2::new(0.0, 22.0),
-                                                        Align2::LEFT_TOP,
-                                                        meta,
-                                                        FontId::new(
-                                                            crate::kit::text_size::CAPTION,
-                                                            kit::medium(),
-                                                        ),
-                                                        MUTED,
-                                                    );
-                                                if response.clicked() {
-                                                    response.request_focus();
-                                                }
-                                                if ready
-                                                    && (response.double_clicked()
-                                                        || response.has_focus()
-                                                            && ui.input(|i| {
-                                                                i.key_pressed(egui::Key::Enter)
-                                                            }))
-                                                {
-                                                    add = Some((*entry).clone());
-                                                }
-                                                if response.drag_started() && ready {
-                                                    response.dnd_set_drag_payload((*entry).clone());
-                                                }
-                                                response.on_hover_text(&entry.title).context_menu(
-                                                    |ui| {
-                                                        if ui.button("Details").clicked() {
-                                                            details = Some((*entry).clone());
-                                                            ui.close();
-                                                        }
-                                                        if ui
-                                                            .add_enabled(
-                                                                ready && !self.busy(),
-                                                                egui::Button::new(
-                                                                    "Add to timeline",
-                                                                ),
-                                                            )
-                                                            .clicked()
-                                                        {
-                                                            add = Some((*entry).clone());
-                                                            ui.close();
-                                                        }
-                                                    },
-                                                );
-                                            },
-                                        );
-                                    }
-                                });
-                            }
-                        },
-                    );
-                if self.importing.is_some() {
-                    ui.spinner();
-                    ui.label(RichText::new("Importing clips…").small().color(MUTED));
-                } else if filtered.is_empty() {
-                    ui.add_space(crate::kit::space::LG);
-                    ui.vertical_centered(|ui| {
-                        ui.label(
-                            RichText::new("No clips here yet")
-                                .size(crate::kit::text_size::BODY)
-                                .family(kit::semibold())
-                                .color(kit::TEXT),
-                        );
-                        ui.add_space(crate::kit::space::XS);
-                        ui.label(
-                            RichText::new("Import clips, or send them from Clips.")
-                                .size(crate::kit::text_size::CAPTION)
-                                .color(MUTED),
-                        );
-                    });
-                }
+                self.library_list(ui, thumbs, height, &media, &mut add, &mut details);
             });
         if let Some(entry) = add {
             self.append(&entry);
@@ -3224,6 +3007,45 @@ mod tests {
         state.open = true;
         assert_eq!(state.session.duration(), Tick::from_units(2, 1));
     }
+    #[test]
+    fn library_draws_as_a_grid_in_every_size_and_as_a_list_at_any_window_size() {
+        let context = crate::kit::test_context();
+        let mut state = state();
+        let mut second = media();
+        second.path = "second.mp4".into();
+        second.title = "Valorant 2026-11-16 08-33-52".into();
+        state.media = Arc::new(vec![media(), second]);
+        state.tab = LibraryTab::Library;
+        let sizes = [
+            Vec2::new(1.0, 1.0),
+            Vec2::new(320.0, 500.0),
+            Vec2::new(900.0, 650.0),
+            Vec2::new(1440.0, 900.0),
+            Vec2::new(6000.0, 4000.0),
+        ];
+        for scale in 0..3_u8 {
+            state.library_layout = library::LibraryLayout::Grid;
+            state.card_scale = scale;
+            for size in sizes {
+                frame(&mut state, &context, vec![], size);
+            }
+        }
+        // Out-of-range sizes (from a damaged value) are clamped, not a crash.
+        state.card_scale = 200;
+        frame(&mut state, &context, vec![], Vec2::new(1440.0, 900.0));
+        state.library_layout = library::LibraryLayout::List;
+        for size in sizes {
+            frame(&mut state, &context, vec![], size);
+        }
+        // Searching narrows both layouts, and an empty result still draws.
+        state.search = "valorant".into();
+        frame(&mut state, &context, vec![], Vec2::new(1440.0, 900.0));
+        state.search = "no such clip".into();
+        frame(&mut state, &context, vec![], Vec2::new(1440.0, 900.0));
+        state.library_layout = library::LibraryLayout::Grid;
+        frame(&mut state, &context, vec![], Vec2::new(1440.0, 900.0));
+    }
+
     #[test]
     fn frame_step_follows_the_frame_rate_of_the_clip_being_shown() {
         for rate in [
