@@ -23,11 +23,53 @@ const PRIVATE_PROGRAMS: &[&str] = &[
     "yubikey-manager",
 ];
 
-/// True if an executable of this name is a private program.
-pub fn is_private_program(executable: &str) -> bool {
+/// Most programs the person can add of their own, and the longest name.
+pub const MAX_OWN_PROGRAMS: usize = 32;
+const MAX_NAME: usize = 64;
+
+/// The name of a program as it is compared: lowercase, no `.exe`, no spaces around it.
+fn stem(executable: &str) -> String {
     let lower = executable.trim().to_lowercase();
-    let stem = lower.strip_suffix(".exe").unwrap_or(&lower);
-    PRIVATE_PROGRAMS.contains(&stem)
+    lower.strip_suffix(".exe").unwrap_or(&lower).to_owned()
+}
+
+/// True if an executable of this name is a private program: one on the built-in list, or one the
+/// person added.
+pub fn is_private_program(executable: &str, own: &[String]) -> bool {
+    let stem = stem(executable);
+    !stem.is_empty() && (PRIVATE_PROGRAMS.contains(&stem.as_str()) || own.contains(&stem))
+}
+
+/// The person's own list made safe to keep: names only (no paths or control characters), lowercase
+/// without `.exe`, no duplicates, at most [`MAX_OWN_PROGRAMS`].
+pub fn clean_program_list(names: &[String]) -> Vec<String> {
+    let mut clean: Vec<String> = Vec::new();
+    for name in names {
+        let name: String = name
+            .chars()
+            .filter(|c| !c.is_control() && !matches!(c, '/' | '\\' | ','))
+            .take(MAX_NAME)
+            .collect();
+        let name = stem(&name);
+        if !name.is_empty() && !clean.contains(&name) {
+            clean.push(name);
+        }
+        if clean.len() == MAX_OWN_PROGRAMS {
+            break;
+        }
+    }
+    clean
+}
+
+/// A list typed as text (commas or new lines between names), as a clean list.
+pub fn parse_program_list(text: &str) -> Vec<String> {
+    let names: Vec<String> = text.split([',', '\n', ';']).map(str::to_owned).collect();
+    clean_program_list(&names)
+}
+
+/// A list as it is shown in the box, names separated by commas.
+pub fn program_list_text(names: &[String]) -> String {
+    names.join(", ")
 }
 
 /// What to do with the recording after looking at the open programs.
@@ -91,12 +133,26 @@ mod tests {
 
     #[test]
     fn password_managers_are_recognized_whatever_the_case_or_extension() {
-        assert!(is_private_program("1Password.exe"));
-        assert!(is_private_program("KeePassXC"));
-        assert!(is_private_program(" bitwarden.EXE "));
-        assert!(!is_private_program("firefox.exe"));
-        assert!(!is_private_program(""));
-        assert!(!is_private_program("keepassxc-helper"));
+        assert!(is_private_program("1Password.exe", &[]));
+        assert!(is_private_program("KeePassXC", &[]));
+        assert!(is_private_program(" bitwarden.EXE ", &[]));
+        assert!(!is_private_program("firefox.exe", &[]));
+        assert!(!is_private_program("", &[]));
+        assert!(!is_private_program("keepassxc-helper", &[]));
+    }
+
+    #[test]
+    fn the_persons_own_programs_count_too_and_the_list_is_made_safe() {
+        let own = parse_program_list("MyBank.exe, my bank app; ../evil\\path.exe\n mybank ,,");
+        assert_eq!(own, vec!["mybank", "my bank app", "..evilpath"]);
+        assert!(is_private_program("MYBANK.EXE", &own));
+        assert!(!is_private_program("mybank2.exe", &own));
+        // Never more than the limit, however long the text.
+        let many: String = (0..100).map(|i| format!("p{i},")).collect();
+        assert_eq!(parse_program_list(&many).len(), MAX_OWN_PROGRAMS);
+        assert_eq!(program_list_text(&own), "mybank, my bank app, ..evilpath");
+        let long = "x".repeat(500);
+        assert_eq!(parse_program_list(&long)[0].len(), 64);
     }
 
     #[test]

@@ -500,6 +500,12 @@ impl Recorder {
         self.shared.clock.set_paused(paused);
     }
 
+    /// Forgets the buffered video, so a paused recording holds no memory. What is recorded after
+    /// starts a new replay.
+    pub fn clear_replay(&self) {
+        lock(&self.shared.buffer).clear();
+    }
+
     /// When on, losing the source (its window closed) does not end the recording: the recorder
     /// keeps its buffer and waits for [`Recorder::replace_source`].
     pub fn keep_through_source_loss(&self, on: bool) {

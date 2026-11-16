@@ -107,8 +107,8 @@ pub use safety::{HOGGING_SHARE, HeavyWork, MEMORY_LIMIT_BYTES, StopReason, Verdi
 pub use screenshot::{ScreenshotJob, screenshot_name};
 pub use session::{
     CLIP_PREFIX, CaptureSession, ClipCheck, MicrophoneTestPlan, SaveJob, SavedClipReport,
-    check_saved_clip, clip_format, clip_stem, folder_name_for, game_clip_stem, is_clip_file_name,
-    record_config,
+    check_library_clip, check_saved_clip, clip_format, clip_stem, folder_name_for, game_clip_stem,
+    is_clip_file_name, record_config,
 };
 pub use share::{SHARE_FOLDER, SharePlan, SharedCopy, make_share_copy, share_plan};
 pub use storage::{

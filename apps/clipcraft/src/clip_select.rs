@@ -641,20 +641,49 @@ impl ClipCraftApp {
         match decision {
             Some(true) => {
                 self.selection.confirm = false;
-                // They leave the page now and wait: nothing is moved until the time is up.
-                self.selection.pending = Some(PendingTrash {
-                    paths: summary.paths.clone(),
-                });
-                self.library_view.invalidate();
-                let count = summary.paths.len();
-                self.capture.notice = notice_with_undo(format!(
-                    "{count} clip{} will move to the Recycle Bin when you close this",
-                    if count == 1 { "" } else { "s" },
-                ));
+                self.hold_for_undo(summary.paths.clone());
             }
             Some(false) => self.selection.confirm = false,
             None => {}
         }
+    }
+
+    /// True when nothing is waiting or being moved.
+    #[cfg(test)]
+    pub(crate) fn selection_idle(&self) -> bool {
+        self.selection.pending.is_none() && self.selection.trashing.is_none()
+    }
+
+    /// Takes clips off the page and holds them until the message with Undo is closed: nothing is
+    /// moved before that. Clips already waiting stay waiting with them.
+    pub(crate) fn hold_for_undo(&mut self, paths: Vec<String>) {
+        if paths.is_empty() {
+            return;
+        }
+        // A clip that is open, or playing, is let go of first.
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|open| paths.contains(&open.path))
+        {
+            self.selected = None;
+            self.playback = None;
+        }
+        let waiting = self
+            .selection
+            .pending
+            .get_or_insert(PendingTrash { paths: Vec::new() });
+        for path in paths {
+            if !waiting.paths.contains(&path) {
+                waiting.paths.push(path);
+            }
+        }
+        let count = waiting.paths.len();
+        self.library_view.invalidate();
+        self.capture.notice = notice_with_undo(format!(
+            "{count} clip{} will move to the Recycle Bin when you close this",
+            if count == 1 { "" } else { "s" },
+        ));
     }
 
     /// Moves the waiting clips now, without the rest of the time to undo.

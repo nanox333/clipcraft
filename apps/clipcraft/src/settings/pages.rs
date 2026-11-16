@@ -1556,12 +1556,77 @@ pub(crate) fn experimental_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut Reco
         ),
         |s| &mut s.pause_for_private_programs,
     );
+    // The person's own programs: names separated by commas, kept as typed while editing.
+    let changed = !s.private_programs.is_empty();
+    let box_id = egui::Id::new("own-private-programs");
+    let mut typed: String = ui
+        .data_mut(|data| data.get_temp::<String>(box_id))
+        .unwrap_or_else(|| clipcraft_engine::privacy::program_list_text(&s.private_programs));
+    let mut edited = false;
+    let reset = rows.custom(
+        ui,
+        Meta::new(
+            "Also pause for these programs",
+            "Names of programs of your own, separated by commas, for example mybank.exe. They count like a password manager while the first switch above is on.",
+            "privacy private own programs custom banking app list add pause",
+        ),
+        changed,
+        280.0,
+        |ui| {
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut typed)
+                    .hint_text("program names, e.g. mybank.exe")
+                    .desired_width(260.0),
+            );
+            crate::kit::name_text_box(&response, "Programs to pause for", &typed);
+            edited = response.changed();
+        },
+    );
+    if reset {
+        typed.clear();
+        edited = true;
+    }
+    if edited {
+        s.private_programs = clipcraft_engine::privacy::parse_program_list(&typed);
+    }
+    ui.data_mut(|data| data.insert_temp(box_id, typed));
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
+            "Pause when the screen is locked",
+            "Nothing is added to the replay while the screen is locked, so the lock screen and anything shown behind it are never recorded. Needs the session manager's lock status on Linux; not yet tried on Windows or with real lock screens.",
+            "privacy lock screen locked pause win l sleep",
+        ),
+        |s| &mut s.pause_on_screen_lock,
+    );
+    rows.section(ui, "Memory");
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
+            "Keep the replay while paused",
+            "By default pausing clears the replay so it holds no memory. Turn this on to keep what was buffered and carry on after the pause, which keeps using the memory the replay needs (see Replay for how much).",
+            "pause keep replay buffer memory ram paused resume",
+        ),
+        |s| &mut s.keep_replay_while_paused,
+    );
     rows.finish(ui);
 }
 
 pub(crate) fn app_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut RecordingSettings) {
     rows.page(ui, "General");
     rows.section(ui, "Startup and window");
+    rows.toggle(
+        ui,
+        s,
+        Meta::new(
+            "Ask before quitting while clipping",
+            "If the replay holds footage when you close ClipCraft (not just minimize it), ask first, since quitting throws the replay away.",
+            "quit close exit confirm ask replay footage lose",
+        ),
+        |s| &mut s.confirm_quit_with_footage,
+    );
     rows.toggle(
         ui,
         s,

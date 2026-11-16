@@ -100,6 +100,11 @@ mod imp {
         pub fn quitting() -> bool {
             QUITTING.load(Ordering::SeqCst)
         }
+
+        /// A quit was asked for but the person chose to keep going.
+        pub fn cancel_quit() {
+            QUITTING.store(false, Ordering::SeqCst);
+        }
     }
 }
 
@@ -127,6 +132,8 @@ mod imp {
         pub fn quitting() -> bool {
             false
         }
+
+        pub fn cancel_quit() {}
     }
 }
 

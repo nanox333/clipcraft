@@ -247,7 +247,9 @@ pub struct CaptureState {
     /// Pauses the recording while a private program is open.
     privacy: clipcraft_engine::privacy::PrivacyPause,
     /// A look at the open programs that is under way, and when the next one is due.
-    privacy_scan: Option<mpsc::Receiver<bool>>,
+    privacy_scan: Option<mpsc::Receiver<PrivacyReading>>,
+    /// Why the recording is held paused (for the message when it resumes).
+    privacy_reason: Option<PrivacyReason>,
     privacy_due: Option<Instant>,
     /// Game windows that delivered only black pictures, and when each may be tried again.
     black_windows: std::collections::HashMap<String, Instant>,
@@ -357,8 +359,42 @@ impl CaptureState {
 const NOTICE_SECONDS: f32 = 30.0;
 const NOTICE_FADE_SECONDS: f32 = 1.2;
 
+/// Why the recording is being held paused for privacy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PrivacyReason {
+    Program,
+    ScreenLocked,
+}
+
+/// What a look at the computer found.
+pub(crate) struct PrivacyReading {
+    program: bool,
+    locked: bool,
+}
+
+impl PrivacyReading {
+    /// Looks. `programs` is the person's own list when private programs are watched (None when
+    /// they are not); `lock` says whether the screen lock is watched.
+    fn take(programs: Option<&[String]>, lock: bool) -> Self {
+        Self {
+            program: programs.is_some_and(private_program_open),
+            locked: lock && clipcraft_platform::screen_locked(),
+        }
+    }
+
+    fn reason(&self) -> Option<PrivacyReason> {
+        if self.locked {
+            Some(PrivacyReason::ScreenLocked)
+        } else if self.program {
+            Some(PrivacyReason::Program)
+        } else {
+            None
+        }
+    }
+}
+
 /// True if a private program (see [`clipcraft_engine::privacy`]) has a window on the screen.
-fn private_program_open() -> bool {
+fn private_program_open(own: &[String]) -> bool {
     let Ok(windows) = clipcraft_platform::owned_windows() else {
         return false;
     };
@@ -374,7 +410,7 @@ fn private_program_open() -> bool {
         .iter()
         .any(|process| {
             owners.contains(&process.process_id)
-                && clipcraft_engine::privacy::is_private_program(&process.executable)
+                && clipcraft_engine::privacy::is_private_program(&process.executable, own)
         })
 }
 
@@ -461,13 +497,14 @@ impl ClipCraftApp {
     }
 
     /// Pauses the recording while a password manager (or another private program) has a window
-    /// open on a recorded screen, and resumes it afterwards. Looks every few seconds, off the
-    /// window's thread.
+    /// open on a recorded screen, or while the screen is locked, and resumes it afterwards. Looks
+    /// every few seconds, off the window's thread. Both are experimental and off by default.
     fn watch_private_programs(&mut self) {
         use clipcraft_engine::privacy::PrivacyStep;
-        let watching = self.recording.pause_for_private_programs
-            && self.capture.session.is_active()
-            && self.records_whole_screen();
+        let programs = self.recording.pause_for_private_programs;
+        let lock = self.recording.pause_on_screen_lock;
+        let watching =
+            (programs || lock) && self.capture.session.is_active() && self.records_whole_screen();
         if !watching {
             if self.capture.privacy.holding() && self.capture.session.is_active() {
                 self.capture.session.set_paused(false);
@@ -475,29 +512,40 @@ impl ClipCraftApp {
             self.capture.privacy.reset();
             self.capture.privacy_scan = None;
             self.capture.privacy_due = None;
+            self.capture.privacy_reason = None;
             return;
         }
         if let Some(receiver) = &self.capture.privacy_scan {
             match receiver.try_recv() {
-                Ok(private_open) => {
+                Ok(reading) => {
                     self.capture.privacy_scan = None;
                     self.capture.privacy_due = Some(Instant::now() + Duration::from_secs(3));
+                    let reason = reading.reason();
                     let paused = self
                         .capture
                         .session
                         .status()
                         .is_some_and(|status| status.paused);
-                    match self.capture.privacy.step(private_open, paused) {
+                    match self.capture.privacy.step(reason.is_some(), paused) {
                         PrivacyStep::Pause => {
                             self.capture.session.set_paused(true);
+                            self.capture.privacy_reason = reason;
                             self.capture.notice = notice(
-                                "Paused: a password manager is open. Clipping carries on when you close it.",
+                                match reason {
+                                    Some(PrivacyReason::ScreenLocked) => {
+                                        "Paused: the screen is locked. Clipping carries on when you unlock it."
+                                    }
+                                    _ => {
+                                        "Paused: a private program is open. Clipping carries on when you close it."
+                                    }
+                                },
                                 false,
                                 None,
                             );
                         }
                         PrivacyStep::Resume => {
                             self.capture.session.set_paused(false);
+                            self.capture.privacy_reason = None;
                             self.capture.notice = notice("Clipping resumed.", false, None);
                         }
                         PrivacyStep::Keep => {}
@@ -518,8 +566,9 @@ impl ClipCraftApp {
         {
             let (sender, receiver) = mpsc::channel();
             self.capture.privacy_scan = Some(receiver);
+            let own = programs.then(|| self.recording.private_programs.clone());
             std::thread::spawn(move || {
-                let _ = sender.send(private_program_open());
+                let _ = sender.send(PrivacyReading::take(own.as_deref(), lock));
             });
         }
     }
@@ -1159,6 +1208,11 @@ impl ClipCraftApp {
         };
         let pause = !status.paused;
         self.capture.session.set_paused(pause);
+        // Keeping the replay while paused holds its memory, so it is an experimental choice.
+        let keep = self.recording.keep_replay_while_paused;
+        if pause && !keep {
+            self.capture.session.clear_replay();
+        }
         self.capture.status = self.capture.session.status();
         self.cue(if pause {
             Cue::ClippingStopped
@@ -1166,8 +1220,10 @@ impl ClipCraftApp {
             Cue::ClippingStarted
         });
         self.capture.notice = notice(
-            if pause {
+            if pause && keep {
                 "Clipping paused. The replay is kept; press the key again to carry on."
+            } else if pause {
+                "Clipping paused and the replay cleared. Press the key again to carry on."
             } else {
                 "Clipping resumed."
             },
@@ -1414,11 +1470,7 @@ impl ClipCraftApp {
             }
             Some(crate::saved_toast::ToastAction::Show) => self.reveal_media(path.clone()),
             Some(crate::saved_toast::ToastAction::Delete) => {
-                let title = path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                self.start_trash(path.to_string_lossy().into_owned(), title);
+                self.hold_for_undo(vec![path.to_string_lossy().into_owned()]);
                 toast.mark_deleted();
             }
             None => {}
@@ -1529,9 +1581,15 @@ impl ClipCraftApp {
         let game_name = self.capture.game_recording_name().map(str::to_owned);
         let (dot, text) = match self.capture.status.as_ref() {
             Some(status) => match status.state {
-                RecordState::Running if status.paused => {
-                    (MUTED, "Paused \u{b7} replay kept".to_owned())
-                }
+                RecordState::Running if status.paused => (
+                    MUTED,
+                    if self.recording.keep_replay_while_paused {
+                        "Paused \u{b7} replay kept"
+                    } else {
+                        "Paused"
+                    }
+                    .to_owned(),
+                ),
                 RecordState::Running => {
                     let encoder = status.encoder.split([' ', '(']).next().unwrap_or("");
                     let tag = status

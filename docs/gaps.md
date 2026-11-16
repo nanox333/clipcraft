@@ -41,6 +41,9 @@ Safety measures that came with it:
   has a window open on a recorded screen, and the recording carries on when it is closed. A pause
   or resume you chose yourself is never undone.
 - **Discarding the editor's saved draft asks first.**
+- **Ask before quitting while clipping** with footage in the replay (Settings → General, on by default); a minimize to the tray never asks.
+- **Experimental, all off by default:** the password-manager pause also takes programs you add, there is a pause while the screen is locked, and **Keep the replay while paused**. Without that last one, pausing clears the replay so it holds no memory (this changed what Pause did: it used to keep the replay).
+- **Refresh** on the Clips page rescans the folder and checks every clip (it opens, has a picture, has a length).
 - **After three starts in a row that never got going,** ClipCraft opens with default settings and
   asks whether to keep them (the saved settings are kept beside them) or go back to the saved ones.
 
@@ -57,8 +60,8 @@ space call was run on Linux only); the three-starts safe start with a real crash
 
 Known limits: the pause only knows programs on its list (1Password, Bitwarden, KeePass, KeePassXC,
 Dashlane, Enpass, Keeper, LastPass, NordPass, Proton Pass, RoboForm, Authy), not websites in a
-browser, and it does not react to the screen lock; an Undo works only while the message is shown, and closing ClipCraft first leaves the waiting clips where they are;
-deleting one clip from its own page still uses the older dialog without Undo; a backup
+browser; the screen-lock pause reads the session manager's lock status on Linux and looks for the lock screen program (LogonUI.exe) on Windows, and was not tried on a real lock screen or on Windows; the quit question is not asked on a crash or a killed process; an Undo works only while the message is shown, and closing ClipCraft first leaves the waiting clips where they are;
+a clip deleted from its own page, its menu or the saved pop-up now uses the same Undo message; a backup
 can be up to a day old; the clip check calls a clip doubtful for length only when it is under half as long as recorded (a slow computer drops pictures, and a stricter bar warned about healthy clips on a slow Windows test machine).
 
 ## Window redesign round (2026-11-16)

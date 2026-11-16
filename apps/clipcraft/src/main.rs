@@ -25,6 +25,7 @@ mod game_data;
 mod game_scan;
 mod gpu_restart;
 mod kit;
+mod library_check;
 mod library_grid;
 mod library_scan;
 mod library_store;
@@ -33,6 +34,7 @@ mod onboarding;
 mod organize;
 mod playback;
 mod presence;
+mod quit_guard;
 mod rows;
 mod safe_start;
 mod saved_toast;
@@ -173,6 +175,10 @@ struct ClipCraftApp {
     gpu_session: Option<gpu_restart::GpuSession>,
     /// Notices a start that keeps failing and offers the default settings (see `safe_start`).
     safe_start: Option<safe_start::SafeStart>,
+    /// Asks before quitting while the replay holds footage (see `quit_guard`).
+    quit_guard: quit_guard::QuitGuard,
+    /// A refresh that is checking every clip in the background.
+    library_check: Option<library_check::LibraryCheck>,
     /// The window icon was set again after the window opened.
     icon_sent: bool,
     directory_text: String,
@@ -247,8 +253,6 @@ struct ClipCraftApp {
     pending_open: Option<PathBuf>,
     /// The clip the person is being asked about deleting.
     confirm_delete: Option<MediaEntry>,
-    /// A clip being moved to the Recycle Bin.
-    trashing: Option<clip_delete::Trashing>,
     /// Clips chosen on the Clips page for a group action (favorite, collection, delete).
     selection: clip_select::Selection,
     /// A share copy being made.
@@ -504,6 +508,7 @@ impl ClipCraftApp {
             self.start_probing(context);
         }
         self.poll_library_scan(context);
+        self.poll_library_check(context);
         self.poll_probes();
         if self.needs_thumbnails {
             self.needs_thumbnails = false;
@@ -540,6 +545,7 @@ impl ClipCraftApp {
         self.poll_find(context);
         self.draw_screen(context);
         self.draw_focus_ring(context);
+        self.guard_quit(context);
         self.hide_to_tray(context);
         self.sync_taskbar_button(context);
         self.poll_update(context);
@@ -762,7 +768,6 @@ impl ClipCraftApp {
         self.top_bar(context);
         self.navigation(context);
         self.notice_toast(context);
-        self.poll_trash(context);
         self.poll_bulk_trash(context);
         self.poll_rename(context);
         self.poll_share(context);
@@ -809,6 +814,7 @@ impl ClipCraftApp {
         self.bulk_trash_dialog(context);
         self.gpu_restart_dialog(context);
         self.safe_start_dialog(context);
+        self.quit_dialog(context);
         self.rename_dialog(context);
         self.bug_report_dialog(context);
         self.thumbs.end_frame();
@@ -1587,6 +1593,18 @@ impl ClipCraftApp {
                     if !folder.is_empty() {
                         self.reveal_media(PathBuf::from(folder));
                     }
+                }
+                if kit::labelled_button(
+                    ui,
+                    Icon::Loop,
+                    "Refresh",
+                    false,
+                    self.library_check.is_none(),
+                )
+                .on_hover_text("Look at the folder again and check that every clip still opens")
+                .clicked()
+                {
+                    self.refresh_library();
                 }
                 // Choose several clips at once, to favorite, collect or delete them together.
                 let has_clips = self.library.as_ref().is_some_and(|r| !r.entries.is_empty());

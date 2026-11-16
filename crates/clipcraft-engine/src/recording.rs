@@ -547,6 +547,15 @@ pub struct RecordingSettings {
     /// Pause the desktop recording while a password manager or similar private program has a
     /// window open (see [`crate::privacy`]). Experimental, so off unless chosen.
     pub pause_for_private_programs: bool,
+    /// Programs of the person's own that count like a password manager (executable names).
+    pub private_programs: Vec<String>,
+    /// Pause the desktop recording while the screen is locked. Experimental.
+    pub pause_on_screen_lock: bool,
+    /// Ask before quitting while the replay holds footage.
+    pub confirm_quit_with_footage: bool,
+    /// Pausing keeps the replay in memory. Experimental: it holds the memory while paused, so by
+    /// default pausing frees it.
+    pub keep_replay_while_paused: bool,
     /// Switch replay sources automatically using game recognition and the chosen desktop policy.
     pub game_only_capture: bool,
     /// When a recognized game is running but no window of it can be found (a protected or unusual
@@ -668,6 +677,10 @@ impl Default for RecordingSettings {
             capture_target_name: String::new(),
             record_on_launch: false,
             pause_for_private_programs: false,
+            private_programs: Vec::new(),
+            pause_on_screen_lock: false,
+            confirm_quit_with_footage: true,
+            keep_replay_while_paused: false,
             game_only_capture: true,
             record_screen_when_game_window_missing: true,
             record_desktop_after_game: false,
@@ -798,6 +811,7 @@ impl RecordingSettings {
             self.codec = VideoCodec::H264;
         }
         self.desktop_after_game_seconds = self.desktop_after_game_seconds.clamp(15, 3600);
+        self.private_programs = crate::privacy::clean_program_list(&self.private_programs);
         // Compatibility with the earlier WIP boolean. UI choices clear this field.
         if self.record_desktop_after_game && self.desktop_capture_mode == DesktopCaptureMode::Never
         {

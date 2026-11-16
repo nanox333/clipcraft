@@ -18,10 +18,10 @@ The full, detailed feature list and known limits. The [README](../README.md) has
   checked once a minute, with a notice under 2 GB and a stronger one under 500 MB. The settings and
   the library index keep three rolling backups (made at most once a day, beside the files as
   `.bak1` to `.bak3`); a damaged file is set aside as `.damaged` and the newest readable backup is
-  used, with a notice. With **Pause for password managers** (Settings → Experimental, off until you turn it on) nothing is
+  used, with a notice. With **Pause for password managers** (Settings → Experimental, off until you turn it on; you can add programs of your own there, and a second switch pauses while the screen is locked) nothing is
   added to the replay while 1Password, Bitwarden, KeePass, KeePassXC, Dashlane, Enpass, Keeper,
   LastPass, NordPass, Proton Pass, RoboForm or Authy has a window open on a recorded screen; a
-  pause or resume you chose is left alone. Discarding the editor's saved draft asks first. After
+  pause or resume you chose is left alone. Discarding the editor's saved draft asks first. Closing ClipCraft while it is clipping and the replay holds at least a second of footage asks first (Settings → General turns that off); a close that only minimizes to the tray never asks. Pausing clipping clears the replay so it holds no memory; **Keep the replay while paused** (Experimental) keeps it. **Refresh** on the Clips page scans the folder again and checks that every clip opens, has a picture and has a length, naming any that do not; nothing is changed. After
   three starts in a row that never ran for half a minute, ClipCraft opens with default settings and
   asks whether to keep them (the saved settings are kept as `.before-safe-start`) or use the saved
   ones.
@@ -39,7 +39,7 @@ The full, detailed feature list and known limits. The [README](../README.md) has
   the portable zip, with Start menu links, an optional desktop shortcut and an uninstaller that
   keeps clips and preferences. Downloads remain unsigned.
 - **Clip deletion and saved pop-up:** right-click a clip (or use the delete button) to send it to the
-  Recycle Bin on Windows; a small "clip saved" pop-up appears without taking focus from your game
+  Recycle Bin (after the same Undo message as choosing many clips) on Windows; a small "clip saved" pop-up appears without taking focus from your game
   (Settings → Replay → Show a notification turns it off).
 
 - **System tray (Windows):** a custom-styled tray menu (status, start/stop recording, save clip, screenshot, clips folder, library, settings, quit) and, by default, closing the window

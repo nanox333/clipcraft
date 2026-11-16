@@ -111,6 +111,27 @@ pub fn check_saved_clip(clip: &SavedClip) -> ClipCheck {
     ClipCheck::Good
 }
 
+/// Opens a clip that is already in the library and checks what can be checked without knowing how
+/// it was recorded: it opens, has a picture and has a length. The file is never changed.
+pub fn check_library_clip(path: &Path) -> ClipCheck {
+    use ClipCheck::Doubtful;
+    match fs::metadata(path) {
+        Ok(meta) if meta.is_file() && meta.len() > 0 => {}
+        Ok(_) => return Doubtful("it is empty".to_owned()),
+        Err(_) => return Doubtful("it could not be opened".to_owned()),
+    }
+    let Ok(probe) = clipcraft_media::probe_file(path) else {
+        return Doubtful("it could not be opened".to_owned());
+    };
+    if probe.width.is_none() || probe.height.is_none() {
+        return Doubtful("it has no picture".to_owned());
+    }
+    match probe.duration {
+        Some(duration) if duration.0 > 0 => ClipCheck::Good,
+        _ => Doubtful("it has no length".to_owned()),
+    }
+}
+
 /// A clip that was saved, and any older ClipCraft clips deleted to stay inside the storage limit.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SavedClipReport {
@@ -449,6 +470,13 @@ impl CaptureSession {
     pub fn set_paused(&self, paused: bool) {
         if let Some(recorder) = &self.recorder {
             recorder.set_paused(paused);
+        }
+    }
+
+    /// Forgets the buffered replay (used when pausing should free the memory).
+    pub fn clear_replay(&self) {
+        if let Some(recorder) = &self.recorder {
+            recorder.clear_replay();
         }
     }
 
@@ -1727,6 +1755,12 @@ mod tests {
         // The clip was reopened after it was written, and is what was recorded.
         assert_eq!(report.check, ClipCheck::Good);
         assert_eq!(check_saved_clip(&report.clip), ClipCheck::Good);
+        // A library clip is checked without knowing how it was recorded.
+        assert_eq!(check_library_clip(&report.clip.path), ClipCheck::Good);
+        assert!(matches!(
+            check_library_clip(&dir.join("never-existed.mp4")),
+            ClipCheck::Doubtful(_)
+        ));
         // A clip that changed afterwards, or that is gone, is called doubtful, never trusted.
         let damaged = dir.join("damaged.mp4");
         let bytes = fs::read(&report.clip.path).unwrap();

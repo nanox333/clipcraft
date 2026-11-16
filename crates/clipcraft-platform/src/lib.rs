@@ -44,6 +44,7 @@ mod process;
 mod pulse;
 mod resources;
 mod screen;
+mod screen_lock;
 mod timer;
 mod trash;
 mod unexpected_restart;
@@ -86,6 +87,7 @@ pub use process::{
 };
 pub use resources::{SelfMeter, SelfUsage};
 pub use screen::{make_window_passive, set_taskbar_button, window_minimized, work_area};
+pub use screen_lock::screen_locked;
 pub use timer::set_fine_timer;
 pub use trash::move_to_trash;
 pub use unexpected_restart::last_unexpected_restart;

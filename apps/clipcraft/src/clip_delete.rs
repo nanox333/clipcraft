@@ -1,29 +1,18 @@
 //! Deleting a clip: ask first, then move the file to the Recycle Bin, so it can be put back.
 
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::time::Duration;
 
 use clipcraft_engine::{Command, EngineError, MediaEntry, execute, format_bytes};
 use eframe::egui::{self, RichText};
 
-use crate::capture::notice;
 use crate::kit::{self, DANGER, MUTED, TEXT};
 use crate::{ClipCraftApp, Icon};
-
-/// A clip being moved to the Recycle Bin on another thread.
-pub(crate) struct Trashing {
-    title: String,
-    path: String,
-    receiver: mpsc::Receiver<Result<(), EngineError>>,
-}
 
 impl ClipCraftApp {
     /// Opens the "are you sure" box for `entry`.
     pub(crate) fn ask_to_delete(&mut self, entry: MediaEntry) {
-        if self.trashing.is_none() {
-            self.confirm_delete = Some(entry);
-        }
+        self.confirm_delete = Some(entry);
     }
 
     /// The confirmation box, while there is one. Enter or the red button moves the clip; Escape or
@@ -72,7 +61,7 @@ impl ClipCraftApp {
                 ui.add_space(crate::kit::space::MD);
                 ui.label(
                     RichText::new(
-                        "It goes to the Recycle Bin, so you can put it back from there if you change your mind.",
+                        "It leaves the page now. A message with Undo stays on screen; when you close it, the clip moves to the Recycle Bin, where you can still put it back.",
                     )
                     .color(MUTED)
                     .size(crate::kit::text_size::SMALL),
@@ -95,64 +84,10 @@ impl ClipCraftApp {
         match decision {
             Some(true) => {
                 self.confirm_delete = None;
-                self.start_trash(entry.path, entry.title);
+                self.hold_for_undo(vec![entry.path]);
             }
             Some(false) => self.confirm_delete = None,
             None => {}
-        }
-    }
-
-    /// Moves the clip to the Recycle Bin on a thread. The player may still hold the file for a
-    /// moment after it is closed, so a refusal is tried again for a couple of seconds.
-    pub(crate) fn start_trash(&mut self, path: String, title: String) {
-        let key = path.clone();
-        let path = PathBuf::from(path);
-        if self
-            .selected
-            .as_ref()
-            .is_some_and(|selected| std::path::Path::new(&selected.path) == path)
-        {
-            self.selected = None;
-        }
-        self.playback = None;
-        let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = sender.send(move_clip_to_trash(path));
-        });
-        self.trashing = Some(Trashing {
-            title,
-            path: key,
-            receiver,
-        });
-    }
-
-    /// Picks up the result of a move to the Recycle Bin.
-    pub(crate) fn poll_trash(&mut self, context: &egui::Context) {
-        let Some(trashing) = self.trashing.as_ref() else {
-            return;
-        };
-        let result = match trashing.receiver.try_recv() {
-            Ok(result) => result,
-            Err(mpsc::TryRecvError::Empty) => {
-                context.request_repaint_after(Duration::from_millis(100));
-                return;
-            }
-            Err(mpsc::TryRecvError::Disconnected) => Err(EngineError::TrashUnavailable),
-        };
-        let title = trashing.title.clone();
-        let path = trashing.path.clone();
-        self.trashing = None;
-        match result {
-            Ok(()) => {
-                self.capture.notice =
-                    notice(format!("Moved {title} to the Recycle Bin"), false, None);
-                // Forget the clip at once, so the grid does not keep an offline ghost of it.
-                self.edit_library(clipcraft_engine::MetaEdit::RemoveFromLibrary { path });
-                self.scan_library();
-            }
-            Err(error) => {
-                self.capture.notice = notice(format!("{title}: {error}"), true, None);
-            }
         }
     }
 }
@@ -228,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn a_clip_is_only_moved_after_the_person_confirms_and_the_library_is_refreshed() {
+    fn a_clip_waits_for_undo_and_is_only_moved_when_the_message_is_closed() {
         clipcraft_engine::set_trash_handler(fake_bin);
         let directory =
             std::env::temp_dir().join(format!("clipcraft-delete-{}", std::process::id()));
@@ -245,30 +180,41 @@ mod tests {
         assert!(app.confirm_delete.is_some());
         assert!(clip.exists(), "asking does not delete");
 
+        // Confirming takes the clip off the page and starts the Undo message; nothing moves yet.
         let confirmed = app.confirm_delete.take().unwrap();
-        app.start_trash(confirmed.path, confirmed.title);
+        app.hold_for_undo(vec![confirmed.path.clone()]);
         assert!(app.selected.is_none(), "the open clip is closed first");
-        assert!(app.trashing.is_some());
-        app.ask_to_delete(entry(&clip));
+        assert!(clip.exists(), "nothing moves while the message is up");
         assert!(
-            app.confirm_delete.is_none(),
-            "nothing new while one is moving"
+            app.capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.undo)
         );
+        // Another delete joins the wait instead of replacing it.
+        app.hold_for_undo(vec!["/clips/other.mp4".to_owned()]);
+        assert!(
+            app.capture
+                .notice
+                .as_ref()
+                .is_some_and(|notice| notice.text.starts_with("2 clips"))
+        );
+
+        // Undo brings them back with nothing moved.
+        app.undo_pending_trash();
+        assert!(clip.exists());
+
+        // Closing the message (or Delete now) moves the clip to the Recycle Bin.
+        app.hold_for_undo(vec![confirmed.path]);
+        app.delete_pending_now();
         for _ in 0..200 {
-            app.poll_trash(&context);
-            if app.trashing.is_none() {
+            app.poll_bulk_trash(&context);
+            if !clip.exists() && app.selection_idle() {
                 break;
             }
             std::thread::sleep(Duration::from_millis(25));
         }
-        assert!(app.trashing.is_none());
         assert!(!clip.exists());
-        let notice = app.capture.notice.as_ref().expect("a notice");
-        assert!(
-            !notice.error && notice.text.contains("Recycle Bin"),
-            "{}",
-            notice.text
-        );
         let _ = std::fs::remove_dir_all(&directory);
     }
 }
