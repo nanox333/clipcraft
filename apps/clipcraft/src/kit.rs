@@ -65,6 +65,10 @@ pub const MUTED: Color32 = Color32::from_rgb(150, 150, 161);
 pub const FAINT: Color32 = Color32::from_rgb(92, 92, 102);
 pub const LIME: Color32 = Color32::from_rgb(190, 255, 43);
 pub const DANGER: Color32 = Color32::from_rgb(255, 112, 112);
+/// Warnings: something worked but needs a look (amber).
+pub const WARNING: Color32 = Color32::from_rgb(255, 190, 92);
+/// Information that is neither good nor bad news (a calm blue).
+pub const INFO: Color32 = Color32::from_rgb(122, 170, 255);
 
 // Inter (SIL OFL 1.1), unmodified; see ATTRIBUTION.md and assets/fonts/OFL-Inter.md.
 const INTER_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
@@ -231,11 +235,14 @@ pub enum Icon {
     Restart,
     Pencil,
     Check,
+    Info,
+    Alert,
+    Close,
 }
 
 impl Icon {
     /// Every icon, in declaration order (the cache below is indexed by it).
-    pub const ALL: [Icon; 28] = [
+    pub const ALL: [Icon; 31] = [
         Icon::Play,
         Icon::Pause,
         Icon::StepBack,
@@ -264,6 +271,9 @@ impl Icon {
         Icon::Restart,
         Icon::Pencil,
         Icon::Check,
+        Icon::Info,
+        Icon::Alert,
+        Icon::Close,
     ];
 
     /// The icon's file under `assets/icons`, a plain SVG that any vector editor can open.
@@ -297,6 +307,9 @@ impl Icon {
             Icon::Trash => include_str!("../../../assets/icons/trash.svg"),
             Icon::Restart => include_str!("../../../assets/icons/restart.svg"),
             Icon::Pencil => include_str!("../../../assets/icons/pencil.svg"),
+            Icon::Info => include_str!("../../../assets/icons/info.svg"),
+            Icon::Alert => include_str!("../../../assets/icons/alert.svg"),
+            Icon::Close => include_str!("../../../assets/icons/close.svg"),
         }
     }
 }

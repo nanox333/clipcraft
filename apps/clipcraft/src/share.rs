@@ -134,11 +134,11 @@ impl ClipCraftApp {
                 let size = std::fs::metadata(&copy.path)
                     .map(|metadata| clipcraft_engine::format_bytes(metadata.len()))
                     .unwrap_or_default();
-                notice(
+                crate::capture::notice_as(
+                    crate::notify::Kind::Success,
                     format!(
                         "The {megabytes} MB copy is ready ({size}). Drag the clip into your chat."
                     ),
-                    false,
                     None,
                 )
             }

@@ -474,12 +474,12 @@ impl ClipCraftApp {
         self.capture.pending_transition = Some(GameArmingDecision::Start(game.clone()));
         self.advance_game_transition();
         if self.capture.game_on_screen {
-            self.capture.notice = notice(
+            self.capture.notice = crate::capture::notice_as(
+                crate::notify::Kind::Warning,
                 format!(
                     "{}'s window gave only a black picture, so ClipCraft is recording the screen instead. It tries the window again in a minute.",
                     game.game_name
                 ),
-                false,
                 None,
             );
         }
@@ -527,16 +527,16 @@ impl ClipCraftApp {
         match verdict {
             Verdict::Lighten => {
                 self.capture.session.lighten_now();
-                self.capture.notice = notice(
+                self.capture.notice = crate::capture::notice_as(
+                    crate::notify::Kind::Warning,
                     "ClipCraft is using almost all of your processor, so it is recording fewer pictures a second to take the load off. Try the graphics card encoder or a lower quality in Settings if this keeps happening.",
-                    true,
                     None,
                 );
             }
             Verdict::Recovered => {
-                self.capture.notice = notice(
+                self.capture.notice = crate::capture::notice_as(
+                    crate::notify::Kind::Success,
                     "ClipCraft is back to using a normal amount of your processor.",
-                    false,
                     None,
                 );
             }
@@ -580,7 +580,15 @@ impl ClipCraftApp {
         {
             return;
         }
-        self.capture.notice = notice(
+        let kind = if now < before {
+            crate::notify::Kind::Warning
+        } else if now == target {
+            crate::notify::Kind::Success
+        } else {
+            crate::notify::Kind::Info
+        };
+        self.capture.notice = crate::capture::notice_as(
+            kind,
             if now < before && squeezed {
                 format!(
                     "Your game started using more of your computer, so ClipCraft is recording {now} pictures a second instead of {target} to stay out of its way. Your replay is kept, and it goes back up when there is room."
@@ -594,7 +602,6 @@ impl ClipCraftApp {
             } else {
                 format!("Recording {now} pictures a second now.")
             },
-            false,
             None,
         );
     }

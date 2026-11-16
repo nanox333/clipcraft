@@ -182,7 +182,7 @@ impl State {
                     if let Some((which, message)) = &self.message
                         && *which == game
                     {
-                        ui.label(RichText::new(message).size(crate::kit::text_size::CAPTION).color(crate::kit::MUTED));
+                        crate::notify::inline(ui, crate::notify::Kind::from_message(message, false), message);
                     }
                     ui.add_space(crate::kit::space::SM);
                 });

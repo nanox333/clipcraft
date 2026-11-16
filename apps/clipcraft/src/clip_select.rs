@@ -456,7 +456,8 @@ impl ClipCraftApp {
         if let Some(edits) = favorite_edits {
             let changed = edits.len();
             self.edit_library_batch(edits);
-            self.capture.notice = crate::capture::notice(
+            self.capture.notice = crate::capture::notice_as(
+                crate::notify::Kind::Success,
                 format!(
                     "{changed} clip{} {}",
                     if changed == 1 { "" } else { "s" },
@@ -466,7 +467,6 @@ impl ClipCraftApp {
                         "no longer favorites"
                     }
                 ),
-                false,
                 None,
             );
         }
@@ -779,9 +779,9 @@ impl ClipCraftApp {
         let moved = done.moved.len();
         let plural = |n: usize| if n == 1 { "" } else { "s" };
         self.capture.notice = if done.failed.is_empty() {
-            crate::capture::notice(
+            crate::capture::notice_as(
+                crate::notify::Kind::Success,
                 format!("Moved {moved} clip{} to the Recycle Bin", plural(moved)),
-                false,
                 None,
             )
         } else {
@@ -790,13 +790,13 @@ impl ClipCraftApp {
                 .first()
                 .map(|(path, error)| format!("{}: {error}", file_name(path)))
                 .unwrap_or_default();
-            crate::capture::notice(
+            crate::capture::notice_as(
+                crate::notify::Kind::Warning,
                 format!(
                     "Moved {moved} of {} clips. {} could not be moved ({first}).",
                     done.total,
                     done.failed.len()
                 ),
-                true,
                 None,
             )
         };

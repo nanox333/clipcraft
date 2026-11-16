@@ -66,6 +66,7 @@ More on the command line, tests and benchmarks is in [`docs/testing.md`](docs/te
 | --- | --- |
 | [`docs/features.md`](docs/features.md) | every feature, with platform limits |
 | [`docs/how-it-works.md`](docs/how-it-works.md) | recording, saving, the library and export, start to finish |
+| [`docs/notifications.md`](docs/notifications.md) | how every message (card, banner, inline line) looks, moves and is worded |
 | [`docs/gaps.md`](docs/gaps.md) | what is verified, what is not |
 | [`CHANGELOG.md`](CHANGELOG.md) | what each release contains |
 | [`ROADMAP.md`](ROADMAP.md), [`docs/backlog.md`](docs/backlog.md) | what is planned |

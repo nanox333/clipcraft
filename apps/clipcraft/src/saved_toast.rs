@@ -12,18 +12,19 @@ use eframe::egui::{
     ViewportCommand, ViewportId,
 };
 
-use crate::kit::{self, BORDER, DANGER, Icon, LIME, MUTED, PANEL, TEXT, medium, semibold};
+use crate::kit::{self, DANGER, Icon, LIME, MUTED, PANEL, TEXT, medium, semibold};
+use crate::notify::{self, Kind, ease_in, ease_out};
 
 const WIDTH: f32 = 408.0;
 const HEIGHT: f32 = 116.0;
 /// Gap to the edges of the free part of the screen.
 const MARGIN: f32 = 18.0;
-/// How far the card travels when it slides in and out.
+/// How far the card travels when it slides in and out. It is a window of its own, so it slides
+/// in from the screen's edge instead of rising and fading like the in-window card; the timing and
+/// easing are the shared ones from `notify`.
 const SLIDE: f32 = 80.0;
-const SLIDE_IN: f32 = 0.30;
-const SLIDE_OUT: f32 = 0.22;
-/// How long the card stays, not counting the time the pointer is on it.
-const STAY: f32 = 7.0;
+const SLIDE_IN: f32 = notify::ENTER_SECONDS;
+const SLIDE_OUT: f32 = notify::EXIT_SECONDS;
 /// The window's title, which is how the system is asked not to give it the focus.
 const TITLE: &str = "ClipCraft saved clip";
 
@@ -69,7 +70,7 @@ impl SavedToast {
             meta,
             created: Instant::now(),
             last_frame: Instant::now(),
-            remaining: STAY,
+            remaining: Kind::Success.stay(),
             closing: None,
             frames: 0,
             texture: None,
@@ -156,7 +157,7 @@ impl SavedToast {
                     .frame(
                         egui::Frame::new()
                             .fill(PANEL)
-                            .stroke(Stroke::new(1.0_f32, BORDER)),
+                            .stroke(Stroke::new(1.0_f32, Kind::Success.hairline())),
                     )
                     .show(context, |ui| {
                         let rect = ui.max_rect();
@@ -189,24 +190,15 @@ impl SavedToast {
         dismiss: &mut bool,
     ) {
         let painter = ui.painter().clone();
-        // The accent down the left edge, and the time left along the bottom.
-        painter.rect_filled(
-            Rect::from_min_size(rect.min, Vec2::new(4.0, rect.height())),
-            0.0,
-            LIME,
-        );
-        let fraction = (self.remaining / STAY).clamp(0.0, 1.0);
-        painter.rect_filled(
-            Rect::from_min_max(
-                Pos2::new(rect.left() + 4.0, rect.bottom() - 2.0),
-                Pos2::new(
-                    rect.left() + 4.0 + (rect.width() - 4.0) * fraction,
-                    rect.bottom(),
-                ),
-            ),
-            0.0,
-            Color32::from_rgba_unmultiplied(190, 255, 43, 150),
-        );
+        // The time left, as along the bottom of every floating notification.
+        if !self.deleted {
+            notify::paint_time_left(
+                &painter,
+                rect,
+                self.remaining / Kind::Success.stay(),
+                Kind::Success,
+            );
+        }
 
         // The clip's picture.
         let picture = Rect::from_min_size(
@@ -237,10 +229,16 @@ impl SavedToast {
             egui::StrokeKind::Inside,
         );
 
-        // What it is.
+        // What it is: the same round badge as every notification, then what happened.
         let left = picture.right() + 16.0;
+        let kind = if self.deleted {
+            Kind::Info
+        } else {
+            Kind::Success
+        };
+        notify::paint_badge(&painter, Pos2::new(left + 10.0, rect.top() + 24.0), kind);
         painter.text(
-            Pos2::new(left, rect.top() + 24.0),
+            Pos2::new(left + 30.0, rect.top() + 24.0),
             Align2::LEFT_CENTER,
             if self.deleted {
                 "MOVED TO THE RECYCLE BIN"
@@ -248,7 +246,7 @@ impl SavedToast {
                 "CLIP SAVED"
             },
             FontId::new(crate::kit::text_size::CAPTION, semibold()),
-            if self.deleted { DANGER } else { LIME },
+            kind.accent(),
         );
         let room = rect.right() - left - 34.0;
         painter.text(
@@ -285,14 +283,7 @@ impl SavedToast {
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Dismiss notification")
         });
-        let ink = if response.hovered() { TEXT } else { MUTED };
-        let c = close.center();
-        for (a, b) in [
-            (Vec2::new(-4.0, -4.0), Vec2::new(4.0, 4.0)),
-            (Vec2::new(4.0, -4.0), Vec2::new(-4.0, 4.0)),
-        ] {
-            painter.line_segment([c + a, c + b], Stroke::new(1.4_f32, ink));
-        }
+        notify::paint_close(&painter, close, response.hovered());
         if response.clicked() {
             *dismiss = true;
         }
@@ -422,14 +413,6 @@ fn fit(painter: &egui::Painter, text: &str, font: FontId, room: f32) -> String {
         }
     }
     String::new()
-}
-
-fn ease_out(t: f32) -> f32 {
-    1.0 - (1.0 - t).powi(3)
-}
-
-fn ease_in(t: f32) -> f32 {
-    t * t * t
 }
 
 /// The clip's picture, from the thumbnail cache.

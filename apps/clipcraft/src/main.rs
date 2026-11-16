@@ -30,6 +30,7 @@ mod library_grid;
 mod library_scan;
 mod library_store;
 mod library_view;
+mod notify;
 mod onboarding;
 mod organize;
 mod playback;
@@ -534,13 +535,11 @@ impl ClipCraftApp {
             // Stay where the person is (the library, on launch) and say the draft is waiting;
             // the Editor tab reopens it as it was.
             self.editor.open = false;
-            self.capture.notice = Some(capture::Notice {
-                text: "Your editor draft was restored. Open the Editor to continue.".into(),
-                error: false,
-                at: std::time::Instant::now(),
-                path: None,
-                undo: false,
-            });
+            self.capture.notice = capture::notice_as(
+                notify::Kind::Info,
+                "Your editor draft was restored. Open the Editor to continue.",
+                None,
+            );
         }
         if self.editor.take_saved().is_some() {
             self.scan_library();
@@ -1746,19 +1745,10 @@ impl ClipCraftApp {
             );
             ui.add_space(crate::kit::space::SM);
         }
-        if let Some(error) = self.error.as_deref() {
-            egui::Frame::new()
-                .fill(Color32::from_rgba_unmultiplied(255, 112, 112, 24))
-                .stroke(Stroke::new(
-                    1.0_f32,
-                    Color32::from_rgba_unmultiplied(255, 112, 112, 90),
-                ))
-                .corner_radius(egui::CornerRadius::same(crate::kit::radius::MD))
-                .inner_margin(egui::Margin::symmetric(16, 12))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label(RichText::new(error).color(DANGER));
-                });
+        if let Some(error) = self.error.clone() {
+            if notify::banner(ui, notify::Kind::Error, &error, true) {
+                self.error = None;
+            }
             ui.add_space(crate::kit::space::MD);
         }
 
@@ -2002,9 +1992,9 @@ impl ClipCraftApp {
         self.error = None;
         match execute(Command::CopyClipFile { path: path.clone() }) {
             Ok(_) => {
-                self.capture.notice = capture::notice(
+                self.capture.notice = capture::notice_as(
+                    notify::Kind::Success,
                     "File copied. Paste it into Discord, a message or a folder.",
-                    false,
                     None,
                 );
             }

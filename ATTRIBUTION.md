@@ -29,9 +29,11 @@ See [ADR 0022](docs/adr/0022-local-game-state.md) for the narrowly scoped trust 
 | `assets/fonts/Inter-Regular.ttf` | Inter 4.1, The Inter Project Authors, <https://github.com/rsms/inter/releases/tag/v4.1> | SIL OFL 1.1, unmodified; text in `assets/fonts/OFL-Inter.md` |
 | `assets/fonts/Inter-Medium.ttf` | Inter 4.1, The Inter Project Authors, <https://github.com/rsms/inter/releases/tag/v4.1> | SIL OFL 1.1, unmodified; text in `assets/fonts/OFL-Inter.md` |
 | `assets/fonts/Inter-SemiBold.ttf` | Inter 4.1, The Inter Project Authors, <https://github.com/rsms/inter/releases/tag/v4.1> | SIL OFL 1.1, unmodified; text in `assets/fonts/OFL-Inter.md` |
+| `assets/icons/alert.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/check.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/chevron-down.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/chevron-left.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/close.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/copy.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/exit-fullscreen.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/folder.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
@@ -39,6 +41,7 @@ See [ADR 0022](docs/adr/0022-local-game-state.md) for the narrowly scoped trust 
 | `assets/icons/gear.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/heart.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/import.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
+| `assets/icons/info.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/library.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/loop.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/pause.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |

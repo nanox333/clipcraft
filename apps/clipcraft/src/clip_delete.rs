@@ -52,10 +52,10 @@ impl ClipCraftApp {
                 );
                 if entry.favorite {
                     ui.add_space(crate::kit::space::SM);
-                    ui.label(
-                        RichText::new("This clip is one of your favorites.")
-                            .color(DANGER)
-                            .size(crate::kit::text_size::SMALL),
+                    crate::notify::inline(
+                        ui,
+                        crate::notify::Kind::Warning,
+                        "This clip is one of your favorites.",
                     );
                 }
                 ui.add_space(crate::kit::space::MD);

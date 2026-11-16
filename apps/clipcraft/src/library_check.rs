@@ -122,7 +122,15 @@ impl ClipCraftApp {
             Ok(result) => {
                 self.library_check = None;
                 let (text, error) = summary(&result);
-                self.capture.notice = notice(text, error, None);
+                self.capture.notice = crate::capture::notice_as(
+                    if error {
+                        crate::notify::Kind::Warning
+                    } else {
+                        crate::notify::Kind::Success
+                    },
+                    text,
+                    None,
+                );
             }
             Err(mpsc::TryRecvError::Empty) => {
                 context.request_repaint_after(std::time::Duration::from_millis(200));

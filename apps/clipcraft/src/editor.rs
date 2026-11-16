@@ -13,7 +13,7 @@ use clipcraft_time::{FrameRate, Tick};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, RichText, Sense, Stroke, Vec2};
 
 use crate::kit::{
-    self, BORDER, CANVAS, CARD, CARD_HOVER, DANGER, FAINT, LIME, MUTED, PANEL, TEXT, sub_tabs,
+    self, BORDER, CANVAS, CARD, CARD_HOVER, FAINT, LIME, MUTED, PANEL, TEXT, sub_tabs,
 };
 
 mod inspector;
@@ -1500,8 +1500,11 @@ impl EditorState {
                 self.timeline(ui, thumbs, lift);
                 self.range_controls(ui);
             });
-        if let Some((text, error)) = &self.message {
-            kit::status_pill(ui, if *error { DANGER } else { LIME }, text);
+        if let Some((text, error)) = self.message.clone() {
+            let kind = crate::notify::Kind::from_message(&text, error);
+            if crate::notify::banner(ui, kind, &text, true) {
+                self.message = None;
+            }
         }
         ui.add_space(crate::kit::space::XS);
         ui.horizontal_wrapped(|ui| {
@@ -1738,9 +1741,10 @@ impl EditorState {
                                         .on_hover_text(folder);
                                     }
                                     None => {
-                                        ui.label(
-                                            RichText::new("No free file name here")
-                                                .color(DANGER),
+                                        crate::notify::inline(
+                                            ui,
+                                            crate::notify::Kind::Error,
+                                            "No free file name here",
                                         );
                                     }
                                 }
@@ -1899,7 +1903,7 @@ impl EditorState {
                                 }
                             }
                             Err(error) => {
-                                ui.label(RichText::new(error).color(DANGER));
+                                crate::notify::inline(ui, crate::notify::Kind::Error, error);
                             }
                         }
                     });
@@ -2253,11 +2257,7 @@ fn frame_menu(ui: &mut egui::Ui, quality: &mut SequenceQuality) {
         if moved && wanted.is_valid() {
             quality.aspect = wanted;
         } else if !wanted.is_valid() && quality.aspect.ratio().is_some() {
-            ui.label(
-                RichText::new("Between 1:4 and 4:1")
-                    .size(crate::kit::text_size::CAPTION)
-                    .color(DANGER),
-            );
+            crate::notify::inline(ui, crate::notify::Kind::Error, "Between 1:4 and 4:1");
         }
     });
     ui.add_space(crate::kit::space::MD);
