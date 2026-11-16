@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A slow sound device no longer stalls the others:** reopening a microphone, headset or output
+  that was unplugged, and looking for a program for a mixer row (the process list on Windows,
+  `pactl` on Linux), used to happen on the one thread that serves every sound source, so a device
+  that took seconds to answer could cause gaps on every track. Both now happen on short-lived
+  helper threads while the working sources keep being read. The settings window also no longer
+  waits for `pactl` the first time the mixer is shown.
+
 - **No more silent disappearing:** on Windows ClipCraft (and its setup) has no console, so when the
   window could not be opened (no OpenGL in a remote desktop or a virtual machine, an old graphics
   driver) or an internal error ended the program, it simply vanished. It now shows a message that

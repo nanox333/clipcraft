@@ -188,7 +188,18 @@ started from them does not end in an internal error); and a soak (`tests/soak.rs
 swap source, lighten, 30 s in the gate and `CLIPCRAFT_SOAK_SECONDS` for a long one) that checks
 memory and thread counts stay flat (a ten-minute run here: 10.5 MiB from the 20th second to
 the end, 7 threads, briefly 9 while a clip was written, 600 s on one core of a small VM at 320x180,
-so it says nothing about a real game's load). **Checked, nothing
+so it says nothing about a real game's load). (6) the engine's one sound thread called each lost source's `recover` itself, so a device that took
+seconds to reopen, or (my own mixer code) a `pactl` that hung for its three-second limit or a
+Windows process list and activation that took seconds, delayed every other source and could cause
+gaps on every track; recovery now runs on a short-lived helper thread per lost source (the lane
+holds a stand-in while the real source is away, and the next ticks take its answer), and the mixer
+rows search for their program on a helper thread too; `app_audio_problem` no longer runs `pactl`
+on the window's thread. Tested: a source that sleeps 600 ms in `recover` leaves the longest tick
+under 200 ms while a healthy source keeps flowing; a `pactl` that sleeps for 20 s never holds up
+`recover` or `read` (each under 100 ms) and the source then says the tool did not answer; the
+real-PulseAudio test still records a program's stream. **Limit:** a source whose helper never
+returns stays lost (silent, with a message) until the recording is restarted. The Windows version
+of the mixer change is type-checked only. **Checked, nothing
 to change:** the single-copy lock and note file (user-only folder, the lock goes with the process,
 a second copy exits before it can touch the heartbeat file); heartbeat and settings files (size
 caps, atomic replace, damaged ones ignored); no `unwrap`, `expect` or `panic!` outside test code;

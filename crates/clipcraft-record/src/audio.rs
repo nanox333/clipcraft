@@ -9,7 +9,7 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::Duration;
 
 use filmcraft_aac::{Encoder, EncoderConfig};
@@ -561,8 +561,32 @@ struct LaneState {
     lost: bool,
     error: Option<String>,
     last_recover: Duration,
+    /// A recovery running on a helper thread, which has the real source until it answers.
+    recovering: Option<mpsc::Receiver<(Box<dyn AudioSource>, bool)>>,
     silence_frames: u64,
     dropped_frames: u64,
+}
+
+/// Stands in on a lane while its real source is away on a recovery thread.
+struct Away {
+    name: String,
+    format: AudioFormat,
+}
+
+impl AudioSource for Away {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn format(&self) -> AudioFormat {
+        self.format
+    }
+
+    fn read(&mut self, _out: &mut Vec<f32>) -> Result<(), AudioError> {
+        Err(AudioError::DeviceLost(
+            "the device is being reopened".to_owned(),
+        ))
+    }
 }
 
 struct TrackState {
@@ -709,6 +733,7 @@ impl AudioEngine {
                     lost: false,
                     error: None,
                     last_recover: Duration::ZERO,
+                    recovering: None,
                     silence_frames: 0,
                     dropped_frames: 0,
                 }
@@ -787,11 +812,46 @@ impl AudioEngine {
 
     fn read_lane(lane: &mut LaneState, elapsed: Duration, scratch: &mut Vec<f32>) {
         if lane.lost {
+            // Bringing a device back can take a while (a headset that does not answer): it is done
+            // on a helper thread, so the sources that work keep being read in the meantime.
+            if let Some(receiver) = lane.recovering.as_ref() {
+                match receiver.try_recv() {
+                    Ok((source, recovered)) => {
+                        lane.recovering = None;
+                        lane.source = source;
+                        if recovered {
+                            lane.lost = false;
+                            lane.error = None;
+                        }
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        // The helper ended without giving the source back (it panicked): this
+                        // lane stays silent, and says so.
+                        lane.recovering = None;
+                        lane.error = Some("the sound device could not be brought back".to_owned());
+                    }
+                }
+                return;
+            }
             if elapsed.saturating_sub(lane.last_recover) >= Duration::from_secs(2) {
                 lane.last_recover = elapsed;
-                if lane.source.recover() {
-                    lane.lost = false;
-                    lane.error = None;
+                let stand_in: Box<dyn AudioSource> = Box::new(Away {
+                    name: lane.name.clone(),
+                    format: lane.source.format(),
+                });
+                let mut source = std::mem::replace(&mut lane.source, stand_in);
+                let (sender, receiver) = mpsc::channel();
+                let spawned = std::thread::Builder::new()
+                    .name("clipcraft-audio-recover".to_owned())
+                    .spawn(move || {
+                        let recovered = source.recover();
+                        let _ = sender.send((source, recovered));
+                    });
+                if spawned.is_ok() {
+                    lane.recovering = Some(receiver);
+                } else {
+                    lane.error = Some("the sound device could not be brought back".to_owned());
                 }
             }
             return;
@@ -1510,9 +1570,72 @@ mod tests {
             engine.status()[0].lost,
             "recovery is not retried every tick"
         );
-        engine.tick(Duration::from_millis(2_100));
+        // Recovery runs on a helper thread: the next ticks pick up its answer.
+        let mut at = 2_100;
+        while engine.status()[0].lost && at < 4_000 {
+            engine.tick(Duration::from_millis(at));
+            std::thread::sleep(Duration::from_millis(5));
+            at += 10;
+        }
         assert!(!engine.status()[0].lost);
         assert!(engine.status()[0].error.is_none());
+    }
+
+    #[test]
+    fn a_device_that_is_slow_to_come_back_does_not_hold_up_the_others() {
+        struct Slow;
+        impl AudioSource for Slow {
+            fn name(&self) -> String {
+                "slow".to_owned()
+            }
+            fn format(&self) -> AudioFormat {
+                STEREO_48K
+            }
+            fn read(&mut self, _out: &mut Vec<f32>) -> Result<(), AudioError> {
+                Err(AudioError::DeviceLost("unplugged".to_owned()))
+            }
+            fn recover(&mut self) -> bool {
+                // A headset that takes its time to answer.
+                std::thread::sleep(Duration::from_millis(600));
+                false
+            }
+        }
+        struct Steady;
+        impl AudioSource for Steady {
+            fn name(&self) -> String {
+                "steady".to_owned()
+            }
+            fn format(&self) -> AudioFormat {
+                STEREO_48K
+            }
+            fn read(&mut self, out: &mut Vec<f32>) -> Result<(), AudioError> {
+                out.extend(std::iter::repeat_n(0.1, 960));
+                Ok(())
+            }
+        }
+        let mut engine = AudioEngine::new(AudioSetup {
+            config: config(1),
+            inputs: vec![
+                AudioInput::new(Box::new(Slow), AudioControl::default(), 0),
+                AudioInput::new(Box::new(Steady), AudioControl::default(), 0),
+            ],
+        })
+        .unwrap();
+        engine.tick(Duration::from_millis(10));
+        let mut slowest = Duration::ZERO;
+        // Past the two seconds after which the lost device is tried again, while it sleeps.
+        for step in 0..40_u64 {
+            let before = std::time::Instant::now();
+            engine.tick(Duration::from_millis(2_050 + step * 10));
+            slowest = slowest.max(before.elapsed());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            slowest < Duration::from_millis(200),
+            "a tick waited {slowest:?} for the device"
+        );
+        assert!(engine.status()[0].lost);
+        assert!(!engine.status()[1].lost);
     }
 
     #[test]

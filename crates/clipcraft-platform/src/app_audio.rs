@@ -93,11 +93,29 @@ pub fn open_app_audio(
     platform::open(target, game_process)
 }
 
-/// Why recording one application's sound cannot work on this system, or `None` when it can. The
-/// answer is looked up once (on Linux it starts a tool) and remembered.
+/// Why recording one application's sound cannot work on this system, or `None` when it can (or
+/// when that is not known yet). On Linux the answer needs a tool to be started, which is done on a
+/// thread of its own so the caller (the settings window) never waits for it; until it has answered
+/// the system is assumed to be able.
 pub fn app_audio_problem() -> Option<String> {
-    static PROBLEM: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    PROBLEM.get_or_init(platform::problem).clone()
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static PROBLEM: OnceLock<Option<String>> = OnceLock::new();
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if !cfg!(all(unix, not(target_os = "macos"))) {
+        return PROBLEM.get_or_init(platform::problem).clone();
+    }
+    if let Some(known) = PROBLEM.get() {
+        return known.clone();
+    }
+    if !STARTED.swap(true, Ordering::SeqCst) {
+        let _ = std::thread::Builder::new()
+            .name("clipcraft-app-audio-check".to_owned())
+            .spawn(|| {
+                let _ = PROBLEM.set(platform::problem());
+            });
+    }
+    None
 }
 
 #[cfg(target_os = "macos")]
@@ -122,6 +140,7 @@ mod platform {
     use std::io::Read;
     use std::process::{Child, Command, Stdio};
     use std::sync::atomic::Ordering;
+    use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
     use clipcraft_record::{AudioError, AudioFormat, SampleQueue};
@@ -245,37 +264,72 @@ mod platform {
         })
     }
 
+    /// What looking for the program's stream found.
+    enum Search {
+        Found(u64),
+        NotPlaying,
+        /// The tools did not work: the reason, in words.
+        Failed(String),
+    }
+
+    /// Looks for the stream to record. Runs on a thread of its own: `pactl` and the process list
+    /// can take a while, and the sound thread must never wait for them.
+    fn find(pactl: &str, target: &AppTarget, game_process: u32) -> Search {
+        let streams = match run(pactl, &["--format=json", "list", "sink-inputs"]) {
+            Ok(listing) => parse_streams(&listing),
+            Err(why) => return Search::Failed(why),
+        };
+        let processes = crate::ProcessObserver::default().refresh(false);
+        let root = resolve_process(target, game_process, &processes);
+        let family = root.map_or_else(Vec::new, |root| crate::process_family(&processes, root));
+        match pick_stream(target, &family, &streams) {
+            Some(index) => Search::Found(index),
+            None => Search::NotPlaying,
+        }
+    }
+
     /// One application's sound as a source. See the module note.
+    ///
+    /// Looking for the program never happens on the caller's thread (the engine's one sound
+    /// thread, which serves every source): `recover` starts a search on a short-lived thread and
+    /// only looks at its answer.
     pub struct AppAudio {
         target: AppTarget,
         game_process: Arc<AtomicU32>,
+        pactl: String,
         queue: Arc<SampleQueue>,
         recorder: Option<Child>,
         waiting: String,
         last_try: Instant,
+        search: Option<mpsc::Receiver<Search>>,
     }
 
     pub fn open(
         target: AppTarget,
         game_process: Arc<AtomicU32>,
     ) -> Result<Box<dyn AudioSource>, String> {
-        // The tools have to exist; the application does not have to be running yet.
-        run("pactl", &["--version"])?;
-        let mut source = AppAudio {
-            waiting: format!("{} is not playing sound", target.label()),
-            target,
-            game_process,
-            queue: Arc::new(SampleQueue::new(
-                RATE as usize * usize::from(CHANNELS) * QUEUE_SECONDS,
-            )),
-            recorder: None,
-            last_try: Instant::now(),
-        };
-        let _ = source.attach();
-        Ok(Box::new(source))
+        Ok(Box::new(AppAudio::new(target, game_process, "pactl")))
     }
 
     impl AppAudio {
+        fn new(target: AppTarget, game_process: Arc<AtomicU32>, pactl: &str) -> Self {
+            let mut source = Self {
+                waiting: format!("{} is not playing sound", target.label()),
+                target,
+                game_process,
+                pactl: pactl.to_owned(),
+                queue: Arc::new(SampleQueue::new(
+                    RATE as usize * usize::from(CHANNELS) * QUEUE_SECONDS,
+                )),
+                recorder: None,
+                last_try: Instant::now(),
+                search: None,
+            };
+            // The program may already be playing: look now, not two seconds from now.
+            source.start_search();
+            source
+        }
+
         fn stop_recorder(&mut self) {
             if let Some(mut child) = self.recorder.take() {
                 let _ = child.kill();
@@ -283,27 +337,58 @@ mod platform {
             }
         }
 
-        /// Looks for the application's stream and starts recording it. True when recording.
-        fn attach(&mut self) -> bool {
+        /// Starts looking for the program's stream, unless a search is already running.
+        fn start_search(&mut self) {
+            if self.search.is_some() {
+                return;
+            }
             self.last_try = Instant::now();
-            let streams = match run("pactl", &["--format=json", "list", "sink-inputs"]) {
-                Ok(listing) => parse_streams(&listing),
-                Err(why) => {
-                    self.waiting = why;
+            let (sender, receiver) = mpsc::channel();
+            let target = self.target.clone();
+            let pactl = self.pactl.clone();
+            let game = self.game_process.load(Ordering::SeqCst);
+            let spawned = std::thread::Builder::new()
+                .name("clipcraft-app-audio-find".to_owned())
+                .spawn(move || {
+                    let _ = sender.send(find(&pactl, &target, game));
+                });
+            if spawned.is_ok() {
+                self.search = Some(receiver);
+            } else {
+                self.waiting = "the sound thread could not start".to_owned();
+            }
+        }
+
+        /// Takes the answer of a finished search, and starts recording when a stream was found.
+        /// True when recording has started.
+        fn poll_search(&mut self) -> bool {
+            let Some(receiver) = self.search.as_ref() else {
+                return false;
+            };
+            let answer = match receiver.try_recv() {
+                Ok(answer) => answer,
+                Err(mpsc::TryRecvError::Empty) => return false,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.search = None;
                     return false;
                 }
             };
-            let processes = crate::ProcessObserver::default().refresh(false);
-            let root = resolve_process(
-                &self.target,
-                self.game_process.load(Ordering::SeqCst),
-                &processes,
-            );
-            let family = root.map_or_else(Vec::new, |root| crate::process_family(&processes, root));
-            let Some(index) = pick_stream(&self.target, &family, &streams) else {
-                self.waiting = format!("{} is not playing sound", self.target.label());
-                return false;
-            };
+            self.search = None;
+            match answer {
+                Search::Found(index) => self.start_recorder(index),
+                Search::NotPlaying => {
+                    self.waiting = format!("{} is not playing sound", self.target.label());
+                    false
+                }
+                Search::Failed(why) => {
+                    self.waiting = why;
+                    false
+                }
+            }
+        }
+
+        /// Starts `parec` on the stream and a thread that reads what it prints.
+        fn start_recorder(&mut self, index: u64) -> bool {
             self.stop_recorder();
             let Ok(mut child) = Command::new("parec")
                 .arg(format!("--monitor-stream={index}"))
@@ -324,6 +409,7 @@ mod platform {
             };
             let Some(mut stdout) = child.stdout.take() else {
                 let _ = child.kill();
+                let _ = child.wait();
                 return false;
             };
             let queue = Arc::new(SampleQueue::new(
@@ -391,10 +477,13 @@ mod platform {
         }
 
         fn recover(&mut self) -> bool {
-            if self.last_try.elapsed() < Duration::from_secs(2) {
-                return false;
+            if self.poll_search() {
+                return true;
             }
-            self.attach()
+            if self.search.is_none() && self.last_try.elapsed() >= Duration::from_secs(2) {
+                self.start_search();
+            }
+            false
         }
     }
 
@@ -407,6 +496,53 @@ mod platform {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn a_stuck_pactl_never_holds_up_the_sound_thread() {
+            use std::os::unix::fs::PermissionsExt;
+            let folder =
+                std::env::temp_dir().join(format!("clipcraft-stuck-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&folder);
+            std::fs::create_dir_all(&folder).expect("scratch folder");
+            let tool = folder.join("fake-pactl");
+            std::fs::write(&tool, "#!/bin/sh\nexec sleep 20\n").expect("script");
+            std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).expect("mode");
+            let started = Instant::now();
+            let mut source = AppAudio::new(
+                AppTarget::Executable("nothing".into()),
+                Arc::new(AtomicU32::new(0)),
+                tool.to_str().expect("path"),
+            );
+            // Opening returned at once, though the tool will not answer for twenty seconds.
+            let mut worst = started.elapsed();
+            let mut samples = Vec::new();
+            while started.elapsed() < Duration::from_millis(600) {
+                let call = Instant::now();
+                assert!(!source.recover());
+                assert!(matches!(
+                    source.read(&mut samples),
+                    Err(AudioError::DeviceLost(_))
+                ));
+                worst = worst.max(call.elapsed());
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                worst < Duration::from_millis(100),
+                "the sound thread waited {worst:?}"
+            );
+            // When the tool's own time limit passes, the source says why it is waiting.
+            let deadline = Instant::now() + Duration::from_secs(8);
+            while !source.waiting.contains("did not answer") {
+                assert!(
+                    Instant::now() < deadline,
+                    "no reason given: {}",
+                    source.waiting
+                );
+                let _ = source.recover();
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let _ = std::fs::remove_dir_all(&folder);
+        }
 
         #[test]
         fn pactls_listing_is_read_and_the_right_stream_is_picked() {
@@ -688,7 +824,60 @@ mod platform {
         }
     }
 
+    /// A capture that has been started and is ready.
+    struct Attached {
+        queue: Arc<SampleQueue>,
+        stop: Arc<AtomicBool>,
+        process: u32,
+    }
+
+    /// What looking for the application found.
+    enum Search {
+        Attached(Attached),
+        NotRunning,
+        /// Windows would not give the application's sound: the reason, in words.
+        Failed(String),
+    }
+
+    /// Looks for the application and starts capturing it. Runs on a thread of its own: listing the
+    /// processes takes a while, and Windows can take seconds to answer the activation, and the
+    /// sound thread (which serves every source) must never wait for either.
+    fn find_and_attach(target: &AppTarget, game_process: u32) -> Search {
+        let processes = crate::ProcessObserver::default().refresh(false);
+        let Some(process) = resolve_process(target, game_process, &processes) else {
+            return Search::NotRunning;
+        };
+        let queue = Arc::new(SampleQueue::new(
+            RATE as usize * usize::from(CHANNELS) * QUEUE_SECONDS,
+        ));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ready, wait) = mpsc::channel();
+        let (thread_queue, thread_stop) = (queue.clone(), stop.clone());
+        if std::thread::Builder::new()
+            .name("clipcraft-app-audio".to_owned())
+            .spawn(move || capture_thread(process, &thread_queue, &thread_stop, &ready))
+            .is_err()
+        {
+            return Search::Failed("the sound thread could not start".to_owned());
+        }
+        match wait.recv_timeout(ACTIVATION_TIMEOUT + Duration::from_secs(1)) {
+            Ok(Ok(())) => Search::Attached(Attached {
+                queue,
+                stop,
+                process,
+            }),
+            Ok(Err(why)) => Search::Failed(why),
+            Err(_) => {
+                stop.store(true, Ordering::SeqCst);
+                Search::Failed("Windows did not answer in time".to_owned())
+            }
+        }
+    }
+
     /// One application's sound as a source. See the module note.
+    ///
+    /// Looking for the application never happens on the caller's thread (the engine's one sound
+    /// thread): `recover` starts a search on a short-lived thread and only looks at its answer.
     pub struct AppAudio {
         target: AppTarget,
         game_process: Arc<AtomicU32>,
@@ -697,6 +886,7 @@ mod platform {
         attached_to: u32,
         waiting: String,
         last_try: Instant,
+        search: Option<mpsc::Receiver<Search>>,
     }
 
     pub fn open(
@@ -713,55 +903,70 @@ mod platform {
             stop: Arc::new(AtomicBool::new(true)),
             attached_to: 0,
             last_try: Instant::now(),
+            search: None,
         };
-        // Attaching now when the application is already running; otherwise the source waits and
-        // `recover` keeps looking.
-        let _ = source.attach();
+        // The application may already be running: look now, not two seconds from now. Otherwise
+        // the source waits and `recover` keeps looking.
+        source.start_search();
         Ok(Box::new(source))
     }
 
     impl AppAudio {
-        /// Looks for the application and starts capturing it. True when it is being captured.
-        fn attach(&mut self) -> bool {
+        /// Starts looking for the application, unless a search is already running.
+        fn start_search(&mut self) {
+            if self.search.is_some() {
+                return;
+            }
             self.last_try = Instant::now();
-            let processes = crate::ProcessObserver::default().refresh(false);
-            let Some(process) = resolve_process(
-                &self.target,
-                self.game_process.load(Ordering::SeqCst),
-                &processes,
-            ) else {
-                self.waiting = format!("{} is not running", self.target.label());
+            let (sender, receiver) = mpsc::channel();
+            let target = self.target.clone();
+            let game = self.game_process.load(Ordering::SeqCst);
+            let spawned = std::thread::Builder::new()
+                .name("clipcraft-app-audio-find".to_owned())
+                .spawn(move || {
+                    let answer = find_and_attach(&target, game);
+                    // Nobody is waiting any more (the source was dropped): end the capture the
+                    // search just started instead of leaving it running.
+                    if let Err(mpsc::SendError(Search::Attached(attached))) = sender.send(answer) {
+                        attached.stop.store(true, Ordering::SeqCst);
+                    }
+                });
+            if spawned.is_ok() {
+                self.search = Some(receiver);
+            } else {
+                self.waiting = "the sound thread could not start".to_owned();
+            }
+        }
+
+        /// Takes the answer of a finished search. True when capturing has started.
+        fn poll_search(&mut self) -> bool {
+            let Some(receiver) = self.search.as_ref() else {
                 return false;
             };
-            self.stop.store(true, Ordering::SeqCst);
-            let queue = Arc::new(SampleQueue::new(
-                RATE as usize * usize::from(CHANNELS) * QUEUE_SECONDS,
-            ));
-            let stop = Arc::new(AtomicBool::new(false));
-            let (ready, wait) = mpsc::channel();
-            let (thread_queue, thread_stop) = (queue.clone(), stop.clone());
-            if std::thread::Builder::new()
-                .name("clipcraft-app-audio".to_owned())
-                .spawn(move || capture_thread(process, &thread_queue, &thread_stop, &ready))
-                .is_err()
-            {
-                self.waiting = "the sound thread could not start".to_owned();
-                return false;
-            }
-            match wait.recv_timeout(ACTIVATION_TIMEOUT + Duration::from_secs(1)) {
-                Ok(Ok(())) => {
-                    self.queue = queue;
-                    self.stop = stop;
-                    self.attached_to = process;
+            let answer = match receiver.try_recv() {
+                Ok(answer) => answer,
+                Err(mpsc::TryRecvError::Empty) => return false,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.search = None;
+                    return false;
+                }
+            };
+            self.search = None;
+            match answer {
+                Search::Attached(attached) => {
+                    // An older capture (the application restarted) ends.
+                    self.stop.store(true, Ordering::SeqCst);
+                    self.queue = attached.queue;
+                    self.stop = attached.stop;
+                    self.attached_to = attached.process;
                     true
                 }
-                Ok(Err(why)) => {
-                    self.waiting = why;
+                Search::NotRunning => {
+                    self.waiting = format!("{} is not running", self.target.label());
                     false
                 }
-                Err(_) => {
-                    stop.store(true, Ordering::SeqCst);
-                    self.waiting = "Windows did not answer in time".to_owned();
+                Search::Failed(why) => {
+                    self.waiting = why;
                     false
                 }
             }
@@ -795,10 +1000,13 @@ mod platform {
 
         fn recover(&mut self) -> bool {
             // The game may have changed, or the application may have started or restarted.
-            if self.last_try.elapsed() < Duration::from_secs(2) {
-                return false;
+            if self.poll_search() {
+                return true;
             }
-            self.attach()
+            if self.search.is_none() && self.last_try.elapsed() >= Duration::from_secs(2) {
+                self.start_search();
+            }
+            false
         }
     }
 

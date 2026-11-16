@@ -66,7 +66,8 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
   forward.
 - **Audio:** per-application sound (Windows 10 2004 or newer, or Linux with PulseAudio or PipeWire
   and the `pactl`/`parec` tools): record the game, Discord or a music
-  player on a track of its own, each with its own level, picked up when it starts playing. System sound and microphone, mixed or on separate tracks, with optional offline
+  player on a track of its own, each with its own level, picked up when it starts playing. A device that is unplugged and comes back (or a program that starts playing later) is picked up
+  without holding up the other sources. System sound and microphone, mixed or on separate tracks, with optional offline
   microphone noise suppression and a mic test.
 - **Share:** drag a clip from the library (or the **Drag into Discord** button on its page) straight
   into a Discord chat or any program that takes files. A clip bigger than the size chosen in
