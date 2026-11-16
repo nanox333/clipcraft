@@ -300,13 +300,13 @@ impl EditorState {
         if let Some(text) = typed {
             next.text = text;
         }
-        let total = self.session.duration();
-        // Four short pages instead of one long panel.
-        let page = usize::from(self.text_page.min(3));
-        if let Some(index) = sub_tabs(ui, &["Style", "Font", "Look", "Timing"], page) {
+        // Three short pages instead of one long panel. Where the text sits is set by dragging it in
+        // the preview, and when it shows by moving and trimming its bar on the timeline.
+        let page = usize::from(self.text_page.min(2));
+        if let Some(index) = sub_tabs(ui, &["Style", "Font", "Look"], page) {
             self.text_page = index as u8;
         }
-        let page = usize::from(self.text_page.min(3));
+        let page = usize::from(self.text_page.min(2));
         ui.add_space(crate::kit::space::XS);
         egui::ScrollArea::vertical()
             .id_salt("editor-text")
@@ -318,14 +318,12 @@ impl EditorState {
                     let mut panel = TextPanel {
                         layer: &layer,
                         next: &mut next,
-                        total,
                         id,
                     };
                     match page {
                         0 => panel.style_page(ui),
                         1 => panel.font_page(ui),
-                        2 => panel.look_page(ui),
-                        _ => panel.timing_page(ui),
+                        _ => panel.look_page(ui),
                     }
                 });
             });
@@ -335,12 +333,11 @@ impl EditorState {
     }
 }
 
-/// The options of the selected text layer, as four pages. Each part writes its changes to `next`;
+/// The options of the selected text layer, as three pages. Each part writes its changes to `next`;
 /// the layer itself (`layer`) is only read.
 struct TextPanel<'a> {
     layer: &'a SequenceText,
     next: &'a mut SequenceText,
-    total: Tick,
     id: u64,
 }
 
@@ -443,52 +440,6 @@ impl TextPanel<'_> {
                 &format!("{}%", self.layer.opacity),
             ) {
                 self.next.opacity = (10.0 + value * 90.0).round().clamp(10.0, 100.0) as u8;
-            }
-        });
-    }
-
-    /// Timing: when it appears and for how long, and where on the picture it sits.
-    fn timing_page(&mut self, ui: &mut egui::Ui) {
-        let (layer, total) = (self.layer, self.total);
-        option_row(ui, "When", |ui| {
-            ui.spacing_mut().interact_size.y = CONTROL_HEIGHT;
-            let mut start = layer.start.seconds();
-            if ui
-                .add(
-                    egui::DragValue::new(&mut start)
-                        .speed(0.05)
-                        .range(0.0..=total.seconds())
-                        .fixed_decimals(2)
-                        .prefix("Starts  ")
-                        .suffix(" s"),
-                )
-                .changed()
-            {
-                let moved = Tick::from_units((start * 1000.0).round() as i64, 1000);
-                let length = layer.duration();
-                self.next.start = moved.min(total - MIN_TEXT).max(Tick::ZERO);
-                self.next.end =
-                    (self.next.start + length).min(total.max(self.next.start + MIN_TEXT));
-            }
-            let mut length = layer.duration().seconds();
-            if ui
-                .add(
-                    egui::DragValue::new(&mut length)
-                        .speed(0.05)
-                        .range(0.04..=total.seconds().max(0.04))
-                        .fixed_decimals(2)
-                        .prefix("Lasts  ")
-                        .suffix(" s"),
-                )
-                .changed()
-            {
-                let ticks = Tick::from_units((length * 1000.0).round() as i64, 1000);
-                self.next.end = (layer.start + ticks).min(total.max(layer.start + MIN_TEXT));
-            }
-        });
-        option_row(ui, "Position", |ui| {
-            if let Some((x, y)) = position_grid(ui, layer.x, layer.y) {
-                (self.next.x, self.next.y) = (x, y);
             }
         });
     }
@@ -648,78 +599,6 @@ fn style_tile(ui: &mut egui::Ui, preset: &StylePreset, active: bool) -> bool {
         .clicked()
 }
 
-/// A nine-spot picture of where the text sits (corners, edges, middle). Returns the spot clicked,
-/// as the place it stands for.
-fn position_grid(ui: &mut egui::Ui, x: u16, y: u16) -> Option<(u16, u16)> {
-    const XS: [u16; 3] = [150, 500, 850];
-    const YS: [u16; 3] = [120, 500, 880];
-    const NAMES: [[&str; 3]; 3] = [
-        ["Top left", "Top", "Top right"],
-        ["Left", "Middle", "Right"],
-        ["Bottom left", "Lower third", "Bottom right"],
-    ];
-    let (frame, _) = ui.allocate_exact_size(Vec2::new(96.0, 60.0), Sense::hover());
-    ui.painter().rect_filled(frame, 6.0, CANVAS);
-    ui.painter().rect_stroke(
-        frame,
-        6.0,
-        Stroke::new(1.0_f32, BORDER),
-        egui::StrokeKind::Inside,
-    );
-    let mut chosen = None;
-    for (row, name_row) in NAMES.iter().enumerate() {
-        for (column, name) in name_row.iter().enumerate() {
-            let spot = egui::Rect::from_center_size(
-                egui::pos2(
-                    frame.left() + 16.0 + column as f32 * 32.0,
-                    frame.top() + 12.0 + row as f32 * 18.0,
-                ),
-                Vec2::new(26.0, 14.0),
-            );
-            let response = ui.interact(
-                spot,
-                egui::Id::new(("text-position", row, column)),
-                Sense::click(),
-            );
-            response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, *name));
-            let here = x.abs_diff(XS[column]) < 60 && y.abs_diff(YS[row]) < 60;
-            let nearest = XS
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, value)| x.abs_diff(**value))
-                .map(|(i, _)| i)
-                == Some(column)
-                && YS
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, value)| y.abs_diff(**value))
-                    .map(|(i, _)| i)
-                    == Some(row);
-            let lit = here && nearest;
-            ui.painter().rect_filled(
-                spot.shrink2(Vec2::new(4.0, 3.0)),
-                2.0,
-                if lit {
-                    LIME
-                } else if response.hovered() {
-                    MUTED
-                } else {
-                    Color32::from_gray(70)
-                },
-            );
-            if response
-                .on_hover_text(*name)
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked()
-            {
-                chosen = Some((XS[column], YS[row]));
-            }
-        }
-    }
-    chosen
-}
-
 /// A small square or pill switch for the letters and look. Lime when on.
 fn mini_toggle(ui: &mut egui::Ui, label: &str, on: bool, tip: &str) -> bool {
     const HEIGHT: f32 = CONTROL_HEIGHT;
@@ -772,7 +651,7 @@ fn value_slider(ui: &mut egui::Ui, value: f32, tip: &str, readout: &str) -> Opti
     changed
 }
 
-/// A look for a text layer in one click: the letters, colour and extras, and where it sits.
+/// A look for a text layer in one click: the letters, colour and extras. It never moves the text.
 struct StylePreset {
     name: &'static str,
     font: TextFont,
@@ -786,8 +665,6 @@ struct StylePreset {
     outline: bool,
     backdrop: bool,
     opacity: u8,
-    x: u16,
-    y: u16,
 }
 
 const STYLE_PRESETS: [StylePreset; 6] = [
@@ -804,8 +681,6 @@ const STYLE_PRESETS: [StylePreset; 6] = [
         outline: false,
         backdrop: false,
         opacity: 100,
-        x: 500,
-        y: 500,
     },
     StylePreset {
         name: "Subtitle",
@@ -820,8 +695,6 @@ const STYLE_PRESETS: [StylePreset; 6] = [
         outline: false,
         backdrop: true,
         opacity: 100,
-        x: 500,
-        y: 880,
     },
     StylePreset {
         name: "Shout",
@@ -836,8 +709,6 @@ const STYLE_PRESETS: [StylePreset; 6] = [
         outline: true,
         backdrop: false,
         opacity: 100,
-        x: 500,
-        y: 500,
     },
     StylePreset {
         name: "Classic",
@@ -852,8 +723,6 @@ const STYLE_PRESETS: [StylePreset; 6] = [
         outline: false,
         backdrop: false,
         opacity: 100,
-        x: 500,
-        y: 500,
     },
     StylePreset {
         name: "Terminal",
@@ -868,8 +737,6 @@ const STYLE_PRESETS: [StylePreset; 6] = [
         outline: false,
         backdrop: true,
         opacity: 100,
-        x: 150,
-        y: 120,
     },
     StylePreset {
         name: "Quiet",
@@ -884,8 +751,6 @@ const STYLE_PRESETS: [StylePreset; 6] = [
         outline: false,
         backdrop: false,
         opacity: 80,
-        x: 500,
-        y: 900,
     },
 ];
 
@@ -904,8 +769,6 @@ impl StylePreset {
         layer.outline = self.outline;
         layer.backdrop = self.backdrop;
         layer.opacity = self.opacity;
-        layer.x = self.x;
-        layer.y = self.y;
     }
     /// Whether `layer` has exactly this look.
     fn matches(&self, layer: &SequenceText) -> bool {
@@ -966,5 +829,55 @@ impl StylePreset {
             );
         }
         painter.text(centre, Align2::CENTER_CENTER, text, font, ink);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_style_changes_how_the_text_looks_and_never_what_it_says_where_it_is_or_when() {
+        let mut layer = SequenceText::new(Tick::from_units(1, 1), Tick::from_units(2, 1), "Mine");
+        layer.x = 123;
+        layer.y = 456;
+        layer.fade_in = Fade::Black;
+        layer.effect = Effect::Sepia;
+        for preset in STYLE_PRESETS {
+            let mut styled = layer.clone();
+            preset.apply(&mut styled);
+            assert!(preset.matches(&styled), "{}", preset.name);
+            assert!(styled.is_valid(), "{}", preset.name);
+            assert_eq!(
+                (
+                    &styled.text,
+                    styled.start,
+                    styled.end,
+                    styled.x,
+                    styled.y,
+                    styled.fade_in,
+                    styled.effect
+                ),
+                (
+                    &layer.text,
+                    layer.start,
+                    layer.end,
+                    layer.x,
+                    layer.y,
+                    layer.fade_in,
+                    layer.effect
+                ),
+                "{} changed more than the look",
+                preset.name
+            );
+        }
+        // Each style is its own look, so a tile is only lit for the one that is in use.
+        for (index, preset) in STYLE_PRESETS.iter().enumerate() {
+            let mut styled = layer.clone();
+            preset.apply(&mut styled);
+            for (other, rival) in STYLE_PRESETS.iter().enumerate() {
+                assert_eq!(rival.matches(&styled), other == index, "{}", preset.name);
+            }
+        }
     }
 }

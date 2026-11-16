@@ -132,7 +132,7 @@ pub struct EditorState {
     text_drag: Option<(u64, Tick, Tick)>,
     tab: LibraryTab,
     effect_tab: bool,
-    /// Which page of the Text tab is open: Style, Font, Look or Timing (0 to 3).
+    /// Which page of the Text tab is open: Style, Font or Look (0 to 2).
     text_page: u8,
     library_width: Option<f32>,
     /// Height the person dragged the preview row to; `None` gives it all the room there is.
