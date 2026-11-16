@@ -406,12 +406,26 @@ fn private_program_open(own: &[String]) -> bool {
     if owners.is_empty() {
         return false;
     }
-    clipcraft_platform::running_processes(false)
-        .iter()
-        .any(|process| {
-            owners.contains(&process.process_id)
-                && clipcraft_engine::privacy::is_private_program(&process.executable, own)
-        })
+    let processes = clipcraft_platform::running_processes(false);
+    window_owner_is_private(
+        &owners,
+        processes
+            .iter()
+            .map(|process| (process.process_id, process.executable.as_str())),
+        own,
+    )
+}
+
+/// True if a process that owns a window is a private program.
+fn window_owner_is_private<'a>(
+    owners: &std::collections::HashSet<u32>,
+    mut processes: impl Iterator<Item = (u32, &'a str)>,
+    own: &[String],
+) -> bool {
+    processes.any(|(process_id, executable)| {
+        owners.contains(&process_id)
+            && clipcraft_engine::privacy::is_private_program(executable, own)
+    })
 }
 
 pub(crate) fn notice(
@@ -2117,6 +2131,26 @@ mod tests {
             }
         }
         found
+    }
+
+    #[test]
+    fn a_program_the_person_added_pauses_only_while_it_owns_a_window() {
+        let own = vec!["mybankapp".to_owned()];
+        let owners: std::collections::HashSet<u32> = [10, 20].into_iter().collect();
+        let running = [(10, "firefox"), (20, "MyBankApp"), (30, "keepassxc")];
+        // Its window is open: it counts, whatever the case.
+        assert!(window_owner_is_private(&owners, running.into_iter(), &own));
+        // Running without a window (in the tray): it does not.
+        let tray_only: std::collections::HashSet<u32> = [10].into_iter().collect();
+        assert!(!window_owner_is_private(
+            &tray_only,
+            running.into_iter(),
+            &own
+        ));
+        // Not on the list and not built in: it does not; a built-in one still does.
+        assert!(!window_owner_is_private(&owners, running.into_iter(), &[]));
+        let keepass: std::collections::HashSet<u32> = [30].into_iter().collect();
+        assert!(window_owner_is_private(&keepass, running.into_iter(), &[]));
     }
 
     #[test]

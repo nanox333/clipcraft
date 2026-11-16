@@ -47,7 +47,7 @@ Safety measures that came with it:
 - **After three starts in a row that never got going,** ClipCraft opens with default settings and
   asks whether to keep them (the saved settings are kept beside them) or go back to the saved ones.
 
-Checked here (Linux, Xvfb, software OpenGL): a recording and screenshots of choosing clips (click, Shift-click, drawing a box, Ctrl and A, Favorite, the Collection menu, the Delete dialog, the Undo notice and a real move to the Trash). Doing this found and fixed three faults: dragging up with the box also scrolled the page, a click inside the Delete dialog reached the grid below and cleared the choice, and the dialog stayed painted until the next input. Unit tests for the selection maths (ranges, box, the 500 limit, favorite and
+Checked here (Linux, Xvfb, software OpenGL): the pause for a program you add, with a real program and window: typing its name in Settings → Experimental and keeping the change, then opening a window of that program while clipping paused the recording within a few seconds and closing it resumed (the test used a renamed copy of xterm, and set the window list a window manager provides by hand, since the test display has no window manager). Typing in that box lost focus after the first letter until it got a fixed id; that is fixed. A recording and screenshots of choosing clips (click, Shift-click, drawing a box, Ctrl and A, Favorite, the Collection menu, the Delete dialog, the Undo notice and a real move to the Trash). Doing this found and fixed three faults: dragging up with the box also scrolled the page, a click inside the Delete dialog reached the grid below and cleared the choice, and the dialog stayed painted until the next input. Unit tests for the selection maths (ranges, box, the 500 limit, favorite and
 collection edits), the delete summary (favorites left out, missing files), the undo window, the
 storage clean-up skipping protected clips, the clip check on good, truncated and picture-less files,
 the disk levels, the backup rotation and restore (settings and index), the pause rules, the start
@@ -58,7 +58,7 @@ selection with a mouse and the process list the password-manager pause reads; a 
 hardware-encoded files; a low disk on a real full disk (the thresholds are unit-tested; the free
 space call was run on Linux only); the three-starts safe start with a real crash.
 
-Known limits: the pause only knows programs on its list (1Password, Bitwarden, KeePass, KeePassXC,
+Known limits: the pause for programs needs to see the windows on the screen, which ClipCraft can do on Windows and on X11 with a window manager, and cannot do on Wayland (the Experimental page says so there; the lock screen pause still works); a program is matched by its file name, so a script or a Flatpak or Snap app may appear under another name; the pause only knows programs on its list (1Password, Bitwarden, KeePass, KeePassXC,
 Dashlane, Enpass, Keeper, LastPass, NordPass, Proton Pass, RoboForm, Authy), not websites in a
 browser; the screen-lock pause reads the session manager's lock status on Linux and looks for the lock screen program (LogonUI.exe) on Windows, and was not tried on a real lock screen or on Windows; the quit question is not asked on a crash or a killed process; an Undo works only while the message is shown, and closing ClipCraft first leaves the waiting clips where they are;
 a clip deleted from its own page, its menu or the saved pop-up now uses the same Undo message; a backup

@@ -340,6 +340,16 @@ pub struct OwnedWindow {
     pub class: String,
 }
 
+/// True when [`owned_windows`] can list the windows on the screen: Windows and X11, not a
+/// Wayland session (the desktop does not share them) and not macOS.
+pub fn can_list_windows() -> bool {
+    #[cfg(target_os = "linux")]
+    if wayland::available() {
+        return false;
+    }
+    cfg!(any(windows, all(unix, not(target_os = "macos"))))
+}
+
 /// Every visible top-level window with its owner and class (bounded). Empty where the desktop
 /// does not expose windows (a Wayland session using the screen-capture portal).
 pub fn owned_windows() -> Result<Vec<OwnedWindow>, CaptureError> {

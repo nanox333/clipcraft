@@ -1546,6 +1546,19 @@ pub(crate) fn storage_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut Recording
 pub(crate) fn experimental_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut RecordingSettings) {
     rows.page(ui, "Experimental");
     rows.section(ui, "Privacy");
+    // The pause looks at the windows on the screen, which some desktops (Wayland) do not share.
+    if !clipcraft_platform::can_list_windows() {
+        rows.extra(ui, |ui| {
+            ui.label(
+                RichText::new(
+                    "This desktop does not let ClipCraft see which windows are open, so the pause for programs cannot work here. The lock screen pause is not affected.",
+                )
+                .color(DANGER)
+                .size(crate::kit::text_size::SMALL),
+            );
+            ui.add_space(crate::kit::space::SM);
+        });
+    }
     rows.toggle(
         ui,
         s,
@@ -1567,7 +1580,7 @@ pub(crate) fn experimental_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut Reco
         ui,
         Meta::new(
             "Also pause for these programs",
-            "Names of programs of your own, separated by commas, for example mybank.exe. They count like a password manager while the first switch above is on.",
+            "Names of programs of your own, separated by commas, for example mybank.exe. They count like a password manager while the first switch above is on. A program is known by its file name, so a script or a sandboxed app (Flatpak, Snap) may show up under another name.",
             "privacy private own programs custom banking app list add pause",
         ),
         changed,
@@ -1575,6 +1588,9 @@ pub(crate) fn experimental_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut Reco
         |ui| {
             let response = ui.add(
                 egui::TextEdit::singleline(&mut typed)
+                    // A fixed id: the "You changed some settings" bar appears above on the first
+                    // letter, and an id from the position would lose the focus.
+                    .id(egui::Id::new("own-private-programs-edit"))
                     .hint_text("program names, e.g. mybank.exe")
                     .desired_width(260.0),
             );
