@@ -37,7 +37,7 @@ never goes online if you turn that off.
 - ClipCraft asks before quitting while the replay holds footage.
 - Settings and the library keep rolling backups and recover from a damaged file.
 - Experimental, off by default (Settings → Experimental): recording pauses while a password manager, a program you name (Windows and X11, not Wayland), or the lock screen is up. Pausing also clears the replay unless you ask it to keep it.
-- If ClipCraft keeps failing to start, it opens with default settings and keeps your old ones.
+- If ClipCraft keeps failing to start, it opens with default settings and asks you whether to keep them or go back to your saved ones. Your saved settings file is not changed until you answer, and the first-run setup waits until after you do.
 - A watchdog slows down or stops clipping if it would starve your computer, and an internal error
   never closes the program or loses the replay.
 

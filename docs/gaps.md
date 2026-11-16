@@ -56,7 +56,15 @@ counter and the settings copy.
 Not checked: any of it on Windows (type-checked and linted only), including the Recycle Bin, drag
 selection with a mouse and the process list the password-manager pause reads; a clip check on
 hardware-encoded files; a low disk on a real full disk (the thresholds are unit-tested; the free
-space call was run on Linux only); the three-starts safe start with a real crash.
+space call was run on Linux only).
+
+Windows safe-start check (2026-11-16, Windows 11, real GUI): the three-starts safe start was run by
+killing the app three times. It found a fault: with a library folder set, the start that was
+meant to ask wrote the default settings over the saved file before the person could choose, and
+the first-run screen then covered the question, so it was never seen and the settings were lost.
+Fixed: nothing is written to the settings file while the question is open, and the first-run
+setup opens only after the answer. Unit tests cover both answers (they fail without the fix). The
+fix itself has not been re-checked in the running Windows app yet.
 
 Known limits: the pause for programs needs to see the windows on the screen, which ClipCraft can do on Windows and on X11 with a window manager, and cannot do on Wayland (the Experimental page says so there; the lock screen pause still works); a program is matched by its file name, so a script or a Flatpak or Snap app may appear under another name; the pause only knows programs on its list (1Password, Bitwarden, KeePass, KeePassXC,
 Dashlane, Enpass, Keeper, LastPass, NordPass, Proton Pass, RoboForm, Authy), not websites in a
