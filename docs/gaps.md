@@ -59,7 +59,7 @@ Known limits: the pause only knows programs on its list (1Password, Bitwarden, K
 Dashlane, Enpass, Keeper, LastPass, NordPass, Proton Pass, RoboForm, Authy), not websites in a
 browser, and it does not react to the screen lock; an Undo works only while the notice is shown;
 deleting one clip from its own page still uses the older dialog without the 10-second Undo; a backup
-can be up to a day old.
+can be up to a day old; the clip check calls a clip doubtful for length only when it is under half as long as recorded (a slow computer drops pictures, and a stricter bar warned about healthy clips on a slow Windows test machine).
 
 ## Window redesign round (2026-11-16)
 

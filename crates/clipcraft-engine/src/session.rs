@@ -95,8 +95,9 @@ pub fn check_saved_clip(clip: &SavedClip) -> ClipCheck {
     }
     if let (Some(duration), Some(rate)) = (probe.duration, probe.frame_rate) {
         let expected = rate.tick_of(i64::try_from(clip.duration_frames).unwrap_or(i64::MAX));
-        // A little shorter is rounding; much shorter means footage is missing.
-        if duration.0.saturating_mul(10) < expected.0.saturating_mul(8) {
+        // Shorter is normal on a slow computer, which drops pictures; less than half of what was
+        // recorded means footage is missing.
+        if duration.0.saturating_mul(2) < expected.0 {
             return Doubtful(format!(
                 "it is {:.1} s long and should be about {:.1} s",
                 duration.seconds(),
