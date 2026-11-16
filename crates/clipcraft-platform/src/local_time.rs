@@ -17,7 +17,10 @@ mod imp {
         // `time_t` is 64 bits almost everywhere; where it is narrower, an out-of-range time is
         // answered with zero instead of wrapping.
         let time = unix_seconds as libc::time_t;
-        if i64::from(time) != unix_seconds {
+        // A no-op on 64-bit `time_t`, and the check that matters on a narrower one.
+        #[allow(clippy::useless_conversion)]
+        let widened = i64::from(time);
+        if widened != unix_seconds {
             return 0;
         }
         let mut parts = std::mem::MaybeUninit::<libc::tm>::zeroed();

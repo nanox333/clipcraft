@@ -460,7 +460,7 @@ impl EditorState {
         let mut at = Tick::ZERO;
         let mut cuts = vec![at];
         for clip in self.session.clips() {
-            at = at + clip.duration();
+            at += clip.duration();
             cuts.push(at);
         }
         cuts

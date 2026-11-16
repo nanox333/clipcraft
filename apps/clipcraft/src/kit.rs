@@ -933,67 +933,6 @@ pub fn brand_mark(ui: &egui::Ui, rect: Rect) {
     );
 }
 
-#[cfg(test)]
-mod icon_tests {
-    use super::*;
-
-    #[test]
-    fn the_window_icon_fits_in_one_x11_request() {
-        let icon = window_icon_data();
-        // The pixels travel as 32-bit values after a two-value header.
-        assert!((icon.rgba.len() + 8) < 262_140, "{} bytes", icon.rgba.len());
-        assert!(
-            icon.rgba.chunks_exact(4).any(|pixel| pixel[3] > 200),
-            "the mark is visible"
-        );
-    }
-
-    #[test]
-    fn every_icon_file_reads_and_stays_inside_its_square() {
-        for (index, icon) in Icon::ALL.iter().enumerate() {
-            assert_eq!(
-                *icon as usize, index,
-                "{icon:?} is out of order in Icon::ALL"
-            );
-            assert!(
-                crate::svg::Svg::parse(icon.source()).is_some(),
-                "{icon:?} has no drawable shapes"
-            );
-            assert!(icons().get(index).is_some_and(Option::is_some), "{icon:?}");
-        }
-    }
-
-    #[test]
-    fn window_icon_uses_the_shared_cut_artwork() {
-        let icon = app_icon();
-        assert_eq!((icon.width, icon.height), (256, 256));
-        assert_eq!(icon.rgba, clipcraft_engine::brand::window_icon().into_raw());
-    }
-
-    #[test]
-    fn brand_texture_loads_without_nested_context_locks_and_is_reused() {
-        let ctx = egui::Context::default();
-        let mut ids = Vec::new();
-        for _ in 0..2 {
-            let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
-                    brand_mark(ui, rect);
-                    let texture = ctx.data_mut(|data| {
-                        data.get_temp::<egui::TextureHandle>(egui::Id::new(
-                            "clipcraft-cut-brand-texture",
-                        ))
-                    });
-                    ids.push(texture.map(|handle| handle.id()));
-                });
-            });
-        }
-        assert!(ids[0].is_some());
-        assert_eq!(ids[0], ids[1]);
-    }
-}
-
 /// A small segmented switch for the groups inside a tab (Transitions, Effects): a quiet capsule
 /// with the chosen part raised, so it reads as a sub-choice next to the lime tabs above it.
 /// Returns the part that was clicked.
@@ -1112,4 +1051,65 @@ pub fn view_switch(ui: &mut egui::Ui, list: bool) -> Option<bool> {
         }
     }
     clicked
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+
+    #[test]
+    fn the_window_icon_fits_in_one_x11_request() {
+        let icon = window_icon_data();
+        // The pixels travel as 32-bit values after a two-value header.
+        assert!((icon.rgba.len() + 8) < 262_140, "{} bytes", icon.rgba.len());
+        assert!(
+            icon.rgba.chunks_exact(4).any(|pixel| pixel[3] > 200),
+            "the mark is visible"
+        );
+    }
+
+    #[test]
+    fn every_icon_file_reads_and_stays_inside_its_square() {
+        for (index, icon) in Icon::ALL.iter().enumerate() {
+            assert_eq!(
+                *icon as usize, index,
+                "{icon:?} is out of order in Icon::ALL"
+            );
+            assert!(
+                crate::svg::Svg::parse(icon.source()).is_some(),
+                "{icon:?} has no drawable shapes"
+            );
+            assert!(icons().get(index).is_some_and(Option::is_some), "{icon:?}");
+        }
+    }
+
+    #[test]
+    fn window_icon_uses_the_shared_cut_artwork() {
+        let icon = app_icon();
+        assert_eq!((icon.width, icon.height), (256, 256));
+        assert_eq!(icon.rgba, clipcraft_engine::brand::window_icon().into_raw());
+    }
+
+    #[test]
+    fn brand_texture_loads_without_nested_context_locks_and_is_reused() {
+        let ctx = egui::Context::default();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
+                    brand_mark(ui, rect);
+                    let texture = ctx.data_mut(|data| {
+                        data.get_temp::<egui::TextureHandle>(egui::Id::new(
+                            "clipcraft-cut-brand-texture",
+                        ))
+                    });
+                    ids.push(texture.map(|handle| handle.id()));
+                });
+            });
+        }
+        assert!(ids[0].is_some());
+        assert_eq!(ids[0], ids[1]);
+    }
 }

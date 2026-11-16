@@ -811,6 +811,7 @@ mod shape_tests {
     use super::*;
 
     /// Draws `grid` once at `size`, with the keys pressed, and returns how many clips were built.
+    #[allow(clippy::too_many_arguments)]
     fn draw(
         context: &egui::Context,
         grid: &mut GridState,

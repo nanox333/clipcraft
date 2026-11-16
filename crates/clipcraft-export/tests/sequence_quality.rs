@@ -196,8 +196,7 @@ fn a_chosen_shape_and_framing_are_rendered_into_the_exported_file() {
     let input = dir.file("wide.mp4");
     flat_source(&input, 1280, 720);
     let original = std::fs::read(&input).unwrap();
-    let mut seen = 0;
-    for (aspect, framing, expected) in [
+    for (index, (aspect, framing, expected)) in [
         (SequenceAspect::VERTICAL, SequenceFraming::Fit, (720, 1280)),
         (SequenceAspect::VERTICAL, SequenceFraming::Blur, (720, 1280)),
         (SequenceAspect::VERTICAL, SequenceFraming::Fill, (720, 1280)),
@@ -214,7 +213,10 @@ fn a_chosen_shape_and_framing_are_rendered_into_the_exported_file() {
             (1680, 720),
         ),
         (SequenceAspect::Source, SequenceFraming::Fill, (1280, 720)),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let request = SequenceRequest {
             segments: vec![segment(&input, Tick::ZERO, Tick::from_units(1, 30))],
             texts: vec![],
@@ -225,9 +227,8 @@ fn a_chosen_shape_and_framing_are_rendered_into_the_exported_file() {
                 framing,
                 ..Default::default()
             },
-            output: dir.file(&format!("out-{seen}.mp4")),
+            output: dir.file(&format!("out-{index}.mp4")),
         };
-        seen += 1;
         let report =
             sequence_to_mp4_with(&request, None, &mut |_| {}, &AtomicBool::new(false)).unwrap();
         assert_eq!(

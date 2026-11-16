@@ -214,7 +214,7 @@ fn badge_menu(
         ui.data_mut(|data| data.get_temp(picker_colour_id));
 
     // How it looks right now, following the picker while it is being dragged.
-    let preview = dragged.map_or(shown, |hsva| egui::Color32::from(hsva));
+    let preview = dragged.map_or(shown, egui::Color32::from);
     ui.horizontal(|ui| {
         let (square, _) = ui.allocate_exact_size(Vec2::splat(30.0), egui::Sense::hover());
         paint_badge(ui.painter(), square, preview, &shown_mark);

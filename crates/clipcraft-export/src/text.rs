@@ -472,9 +472,9 @@ mod tests {
             backdrop: true,
             ..plain
         };
-        match TextRaster::render(&everything, 1920, 1080) {
-            Ok(Some(raster)) => assert!(raster.bytes() <= MAX_RASTER_PIXELS * 4),
-            Ok(None) | Err(_) => {}
+        // Too much text for the budget is refused cleanly; anything that does render stays bounded.
+        if let Ok(Some(raster)) = TextRaster::render(&everything, 1920, 1080) {
+            assert!(raster.bytes() <= MAX_RASTER_PIXELS * 4);
         }
     }
 

@@ -1050,8 +1050,10 @@ mod tests {
         let back: RecordingSettings = serde_json::from_str(&json).unwrap();
         assert!(back.library_manual);
         assert_eq!(back.library_order, settings.library_order);
-        let mut flood = RecordingSettings::default();
-        flood.library_order = (0..30_000).map(|n| format!("/clips/{n}.mp4")).collect();
+        let flood = RecordingSettings {
+            library_order: (0..30_000).map(|n| format!("/clips/{n}.mp4")).collect(),
+            ..RecordingSettings::default()
+        };
         assert_eq!(flood.sanitized().library_order.len(), MAX_LIBRARY_ORDER);
     }
 
