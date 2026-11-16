@@ -1989,8 +1989,9 @@ Encoder: {}",
             .order(egui::Order::Foreground)
             .show(context, |ui| {
                 ui.set_opacity(shown);
-                let card = notify::card(kind).show(ui, |ui| {
+                let card = notify::show_card(ui, kind, |ui| {
                     ui.set_max_width(notify::CARD_MAX_WIDTH);
+                    ui.set_min_width(300.0);
                     ui.horizontal(|ui| {
                         notify::badge(ui, kind);
                         ui.add(

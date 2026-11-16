@@ -91,7 +91,7 @@ impl Kind {
         }
     }
 
-    fn with_alpha(self, alpha: u8) -> Color32 {
+    pub(crate) fn with_alpha(self, alpha: u8) -> Color32 {
         let colour = self.accent();
         Color32::from_rgba_unmultiplied(colour.r(), colour.g(), colour.b(), alpha)
     }
@@ -139,25 +139,108 @@ pub(crate) fn presence(age: f32, leaving: f32) -> f32 {
 /// in a coloured border.
 pub(crate) const CARD_OUTLINE: Color32 = Color32::from_rgba_premultiplied(30, 30, 30, 30);
 
-/// The frame of a floating message: the panel colour, a quiet outline, round corners and a soft
-/// shadow. There is room under the content for the time-left line.
-pub(crate) fn card(_kind: Kind) -> egui::Frame {
-    egui::Frame::new()
-        .fill(PANEL)
-        .stroke(Stroke::new(1.0_f32, CARD_OUTLINE))
-        .corner_radius(CornerRadius::same(kit::radius::LG))
+/// A rounded panel of `rect` with a soft glow of the kind's colour that is strongest at the left
+/// edge (where the badge is) and fades out towards the right. A corner `radius` of 0 gives a
+/// plain rectangle.
+pub(crate) fn glow(rect: Rect, radius: f32, kind: Kind) -> egui::Shape {
+    use egui::epaint::{Mesh, Vertex, WHITE_UV};
+    let radius = radius.min(rect.height() / 2.0).min(rect.width() / 2.0);
+    let reach = rect.width() * 0.7;
+    let colour_at = |x: f32| {
+        let fade = (1.0 - (x - rect.left()) / reach).clamp(0.0, 1.0);
+        kind.with_alpha((GLOW_ALPHA * fade) as u8)
+    };
+    // The outline of the rounded rectangle, clockwise from the top left.
+    let mut outline: Vec<Pos2> = Vec::new();
+    let steps = if radius > 0.0 { 8 } else { 1 };
+    let corners = [
+        (
+            Pos2::new(rect.left() + radius, rect.top() + radius),
+            180.0_f32,
+        ),
+        (Pos2::new(rect.right() - radius, rect.top() + radius), 270.0),
+        (
+            Pos2::new(rect.right() - radius, rect.bottom() - radius),
+            0.0,
+        ),
+        (
+            Pos2::new(rect.left() + radius, rect.bottom() - radius),
+            90.0,
+        ),
+    ];
+    for (centre, start) in corners {
+        for step in 0..=steps {
+            let angle = (start + 90.0 * step as f32 / steps as f32).to_radians();
+            outline.push(centre + radius * Vec2::new(angle.cos(), angle.sin()));
+        }
+    }
+    let mut mesh = Mesh::default();
+    let middle = rect.center();
+    mesh.vertices.push(Vertex {
+        pos: middle,
+        uv: WHITE_UV,
+        color: colour_at(middle.x),
+    });
+    for point in &outline {
+        mesh.vertices.push(Vertex {
+            pos: *point,
+            uv: WHITE_UV,
+            color: colour_at(point.x),
+        });
+    }
+    let count = outline.len() as u32;
+    for index in 0..count {
+        mesh.indices.extend([0, 1 + index, 1 + (index + 1) % count]);
+    }
+    egui::Shape::mesh(mesh)
+}
+
+/// How strong the glow is at its strongest, out of 255.
+const GLOW_ALPHA: f32 = 66.0;
+
+/// Draws a floating message: the panel colour with a glow of the kind's colour at the badge end,
+/// a quiet outline, round corners and a deep soft shadow. There is room under the content for
+/// the time-left line.
+pub(crate) fn show_card<R>(
+    ui: &mut egui::Ui,
+    kind: Kind,
+    contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    // The background is painted after the contents (when the size is known) into a slot that was
+    // reserved first, so it lies under them.
+    let slot = ui.painter().add(egui::Shape::Noop);
+    let inner = egui::Frame::new()
         .inner_margin(Margin {
-            left: 14,
-            right: 12,
-            top: 13,
-            bottom: 15,
+            left: 16,
+            right: 14,
+            top: 15,
+            bottom: 18,
         })
-        .shadow(egui::Shadow {
-            offset: [0, 8],
-            blur: 28,
-            spread: 0,
-            color: Color32::from_black_alpha(150),
-        })
+        .show(ui, contents);
+    let rect = inner.response.rect;
+    let radius = CornerRadius::same(kit::radius::LG);
+    let shadow = egui::Shadow {
+        offset: [0, 10],
+        blur: 32,
+        spread: 0,
+        color: Color32::from_black_alpha(170),
+    };
+    ui.painter().set(
+        slot,
+        egui::Shape::Vec(vec![
+            shadow.as_shape(rect, radius).into(),
+            egui::epaint::RectShape::filled(rect, radius, PANEL).into(),
+            glow(rect, f32::from(kit::radius::LG), kind),
+            egui::epaint::RectShape::stroke(
+                rect,
+                radius,
+                Stroke::new(1.0_f32, CARD_OUTLINE),
+                egui::StrokeKind::Inside,
+            )
+            .into(),
+        ]),
+    );
+    inner
 }
 
 /// The ink of a glyph on a badge: nearly black, which reads on all four kind colours.

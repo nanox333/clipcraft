@@ -38,11 +38,13 @@ All three use the same parts:
   on a card, and the page's own few actions on a banner; the primary action is lime;
 - a round **close button** (cross) on every card and on every banner the person can ignore.
 
-A card is the panel colour with a quiet grey outline (the kind is shown by the badge and the time
-line, not by a coloured border), a deep soft shadow and, along its bottom edge, a thin track with
-a line in the kind's colour that shrinks as its time runs out. A banner has a faint wash of the
-kind's colour and an outline in the kind's colour instead, and no shadow.
-
+A card is the panel colour with a soft glow of the kind's colour behind the badge (strongest at the left
+edge, gone by the right), a quiet grey outline (the kind is not shown by a coloured border), a deep
+soft shadow and, along its bottom edge, a thin track with a line in the kind's colour that shrinks
+as its time runs out. The saved-clip pop-up has the same glow, a larger picture and a 20 px title. A
+banner has a faint wash of the kind's colour and an outline in the kind's colour instead, and no
+banner has a faint wash of the kind's colour and an outline in the kind's colour instead, and no
+shadow.
 ## Motion
 
 One entrance and one exit, the same length everywhere:

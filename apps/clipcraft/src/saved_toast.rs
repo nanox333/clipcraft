@@ -15,8 +15,8 @@ use eframe::egui::{
 use crate::kit::{self, DANGER, Icon, LIME, MUTED, PANEL, TEXT, medium, semibold};
 use crate::notify::{self, Kind, ease_in, ease_out};
 
-const WIDTH: f32 = 432.0;
-const HEIGHT: f32 = 136.0;
+const WIDTH: f32 = 480.0;
+const HEIGHT: f32 = 152.0;
 /// Gap to the edges of the free part of the screen.
 const MARGIN: f32 = 18.0;
 /// How far the card travels when it slides in and out. It is a window of its own, so it slides
@@ -197,6 +197,15 @@ impl SavedToast {
         dismiss: &mut bool,
     ) {
         let painter = ui.painter().clone();
+        painter.add(notify::glow(
+            rect,
+            0.0,
+            if self.deleted {
+                Kind::Info
+            } else {
+                Kind::Success
+            },
+        ));
         // The time left, as along the bottom of every floating notification.
         if !self.deleted {
             notify::paint_time_left(
@@ -209,8 +218,8 @@ impl SavedToast {
 
         // The clip's picture.
         let picture = Rect::from_min_size(
-            Pos2::new(rect.left() + 16.0, rect.top() + 28.0),
-            Vec2::new(144.0, 81.0),
+            Pos2::new(rect.left() + 18.0, rect.top() + 22.0),
+            Vec2::new(192.0, 108.0),
         );
         match &self.texture {
             Some(texture) => {
@@ -243,9 +252,9 @@ impl SavedToast {
         } else {
             Kind::Success
         };
-        notify::paint_badge(&painter, Pos2::new(left + 14.0, rect.top() + 30.0), kind);
+        notify::paint_badge(&painter, Pos2::new(left + 14.0, rect.top() + 32.0), kind);
         painter.text(
-            Pos2::new(left + 36.0, rect.top() + 30.0),
+            Pos2::new(left + 36.0, rect.top() + 32.0),
             Align2::LEFT_CENTER,
             if self.deleted {
                 "MOVED TO THE RECYCLE BIN"
@@ -257,19 +266,19 @@ impl SavedToast {
         );
         let room = rect.right() - left - 20.0;
         painter.text(
-            Pos2::new(left, rect.top() + 60.0),
+            Pos2::new(left, rect.top() + 66.0),
             Align2::LEFT_CENTER,
             fit(
                 &painter,
                 &self.title,
-                FontId::new(crate::kit::text_size::LEAD, semibold()),
+                FontId::new(crate::kit::text_size::TITLE, semibold()),
                 room,
             ),
-            FontId::new(crate::kit::text_size::LEAD, semibold()),
+            FontId::new(crate::kit::text_size::TITLE, semibold()),
             TEXT,
         );
         painter.text(
-            Pos2::new(left, rect.top() + 80.0),
+            Pos2::new(left, rect.top() + 92.0),
             Align2::LEFT_CENTER,
             fit(
                 &painter,
@@ -283,7 +292,7 @@ impl SavedToast {
 
         // The close button.
         let close = Rect::from_center_size(
-            Pos2::new(rect.right() - 26.0, rect.top() + 30.0),
+            Pos2::new(rect.right() - 28.0, rect.top() + 32.0),
             Vec2::splat(notify::BADGE),
         );
         let response = ui.interact(close, ui.id().with("close"), Sense::click());
@@ -299,13 +308,13 @@ impl SavedToast {
             return;
         }
         // The buttons: play, show in folder, delete.
-        let top = rect.top() + 92.0;
-        let play = Rect::from_min_size(Pos2::new(left, top), Vec2::new(72.0, 28.0));
+        let top = rect.top() + 106.0;
+        let play = Rect::from_min_size(Pos2::new(left, top), Vec2::new(82.0, 30.0));
         let response = ui.interact(play, ui.id().with("play"), Sense::click());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Play"));
         painter.rect_filled(
             play,
-            14.0,
+            15.0,
             if response.hovered() {
                 Color32::from_rgb(210, 255, 90)
             } else {
@@ -329,22 +338,22 @@ impl SavedToast {
         if response.clicked() {
             *action = Some(ToastAction::Play);
         }
-        let folder = Rect::from_min_size(Pos2::new(play.right() + 8.0, top), Vec2::splat(28.0));
+        let folder = Rect::from_min_size(Pos2::new(play.right() + 8.0, top), Vec2::splat(30.0));
         if round_button(ui, folder, "folder", Icon::Folder, "Show in folder", false) {
             *action = Some(ToastAction::Show);
         }
         let trash =
-            Rect::from_min_size(Pos2::new(folder.right() + 6.0, top), Vec2::new(28.0, 28.0));
+            Rect::from_min_size(Pos2::new(folder.right() + 6.0, top), Vec2::new(30.0, 30.0));
         if let Some(asked) = self.sure_to_delete {
             // Second step: a red button with the words, so a stray click does nothing.
-            let sure = Rect::from_min_size(trash.min, Vec2::new(74.0, 28.0));
+            let sure = Rect::from_min_size(trash.min, Vec2::new(78.0, 30.0));
             let response = ui.interact(sure, ui.id().with("sure"), Sense::click());
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Confirm delete")
             });
             painter.rect_filled(
                 sure,
-                14.0,
+                15.0,
                 if response.hovered() {
                     Color32::from_rgb(255, 132, 132)
                 } else {
@@ -382,7 +391,7 @@ fn round_button(
     let hovered = response.hovered();
     ui.painter().rect_filled(
         rect,
-        14.0,
+        15.0,
         if hovered {
             kit::CONTROL_HOVER
         } else {
