@@ -150,6 +150,8 @@ fn main() -> eframe::Result<()> {
 
 #[derive(Default)]
 struct ClipCraftApp {
+    /// A new collection being named on the clip page, and whether its field has the focus yet.
+    collection_draft: Option<(String, bool)>,
     /// Keeps one panicking frame from ending the program (see `crash`).
     frame_guard: crash::FrameGuard,
     /// Tests: this many frames panic on purpose.

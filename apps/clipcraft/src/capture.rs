@@ -343,6 +343,10 @@ impl CaptureState {
     }
 }
 
+/// How long a message stays before it fades out, and how long the fade takes.
+const NOTICE_SECONDS: f32 = 30.0;
+const NOTICE_FADE_SECONDS: f32 = 1.2;
+
 pub(crate) fn notice(
     text: impl Into<String>,
     error: bool,
@@ -1546,12 +1550,30 @@ Encoder: {}",
             .notice
             .as_ref()
             .map_or(1.0, |current| current.at.elapsed().as_secs_f32());
-        let arrive = (age / 0.22).clamp(0.0, 1.0);
-        let eased = 1.0 - (1.0 - arrive) * (1.0 - arrive);
-        if arrive < 1.0 {
-            context.request_repaint();
+        // It stays for NOTICE_SECONDS (the time it is held under the pointer does not count), then
+        // fades out and goes. Holding the pointer over it keeps it for reading.
+        let held_key = egui::Id::new("notice-held");
+        let text_key = text.len() as u64 * 1_000_003 + u64::from(error);
+        let (mut held_for, held_text) = context
+            .data(|data| data.get_temp::<(f32, u64)>(held_key))
+            .unwrap_or((0.0, text_key));
+        if held_text != text_key {
+            held_for = 0.0;
         }
-        egui::Area::new(egui::Id::new("notice-toast"))
+        let on_screen = (age - held_for).max(0.0);
+        let leaving = ((on_screen - NOTICE_SECONDS) / NOTICE_FADE_SECONDS).clamp(0.0, 1.0);
+        if leaving >= 1.0 {
+            self.capture.notice = None;
+            return;
+        }
+        let arrive = (age / 0.22).clamp(0.0, 1.0);
+        let eased = (1.0 - (1.0 - arrive) * (1.0 - arrive)) * (1.0 - leaving);
+        if arrive < 1.0 || leaving > 0.0 {
+            context.request_repaint();
+        } else {
+            context.request_repaint_after(std::time::Duration::from_millis(500));
+        }
+        let area = egui::Area::new(egui::Id::new("notice-toast"))
             .anchor(
                 egui::Align2::CENTER_BOTTOM,
                 egui::vec2(0.0, -28.0 + 14.0 * (1.0 - eased)),
@@ -1626,6 +1648,14 @@ Encoder: {}",
                         });
                     });
             });
+        // Time spent with the pointer over it does not count towards its stay.
+        let hovered = context
+            .pointer_hover_pos()
+            .is_some_and(|pos| area.response.rect.contains(pos));
+        if hovered {
+            held_for += context.input(|input| input.unstable_dt).min(0.25);
+        }
+        context.data_mut(|data| data.insert_temp(held_key, (held_for, text_key)));
         if show && let Some(path) = path {
             self.reveal_media(path);
         }
@@ -2021,6 +2051,27 @@ mod tests {
         assert!(app.capture.meter_read_at.is_none(), "unless turned off");
         drop(app);
         remove_scratch(root);
+    }
+
+    #[test]
+    fn a_message_stays_half_a_minute_then_fades_and_goes() {
+        let context = crate::kit::test_context();
+        let mut app = ClipCraftApp::default();
+        let aged = |seconds: u64| {
+            Some(Notice {
+                text: "Saved".to_owned(),
+                error: false,
+                at: Instant::now()
+                    .checked_sub(Duration::from_secs(seconds))
+                    .expect("a time in the past"),
+                path: None,
+            })
+        };
+        for (seconds, stays) in [(1, true), (20, true), (29, true), (45, false)] {
+            app.capture.notice = aged(seconds);
+            let _ = context.run(egui::RawInput::default(), |ctx| app.notice_toast(ctx));
+            assert_eq!(app.capture.notice.is_some(), stays, "after {seconds} s");
+        }
     }
 
     #[test]

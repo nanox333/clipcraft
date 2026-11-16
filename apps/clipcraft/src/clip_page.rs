@@ -32,16 +32,19 @@ impl ClipCraftApp {
             return;
         }
 
+        // When it was recorded, on a line of its own: apart from the technical facts below it.
+        ui.label(
+            RichText::new(crate::clip_label::long_when(
+                &entry.title,
+                &entry.extension,
+                entry.modified_unix_seconds,
+            ))
+            .color(MUTED)
+            .size(crate::kit::text_size::BODY),
+        );
+        ui.add_space(crate::kit::space::XS);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.y = crate::kit::space::SM;
-            kit::chip(
-                ui,
-                &crate::clip_label::when(
-                    &entry.title,
-                    &entry.extension,
-                    entry.modified_unix_seconds,
-                ),
-            );
             if !entry.extension.eq_ignore_ascii_case("mp4") {
                 kit::chip(ui, &entry.extension.to_uppercase());
             }
@@ -146,6 +149,9 @@ impl ClipCraftApp {
         let mut favorite = None;
         let mut game_change = None;
         let mut collection_change = None;
+        let mut create_collection: Option<String> = None;
+        let mut cancel_draft = false;
+        let collections_before = collections.clone();
         kit::card_frame()
             .inner_margin(egui::Margin::same(20))
             .show(ui, |ui| {
@@ -231,13 +237,6 @@ impl ClipCraftApp {
                         .size(crate::kit::text_size::CAPTION),
                 );
                 ui.add_space(crate::kit::space::XS);
-                if collections.is_empty() {
-                    ui.label(
-                        RichText::new("Make a collection with + in the Library sidebar.")
-                            .color(FAINT)
-                            .size(crate::kit::text_size::CAPTION),
-                    );
-                }
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing =
                         Vec2::new(crate::kit::space::SM, crate::kit::space::SM);
@@ -247,8 +246,73 @@ impl ClipCraftApp {
                             collection_change = Some(name.clone());
                         }
                     }
+                    // A new collection right here, without a trip to the sidebar.
+                    if self.collection_draft.is_none()
+                        && ghost_chip(
+                            ui,
+                            "New collection",
+                            "Make a collection and put this clip in it",
+                        )
+                    {
+                        self.collection_draft = Some((String::new(), false));
+                    }
                 });
+                if let Some((text, focused)) = self.collection_draft.as_mut() {
+                    ui.add_space(crate::kit::space::SM);
+                    let field = kit::field_frame()
+                        .stroke(egui::Stroke::new(1.0_f32, LIME))
+                        .show(ui, |ui| {
+                            ui.set_min_height(crate::kit::control::FIELD_INNER);
+                            ui.add(
+                                egui::TextEdit::singleline(text)
+                                    .frame(false)
+                                    .hint_text("Name it, then press Enter")
+                                    .char_limit(clipcraft_engine::MAX_NAME_CHARS)
+                                    .desired_width(ui.available_width().max(0.0)),
+                            )
+                        })
+                        .inner;
+                    kit::name_text_box(&field, "New collection", text);
+                    if !*focused {
+                        field.request_focus();
+                        *focused = true;
+                    }
+                    if field.lost_focus() {
+                        if ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                            create_collection = clipcraft_engine::clean_name(text);
+                        }
+                        cancel_draft = true;
+                    }
+                    ui.label(
+                        RichText::new("Enter to create and add this clip. Escape to cancel.")
+                            .color(FAINT)
+                            .size(crate::kit::text_size::CAPTION),
+                    );
+                }
             });
+        if cancel_draft {
+            self.collection_draft = None;
+        }
+        if let Some(name) = create_collection {
+            // A name that already exists (in any letter case) just adds the clip to it.
+            let existing = collections_before
+                .iter()
+                .find(|existing| existing.to_lowercase() == name.to_lowercase())
+                .cloned();
+            let name = match existing {
+                Some(existing) => existing,
+                None => {
+                    self.edit_library(MetaEdit::CreateCollection { name: name.clone() });
+                    name
+                }
+            };
+            if !entry.collections.contains(&name) {
+                self.edit_library(MetaEdit::AddToCollection {
+                    path: entry.path.clone(),
+                    name,
+                });
+            }
+        }
         if let Some(favorite) = favorite {
             self.edit_library(MetaEdit::SetFavorite {
                 path: entry.path.clone(),
@@ -431,4 +495,49 @@ impl ClipCraftApp {
                 ui.add_space(crate::kit::space::SM);
             });
     }
+}
+
+/// A quiet "+ label" pill for something to add: it asks for nothing until the pointer is on it.
+fn ghost_chip(ui: &mut egui::Ui, label: &str, hint: &str) -> bool {
+    let font = egui::FontId::new(crate::kit::text_size::SMALL, kit::medium());
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font, Color32::PLACEHOLDER);
+    let size = Vec2::new(galley.size().x + 44.0, 34.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let hot = response.hovered() || response.has_focus();
+    let ink = if hot { LIME } else { MUTED };
+    ui.painter().rect_stroke(
+        rect,
+        17.0,
+        egui::Stroke::new(
+            1.0_f32,
+            if hot {
+                Color32::from_rgba_unmultiplied(190, 255, 43, 150)
+            } else {
+                BORDER
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    let plus = egui::pos2(rect.left() + 18.0, rect.center().y);
+    let stroke = egui::Stroke::new(1.5_f32, ink);
+    ui.painter().line_segment(
+        [plus + Vec2::new(-4.5, 0.0), plus + Vec2::new(4.5, 0.0)],
+        stroke,
+    );
+    ui.painter().line_segment(
+        [plus + Vec2::new(0.0, -4.5), plus + Vec2::new(0.0, 4.5)],
+        stroke,
+    );
+    ui.painter().galley(
+        egui::pos2(rect.left() + 32.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        ink,
+    );
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(hint)
+        .clicked()
 }

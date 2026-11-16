@@ -840,6 +840,7 @@ dependencies = [
  "futures-lite",
  "global-hotkey",
  "interprocess",
+ "libc",
  "libloading",
  "native-tls",
  "rustix 1.1.6",
