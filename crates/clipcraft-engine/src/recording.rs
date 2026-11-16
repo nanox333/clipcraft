@@ -621,6 +621,10 @@ pub struct RecordingSettings {
     pub library_order: Vec<String>,
     /// The library is shown in that order.
     pub library_manual: bool,
+    /// The library is shown as a list rather than as picture cards.
+    pub library_list: bool,
+    /// How big the picture cards are: 0 small, 1 medium, 2 large.
+    pub library_card_size: u8,
 }
 
 impl Default for RecordingSettings {
@@ -694,6 +698,8 @@ impl Default for RecordingSettings {
             game_badges: std::collections::BTreeMap::new(),
             library_order: Vec::new(),
             library_manual: false,
+            library_list: false,
+            library_card_size: 1,
         }
     }
 }
@@ -844,6 +850,10 @@ impl RecordingSettings {
         self.replay_seconds = self.replay_seconds.clamp(5, 600);
         self.post_roll_seconds = self.post_roll_seconds.min(30);
         self.share_megabytes = self.share_megabytes.clamp(1, 500);
+        // A card size from a damaged file is the middle one.
+        if self.library_card_size > 2 {
+            self.library_card_size = 1;
+        }
         {
             let mut seen = std::collections::HashSet::new();
             self.library_order = std::mem::take(&mut self.library_order)
@@ -1464,5 +1474,27 @@ mod tests {
                 .starts_with(b"{\"version\":999")
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_library_layout_is_kept_and_a_damaged_size_falls_back_to_medium() {
+        let settings = RecordingSettings {
+            library_list: true,
+            library_card_size: 2,
+            ..RecordingSettings::default()
+        };
+        let back: RecordingSettings =
+            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert!(back.library_list);
+        assert_eq!(back.sanitized().library_card_size, 2);
+        let damaged = RecordingSettings {
+            library_card_size: 200,
+            ..RecordingSettings::default()
+        };
+        assert_eq!(damaged.sanitized().library_card_size, 1);
+        // Settings saved before the layout could be chosen show picture cards, medium.
+        let old: RecordingSettings = serde_json::from_str("{}").unwrap();
+        assert!(!old.library_list);
+        assert_eq!(old.library_card_size, 1);
     }
 }

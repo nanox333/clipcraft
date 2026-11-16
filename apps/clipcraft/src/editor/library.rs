@@ -54,8 +54,12 @@ impl EditorState {
                     self.card_scale = index as u8;
                 }
             }
-            if let Some(layout) = layout_switch(ui, self.library_layout) {
-                self.library_layout = layout;
+            if let Some(list) = kit::view_switch(ui, self.library_layout == LibraryLayout::List) {
+                self.library_layout = if list {
+                    LibraryLayout::List
+                } else {
+                    LibraryLayout::Grid
+                };
             }
         });
         ui.add_space(crate::kit::space::MD);
@@ -416,78 +420,4 @@ fn list_row(
         }
     }
     finish_item(ui, response, entry, busy, add, details);
-}
-
-/// Two icons in a capsule, grid and list. Returns the one that was clicked.
-fn layout_switch(ui: &mut egui::Ui, current: LibraryLayout) -> Option<LibraryLayout> {
-    const HEIGHT: f32 = 26.0;
-    const PART: f32 = 34.0;
-    let (frame, _) = ui.allocate_exact_size(Vec2::new(PART * 2.0 + 4.0, HEIGHT), Sense::hover());
-    ui.painter().rect_filled(frame, HEIGHT / 2.0, CANVAS);
-    ui.painter().rect_stroke(
-        frame,
-        HEIGHT / 2.0,
-        Stroke::new(1.0_f32, BORDER),
-        egui::StrokeKind::Inside,
-    );
-    let mut clicked = None;
-    for (index, (layout, name)) in [
-        (LibraryLayout::Grid, "Show as a grid"),
-        (LibraryLayout::List, "Show as a list"),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let rect = egui::Rect::from_min_size(
-            frame.min + Vec2::new(2.0 + PART * index as f32, 2.0),
-            Vec2::new(PART, HEIGHT - 4.0),
-        );
-        let response = ui.interact(
-            rect,
-            egui::Id::new(("library-layout", name)),
-            Sense::click(),
-        );
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
-        let on = current == layout;
-        if on {
-            ui.painter()
-                .rect_filled(rect, (HEIGHT - 4.0) / 2.0, CARD_HOVER);
-        } else if response.hovered() {
-            ui.painter()
-                .rect_filled(rect, (HEIGHT - 4.0) / 2.0, Color32::from_white_alpha(10));
-        }
-        let colour = if on { TEXT } else { MUTED };
-        let centre = rect.center();
-        match layout {
-            LibraryLayout::Grid => {
-                for (dx, dy) in [(-3.5, -3.5), (3.5, -3.5), (-3.5, 3.5), (3.5, 3.5)] {
-                    ui.painter().rect_filled(
-                        egui::Rect::from_center_size(centre + Vec2::new(dx, dy), Vec2::splat(5.0)),
-                        1.0,
-                        colour,
-                    );
-                }
-            }
-            LibraryLayout::List => {
-                for dy in [-4.5, 0.0, 4.5] {
-                    ui.painter().rect_filled(
-                        egui::Rect::from_center_size(
-                            centre + Vec2::new(0.0, dy),
-                            Vec2::new(11.0, 2.0),
-                        ),
-                        1.0,
-                        colour,
-                    );
-                }
-            }
-        }
-        if response
-            .on_hover_text(name)
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
-        {
-            clicked = Some(layout);
-        }
-    }
-    clicked
 }

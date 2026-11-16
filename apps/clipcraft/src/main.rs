@@ -1549,7 +1549,8 @@ impl ClipCraftApp {
         // In a narrow window the folder pill and the search box both give way so they never touch.
         let row = ui.available_width();
         let folder_width = (row * 0.4).clamp(200.0, 340.0);
-        let search_width = (row - folder_width - 190.0).clamp(90.0, 230.0);
+        // Room is left for the size and layout switches after the sort menu.
+        let search_width = (row - folder_width - 190.0 - 190.0).clamp(90.0, 230.0);
         ui.horizontal(|ui| {
             kit::field_frame().show(ui, |ui| {
                 ui.set_min_height(crate::kit::control::FIELD_INNER);
@@ -1564,6 +1565,31 @@ impl ClipCraftApp {
                 kit::name_text_box(&search, "Search clips", &self.search_text);
             });
             self.sort_menu(ui);
+            // How the clips are shown: card size (for cards) and cards or a list.
+            let before = (
+                self.recording.library_list,
+                self.recording.library_card_size,
+            );
+            if !self.recording.library_list
+                && let Some(index) = kit::sub_tabs(
+                    ui,
+                    &["S", "M", "L"],
+                    usize::from(self.recording.library_card_size.min(2)),
+                )
+            {
+                self.recording.library_card_size = index as u8;
+            }
+            if let Some(list) = kit::view_switch(ui, self.recording.library_list) {
+                self.recording.library_list = list;
+            }
+            if before
+                != (
+                    self.recording.library_list,
+                    self.recording.library_card_size,
+                )
+            {
+                self.save_recording_settings();
+            }
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 kit::field_frame().show(ui, |ui| {
@@ -1665,6 +1691,10 @@ impl ClipCraftApp {
                             self.sort,
                             library_view::Sort::Newest | library_view::Sort::Oldest
                         ),
+                        library_grid::GridShape {
+                            list: self.recording.library_list,
+                            size: self.recording.library_card_size,
+                        },
                     );
                 }
             }

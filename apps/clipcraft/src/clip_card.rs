@@ -34,6 +34,12 @@ pub(crate) enum ClipCardAction {
     FindFile(String, String, u64),
 }
 
+/// Height of a clip in the list layout, and of its small picture.
+pub(crate) const ROW_HEIGHT: f32 = 76.0;
+const ROW_PICTURE: f32 = 60.0;
+
+/// One clip: a picture card, or with `row` a line of the list (a small picture, the name and
+/// details beside it, the length at the right). Both have the same actions, menu and keys.
 pub(crate) fn clip_card(
     ui: &mut egui::Ui,
     entry: &MediaEntry,
@@ -41,25 +47,50 @@ pub(crate) fn clip_card(
     thumbs: &mut thumbs::Thumbnails,
     game: Option<&str>,
     collections: &[String],
+    row: bool,
 ) -> Option<ClipCardAction> {
     const RADIUS: u8 = crate::kit::radius::LG;
-    let thumb_height = (width * 0.5625).clamp(120.0, 240.0);
-    let (_, card) = ui.allocate_space(Vec2::new(width, thumb_height + CARD_TEXT_HEIGHT));
+    let thumb_height = if row {
+        ROW_PICTURE
+    } else {
+        (width * 0.5625).clamp(120.0, 240.0)
+    };
+    let card_height = if row {
+        ROW_HEIGHT
+    } else {
+        thumb_height + CARD_TEXT_HEIGHT
+    };
+    let (_, card) = ui.allocate_space(Vec2::new(width, card_height));
     let response = ui.interact(
         card,
         library_grid::card_id(entry),
         egui::Sense::click_and_drag(),
     );
-    let thumbnail = egui::Rect::from_min_size(card.min, Vec2::new(width, thumb_height));
-    // Quick actions sit on the picture, from the right edge: favorite, folder, editor.
-    let button_area = |slot: f32| {
-        egui::Rect::from_center_size(
-            egui::pos2(
-                thumbnail.right() - 22.0 - slot * 40.0,
-                thumbnail.top() + 22.0,
-            ),
-            Vec2::splat(36.0),
+    let thumbnail = if row {
+        egui::Rect::from_min_size(
+            card.min + Vec2::new(8.0, 8.0),
+            Vec2::new(ROW_PICTURE * 16.0 / 9.0, ROW_PICTURE),
         )
+    } else {
+        egui::Rect::from_min_size(card.min, Vec2::new(width, thumb_height))
+    };
+    // Quick actions: on the picture from its right edge in a card, and in a list at the right
+    // of the line. Favorite, folder, editor.
+    let button_area = |slot: f32| {
+        if row {
+            egui::Rect::from_center_size(
+                egui::pos2(card.right() - 28.0 - slot * 40.0, card.center().y),
+                Vec2::splat(36.0),
+            )
+        } else {
+            egui::Rect::from_center_size(
+                egui::pos2(
+                    thumbnail.right() - 22.0 - slot * 40.0,
+                    thumbnail.top() + 22.0,
+                ),
+                Vec2::splat(36.0),
+            )
+        }
     };
     let copy_area = button_area(2.0);
     let reveal_area = button_area(1.0);
@@ -121,6 +152,9 @@ pub(crate) fn clip_card(
 
     let painter = ui.painter().clone();
 
+    if row && (hovered || response.has_focus()) {
+        painter.rect_filled(card, egui::CornerRadius::same(RADIUS), CARD);
+    }
     // Picture, then the hover play button over it.
     let visible = ui.is_rect_visible(thumbnail);
     let texture = thumbs.texture(ui.ctx(), &entry.path, visible);
@@ -139,17 +173,21 @@ pub(crate) fn clip_card(
         egui::StrokeKind::Inside,
     );
     if hovered && !entry.offline {
-        painter.circle_filled(thumbnail.center(), 26.0, Color32::from_black_alpha(165));
+        painter.circle_filled(
+            thumbnail.center(),
+            if row { 16.0 } else { 26.0 },
+            Color32::from_black_alpha(165),
+        );
         kit::draw_icon(
             &painter,
             thumbnail.center() + Vec2::new(1.0, 0.0),
             Icon::Play,
             LIME,
-            1.15,
+            if row { 0.7 } else { 1.15 },
         );
     }
 
-    if entry.offline {
+    if entry.offline && !row {
         painter.text(
             thumbnail.center() + Vec2::new(0.0, -8.0),
             egui::Align2::CENTER_CENTER,
@@ -183,7 +221,7 @@ pub(crate) fn clip_card(
     }
     // The title is the game for a clip ClipCraft named, so a badge saying the same is noise.
     let shown_title = crate::clip_label::title(&entry.title, &entry.extension);
-    if let Some(game) = game.filter(|game| *game != shown_title) {
+    if let Some(game) = game.filter(|game| *game != shown_title && !row) {
         let galley = painter.layout_no_wrap(
             game.to_owned(),
             egui::FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
@@ -203,36 +241,69 @@ pub(crate) fn clip_card(
     }
 
     // Title (one line, ellipsized) and details.
-    let text_left = card.left() + 4.0;
+    let text_left = if row {
+        thumbnail.right() + 16.0
+    } else {
+        card.left() + 4.0
+    };
+    let text_top = if row {
+        card.top() + 15.0
+    } else {
+        thumbnail.bottom() + 10.0
+    };
     let mut title = egui::text::LayoutJob::simple_singleline(
-        shown_title,
+        shown_title.clone(),
         egui::FontId::new(crate::kit::text_size::BODY, kit::semibold()),
         TEXT,
     );
-    title.wrap.max_width = width - 8.0;
+    // In a list the buttons take the right of the line.
+    title.wrap.max_width = if row {
+        (card.right() - 150.0 - text_left).max(60.0)
+    } else {
+        width - 8.0
+    };
     title.wrap.max_rows = 1;
     title.wrap.break_anywhere = true;
     title.wrap.overflow_character = Some('…');
     let title = painter.layout_job(title);
-    painter.galley(
-        egui::pos2(text_left, thumbnail.bottom() + 10.0),
-        title,
-        TEXT,
-    );
+    painter.galley(egui::pos2(text_left, text_top), title, TEXT);
     let mut details = format!(
         "{}  ·  {}",
         crate::clip_label::when(&entry.title, &entry.extension, entry.modified_unix_seconds),
         format_bytes(entry.size_bytes),
     );
+    // A list has no badge on the picture, so the game goes in the details.
+    if row && let Some(game) = game.filter(|game| *game != shown_title) {
+        details = format!("{game}  \u{00b7}  {details}");
+    }
     if entry.offline {
         details = format!("File not found  \u{00b7}  {details}");
     }
-    painter.text(
-        egui::pos2(text_left, thumbnail.bottom() + 32.0),
-        egui::Align2::LEFT_TOP,
+    let mut details_job = egui::text::LayoutJob::simple_singleline(
         details,
         egui::FontId::proportional(crate::kit::text_size::CAPTION),
         if entry.offline { DANGER } else { MUTED },
+    );
+    details_job.wrap.max_width = if row {
+        (card.right() - 150.0 - text_left).max(60.0)
+    } else {
+        width - 8.0
+    };
+    details_job.wrap.max_rows = 1;
+    details_job.wrap.break_anywhere = true;
+    details_job.wrap.overflow_character = Some('\u{2026}');
+    let details = painter.layout_job(details_job);
+    painter.galley(
+        egui::pos2(
+            text_left,
+            if row {
+                card.top() + 40.0
+            } else {
+                thumbnail.bottom() + 32.0
+            },
+        ),
+        details,
+        MUTED,
     );
 
     // Round quick actions on the picture, shown while the card is hovered or focused.

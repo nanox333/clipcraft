@@ -993,3 +993,123 @@ mod icon_tests {
         assert_eq!(ids[0], ids[1]);
     }
 }
+
+/// A small segmented switch for the groups inside a tab (Transitions, Effects): a quiet capsule
+/// with the chosen part raised, so it reads as a sub-choice next to the lime tabs above it.
+/// Returns the part that was clicked.
+pub fn sub_tabs(ui: &mut egui::Ui, items: &[&str], active: usize) -> Option<usize> {
+    const HEIGHT: f32 = 26.0;
+    const PAD: f32 = 12.0;
+    let font = FontId::new(text_size::CAPTION, medium());
+    let widths: Vec<f32> = items
+        .iter()
+        .map(|label| {
+            ui.painter()
+                .layout_no_wrap((*label).to_owned(), font.clone(), Color32::PLACEHOLDER)
+                .size()
+                .x
+                + PAD * 2.0
+        })
+        .collect();
+    let total = widths.iter().sum::<f32>() + 4.0;
+    let (frame, _) = ui.allocate_exact_size(Vec2::new(total, HEIGHT), Sense::hover());
+    ui.painter().rect_filled(frame, HEIGHT / 2.0, CANVAS);
+    ui.painter().rect_stroke(
+        frame,
+        HEIGHT / 2.0,
+        Stroke::new(1.0_f32, BORDER),
+        egui::StrokeKind::Inside,
+    );
+    let mut clicked = None;
+    let mut left = frame.left() + 2.0;
+    for (index, (label, width)) in items.iter().zip(&widths).enumerate() {
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(left, frame.top() + 2.0),
+            Vec2::new(*width, HEIGHT - 4.0),
+        );
+        left += width;
+        let response = ui.interact(rect, egui::Id::new(("sub-tab", *label)), Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, *label));
+        if index == active {
+            ui.painter()
+                .rect_filled(rect, (HEIGHT - 4.0) / 2.0, CARD_HOVER);
+        } else if response.hovered() {
+            ui.painter()
+                .rect_filled(rect, (HEIGHT - 4.0) / 2.0, Color32::from_white_alpha(10));
+        }
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            *label,
+            font.clone(),
+            if index == active { TEXT } else { MUTED },
+        );
+        if response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            clicked = Some(index);
+        }
+    }
+    clicked
+}
+
+/// Two icons in a capsule: a grid and a list. Returns `Some(true)` when the list was clicked and
+/// `Some(false)` when the grid was.
+pub fn view_switch(ui: &mut egui::Ui, list: bool) -> Option<bool> {
+    const HEIGHT: f32 = 26.0;
+    const PART: f32 = 34.0;
+    let (frame, _) = ui.allocate_exact_size(Vec2::new(PART * 2.0 + 4.0, HEIGHT), Sense::hover());
+    ui.painter().rect_filled(frame, HEIGHT / 2.0, CANVAS);
+    ui.painter().rect_stroke(
+        frame,
+        HEIGHT / 2.0,
+        Stroke::new(1.0_f32, BORDER),
+        egui::StrokeKind::Inside,
+    );
+    let mut clicked = None;
+    for (index, name) in ["Show as a grid", "Show as a list"].into_iter().enumerate() {
+        let is_list = index == 1;
+        let rect = Rect::from_min_size(
+            frame.min + Vec2::new(2.0 + PART * index as f32, 2.0),
+            Vec2::new(PART, HEIGHT - 4.0),
+        );
+        let response = ui.interact(rect, egui::Id::new(("view-switch", name)), Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
+        let on = list == is_list;
+        if on {
+            ui.painter()
+                .rect_filled(rect, (HEIGHT - 4.0) / 2.0, CARD_HOVER);
+        } else if response.hovered() {
+            ui.painter()
+                .rect_filled(rect, (HEIGHT - 4.0) / 2.0, Color32::from_white_alpha(10));
+        }
+        let colour = if on { TEXT } else { MUTED };
+        let centre = rect.center();
+        if is_list {
+            for dy in [-4.5, 0.0, 4.5] {
+                ui.painter().rect_filled(
+                    Rect::from_center_size(centre + Vec2::new(0.0, dy), Vec2::new(11.0, 2.0)),
+                    1.0,
+                    colour,
+                );
+            }
+        } else {
+            for (dx, dy) in [(-3.5, -3.5), (3.5, -3.5), (-3.5, 3.5), (3.5, 3.5)] {
+                ui.painter().rect_filled(
+                    Rect::from_center_size(centre + Vec2::new(dx, dy), Vec2::splat(5.0)),
+                    1.0,
+                    colour,
+                );
+            }
+        }
+        if response
+            .on_hover_text(name)
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            clicked = Some(is_list);
+        }
+    }
+    clicked
+}

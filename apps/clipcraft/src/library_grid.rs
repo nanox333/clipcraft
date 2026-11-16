@@ -24,6 +24,24 @@ fn control_id(entry: &MediaEntry, part: usize) -> egui::Id {
     }
 }
 
+/// How the clips are laid out: picture cards in one of three sizes, or a list.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct GridShape {
+    /// One clip to a line, with a small picture.
+    pub list: bool,
+    /// The size of a card: 0 small, 1 medium, 2 large. Others are taken as medium.
+    pub size: u8,
+}
+
+impl Default for GridShape {
+    fn default() -> Self {
+        Self {
+            list: false,
+            size: 1,
+        }
+    }
+}
+
 /// Height of a date heading, and of the space under it.
 const HEADER_HEIGHT: f32 = 40.0;
 /// How long a card takes to glide to its new place.
@@ -174,6 +192,7 @@ impl GridState {
         view: &ViewCache,
         thumbs: &mut Thumbnails,
         by_date: bool,
+        shape: GridShape,
     ) -> Option<ClipCardAction> {
         let count = view.indices.len();
         if self.target.is_some_and(|(index, _)| index >= count) {
@@ -186,11 +205,38 @@ impl GridState {
         {
             self.carrying = None;
         }
-        let columns = columns(ui.available_width());
-        let gap = crate::kit::space::LG;
-        let width =
-            ((ui.available_width() - (columns - 1) as f32 * gap) / columns as f32).max(180.0);
-        let height = (width * 0.5625).clamp(120.0, 240.0) + crate::CARD_TEXT_HEIGHT;
+        let available = ui.available_width();
+        let gap = if shape.list {
+            crate::kit::space::SM
+        } else {
+            crate::kit::space::LG
+        };
+        // Columns: one in a list. Otherwise as many as suit the width, one more or fewer for
+        // the small and large sizes, and never so many that a card gets narrower than 180.
+        let columns = if shape.list {
+            1
+        } else {
+            let base = columns(available);
+            let wanted = match shape.size {
+                0 => base + 1,
+                2 => base.saturating_sub(1).max(1),
+                _ => base,
+            };
+            (1..=wanted)
+                .rev()
+                .find(|&count| (available - (count - 1) as f32 * gap) / count as f32 >= 180.0)
+                .unwrap_or(1)
+        };
+        let width = if shape.list {
+            available.max(300.0)
+        } else {
+            ((available - (columns - 1) as f32 * gap) / columns as f32).max(180.0)
+        };
+        let height = if shape.list {
+            crate::clip_card::ROW_HEIGHT
+        } else {
+            (width * 0.5625).clamp(120.0, 240.0) + crate::CARD_TEXT_HEIGHT
+        };
         // Headings are put aside while a card is carried: the clips flow as one set.
         let grouping = by_date && self.carrying.is_none();
         let clock = Clock::system();
@@ -349,6 +395,7 @@ impl GridState {
                                             thumbs,
                                             view.game(source),
                                             &result.collections,
+                                            shape.list,
                                         )
                                     })
                                     .inner;
@@ -453,7 +500,19 @@ impl GridState {
                     carry.slot = (places.start + column).min(places.end.saturating_sub(1));
                 }
                 // The card in hand, over everything, a little larger and lifted.
-                paint_carried(&context, entry, thumbs, pointer - carry.grab, width, height);
+                if shape.list {
+                    // A line is carried as its small picture.
+                    paint_carried(
+                        &context,
+                        entry,
+                        thumbs,
+                        pointer - carry.grab,
+                        crate::clip_card::ROW_HEIGHT * 0.8 * 16.0 / 9.0,
+                        crate::clip_card::ROW_HEIGHT * 0.8 + crate::CARD_TEXT_HEIGHT,
+                    );
+                } else {
+                    paint_carried(&context, entry, thumbs, pointer - carry.grab, width, height);
+                }
                 // Near the top or bottom edge the list scrolls.
                 let viewport = output.inner_rect;
                 let edge = 56.0;
@@ -732,7 +791,7 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        grid.show(ui, &result, &view, &mut thumbs, false);
+                        grid.show(ui, &result, &view, &mut thumbs, false, GridShape::default());
                     });
                 },
             );
@@ -744,6 +803,168 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod shape_tests {
+    use super::*;
+
+    /// Draws `grid` once at `size`, with the keys pressed, and returns how many clips were built.
+    fn draw(
+        context: &egui::Context,
+        grid: &mut GridState,
+        result: &LibraryScanResult,
+        view: &ViewCache,
+        thumbs: &mut Thumbnails,
+        size: egui::Vec2,
+        by_date: bool,
+        shape: GridShape,
+        keys: Vec<Key>,
+    ) -> usize {
+        let _ = context.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                events: keys
+                    .into_iter()
+                    .map(|key| egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::NONE,
+                    })
+                    .collect(),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    grid.show(ui, result, view, thumbs, by_date, shape);
+                });
+            },
+        );
+        grid.painted
+    }
+
+    #[test]
+    fn a_list_and_every_card_size_stay_virtual_in_any_window_and_keep_the_keyboard() {
+        let context = crate::kit::test_context();
+        let result = LibraryScanResult {
+            directory: "/clips".into(),
+            entries: (0..10_000)
+                .map(|i| crate::tests::media_entry(&format!("Clip {i:05}"), None))
+                .collect(),
+            persisted: false,
+            collections: Vec::new(),
+        };
+        let mut view = ViewCache::default();
+        view.prepare(&result, &crate::LibraryFilter::All, "", false);
+        let mut thumbs = Thumbnails::default();
+        let shapes = [
+            GridShape {
+                list: false,
+                size: 0,
+            },
+            GridShape {
+                list: false,
+                size: 1,
+            },
+            GridShape {
+                list: false,
+                size: 2,
+            },
+            // A size from a damaged file is drawn as the medium one.
+            GridShape {
+                list: false,
+                size: 250,
+            },
+            GridShape {
+                list: true,
+                size: 1,
+            },
+        ];
+        for shape in shapes {
+            for by_date in [false, true] {
+                let mut grid = GridState::default();
+                for size in [
+                    egui::vec2(240.0, 400.0),
+                    egui::vec2(700.0, 500.0),
+                    egui::vec2(1200.0, 700.0),
+                    egui::vec2(3000.0, 1500.0),
+                ] {
+                    let built = draw(
+                        &context,
+                        &mut grid,
+                        &result,
+                        &view,
+                        &mut thumbs,
+                        size,
+                        by_date,
+                        shape,
+                        vec![],
+                    );
+                    assert!(
+                        built > 0 && built < 120,
+                        "{shape:?} {by_date} {size:?}: {built} built"
+                    );
+                }
+                // From the first clip the End key reaches the last, and Home goes back.
+                for (key, expected) in [(Key::End, 9999), (Key::Home, 0)] {
+                    context.memory_mut(|m| m.request_focus(card_id(&result.entries[0])));
+                    draw(
+                        &context,
+                        &mut grid,
+                        &result,
+                        &view,
+                        &mut thumbs,
+                        egui::vec2(1200.0, 700.0),
+                        by_date,
+                        shape,
+                        vec![key],
+                    );
+                    assert_eq!(
+                        context.memory(|m| m.focused()),
+                        Some(card_id(&result.entries[expected])),
+                        "{shape:?} {by_date} {key:?}"
+                    );
+                }
+            }
+        }
+        // More fit in a row at the small size and fewer at the large one; a list is one column.
+        let mut built = std::collections::BTreeMap::new();
+        for (name, shape) in [
+            (
+                "small",
+                GridShape {
+                    list: false,
+                    size: 0,
+                },
+            ),
+            (
+                "large",
+                GridShape {
+                    list: false,
+                    size: 2,
+                },
+            ),
+        ] {
+            let mut grid = GridState::default();
+            built.insert(
+                name,
+                draw(
+                    &context,
+                    &mut grid,
+                    &result,
+                    &view,
+                    &mut thumbs,
+                    egui::vec2(1600.0, 900.0),
+                    false,
+                    shape,
+                    vec![],
+                ),
+            );
+        }
+        assert!(built["small"] > built["large"], "{built:?}");
     }
 }
 
@@ -777,7 +998,7 @@ mod traversal_tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        grid.show(ui, &result, &view, thumbs, false);
+                        grid.show(ui, &result, &view, thumbs, false, GridShape::default());
                     });
                 },
             );
@@ -830,7 +1051,7 @@ mod traversal_tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        grid.show(ui, &result, &view, &mut thumbs, false);
+                        grid.show(ui, &result, &view, &mut thumbs, false, GridShape::default());
                     });
                 },
             );
@@ -930,7 +1151,14 @@ mod layout_and_drag_tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        action = self.grid.show(ui, result, view, &mut self.thumbs, by_date);
+                        action = self.grid.show(
+                            ui,
+                            result,
+                            view,
+                            &mut self.thumbs,
+                            by_date,
+                            GridShape::default(),
+                        );
                     });
                 },
             );
