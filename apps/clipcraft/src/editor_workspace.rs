@@ -323,16 +323,31 @@ impl EditorState {
         } else {
             "Editor drafts save automatically on this device. Originals are never changed."
         };
+        // Short on the page; the whole sentence is one hover away.
         ui.label(
-            RichText::new(status)
-                .size(crate::kit::text_size::CAPTION)
-                .color(kit::FAINT),
-        );
+            RichText::new(if enabled && !self.draft.suppressed {
+                "Draft saved automatically"
+            } else {
+                status
+            })
+            .size(crate::kit::text_size::CAPTION)
+            .color(kit::FAINT),
+        )
+        .on_hover_text(status);
         if enabled
             && !self.draft.loading
             && !self.draft.suppressed
             && !self.media.is_empty()
-            && super::button(ui, "Discard saved draft", false, !self.draft.discarding)
+            && ui
+                .add_enabled(
+                    !self.draft.discarding,
+                    egui::Button::new(
+                        RichText::new("Discard draft")
+                            .size(crate::kit::text_size::CAPTION)
+                            .color(MUTED),
+                    )
+                    .frame(false),
+                )
                 .on_hover_text("Delete the automatically saved copy of this edit")
                 .clicked()
         {

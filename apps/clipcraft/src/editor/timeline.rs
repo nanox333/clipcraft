@@ -212,26 +212,41 @@ impl EditorState {
                 {
                     self.edit(EditorAction::Reset);
                 }
-                if button(ui, "Fit", self.fit, true)
-                    .on_hover_text("Show the whole edit")
-                    .clicked()
-                {
-                    self.fit = true;
-                }
-                if button(ui, "+", false, true)
-                    .on_hover_text("Zoom in")
-                    .clicked()
-                {
-                    self.fit = false;
-                    self.zoom = (self.zoom * 1.5).min(160.0);
-                }
-                if button(ui, "\u{2212}", false, true)
-                    .on_hover_text("Zoom out")
-                    .clicked()
-                {
-                    self.fit = false;
-                    self.zoom = (self.zoom / 1.5).max(4.0);
-                }
+                // Zoom out, zoom in and fit, as one capsule.
+                egui::Frame::new()
+                    .fill(kit::CONTROL)
+                    .stroke(Stroke::new(1.0_f32, kit::CONTROL_BORDER))
+                    .corner_radius((crate::kit::control::COMPACT / 2.0) as u8)
+                    .inner_margin(egui::Margin::same(2))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(108.0, crate::kit::control::COMPACT - 6.0),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                if segment(ui, "\u{2212}", false, 30.0)
+                                    .on_hover_text("Zoom out")
+                                    .clicked()
+                                {
+                                    self.fit = false;
+                                    self.zoom = (self.zoom / 1.5).max(4.0);
+                                }
+                                if segment(ui, "+", false, 30.0)
+                                    .on_hover_text("Zoom in")
+                                    .clicked()
+                                {
+                                    self.fit = false;
+                                    self.zoom = (self.zoom * 1.5).min(160.0);
+                                }
+                                if segment(ui, "Fit", self.fit, 44.0)
+                                    .on_hover_text("Show the whole edit")
+                                    .clicked()
+                                {
+                                    self.fit = true;
+                                }
+                            },
+                        );
+                    });
             });
         });
         ui.add_space(crate::kit::space::SM);
@@ -437,7 +452,17 @@ impl EditorState {
                     clipped.text(
                         card.left_top() + Vec2::new(6.0, 6.0),
                         Align2::LEFT_TOP,
-                        format!("{} · {}", index + 1, clip.name),
+                        format!(
+                            "{} · {}",
+                            index + 1,
+                            crate::clip_label::title(
+                                &clip.name,
+                                clip.input
+                                    .extension()
+                                    .and_then(|extension| extension.to_str())
+                                    .unwrap_or_default(),
+                            )
+                        ),
                         FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
                         TEXT,
                     );
@@ -941,4 +966,27 @@ impl EditorState {
                 });
         });
     }
+}
+
+/// One part of a capsule of buttons: lime while it is the active one.
+fn segment(ui: &mut egui::Ui, label: &str, active: bool, width: f32) -> egui::Response {
+    let height = crate::kit::control::COMPACT - 6.0;
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let (fill, text) = if active {
+        (LIME, Color32::BLACK)
+    } else if response.hovered() {
+        (kit::CONTROL_HOVER, TEXT)
+    } else {
+        (Color32::TRANSPARENT, TEXT)
+    };
+    ui.painter().rect_filled(rect, height / 2.0, fill);
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::new(crate::kit::text_size::SMALL, kit::medium()),
+        text,
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }

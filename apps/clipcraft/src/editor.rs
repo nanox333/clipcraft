@@ -1060,7 +1060,7 @@ impl EditorState {
                         .show(ui, |ui| {
                             ui.set_width((preview_width - 24.0).max(1.0));
                             ui.set_min_height((top - 16.0).max(0.0));
-                            let size = Vec2::new(ui.available_width(), (top - 56.0).max(40.0));
+                            let size = Vec2::new(ui.available_width(), (top - 62.0).max(40.0));
                             let area = egui::Rect::from_min_size(ui.cursor().min, size);
                             let canvas = self.export_canvas().unwrap_or((1280, 720));
                             if let Some(preview) = self.preview.as_mut() {
@@ -1085,55 +1085,99 @@ impl EditorState {
                                     1.6,
                                 );
                                 ui.painter().text(
-                                    rect.center() + Vec2::new(0.0, 14.0),
+                                    rect.center() + Vec2::new(0.0, 8.0),
                                     Align2::CENTER_CENTER,
                                     "Add clips to begin",
                                     FontId::new(crate::kit::text_size::LEAD, kit::medium()),
                                     MUTED,
                                 );
+                                // A child ui, so placing the button leaves the layout cursor alone.
+                                let mut cta = ui.new_child(
+                                    egui::UiBuilder::new()
+                                        .max_rect(egui::Rect::from_center_size(
+                                            rect.center() + Vec2::new(0.0, 56.0),
+                                            Vec2::new(160.0, crate::kit::control::COMPACT),
+                                        ))
+                                        .layout(Layout::centered_and_justified(
+                                            egui::Direction::LeftToRight,
+                                        )),
+                                );
+                                if tool(
+                                    &mut cta,
+                                    kit::Icon::Import,
+                                    "Import clips",
+                                    true,
+                                    self.importing.is_none(),
+                                )
+                                .clicked()
+                                {
+                                    self.picker = Some(ClipPicker::default());
+                                }
                             }
                             ui.add_space(crate::kit::space::SM);
                             // Transport centred under the picture, the time at the right edge.
                             let (row, _) = ui.allocate_exact_size(
-                                Vec2::new(ui.available_width(), 28.0),
+                                Vec2::new(ui.available_width(), 34.0),
                                 Sense::hover(),
                             );
                             let any = !self.session.clips().is_empty();
                             let playing = self.playing;
-                            ui.painter().circle_filled(row.center(), 15.0, kit::CONTROL);
-                            ui.scope_builder(
-                                egui::UiBuilder::new().max_rect(egui::Rect::from_center_size(
-                                    row.center(),
-                                    Vec2::splat(28.0),
-                                )),
-                                |ui| {
-                                    if kit::icon_button(
-                                        ui,
-                                        if playing {
-                                            kit::Icon::Pause
-                                        } else {
-                                            kit::Icon::Play
-                                        },
-                                        28.0,
-                                        true,
-                                        any,
-                                        if playing { "Pause edit" } else { "Play edit" },
-                                    )
-                                    .clicked()
-                                    {
-                                        self.toggle();
-                                    }
-                                },
+                            ui.painter().circle_filled(
+                                row.center(),
+                                17.0,
+                                if any { LIME } else { kit::CONTROL },
                             );
-                            ui.painter().text(
-                                egui::pos2(row.right(), row.center().y),
-                                Align2::RIGHT_CENTER,
-                                format!(
-                                    "{} / {}",
-                                    stamp(self.playhead),
-                                    stamp(self.session.duration())
-                                ),
-                                FontId::monospace(12.0),
+                            let hit = ui.interact(
+                                egui::Rect::from_center_size(row.center(), Vec2::splat(34.0)),
+                                egui::Id::new("editor-play"),
+                                if any { Sense::click() } else { Sense::hover() },
+                            );
+                            hit.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    any,
+                                    if playing { "Pause edit" } else { "Play edit" },
+                                )
+                            });
+                            // The icon is dark on the lime circle, and quiet while there is nothing
+                            // to play.
+                            kit::draw_icon(
+                                ui.painter(),
+                                row.center(),
+                                if playing {
+                                    kit::Icon::Pause
+                                } else {
+                                    kit::Icon::Play
+                                },
+                                if any { Color32::BLACK } else { FAINT },
+                                0.9,
+                            );
+                            if hit
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(if playing { "Pause edit" } else { "Play edit" })
+                                .clicked()
+                                && any
+                            {
+                                self.toggle();
+                            }
+                            // The time passed in the text colour, the total beside it quieter.
+                            let total = ui.painter().layout_no_wrap(
+                                format!(" / {}", stamp(self.session.duration())),
+                                FontId::monospace(13.0),
+                                MUTED,
+                            );
+                            let passed = ui.painter().layout_no_wrap(
+                                stamp(self.playhead),
+                                FontId::monospace(13.0),
+                                if any { TEXT } else { MUTED },
+                            );
+                            let left = row.right() - total.size().x - passed.size().x;
+                            let top = row.center().y - passed.size().y / 2.0;
+                            ui.painter()
+                                .galley(egui::pos2(left, top), passed.clone(), TEXT);
+                            ui.painter().galley(
+                                egui::pos2(left + passed.size().x, top),
+                                total,
                                 MUTED,
                             );
                         });
@@ -1438,6 +1482,7 @@ impl EditorState {
                     }
                     if self.tab == LibraryTab::Library {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
                             if tool(
                                 ui,
                                 kit::Icon::Import,
@@ -1449,6 +1494,10 @@ impl EditorState {
                             {
                                 self.picker = Some(ClipPicker::default());
                             }
+                            kit::help(
+                                ui,
+                                "Double-click a clip, or drag it onto the timeline, to add it. Right-click for details.",
+                            );
                         });
                     }
                 });
@@ -1578,7 +1627,10 @@ impl EditorState {
                                                 );
                                                 let mut title_job =
                                                     egui::text::LayoutJob::simple_singleline(
-                                                        entry.title.clone(),
+                                                        crate::clip_label::title(
+                                                            &entry.title,
+                                                            &entry.extension,
+                                                        ),
                                                         FontId::new(
                                                             crate::kit::text_size::CAPTION,
                                                             kit::medium(),
@@ -1599,17 +1651,15 @@ impl EditorState {
                                                         title,
                                                         TEXT,
                                                     );
-                                                let meta = match entry
-                                                    .probe
-                                                    .as_ref()
-                                                    .and_then(|p| p.width.zip(p.height))
-                                                {
-                                                    Some((w, h)) => format!(
-                                                        "{w}\u{00d7}{h} \u{00b7} {}",
-                                                        crate::format_bytes(entry.size_bytes)
+                                                let meta = format!(
+                                                    "{} \u{00b7} {}",
+                                                    crate::clip_label::when(
+                                                        &entry.title,
+                                                        &entry.extension,
+                                                        entry.modified_unix_seconds,
                                                     ),
-                                                    None => crate::format_bytes(entry.size_bytes),
-                                                };
+                                                    crate::format_bytes(entry.size_bytes)
+                                                );
                                                 ui.painter()
                                                     .with_clip_rect(egui::Rect::from_min_max(
                                                         rect.left_bottom(),
@@ -1687,14 +1737,6 @@ impl EditorState {
                         );
                     });
                 }
-                ui.add_space(crate::kit::space::SM);
-                ui.label(
-                    RichText::new(
-                        "Double-click or drag a clip to add it.\nRight-click for details.",
-                    )
-                    .size(crate::kit::text_size::CAPTION)
-                    .color(kit::FAINT),
-                );
             });
         if let Some(entry) = add {
             self.append(&entry);
