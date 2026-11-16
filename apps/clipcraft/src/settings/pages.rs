@@ -256,18 +256,40 @@ fn stat_tile(ui: &mut egui::Ui, width: f32, label: &str, value: &str, note: &str
         egui::FontId::new(crate::kit::text_size::CAPTION, kit::semibold()),
         FAINT,
     );
-    ui.painter().text(
-        egui::pos2(rect.left() + 16.0, rect.top() + 44.0),
-        egui::Align2::LEFT_CENTER,
+    // Whatever is long is cut with an ellipsis inside the tile instead of running past its edge.
+    let inside = (rect.width() - 32.0).max(0.0);
+    let fit = |text: &str, font: egui::FontId, color: Color32| {
+        let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
+        job.wrap.max_width = inside;
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        job.wrap.overflow_character = Some('\u{2026}');
+        ui.painter().layout_job(job)
+    };
+    let value_galley = fit(
         value,
         egui::FontId::new(crate::kit::text_size::TITLE, kit::semibold()),
         TEXT,
     );
-    ui.painter().text(
-        egui::pos2(rect.left() + 16.0, rect.top() + 70.0),
-        egui::Align2::LEFT_CENTER,
+    let note_galley = fit(
         note,
         egui::FontId::proportional(crate::kit::text_size::CAPTION),
+        MUTED,
+    );
+    ui.painter().galley(
+        egui::pos2(
+            rect.left() + 16.0,
+            rect.top() + 44.0 - value_galley.size().y / 2.0,
+        ),
+        value_galley,
+        TEXT,
+    );
+    ui.painter().galley(
+        egui::pos2(
+            rect.left() + 16.0,
+            rect.top() + 70.0 - note_galley.size().y / 2.0,
+        ),
+        note_galley,
         MUTED,
     );
 }
@@ -371,7 +393,8 @@ pub(crate) fn overview(
 ) {
     let encoder = match (settings.video_encoder, gpu) {
         (VideoEncoder::Gpu, GpuProbe::Ready(_)) => "Graphics card".to_owned(),
-        (VideoEncoder::Gpu, _) => "Processor (no GPU encoder)".to_owned(),
+        // The tile is narrow: say "Processor" and put the reason in the line below.
+        (VideoEncoder::Gpu, _) => "Processor".to_owned(),
         (VideoEncoder::Cpu, _) => "Processor".to_owned(),
     };
     let gap = 12.0;
@@ -394,11 +417,19 @@ pub(crate) fn overview(
             width,
             "Encoder",
             &encoder,
-            &format!(
-                "{} \u{b7} {}",
-                settings.codec.label(),
-                settings.encoder_preset.label()
-            ),
+            &if matches!(
+                (settings.video_encoder, gpu),
+                (VideoEncoder::Gpu, GpuProbe::Ready(_))
+            ) || settings.video_encoder == VideoEncoder::Cpu
+            {
+                format!(
+                    "{} \u{b7} {}",
+                    settings.codec.label(),
+                    settings.encoder_preset.label()
+                )
+            } else {
+                "No graphics-card encoder".to_owned()
+            },
         );
         stat_tile(
             ui,

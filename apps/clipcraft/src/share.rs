@@ -16,7 +16,7 @@ use clipcraft_engine::{
 use eframe::egui;
 
 use crate::capture::notice;
-use crate::{ClipCraftApp, Icon, kit};
+use crate::{ClipCraftApp, kit};
 
 /// A share copy being made on another thread.
 pub(crate) struct ShareJob {
@@ -207,33 +207,205 @@ pub(crate) enum ShareChip {
     Press,
 }
 
+/// The words on the drag tile, for each state: (title, line under it).
+fn share_words(state: &ShareState, megabytes: u16) -> (String, String) {
+    match state {
+        ShareState::Ready => (
+            "Drag this into Discord".to_owned(),
+            format!("Hold, drag and drop it into a chat \u{b7} {megabytes} MB"),
+        ),
+        ShareState::Making(done) => (
+            format!("Making a {megabytes} MB copy\u{2026} {:.0}%", done * 100.0),
+            "Then you can drag it into a chat".to_owned(),
+        ),
+        ShareState::NotMade => (
+            "Get ready to drag".to_owned(),
+            format!("Click to make a {megabytes} MB copy for chats"),
+        ),
+    }
+}
+
+/// The tile you pick up and drag into a chat. It is drawn to look like something to grab: a grip
+/// of dots, a small file, a dashed outline like a drop target, a hand cursor and a lift when the
+/// pointer is on it, and a firmer look while it is being dragged.
 pub(crate) fn share_chip(
     ui: &mut egui::Ui,
     state: &ShareState,
     megabytes: u16,
     enabled: bool,
 ) -> ShareChip {
-    let label = match state {
-        ShareState::Ready => format!("Drag into Discord \u{b7} {megabytes} MB"),
-        ShareState::Making(done) => {
-            format!("Making {megabytes} MB copy\u{2026} {:.0}%", done * 100.0)
-        }
-        ShareState::NotMade => format!("Share into Discord \u{b7} {megabytes} MB"),
-    };
+    use eframe::egui::{Color32, CursorIcon, Sense, Shape, Stroke, Vec2};
+    let (title, subtitle) = share_words(state, megabytes);
     let ready = matches!(state, ShareState::Ready);
-    let full = ui.available_width();
-    let response = kit::labelled_button_sensing(
-        ui,
-        Icon::Import,
-        &label,
-        "",
-        ready,
-        enabled,
-        full,
-        egui::Sense::click_and_drag(),
-    )
-    .on_hover_text(if ready {
-        "Drag this into a Discord chat (or anywhere that takes files). Clips that are too big are shared as a smaller copy."
+    let sense = if enabled {
+        Sense::click_and_drag()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 78.0), sense);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, title.clone())
+    });
+    let dragging = enabled && response.dragged();
+    let hovered = enabled && (response.hovered() || dragging);
+    if enabled {
+        ui.ctx().set_cursor_icon(if dragging {
+            CursorIcon::Grabbing
+        } else if hovered && ready {
+            CursorIcon::Grab
+        } else if hovered {
+            CursorIcon::PointingHand
+        } else {
+            CursorIcon::Default
+        });
+    }
+    let lift = ui.ctx().animate_bool_responsive(response.id, hovered);
+    let accent = if enabled { kit::LIME } else { kit::FAINT };
+    let alpha = |value: f32| (value.clamp(0.0, 255.0)) as u8;
+    let body = rect.translate(Vec2::new(0.0, -2.0 * lift));
+    let painter = ui.painter();
+    if enabled {
+        // A soft shadow under the tile that grows as it lifts.
+        painter.rect_filled(
+            body.translate(Vec2::new(0.0, 5.0 + 2.0 * lift)),
+            14.0,
+            Color32::from_black_alpha(alpha(60.0 + 50.0 * lift)),
+        );
+    }
+    let fill_alpha = if dragging { 52.0 } else { 20.0 + 16.0 * lift };
+    painter.rect_filled(
+        body,
+        14.0,
+        if enabled {
+            Color32::from_rgba_unmultiplied(190, 255, 43, alpha(fill_alpha))
+        } else {
+            kit::CARD
+        },
+    );
+    // The copy being made fills the tile from the left.
+    if let ShareState::Making(done) = state {
+        let mut filled = body;
+        filled.set_right(body.left() + body.width() * done.clamp(0.0, 1.0));
+        painter.with_clip_rect(body).rect_filled(
+            filled,
+            14.0,
+            Color32::from_rgba_unmultiplied(190, 255, 43, 70),
+        );
+    }
+    // Dashed outline: the look of a thing that is picked up, not a button that is pressed.
+    let stroke = Stroke::new(
+        if dragging { 2.0_f32 } else { 1.5_f32 },
+        Color32::from_rgba_unmultiplied(
+            accent.r(),
+            accent.g(),
+            accent.b(),
+            alpha(if ready { 150.0 + 105.0 * lift } else { 110.0 }),
+        ),
+    );
+    let outline = body.shrink(1.0);
+    let corners = [
+        outline.left_top() + Vec2::new(14.0, 0.0),
+        outline.right_top() - Vec2::new(14.0, 0.0),
+        outline.right_bottom() - Vec2::new(14.0, 0.0),
+        outline.left_bottom() + Vec2::new(14.0, 0.0),
+    ];
+    let sides = [
+        (corners[0], corners[1]),
+        (
+            outline.right_top() + Vec2::new(0.0, 14.0),
+            outline.right_bottom() - Vec2::new(0.0, 14.0),
+        ),
+        (corners[3], corners[2]),
+        (
+            outline.left_top() + Vec2::new(0.0, 14.0),
+            outline.left_bottom() - Vec2::new(0.0, 14.0),
+        ),
+    ];
+    for (from, to) in sides {
+        painter.extend(Shape::dashed_line(&[from, to], stroke, 7.0, 5.0));
+    }
+    for (corner, start) in [
+        (outline.left_top() + Vec2::splat(14.0), 180.0_f32),
+        (outline.right_top() + Vec2::new(-14.0, 14.0), 270.0),
+        (outline.right_bottom() - Vec2::splat(14.0), 0.0),
+        (outline.left_bottom() + Vec2::new(14.0, -14.0), 90.0),
+    ] {
+        let points: Vec<egui::Pos2> = (0..=6)
+            .map(|step| {
+                let angle = (start + 15.0 * step as f32).to_radians();
+                corner + Vec2::new(angle.cos(), angle.sin()) * 14.0
+            })
+            .collect();
+        painter.add(Shape::line(points, stroke));
+    }
+    // The grip: two columns of three dots, the sign of something to hold.
+    let grip = body.left_center() + Vec2::new(22.0, 0.0);
+    for column in [-4.5_f32, 4.5] {
+        for row in [-9.0_f32, 0.0, 9.0] {
+            painter.circle_filled(
+                grip + Vec2::new(column, row),
+                2.1,
+                Color32::from_rgba_unmultiplied(
+                    accent.r(),
+                    accent.g(),
+                    accent.b(),
+                    alpha(if enabled { 200.0 + 55.0 * lift } else { 120.0 }),
+                ),
+            );
+        }
+    }
+    // A small file, as the thing that comes along with the pointer.
+    let file = egui::Rect::from_center_size(
+        body.left_center() + Vec2::new(62.0, 0.0),
+        Vec2::new(30.0, 38.0),
+    );
+    painter.rect_filled(file, 6.0, Color32::from_black_alpha(120));
+    painter.rect_stroke(
+        file,
+        6.0,
+        Stroke::new(1.5_f32, accent),
+        egui::StrokeKind::Inside,
+    );
+    painter.add(Shape::convex_polygon(
+        vec![
+            file.center() + Vec2::new(-4.0, -7.0),
+            file.center() + Vec2::new(-4.0, 7.0),
+            file.center() + Vec2::new(7.0, 0.0),
+        ],
+        accent,
+        Stroke::NONE,
+    ));
+    // The words.
+    let text_left = body.left() + 92.0;
+    let room = (body.right() - text_left - 14.0).max(40.0);
+    let fit = |text: String, font: egui::FontId, color: Color32| {
+        let mut job = egui::text::LayoutJob::simple_singleline(text, font, color);
+        job.wrap.max_width = room;
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        job.wrap.overflow_character = Some('\u{2026}');
+        painter.layout_job(job)
+    };
+    let title_galley = fit(
+        title,
+        egui::FontId::new(crate::kit::text_size::LEAD, kit::semibold()),
+        if enabled { kit::TEXT } else { kit::MUTED },
+    );
+    let subtitle_galley = fit(
+        subtitle,
+        egui::FontId::proportional(crate::kit::text_size::CAPTION),
+        if enabled { kit::MUTED } else { kit::FAINT },
+    );
+    let total = title_galley.size().y + 4.0 + subtitle_galley.size().y;
+    let top = body.center().y - total / 2.0;
+    painter.galley(egui::pos2(text_left, top), title_galley.clone(), kit::TEXT);
+    painter.galley(
+        egui::pos2(text_left, top + title_galley.size().y + 4.0),
+        subtitle_galley,
+        kit::MUTED,
+    );
+    let response = response.on_hover_text(if ready {
+        "Click and hold this, then drag it into a Discord chat (or any program that takes files). A clip that is too big is shared as a smaller copy."
     } else {
         "Make a copy small enough to drag into a chat. Bigger clips are re-encoded to fit."
     });

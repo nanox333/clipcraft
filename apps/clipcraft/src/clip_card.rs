@@ -179,7 +179,9 @@ pub(crate) fn clip_card(
             );
         }
     }
-    if let Some(game) = game {
+    // The title is the game for a clip ClipCraft named, so a badge saying the same is noise.
+    let shown_title = crate::clip_label::title(&entry.title, &entry.extension);
+    if let Some(game) = game.filter(|game| *game != shown_title) {
         let galley = painter.layout_no_wrap(
             game.to_owned(),
             egui::FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
@@ -201,7 +203,7 @@ pub(crate) fn clip_card(
     // Title (one line, ellipsized) and details.
     let text_left = card.left() + 4.0;
     let mut title = egui::text::LayoutJob::simple_singleline(
-        entry.title.clone(),
+        shown_title,
         egui::FontId::new(crate::kit::text_size::BODY, kit::semibold()),
         TEXT,
     );
@@ -217,8 +219,8 @@ pub(crate) fn clip_card(
     );
     let mut details = format!(
         "{}  ·  {}",
+        crate::clip_label::when(&entry.title, &entry.extension, entry.modified_unix_seconds),
         format_bytes(entry.size_bytes),
-        format_date(entry.modified_unix_seconds)
     );
     if entry.offline {
         details = format!("File not found  \u{00b7}  {details}");
@@ -487,22 +489,25 @@ pub(crate) fn paint_video_placeholder(
         150,
     );
 
-    let badge = egui::Rect::from_min_size(
-        rect.left_top() + Vec2::new(10.0, 10.0),
-        Vec2::new(44.0, 22.0),
-    );
-    painter.rect_filled(
-        badge,
-        egui::CornerRadius::same(crate::kit::radius::SM),
-        Color32::from_black_alpha(170),
-    );
-    painter.text(
-        badge.center(),
-        egui::Align2::CENTER_CENTER,
-        entry.extension.to_uppercase(),
-        egui::FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
-        TEXT,
-    );
+    // Only a format that is not the usual one is worth a badge: MP4 on every card is noise.
+    if !entry.extension.eq_ignore_ascii_case("mp4") {
+        let badge = egui::Rect::from_min_size(
+            rect.left_top() + Vec2::new(10.0, 10.0),
+            Vec2::new(44.0, 22.0),
+        );
+        painter.rect_filled(
+            badge,
+            egui::CornerRadius::same(crate::kit::radius::SM),
+            Color32::from_black_alpha(170),
+        );
+        painter.text(
+            badge.center(),
+            egui::Align2::CENTER_CENTER,
+            entry.extension.to_uppercase(),
+            egui::FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
+            TEXT,
+        );
+    }
     let duration = format_duration(entry.probe.as_ref());
     let duration_badge = egui::Rect::from_min_size(
         rect.right_bottom() - Vec2::new(58.0, 32.0),

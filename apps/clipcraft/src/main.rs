@@ -11,6 +11,7 @@ mod bug_report;
 mod capture;
 mod clip_card;
 mod clip_delete;
+mod clip_label;
 mod clip_page;
 mod clip_rename;
 mod crash;

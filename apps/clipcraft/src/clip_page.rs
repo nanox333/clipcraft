@@ -19,7 +19,7 @@ impl ClipCraftApp {
 
             ui.add(
                 egui::Label::new(
-                    RichText::new(&entry.title)
+                    RichText::new(crate::clip_label::title(&entry.title, &entry.extension))
                         .color(TEXT)
                         .size(22.0)
                         .family(kit::semibold()),
@@ -34,7 +34,17 @@ impl ClipCraftApp {
 
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.y = crate::kit::space::SM;
-            kit::chip(ui, &entry.extension.to_uppercase());
+            kit::chip(
+                ui,
+                &crate::clip_label::when(
+                    &entry.title,
+                    &entry.extension,
+                    entry.modified_unix_seconds,
+                ),
+            );
+            if !entry.extension.eq_ignore_ascii_case("mp4") {
+                kit::chip(ui, &entry.extension.to_uppercase());
+            }
             if let Some(probe) = entry.probe.as_ref() {
                 if let (Some(width), Some(height)) = (probe.width, probe.height) {
                     kit::chip(ui, &format!("{width}×{height}"));
@@ -107,6 +117,8 @@ impl ClipCraftApp {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
+                            self.actions_card(ui, entry, side);
+                            ui.add_space(crate::kit::space::MD);
                             self.organize_card(ui, entry, side);
                             ui.add_space(crate::kit::space::MD);
                             self.details_card(ui, entry, side);
@@ -267,6 +279,101 @@ impl ClipCraftApp {
         }
     }
 
+    /// What a person does with a finished clip, first in the panel: share it, copy it, find it,
+    /// rename it or delete it.
+    pub(crate) fn actions_card(&mut self, ui: &mut egui::Ui, entry: &MediaEntry, width: f32) {
+        kit::card_frame()
+            .inner_margin(egui::Margin::same(20))
+            .show(ui, |ui| {
+                ui.set_width((width - 42.0).max(0.0));
+                let full = ui.available_width();
+                let state = self.share_state(entry);
+                let megabytes =
+                    u16::try_from(self.recording.share_megabytes.clamp(1, 500)).unwrap_or(10);
+                match share::share_chip(ui, &state, megabytes, !entry.offline) {
+                    share::ShareChip::Drag => self.drag_clip_out(ui.ctx(), entry),
+                    share::ShareChip::Press => self.prepare_share(entry, true),
+                    share::ShareChip::Hover => self.prepare_share(entry, false),
+                    share::ShareChip::Nothing => {}
+                }
+                // One main action (the lime one above); the rest are quieter, and the less common
+                // ones share rows two to a line instead of a tall stack of full-width buttons.
+                if kit::labelled_button_sized(
+                    ui,
+                    Icon::Copy,
+                    "Copy file",
+                    "",
+                    false,
+                    !entry.offline,
+                    full,
+                )
+                .on_hover_text("Copy the clip itself, so you can paste it into Discord or a folder")
+                .clicked()
+                {
+                    self.copy_clip_file(ui.ctx(), PathBuf::from(&entry.path));
+                }
+                let gap = crate::kit::space::SM;
+                let half = ((full - gap) / 2.0).max(40.0);
+                ui.spacing_mut().item_spacing = Vec2::new(gap, gap);
+                ui.horizontal(|ui| {
+                    if kit::labelled_button_sized(
+                        ui,
+                        Icon::Folder,
+                        "Open folder",
+                        "",
+                        false,
+                        true,
+                        half,
+                    )
+                    .on_hover_text(open_in_file_manager_label())
+                    .clicked()
+                    {
+                        self.reveal_media(PathBuf::from(&entry.path));
+                    }
+                    if kit::labelled_button_sized(
+                        ui,
+                        Icon::Copy,
+                        "Copy path",
+                        "",
+                        false,
+                        true,
+                        half,
+                    )
+                    .on_hover_text("Copy the file's location as text")
+                    .clicked()
+                    {
+                        self.copy_media_path(ui.ctx(), PathBuf::from(&entry.path));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if kit::labelled_button_sized(
+                        ui,
+                        Icon::Pencil,
+                        "Rename",
+                        "F2",
+                        false,
+                        !entry.offline,
+                        half,
+                    )
+                    .clicked()
+                    {
+                        self.ask_to_rename(entry.clone());
+                    }
+                    if kit::labelled_button_sized(ui, Icon::Trash, "Delete", "", false, true, half)
+                        .clicked()
+                    {
+                        self.ask_to_delete(entry.clone());
+                    }
+                });
+                ui.add_space(crate::kit::space::XS);
+                ui.label(
+                    RichText::new("Quick trim and export is available below the player.")
+                        .color(MUTED)
+                        .size(crate::kit::text_size::CAPTION),
+                );
+            });
+    }
+
     pub(crate) fn details_card(&mut self, ui: &mut egui::Ui, entry: &MediaEntry, width: f32) {
         kit::card_frame()
             .inner_margin(egui::Margin::same(20))
@@ -279,19 +386,16 @@ impl ClipCraftApp {
                         .family(kit::semibold()),
                 );
                 ui.add_space(crate::kit::space::SM);
-                detail_row(ui, "Source", "Local video");
-                detail_row(ui, "Modified", &format_date(entry.modified_unix_seconds));
+                detail_row(
+                    ui,
+                    "Recorded",
+                    &crate::clip_label::when(
+                        &entry.title,
+                        &entry.extension,
+                        entry.modified_unix_seconds,
+                    ),
+                );
                 if let Some(probe) = entry.probe.as_ref() {
-                    detail_row(ui, "Duration", &format_duration(Some(probe)));
-                    if let (Some(width), Some(height)) = (probe.width, probe.height) {
-                        detail_row(ui, "Resolution", &format!("{width}×{height}"));
-                    }
-                    if let Some(rate) = probe.frame_rate {
-                        detail_row(ui, "Frame rate", &format!("{} fps", rate.label()));
-                    }
-                    if let Some(codec) = probe.video_codec.as_deref() {
-                        detail_row(ui, "Video codec", codec);
-                    }
                     detail_row(
                         ui,
                         "Audio",
@@ -302,7 +406,7 @@ impl ClipCraftApp {
                         },
                     );
                 }
-                detail_row(ui, "File size", &format_bytes(entry.size_bytes));
+                detail_row(ui, "File", &entry.title);
 
                 ui.add_space(crate::kit::space::XS);
                 let (line, _) = ui.allocate_exact_size(
@@ -325,80 +429,6 @@ impl ClipCraftApp {
                     .wrap_mode(egui::TextWrapMode::Wrap),
                 );
                 ui.add_space(crate::kit::space::SM);
-                let full = ui.available_width();
-                let state = self.share_state(entry);
-                let megabytes =
-                    u16::try_from(self.recording.share_megabytes.clamp(1, 500)).unwrap_or(10);
-                match share::share_chip(ui, &state, megabytes, !entry.offline) {
-                    share::ShareChip::Drag => self.drag_clip_out(ui.ctx(), entry),
-                    share::ShareChip::Press => self.prepare_share(entry, true),
-                    share::ShareChip::Hover => self.prepare_share(entry, false),
-                    share::ShareChip::Nothing => {}
-                }
-                if kit::labelled_button_sized(
-                    ui,
-                    Icon::Copy,
-                    "Copy file",
-                    "",
-                    true,
-                    !entry.offline,
-                    full,
-                )
-                .on_hover_text("Copy the clip itself, so you can paste it into Discord or a folder")
-                .clicked()
-                {
-                    self.copy_clip_file(ui.ctx(), PathBuf::from(&entry.path));
-                }
-                if kit::labelled_button_sized(
-                    ui,
-                    Icon::Copy,
-                    "Copy file path",
-                    "",
-                    false,
-                    true,
-                    full,
-                )
-                .clicked()
-                {
-                    self.copy_media_path(ui.ctx(), PathBuf::from(&entry.path));
-                }
-                if kit::labelled_button_sized(
-                    ui,
-                    Icon::Folder,
-                    open_in_file_manager_label(),
-                    "",
-                    false,
-                    true,
-                    full,
-                )
-                .clicked()
-                {
-                    self.reveal_media(PathBuf::from(&entry.path));
-                }
-                if kit::labelled_button_sized(
-                    ui,
-                    Icon::Pencil,
-                    "Rename clip",
-                    "F2",
-                    false,
-                    !entry.offline,
-                    full,
-                )
-                .clicked()
-                {
-                    self.ask_to_rename(entry.clone());
-                }
-                if kit::labelled_button_sized(ui, Icon::Trash, "Delete clip", "", false, true, full)
-                    .clicked()
-                {
-                    self.ask_to_delete(entry.clone());
-                }
-                ui.add_space(crate::kit::space::XS);
-                ui.label(
-                    RichText::new("Quick trim and export is available below the player.")
-                        .color(MUTED)
-                        .size(crate::kit::text_size::CAPTION),
-                );
             });
     }
 }
