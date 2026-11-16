@@ -396,7 +396,7 @@ pub fn rail(
             let header = section_header(
                 ui,
                 "Collections",
-                Some("Group clips your way. Press + to make a collection, or make one from a clip's page."),
+                None,
             );
             let plus = egui::Rect::from_center_size(
                 egui::pos2(header.rect.right() - 16.0, header.rect.center().y),

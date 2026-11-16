@@ -233,18 +233,11 @@ impl ClipCraftApp {
                     }
                 }
                 ui.add_space(crate::kit::space::MD);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    ui.label(
-                        RichText::new("Collections")
-                            .color(MUTED)
-                            .size(crate::kit::text_size::CAPTION),
-                    );
-                    kit::help(
-                        ui,
-                        "Group clips your way. A collection shows in the Clips sidebar, and a clip can be in several.",
-                    );
-                });
+                ui.label(
+                    RichText::new("Collections")
+                        .color(MUTED)
+                        .size(crate::kit::text_size::CAPTION),
+                );
                 ui.add_space(crate::kit::space::XS);
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing =
