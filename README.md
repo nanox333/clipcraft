@@ -33,7 +33,7 @@ never goes online if you turn that off.
 - Everything stays on your computer. Original clips are never overwritten by trim or export.
 - Deleting goes to the Recycle Bin, with an Undo. The storage limit never touches favorites, clips in
   a collection or clips in an open edit.
-- Every saved clip is reopened and checked, and you are warned when the disk is getting full.
+- Every saved clip is reopened and checked for missing footage, and you are warned when the disk is getting full.
 - Settings and the library keep rolling backups and recover from a damaged file.
 - Recording pauses while a password manager is open (you can turn this off).
 - If ClipCraft keeps failing to start, it opens with default settings and keeps your old ones.
