@@ -2108,19 +2108,6 @@ pub(crate) fn format_bytes(size: u64) -> String {
     }
 }
 
-fn format_date(seconds: Option<u64>) -> String {
-    seconds.map_or_else(
-        || "Unknown date".to_owned(),
-        |value| {
-            let Ok(days) = i64::try_from(value / 86_400) else {
-                return "Unknown date".to_owned();
-            };
-            let (year, month, day) = civil_from_days(days);
-            format!("{year:04}-{month:02}-{day:02}")
-        },
-    )
-}
-
 fn civil_from_days(unix_days: i64) -> (i64, u32, u32) {
     let shifted_days = unix_days + 719_468;
     let era = if shifted_days >= 0 {
@@ -2144,7 +2131,7 @@ fn civil_from_days(unix_days: i64) -> (i64, u32, u32) {
 mod tests {
     use super::{
         ClipCraftApp, EngineError, LibraryFilter, MediaProbe, Page, ProbeMessage,
-        RecordingSettings, SettingsTab, format_date, format_duration, kit, probe_paths,
+        RecordingSettings, SettingsTab, civil_from_days, format_duration, kit, probe_paths,
         visible_entries,
     };
     use clipcraft_engine::{Container, Framing, LibraryScanResult, MediaEntry, OutputShape};
@@ -2395,9 +2382,9 @@ mod tests {
 
     #[test]
     fn formats_local_file_dates_as_calendar_dates() {
-        assert_eq!(format_date(Some(0)), "1970-01-01");
-        assert_eq!(format_date(Some(946_684_800)), "2000-01-01");
-        assert_eq!(format_date(None), "Unknown date");
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(946_684_800 / 86_400), (2000, 1, 1));
+        assert_eq!(civil_from_days(-1), (1969, 12, 31));
     }
 
     #[test]

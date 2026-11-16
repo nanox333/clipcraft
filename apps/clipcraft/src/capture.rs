@@ -1440,14 +1440,17 @@ impl ClipCraftApp {
                                 Color32::from_rgba_unmultiplied(190, 255, 43, 150)
                             },
                         );
+                        let shown = if buffered.is_finite() {
+                            buffered.clamp(0.0, wanted).floor()
+                        } else {
+                            0.0
+                        };
                         ui.label(
-                            RichText::new(format!("{:.0} s", buffered.min(wanted)))
+                            RichText::new(format!("{shown:.0} s"))
                                 .color(MUTED)
                                 .size(crate::kit::text_size::CAPTION),
                         )
-                        .on_hover_text(format!(
-                            "{buffered:.0} of {wanted:.0} seconds of replay are ready to save"
-                        ));
+                        .on_hover_text(buffer_label(buffered, wanted as u32));
                     }
                     if active {
                         let key = self.recording.hotkeys.toggle_pause.replace('+', " + ");
@@ -1596,14 +1599,7 @@ impl ClipCraftApp {
             .as_ref()
             .filter(|s| s.state == RecordState::Running)
         {
-            let target = self
-                .capture
-                .started_with
-                .as_ref()
-                .map_or(self.recording.replay_seconds, |settings| {
-                    settings.replay_seconds
-                });
-            parts.push(buffer_label(status.buffered_seconds, target));
+            // How much replay is ready is shown beside the status, so it is not repeated here.
             tip = Some(format!(
                 "{}
 Encoder: {}",

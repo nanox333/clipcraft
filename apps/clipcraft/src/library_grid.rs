@@ -38,6 +38,9 @@ pub(crate) struct GridState {
     layout: Option<(usize, u32)>,
     /// The card being carried.
     carrying: Option<Carry>,
+    /// A press that has already been used (a card was dropped, or handed to the system) is
+    /// ignored until the button is let go, so it cannot pick the card up a second time.
+    spent: bool,
     /// The scroll position last frame, and a nudge to apply (dragging near an edge scrolls).
     offset: f32,
     nudge: f32,
@@ -358,6 +361,7 @@ impl GridState {
                                 }
                                 // A press that has moved far enough picks the card up.
                                 if self.carrying.is_none()
+                                    && !self.spent
                                     && picked.is_none()
                                     && context.dragged_id() == Some(id)
                                     && let (Some(pointer), Some(pressed)) = (pointer, pressed_at)
@@ -377,6 +381,9 @@ impl GridState {
             }
         });
         self.offset = output.state.offset.y;
+        if !down {
+            self.spent = false;
+        }
         // Picking up: holding Alt, or an offline clip, never reorders. Alt hands the file to the
         // system at once.
         if let Some((flat, grab)) = picked {
@@ -385,6 +392,7 @@ impl GridState {
                 .get(flat)
                 .and_then(|&source| result.entries.get(source));
             if alt && let Some(entry) = entry {
+                self.spent = true;
                 if !entry.offline {
                     action = Some(ClipCardAction::DragOut(Box::new(entry.clone())));
                 }
@@ -414,6 +422,7 @@ impl GridState {
                     .map(|entry| entry.path.clone())
                     .collect();
                 self.carrying = None;
+                self.spent = true;
                 if moved {
                     action = Some(ClipCardAction::Reordered(paths));
                 }
@@ -421,6 +430,7 @@ impl GridState {
                 // Past the window's edge: it becomes a file dragged out to another program.
                 let entry = entry.cloned();
                 self.carrying = None;
+                self.spent = true;
                 if let Some(entry) = entry {
                     action = Some(ClipCardAction::DragOut(Box::new(entry)));
                 }
@@ -1030,6 +1040,43 @@ mod layout_and_drag_tests {
                 .iter()
                 .any(|action| matches!(action, ClipCardAction::Reordered(_)))
         );
+    }
+
+    #[test]
+    fn a_card_handed_to_the_system_is_not_picked_up_again_by_the_same_press() {
+        let result = result(6);
+        let mut view = ViewCache::default();
+        view.prepare(&result, &crate::LibraryFilter::All, "", false);
+        let mut frames = Frames::new();
+        let mut actions = carry(
+            &mut frames,
+            &result,
+            &view,
+            egui::pos2(1300.0, 100.0),
+            false,
+        );
+        // The button is still down and the pointer still outside for many more frames.
+        for _ in 0..12 {
+            actions.extend(frames.frame(
+                &result,
+                &view,
+                vec![egui::Event::PointerMoved(egui::pos2(1310.0, 105.0))],
+                false,
+            ));
+        }
+        let drags = actions
+            .iter()
+            .filter(|action| matches!(action, ClipCardAction::DragOut(_)))
+            .count();
+        assert_eq!(drags, 1, "one press, one drag out");
+        // Letting go and pressing again can pick a card up once more.
+        let _ = frames.frame(
+            &result,
+            &view,
+            vec![button(egui::pos2(1310.0, 105.0), false)],
+            false,
+        );
+        assert!(!frames.grid.spent);
     }
 
     #[test]
