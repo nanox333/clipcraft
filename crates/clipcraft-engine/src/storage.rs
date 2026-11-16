@@ -114,6 +114,42 @@ pub fn list_clips(folder: &Path) -> (Vec<StoredClip>, bool) {
     (clips, truncated)
 }
 
+/// How much room is left on the disk for clips.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum DiskLevel {
+    /// Plenty.
+    Fine,
+    /// Getting full: worth telling the person.
+    Low,
+    /// Nearly full: saving a clip may fail until room is made.
+    Critical,
+}
+
+/// Below this much free space the disk is [`DiskLevel::Low`] (2 GB).
+pub const DISK_LOW_BYTES: u64 = 2_000_000_000;
+/// Below this much it is [`DiskLevel::Critical`] (500 MB).
+pub const DISK_CRITICAL_BYTES: u64 = 500_000_000;
+
+/// How full the disk is, from its free bytes.
+pub fn disk_level(free_bytes: u64) -> DiskLevel {
+    if free_bytes < DISK_CRITICAL_BYTES {
+        DiskLevel::Critical
+    } else if free_bytes < DISK_LOW_BYTES {
+        DiskLevel::Low
+    } else {
+        DiskLevel::Fine
+    }
+}
+
+/// The free space on the disk holding `folder` (or the nearest folder above it that exists), or
+/// `None` when it is not known. Cheap: it does not look at the clips.
+pub fn free_space(folder: &Path) -> Option<u64> {
+    folder
+        .ancestors()
+        .find(|path| path.is_dir())
+        .and_then(|path| fs4::available_space(path).ok())
+}
+
 /// Measures a capture folder and its disk.
 pub fn storage_usage(folder: &Path) -> StorageUsage {
     let exists = folder.is_dir();
@@ -214,5 +250,22 @@ mod tests {
         assert!(!usage.exists);
         assert_eq!((usage.clip_count, usage.used_bytes), (0, 0));
         assert!(usage.free_bytes.is_some());
+    }
+
+    #[test]
+    fn the_disk_is_fine_low_or_critical_by_its_free_space_and_a_missing_folder_still_answers() {
+        assert_eq!(disk_level(u64::MAX), DiskLevel::Fine);
+        assert_eq!(disk_level(DISK_LOW_BYTES), DiskLevel::Fine);
+        assert_eq!(disk_level(DISK_LOW_BYTES - 1), DiskLevel::Low);
+        assert_eq!(disk_level(DISK_CRITICAL_BYTES), DiskLevel::Low);
+        assert_eq!(disk_level(DISK_CRITICAL_BYTES - 1), DiskLevel::Critical);
+        assert_eq!(disk_level(0), DiskLevel::Critical);
+        assert!(DiskLevel::Fine < DiskLevel::Low && DiskLevel::Low < DiskLevel::Critical);
+        // The folder need not exist yet: the room is that of the nearest folder that does.
+        let missing = std::env::temp_dir()
+            .join("clipcraft-not-made-yet")
+            .join("clips");
+        assert!(free_space(&missing).is_some());
+        assert!(free_space(Path::new("")).is_none() || free_space(Path::new("")).is_some());
     }
 }

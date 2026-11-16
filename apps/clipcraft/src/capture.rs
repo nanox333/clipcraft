@@ -184,6 +184,9 @@ pub struct CaptureState {
     opening_game: Option<GameProcessMatch>,
     /// When the clip being saved will be written, if it is waiting for the post-roll.
     saving_at: Option<Instant>,
+    /// When the free disk space was last looked at, and how full the disk was found to be.
+    disk_checked: Option<Instant>,
+    disk_level: Option<clipcraft_engine::DiskLevel>,
     listener: Option<HotkeyListener>,
     retiring_listener: Option<HotkeyListener>,
     hotkey_settings: Option<clipcraft_engine::Hotkeys>,
@@ -376,7 +379,47 @@ pub(crate) fn notice_with_undo(text: impl Into<String>) -> Option<Notice> {
 
 impl ClipCraftApp {
     /// Runs once per frame: hotkeys, status, and a save that finished.
+    /// While recording, looks at the free disk space once a minute and tells the person when it
+    /// gets low or nearly gone (once for each step down, again if it fills up after being freed).
+    fn watch_disk_space(&mut self) {
+        use clipcraft_engine::DiskLevel;
+        if !self.capture.is_active()
+            || self
+                .capture
+                .disk_checked
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(60))
+        {
+            return;
+        }
+        self.capture.disk_checked = Some(Instant::now());
+        let folder = PathBuf::from(self.directory_text.trim());
+        let Some(free) = clipcraft_engine::free_space(&folder) else {
+            return;
+        };
+        let level = clipcraft_engine::disk_level(free);
+        let before = self.capture.disk_level.unwrap_or(DiskLevel::Fine);
+        self.capture.disk_level = Some(level);
+        if level > before {
+            let room = clipcraft_engine::format_bytes(free);
+            self.capture.notice = match level {
+                DiskLevel::Critical => notice(
+                    format!(
+                        "Your disk is almost full: only {room} left. Saving a clip may fail until you free some space."
+                    ),
+                    true,
+                    None,
+                ),
+                _ => notice(
+                    format!("Your disk is getting full: {room} left for clips."),
+                    false,
+                    None,
+                ),
+            };
+        }
+    }
+
     pub(crate) fn capture_frame(&mut self, context: &egui::Context) {
+        self.watch_disk_space();
         clipcraft_engine::enable_export_hardware(
             self.recording.video_encoder == clipcraft_engine::VideoEncoder::Gpu,
         );
@@ -1158,6 +1201,12 @@ impl ClipCraftApp {
                         if report.deleted.len() == 1 { "" } else { "s" }
                     )
                 };
+                // A clip that does not look right when reopened is kept, and said so: the person
+                // should know before they rely on it.
+                let doubt = match &report.check {
+                    clipcraft_engine::ClipCheck::Good => None,
+                    clipcraft_engine::ClipCheck::Doubtful(why) => Some(why.clone()),
+                };
                 if self.recording.show_save_notification {
                     self.saved_toast = Some(crate::saved_toast::SavedToast::new(
                         report.clip.path.clone(),
@@ -1170,7 +1219,15 @@ impl ClipCraftApp {
                     ));
                 }
                 // The card says it all; the top bar only speaks up when there is more to tell.
-                if !self.recording.show_save_notification
+                if let Some(why) = doubt {
+                    self.capture.notice = notice(
+                        format!(
+                            "Saved {name}, but it may be damaged: {why}. Play it before you rely on it."
+                        ),
+                        true,
+                        Some(report.clip.path.clone()),
+                    );
+                } else if !self.recording.show_save_notification
                     || metadata_warning
                     || !report.deleted.is_empty()
                 {
@@ -2730,6 +2787,7 @@ mod tests {
                         audio_tracks: 0,
                         start_frame: 0,
                     },
+                    check: clipcraft_engine::ClipCheck::Good,
                     deleted: Vec::new(),
                     recorded_game: Some("Captured Game".into()),
                 }))

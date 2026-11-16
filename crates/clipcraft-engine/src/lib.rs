@@ -103,12 +103,14 @@ pub use rename::{MAX_CLIP_NAME_CHARS, RenamedClip, clean_clip_name};
 pub use safety::{HOGGING_SHARE, HeavyWork, MEMORY_LIMIT_BYTES, StopReason, Verdict, Watchdog};
 pub use screenshot::{ScreenshotJob, screenshot_name};
 pub use session::{
-    CLIP_PREFIX, CaptureSession, MicrophoneTestPlan, SaveJob, SavedClipReport, clip_format,
-    clip_stem, folder_name_for, game_clip_stem, is_clip_file_name, record_config,
+    CLIP_PREFIX, CaptureSession, ClipCheck, MicrophoneTestPlan, SaveJob, SavedClipReport,
+    check_saved_clip, clip_format, clip_stem, folder_name_for, game_clip_stem, is_clip_file_name,
+    record_config,
 };
 pub use share::{SHARE_FOLDER, SharePlan, SharedCopy, make_share_copy, share_plan};
 pub use storage::{
-    StorageUsage, StoredClip, cleanup_plan, default_capture_folder, list_clips, storage_usage,
+    DISK_CRITICAL_BYTES, DISK_LOW_BYTES, DiskLevel, StorageUsage, StoredClip, cleanup_plan,
+    default_capture_folder, disk_level, free_space, list_clips, storage_usage,
 };
 
 pub use index::merge_entries as merge_library_entries;

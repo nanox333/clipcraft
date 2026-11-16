@@ -67,11 +67,56 @@ pub fn clip_format(settings: &RecordingSettings) -> ClipFormat {
     }
 }
 
+/// What reopening a clip just after it was saved showed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClipCheck {
+    /// It opens, has its picture, its length and its sound.
+    Good,
+    /// Something looks wrong with it; the text says what, for the person.
+    Doubtful(String),
+}
+
+/// Reopens the clip that was just written and checks it is what was recorded: it opens, has a
+/// picture, is about as long as recorded, has the sound it should and is the size it was written.
+/// The file is never changed; a doubtful clip is kept and reported.
+pub fn check_saved_clip(clip: &SavedClip) -> ClipCheck {
+    use ClipCheck::Doubtful;
+    let doubtful = |why: &str| Doubtful(why.to_owned());
+    match fs::metadata(&clip.path) {
+        Ok(meta) if meta.len() == clip.bytes => {}
+        Ok(_) => return doubtful("its size changed after it was written"),
+        Err(_) => return doubtful("it could not be opened again"),
+    }
+    let Ok(probe) = clipcraft_media::probe_file(&clip.path) else {
+        return doubtful("it could not be opened again");
+    };
+    if probe.width.is_none() || probe.height.is_none() {
+        return doubtful("it has no picture");
+    }
+    if let (Some(duration), Some(rate)) = (probe.duration, probe.frame_rate) {
+        let expected = rate.tick_of(i64::try_from(clip.duration_frames).unwrap_or(i64::MAX));
+        // A little shorter is rounding; much shorter means footage is missing.
+        if duration.0.saturating_mul(10) < expected.0.saturating_mul(8) {
+            return Doubtful(format!(
+                "it is {:.1} s long and should be about {:.1} s",
+                duration.seconds(),
+                expected.seconds()
+            ));
+        }
+    }
+    if (probe.audio_tracks as usize) < clip.audio_tracks {
+        return doubtful("some of its sound is missing");
+    }
+    ClipCheck::Good
+}
+
 /// A clip that was saved, and any older ClipCraft clips deleted to stay inside the storage limit.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SavedClipReport {
     /// The clip written.
     pub clip: SavedClip,
+    /// What reopening it showed.
+    pub check: ClipCheck,
     /// Older ClipCraft clips removed to make room.
     pub deleted: Vec<PathBuf>,
     /// Game snapped when Save was pressed, independent of later process/session changes.
@@ -651,8 +696,10 @@ impl SaveJob {
             ),
             None => Vec::new(),
         };
+        let check = check_saved_clip(&clip);
         Ok(SavedClipReport {
             clip,
+            check,
             deleted,
             recorded_game: self.recorded_game,
         })
@@ -1676,6 +1723,35 @@ mod tests {
         let pressed = Instant::now();
         let report = job.run().unwrap();
         assert!(pressed.elapsed() >= Duration::from_secs(3));
+        // The clip was reopened after it was written, and is what was recorded.
+        assert_eq!(report.check, ClipCheck::Good);
+        assert_eq!(check_saved_clip(&report.clip), ClipCheck::Good);
+        // A clip that changed afterwards, or that is gone, is called doubtful, never trusted.
+        let damaged = dir.join("damaged.mp4");
+        let bytes = fs::read(&report.clip.path).unwrap();
+        fs::write(&damaged, &bytes[..bytes.len() / 2]).unwrap();
+        let mut cut = report.clip.clone();
+        cut.path = damaged.clone();
+        assert!(matches!(check_saved_clip(&cut), ClipCheck::Doubtful(why) if why.contains("size")));
+        cut.bytes = bytes.len() as u64 / 2;
+        assert!(matches!(check_saved_clip(&cut), ClipCheck::Doubtful(_)));
+        let mut gone = report.clip.clone();
+        gone.path = dir.join("not-here.mp4");
+        assert!(
+            matches!(check_saved_clip(&gone), ClipCheck::Doubtful(why) if why.contains("opened"))
+        );
+        // A recording that promised sound the file does not have.
+        let mut promised = report.clip.clone();
+        promised.audio_tracks = report.clip.audio_tracks + 3;
+        assert!(
+            matches!(check_saved_clip(&promised), ClipCheck::Doubtful(why) if why.contains("sound"))
+        );
+        // Much shorter than recorded.
+        let mut long = report.clip.clone();
+        long.duration_frames *= 5;
+        assert!(
+            matches!(check_saved_clip(&long), ClipCheck::Doubtful(why) if why.contains("long"))
+        );
         // A slow machine may drop pictures while the encoder catches up, so the clip is not
         // required to be the full 4.2 s; it must clearly hold more than was buffered at the
         // press, which is the picture taken during the post-roll.
