@@ -622,7 +622,7 @@ impl Playback {
         let corner = if rounded { 14 } else { 0 };
         let frame = canvas.map_or(rect, |size| fit(size, rect));
         // The edit's own frame is drawn so its shape is plain: a lighter surround, the frame in
-        // black, and a lime edge where the frame does not fill the area.
+        // black, and a thin light edge where the frame does not fill the area.
         let framed = canvas.is_some()
             && ((frame.width() - rect.width()).abs() >= 1.5
                 || (frame.height() - rect.height()).abs() >= 1.5);
@@ -630,7 +630,7 @@ impl Playback {
             ui.painter().rect_filled(
                 rect,
                 egui::CornerRadius::same(corner),
-                Color32::from_rgb(33, 33, 38),
+                Color32::from_rgb(26, 26, 30),
             );
             ui.painter().rect_filled(frame, 2.0, Color32::BLACK);
         } else {
@@ -663,7 +663,7 @@ impl Playback {
             ui.painter().rect_stroke(
                 frame,
                 2.0,
-                egui::Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(190, 255, 43, 170)),
+                egui::Stroke::new(1.0_f32, Color32::from_white_alpha(34)),
                 egui::StrokeKind::Outside,
             );
         }

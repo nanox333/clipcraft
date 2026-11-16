@@ -39,6 +39,8 @@ pub(crate) struct Selection {
     pending: Option<PendingTrash>,
     /// Clips being moved to the Recycle Bin.
     trashing: Option<BulkTrashing>,
+    /// A menu was open on the last frame, so an Escape now closed it and is not ours.
+    menu_was_open: bool,
 }
 
 impl Selection {
@@ -258,18 +260,30 @@ impl ClipCraftApp {
         }
     }
 
-    /// Escape ends choosing, and Ctrl or ⌘ A chooses everything on screen, unless the person is
-    /// typing or a box or menu is open.
+    /// Escape clears the chosen clips first and ends choosing on the next press, and Ctrl or ⌘ A
+    /// chooses everything on screen, unless the person is typing or a box or menu is open.
     pub(crate) fn selection_keys(&mut self, ui: &egui::Ui) {
+        let menu_open = egui::Popup::is_any_open(ui.ctx());
+        // A menu closes itself on Escape before this runs, so remember it was open a frame ago.
+        let menu_just_closed = std::mem::replace(&mut self.selection.menu_was_open, menu_open);
         if !self.selection.active
             || self.selection.confirm
             || typing_in_a_text_box(ui.ctx())
-            || egui::Popup::is_any_open(ui.ctx())
+            || menu_open
         {
             return;
         }
+        let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
+        if escape && menu_just_closed {
+            return;
+        }
         if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-            self.set_choosing(false);
+            if self.selection.chosen.is_empty() {
+                self.set_choosing(false);
+            } else {
+                self.selection.chosen.clear();
+                self.selection.anchor = None;
+            }
         } else if ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::A)) {
             self.select_all_shown();
         }
@@ -945,6 +959,58 @@ mod tests {
             !focus_in_a_frame(false),
             "a focused button is not a text box"
         );
+    }
+
+    /// One frame in which Escape is pressed (or not) while the selection keys are handled.
+    fn frame_with_escape(app: &mut ClipCraftApp, context: &egui::Context, escape: bool) {
+        let mut input = egui::RawInput::default();
+        if escape {
+            input.events.push(egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: Some(egui::Key::Escape),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        let _ = context.run(input, |context| {
+            egui::CentralPanel::default().show(context, |ui| app.selection_keys(ui));
+        });
+    }
+
+    #[test]
+    fn escape_clears_the_chosen_clips_first_and_ends_choosing_second() {
+        let mut app = ClipCraftApp::restored_from(None);
+        let context = egui::Context::default();
+        app.set_choosing(true);
+        app.selection.chosen.insert("/clips/a.mp4".to_owned());
+        app.selection.chosen.insert("/clips/b.mp4".to_owned());
+        frame_with_escape(&mut app, &context, false);
+        assert_eq!(app.selection.chosen.len(), 2, "no key, nothing changes");
+        frame_with_escape(&mut app, &context, true);
+        assert!(
+            app.selection.chosen.is_empty(),
+            "the first Escape deselects"
+        );
+        assert!(app.selection.active, "and stays in choosing mode");
+        frame_with_escape(&mut app, &context, true);
+        assert!(!app.selection.active, "the second Escape leaves choosing");
+    }
+
+    #[test]
+    fn escape_that_closes_a_menu_does_not_touch_the_selection() {
+        let mut app = ClipCraftApp::restored_from(None);
+        let context = egui::Context::default();
+        app.set_choosing(true);
+        app.selection.chosen.insert("/clips/a.mp4".to_owned());
+        // A menu was open on the last frame and has closed by the time Escape arrives.
+        app.selection.menu_was_open = true;
+        frame_with_escape(&mut app, &context, true);
+        assert_eq!(app.selection.chosen.len(), 1);
+        assert!(app.selection.active);
+        // With the menu gone, the next Escape is the selection's again.
+        frame_with_escape(&mut app, &context, true);
+        assert!(app.selection.chosen.is_empty());
     }
 
     fn clip(name: &str) -> MediaEntry {

@@ -1539,11 +1539,11 @@ impl EditorState {
         let text = format!("{name}  \u{00b7}  {} \u{00d7} {}", canvas.0, canvas.1);
         let galley = ui.painter().layout_no_wrap(
             text,
-            FontId::new(crate::kit::text_size::CAPTION, kit::semibold()),
-            TEXT,
+            FontId::proportional(crate::kit::text_size::CAPTION),
+            MUTED,
         );
-        let icon = 14.0;
-        let size = Vec2::new(galley.size().x + icon + 28.0, 24.0);
+        let icon = 12.0;
+        let size = Vec2::new(galley.size().x + icon + 26.0, 22.0);
         let frame = crate::playback::fit(Vec2::new(canvas.0 as f32, canvas.1 as f32), area);
         let origin = if frame.width() >= size.x + 16.0 {
             frame.min + Vec2::splat(8.0)
@@ -1552,13 +1552,7 @@ impl EditorState {
         };
         let pill = egui::Rect::from_min_size(origin, size);
         ui.painter()
-            .rect_filled(pill, 12.0, Color32::from_rgba_unmultiplied(12, 12, 14, 215));
-        ui.painter().rect_stroke(
-            pill,
-            12.0,
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(190, 255, 43, 120)),
-            egui::StrokeKind::Inside,
-        );
+            .rect_filled(pill, 11.0, Color32::from_black_alpha(150));
         // A tiny drawing of the shape at its own proportions.
         let (across, down) = shape
             .ratio()
@@ -1573,16 +1567,16 @@ impl EditorState {
         ui.painter().rect_stroke(
             egui::Rect::from_center_size(egui::pos2(pill.left() + 14.0, pill.center().y), drawn),
             1.5,
-            Stroke::new(1.5_f32, LIME),
+            Stroke::new(1.2_f32, MUTED),
             egui::StrokeKind::Inside,
         );
         ui.painter().galley(
             egui::pos2(
-                pill.left() + 14.0 + icon / 2.0 + 8.0,
+                pill.left() + 14.0 + icon / 2.0 + 7.0,
                 pill.center().y - galley.size().y / 2.0,
             ),
             galley,
-            TEXT,
+            MUTED,
         );
     }
     fn export_canvas(&self) -> Result<(u32, u32), String> {

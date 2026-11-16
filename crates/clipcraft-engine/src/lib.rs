@@ -1574,7 +1574,9 @@ fn reveal_in_file_manager(path: &Path) -> Result<String, EngineError> {
     if path.as_os_str().is_empty() {
         return Err(EngineError::EmptyMediaPath);
     }
-    let absolute = std::path::absolute(path).map_err(|_| EngineError::FileUnavailable)?;
+    // Explorer cannot select a file given as `\\?\C:\...` (it opens Documents), and library
+    // entries made by older versions may carry that form.
+    let absolute = plain_path(std::path::absolute(path).map_err(|_| EngineError::FileUnavailable)?);
     fs::metadata(&absolute).map_err(|_| EngineError::FileUnavailable)?;
 
     let (program, arguments) = reveal_invocation(FileManager::current(), &absolute);
