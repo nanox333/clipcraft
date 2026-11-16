@@ -64,7 +64,9 @@ meant to ask wrote the default settings over the saved file before the person co
 the first-run screen then covered the question, so it was never seen and the settings were lost.
 Fixed: nothing is written to the settings file while the question is open, and the first-run
 setup opens only after the answer. Unit tests cover both answers (they fail without the fix). The
-fix itself has not been re-checked in the running Windows app yet.
+fix was then re-checked in the running Windows app: the question shows with the settings file unchanged, "Use my settings" keeps it, and "Keep the defaults" keeps a copy and then opens the setup.
+
+Windows selection check (2026-11-16): a second fault: after clicking a clip, Ctrl+A did nothing and Esc needed two presses, because the clicked card keeps the keyboard focus and the key handler treated any focused widget as typing. Fixed (only a focused text box now blocks them); in the running app Ctrl+A then chose all 12 clips and one Esc ended choosing.
 
 Known limits: the pause for programs needs to see the windows on the screen, which ClipCraft can do on Windows and on X11 with a window manager, and cannot do on Wayland (the Experimental page says so there; the lock screen pause still works); a program is matched by its file name, so a script or a Flatpak or Snap app may appear under another name; the pause only knows programs on its list (1Password, Bitwarden, KeePass, KeePassXC,
 Dashlane, Enpass, Keeper, LastPass, NordPass, Proton Pass, RoboForm, Authy), not websites in a

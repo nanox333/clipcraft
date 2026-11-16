@@ -263,7 +263,7 @@ impl ClipCraftApp {
     pub(crate) fn selection_keys(&mut self, ui: &egui::Ui) {
         if !self.selection.active
             || self.selection.confirm
-            || ui.ctx().wants_keyboard_input()
+            || typing_in_a_text_box(ui.ctx())
             || egui::Popup::is_any_open(ui.ctx())
         {
             return;
@@ -900,9 +900,52 @@ fn collection_row(ui: &mut egui::Ui, name: &str, state: Membership) -> egui::Res
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// Whether the keyboard focus is in a text box, where Ctrl+A and Esc belong to the box. Any
+/// other focused widget does not count: a clip card keeps the focus after it is clicked, and that
+/// must not stop Ctrl+A choosing every clip or make Esc need a second press.
+fn typing_in_a_text_box(context: &egui::Context) -> bool {
+    context
+        .memory(|memory| memory.focused())
+        .is_some_and(|id| egui::text_edit::TextEditState::load(context, id).is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One frame of a window holding a text box and a button; the named one takes the focus.
+    fn focus_in_a_frame(text_box: bool) -> bool {
+        let context = egui::Context::default();
+        let mut text = String::new();
+        let mut focus = None;
+        for frame in 0..3 {
+            let _ = context.run(egui::RawInput::default(), |context| {
+                egui::CentralPanel::default().show(context, |ui| {
+                    let edit = ui.text_edit_singleline(&mut text);
+                    let button = ui.button("card");
+                    if frame == 0 {
+                        focus = Some(if text_box { edit.id } else { button.id });
+                    }
+                });
+                if frame == 0
+                    && let Some(id) = focus
+                {
+                    context.memory_mut(|memory| memory.request_focus(id));
+                }
+            });
+        }
+        assert!(context.memory(|memory| memory.focused()).is_some());
+        typing_in_a_text_box(&context)
+    }
+
+    #[test]
+    fn a_focused_card_is_not_typing_but_a_focused_text_box_is() {
+        assert!(focus_in_a_frame(true), "a text box has the focus");
+        assert!(
+            !focus_in_a_frame(false),
+            "a focused button is not a text box"
+        );
+    }
 
     fn clip(name: &str) -> MediaEntry {
         crate::tests::media_entry(name, None)
