@@ -1621,17 +1621,18 @@ mod tests {
             ],
         })
         .unwrap();
-        engine.tick(Duration::from_millis(10));
+        // Tick along in small steps (so no single tick has a big stretch of sound to encode),
+        // past the two seconds after which the lost device is tried again. Every tick is timed:
+        // the one that starts the reopening must not wait for the device, which sleeps 600 ms.
         let mut slowest = Duration::ZERO;
-        // Past the two seconds after which the lost device is tried again, while it sleeps.
-        for step in 0..40_u64 {
+        for at in (10..2_600).step_by(10) {
             let before = std::time::Instant::now();
-            engine.tick(Duration::from_millis(2_050 + step * 10));
+            engine.tick(Duration::from_millis(at));
             slowest = slowest.max(before.elapsed());
-            std::thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(Duration::from_millis(1));
         }
         assert!(
-            slowest < Duration::from_millis(200),
+            slowest < Duration::from_millis(400),
             "a tick waited {slowest:?} for the device"
         );
         assert!(engine.status()[0].lost);

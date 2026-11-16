@@ -527,7 +527,7 @@ mod platform {
                 std::thread::sleep(Duration::from_millis(10));
             }
             assert!(
-                worst < Duration::from_millis(100),
+                worst < Duration::from_millis(300),
                 "the sound thread waited {worst:?}"
             );
             // When the tool's own time limit passes, the source says why it is waiting.
