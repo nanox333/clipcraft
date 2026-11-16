@@ -101,29 +101,49 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
 
-    eframe::run_native(
-        "ClipCraft",
-        options,
-        Box::new(|creation| {
-            // Fonts must be installed before the first frame uses a named family.
-            kit::install_fonts(&creation.egui_ctx);
-            kit::apply_theme(&creation.egui_ctx);
-            if minimized {
-                creation
-                    .egui_ctx
-                    .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-            }
-            let mut app = ClipCraftApp::restored();
-            app.tray = tray::Tray::new(&creation.egui_ctx);
-            app.show_requests = clipcraft_engine::default_show_request_path()
-                .map(|path| single_instance::watch_show_requests(path, creation.egui_ctx.clone()));
-            app.gpu_session = Some(gpu_restart::GpuSession::begin());
-            if let Some(path) = clipcraft_engine::default_editor_draft_path() {
-                app.editor.enable_recovery(path, &creation.egui_ctx);
-            }
-            Ok(Box::new(app))
-        }),
-    )
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        eframe::run_native(
+            "ClipCraft",
+            options,
+            Box::new(|creation| {
+                // Fonts must be installed before the first frame uses a named family.
+                kit::install_fonts(&creation.egui_ctx);
+                kit::apply_theme(&creation.egui_ctx);
+                if minimized {
+                    creation
+                        .egui_ctx
+                        .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                }
+                let mut app = ClipCraftApp::restored();
+                app.tray = tray::Tray::new(&creation.egui_ctx);
+                app.show_requests = clipcraft_engine::default_show_request_path().map(|path| {
+                    single_instance::watch_show_requests(path, creation.egui_ctx.clone())
+                });
+                app.gpu_session = Some(gpu_restart::GpuSession::begin());
+                if let Some(path) = clipcraft_engine::default_editor_draft_path() {
+                    app.editor.enable_recovery(path, &creation.egui_ctx);
+                }
+                Ok(Box::new(app))
+            }),
+        )
+    }));
+    match outcome {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => {
+            crash::report_fatal(
+                &format!("ClipCraft could not open its window: {error}"),
+                crash::startup_advice(&error.to_string()),
+            );
+            Err(error)
+        }
+        Err(_) => {
+            crash::report_fatal(
+                "ClipCraft stopped because of an internal error.",
+                "Start ClipCraft again to continue. ",
+            );
+            std::process::exit(1);
+        }
+    }
 }
 
 #[derive(Default)]

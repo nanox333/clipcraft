@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **No more silent disappearing:** on Windows ClipCraft (and its setup) has no console, so when the
+  window could not be opened (no OpenGL in a remote desktop or a virtual machine, an old graphics
+  driver) or an internal error ended the program, it simply vanished. It now shows a message that
+  says what happened and what to try (your clips are not affected), and writes the same to
+  `crash-reports.log`.
 - **The window survives a bad frame:** if drawing a screen panics, ClipCraft keeps running (and
   keeps recording and answering shortcuts) instead of closing and losing the replay in memory. The
   next frame is drawn normally; if screens keep failing, a plain fallback screen with *Try again*

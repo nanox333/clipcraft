@@ -41,7 +41,9 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
   ClipCraft itself uses nearly all of the processor for a long time or far too much memory, so it
   cannot starve the computer, and an internal error inside a recording is reported at once with the
   replay kept. A problem while drawing a screen no longer closes the program: it keeps recording,
-  shows a fallback screen and writes a local note (`crash-reports.log`). Automatic quality (on by default) records half, then a third, of the
+  shows a fallback screen and writes a local note (`crash-reports.log`); if the window cannot be
+  opened at all, or an internal error ends the program, a message box says so instead of the
+  program vanishing. Automatic quality (on by default) records half, then a third, of the
   pictures per second when the computer cannot keep up, and goes back when there is room, without
   clearing the replay. It also steps down before anything is lost when a game starts taking the
   computer and each picture suddenly takes much longer to encode. Pause and resume clipping with a hotkey or the Pause button, and an optional

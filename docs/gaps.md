@@ -173,7 +173,12 @@ running after its eight-second limit and collected its whole output; it is now e
 would hang or fill memory); now read to the size of a token (test: `/dev/zero`). (5) a panic while drawing the window used to end the whole program and with it the replay in
 memory; each frame now runs inside `crash::FrameGuard` (tested with injected panics, and looked at
 on screen), a panic hook appends a short note to `crash-reports.log` (64 KiB, local only), and a
-plain fallback screen replaces a screen that fails three frames in a row. State a half-finished
+plain fallback screen replaces a screen that fails three frames in a row. A program with no
+console (Windows) used to disappear when its window could not be opened or after a fatal panic; both
+now show a message box (`show_error_box`, `MessageBoxW`; elsewhere the text goes to standard
+error) with advice that matches the cause, and write the note. The installer does the same.
+Tried here: no display at all gives the message and the note and exit code 1; the Windows box
+itself has only been type-checked, not seen. State a half-finished
 frame left behind is not repaired, so a screen can look wrong until *Try again*; a panic inside
 the program's startup (before the first frame) still ends it. **Also run, with no failures:** the
 damaged-media pass at 2,500 rounds per format (5,000 files; set `CLIPCRAFT_HOSTILE_ROUNDS`); a new

@@ -31,6 +31,7 @@ mod hevc_stream;
 mod hotkey;
 mod http;
 mod installation;
+mod message_box;
 #[cfg(windows)]
 mod mf_encoder;
 #[cfg(windows)]
@@ -76,6 +77,7 @@ pub use drag::start_file_drag;
 pub use drag::start_file_drag_on;
 pub use http::https_get;
 pub use installation::{register_installation, unregister_installation};
+pub use message_box::show_error_box;
 pub use priority::set_background_priority;
 pub use process::{
     ProcessObserver, RunningProcess, process_family, running_processes, steam_installation_roots,

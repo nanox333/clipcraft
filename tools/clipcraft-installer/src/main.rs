@@ -168,7 +168,13 @@ fn main() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("ClipCraft setup: {error}");
+            // A program with no console: without a box the setup would just disappear.
+            clipcraft_platform::show_error_box(
+                "ClipCraft setup",
+                &format!(
+                    "ClipCraft setup could not start: {error}\n\nNothing was installed or changed. If this keeps happening, check that your graphics driver is up to date, or use the portable zip instead."
+                ),
+            );
             std::process::ExitCode::FAILURE
         }
     }

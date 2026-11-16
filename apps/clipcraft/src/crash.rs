@@ -114,6 +114,41 @@ fn append_entry(path: &Path, entry: &str) {
     let _ = fs::write(path, kept);
 }
 
+/// The program cannot go on (its window cannot be opened, or an internal error ended it): write
+/// it down and say so in a box, since a program without a console would otherwise just vanish.
+pub fn report_fatal(what: &str, advice: &str) {
+    let entry = format_entry(
+        clipcraft_engine::unix_now(),
+        "main",
+        &format!("fatal: {what}"),
+        "startup or exit",
+    );
+    if let Ok(slot) = LOG.lock()
+        && let Some(path) = slot.as_deref()
+    {
+        append_entry(path, &entry);
+    }
+    clipcraft_platform::show_error_box("ClipCraft", &fatal_text(what, advice));
+}
+
+/// What to try when the window could not be opened, from what went wrong.
+pub fn startup_advice(error: &str) -> &'static str {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("display") || lower.contains("wayland") || lower.contains("x11") {
+        "No desktop was found to open a window on. Start ClipCraft from your desktop session, not from a plain terminal, a remote shell or a service. "
+    } else {
+        "This usually means the graphics driver is missing, too old, or not available in this kind of session (remote desktop, some virtual machines): ClipCraft needs OpenGL 3.3. Update the graphics driver and start ClipCraft again. "
+    }
+}
+
+/// The words of the box.
+fn fatal_text(what: &str, advice: &str) -> String {
+    let what: String = what.chars().take(600).collect();
+    format!(
+        "{what}\n\n{advice}Your saved clips are not affected. What happened was also saved in crash-reports.log beside your settings."
+    )
+}
+
 /// Runs one frame of the window at a time and survives a panic in it.
 #[derive(Default)]
 pub struct FrameGuard {
@@ -247,6 +282,30 @@ mod tests {
         guard.retry();
         assert!(!guard.broken());
         assert!(guard.run(|| {}));
+    }
+
+    #[test]
+    fn the_fatal_box_says_what_happened_what_to_try_and_that_clips_are_safe() {
+        let text = fatal_text(
+            "ClipCraft could not open its window: no OpenGL",
+            "Update the driver. ",
+        );
+        assert!(
+            text.starts_with(
+                "ClipCraft could not open its window: no OpenGL\n\nUpdate the driver. "
+            )
+        );
+        assert!(text.contains("saved clips are not affected"));
+        assert!(text.contains("crash-reports.log"));
+        // A very long reason is cut.
+        assert!(fatal_text(&"x".repeat(5_000), "").len() < 900);
+    }
+
+    #[test]
+    fn the_advice_fits_the_cause() {
+        assert!(startup_advice("neither WAYLAND_DISPLAY nor DISPLAY is set").contains("desktop"));
+        assert!(startup_advice("NoGlutinConfigs").contains("OpenGL 3.3"));
+        assert!(startup_advice("").contains("graphics driver"));
     }
 
     #[test]
