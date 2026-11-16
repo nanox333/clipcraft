@@ -43,8 +43,8 @@ edge, gone by the right), a quiet grey outline (the kind is not shown by a colou
 soft shadow and, along its bottom edge, a thin track with a line in the kind's colour that shrinks
 as its time runs out. The saved-clip pop-up has the same glow, a larger picture and a 20 px title. A
 banner has a faint wash of the kind's colour and an outline in the kind's colour instead, and no
-banner has a faint wash of the kind's colour and an outline in the kind's colour instead, and no
 shadow.
+
 ## Motion
 
 One entrance and one exit, the same length everywhere:
