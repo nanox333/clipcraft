@@ -212,7 +212,7 @@ fn share_words(state: &ShareState, megabytes: u16) -> (String, String) {
     match state {
         ShareState::Ready => (
             "Drag into Discord".to_owned(),
-            format!("Pick up the picture and drop it in a chat \u{b7} {megabytes} MB"),
+            format!("Drop it in a chat \u{b7} {megabytes} MB"),
         ),
         ShareState::Making(done) => (
             format!("Making a {megabytes} MB copy\u{2026} {:.0}%", done * 100.0),
@@ -301,8 +301,8 @@ pub(crate) fn share_chip(
     }
     // The picture to pick up: bigger and raised on hover, with a shadow that grows.
     let base = egui::Rect::from_min_size(
-        rect.left_top() + Vec2::new(12.0, 12.0),
-        Vec2::new(96.0, 60.0),
+        rect.left_top() + Vec2::new(14.0, 16.0),
+        Vec2::new(82.0, 52.0),
     );
     let raised = base
         .expand2(
@@ -331,13 +331,13 @@ pub(crate) fn share_chip(
         egui::StrokeKind::Inside,
     );
     // The words.
-    let text_left = base.right() + 22.0;
-    let room = (rect.right() - text_left - 44.0).max(40.0);
+    let text_left = base.right() + 18.0;
+    let room = (rect.right() - text_left - 38.0).max(40.0);
     let fit = |text: String, font: egui::FontId, color: Color32| {
         let mut job = egui::text::LayoutJob::simple_singleline(text, font, color);
         job.wrap.max_width = room;
-        job.wrap.max_rows = 2;
-        job.wrap.break_anywhere = false;
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
         job.wrap.overflow_character = Some('\u{2026}');
         painter.layout_job(job)
     };
