@@ -994,10 +994,28 @@ impl EditorState {
 
 /// One part of a capsule of buttons: lime while it is the active one.
 fn segment(ui: &mut egui::Ui, label: &str, active: bool, width: f32) -> egui::Response {
+    segment_if(ui, label, active, true, width)
+}
+
+/// [`segment`] that can be switched off: dim, and it does not react.
+pub(super) fn segment_if(
+    ui: &mut egui::Ui,
+    label: &str,
+    active: bool,
+    enabled: bool,
+    width: f32,
+) -> egui::Response {
     let height = crate::kit::control::COMPACT - 6.0;
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
-    let (fill, text) = if active {
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), sense);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    let (fill, text) = if !enabled {
+        (Color32::TRANSPARENT, FAINT)
+    } else if active {
         (LIME, Color32::BLACK)
     } else if response.hovered() {
         (kit::CONTROL_HOVER, TEXT)

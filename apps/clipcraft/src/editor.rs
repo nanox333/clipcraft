@@ -1041,11 +1041,37 @@ impl EditorState {
                 {
                     self.export_dialog = true;
                 }
-                if button(ui, "Redo", false, self.session.can_redo() && !self.busy()).clicked() {
-                    self.edit(EditorAction::Redo);
-                }
-                if button(ui, "Undo", false, self.session.can_undo() && !self.busy()).clicked() {
+                // Undo and Redo as one capsule, like the zoom controls under the preview.
+                let (can_undo, can_redo) = (
+                    self.session.can_undo() && !self.busy(),
+                    self.session.can_redo() && !self.busy(),
+                );
+                let (mut undo, mut redo) = (false, false);
+                egui::Frame::new()
+                    .fill(kit::CONTROL)
+                    .stroke(Stroke::new(1.0_f32, kit::CONTROL_BORDER))
+                    .corner_radius((crate::kit::control::COMPACT / 2.0) as u8)
+                    .inner_margin(egui::Margin::same(2))
+                    .show(ui, |ui| {
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(116.0, crate::kit::control::COMPACT - 6.0),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                undo = timeline::segment_if(ui, "Undo", false, can_undo, 56.0)
+                                    .on_hover_text("Undo (Ctrl+Z)")
+                                    .clicked();
+                                redo = timeline::segment_if(ui, "Redo", false, can_redo, 56.0)
+                                    .on_hover_text("Redo (Ctrl+Shift+Z)")
+                                    .clicked();
+                            },
+                        );
+                    });
+                if undo && can_undo {
                     self.edit(EditorAction::Undo);
+                }
+                if redo && can_redo {
+                    self.edit(EditorAction::Redo);
                 }
                 // Keep cancellation reachable even when a short window clips the lower timeline.
                 if let Some(job) = &self.job {
@@ -1388,6 +1414,8 @@ impl EditorState {
                 ("Space", "play"),
                 ("S", "split"),
                 ("\u{2190} \u{2192}", "frame"),
+                ("Home", "start"),
+                ("End", "end"),
                 ("Del", "delete"),
                 ("Ctrl Z", "undo"),
             ] {
