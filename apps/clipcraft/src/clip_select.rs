@@ -639,6 +639,10 @@ impl ClipCraftApp {
         if modal.should_close() {
             decision = decision.or(Some(false));
         }
+        // The dialog is gone next frame, so the screen must be drawn again even with no input.
+        if decision.is_some() {
+            context.request_repaint();
+        }
         match decision {
             Some(true) => {
                 self.selection.confirm = false;
@@ -657,6 +661,17 @@ impl ClipCraftApp {
             }
             Some(false) => self.selection.confirm = false,
             None => {}
+        }
+    }
+
+    /// Moves the waiting clips now, without the rest of the time to undo.
+    pub(crate) fn delete_pending_now(&mut self) {
+        if self.selection.trashing.is_some() {
+            return;
+        }
+        if let Some(pending) = self.selection.pending.take() {
+            self.capture.notice = None;
+            self.start_bulk_trash(pending.paths);
         }
     }
 
@@ -867,6 +882,27 @@ mod tests {
 
     fn refs(entries: &[MediaEntry]) -> Vec<&MediaEntry> {
         entries.iter().collect()
+    }
+
+    #[test]
+    fn delete_now_starts_the_move_at_once_and_undo_still_cancels_while_waiting() {
+        let mut app = ClipCraftApp::restored_from(None);
+        let waiting = || PendingTrash {
+            paths: vec!["/clips/none.mp4".to_owned()],
+            since: Instant::now(),
+        };
+        app.selection.pending = Some(waiting());
+        app.undo_pending_trash();
+        assert!(app.selection.pending.is_none());
+        assert!(app.selection.trashing.is_none());
+        app.selection.pending = Some(waiting());
+        app.delete_pending_now();
+        assert!(app.selection.pending.is_none());
+        assert!(app.selection.trashing.is_some(), "the move started");
+        // With nothing waiting, nothing happens.
+        app.selection.trashing = None;
+        app.delete_pending_now();
+        assert!(app.selection.trashing.is_none());
     }
 
     #[test]

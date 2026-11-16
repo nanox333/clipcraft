@@ -1854,6 +1854,7 @@ Encoder: {}",
         };
         let mut show = false;
         let mut undone = false;
+        let mut delete_now = false;
         let mut dismiss = false;
         // It rises into place from the bottom of the window (so it never sits on the controls at
         // the top of a page) and fades in; a coloured dot says at a glance whether it is good news.
@@ -1942,6 +1943,12 @@ Encoder: {}",
                             {
                                 undone = true;
                             }
+                            if undo
+                                && kit::labelled_button(ui, Icon::Trash, "Delete now", false, true)
+                                    .clicked()
+                            {
+                                delete_now = true;
+                            }
                             let (rect, response) =
                                 ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::click());
                             response.widget_info(|| {
@@ -1976,6 +1983,10 @@ Encoder: {}",
         context.data_mut(|data| data.insert_temp(held_key, (held_for, text_key)));
         if undone {
             self.undo_pending_trash();
+            context.request_repaint();
+        } else if delete_now {
+            self.delete_pending_now();
+            context.request_repaint();
         }
         if show && let Some(path) = path {
             self.reveal_media(path);

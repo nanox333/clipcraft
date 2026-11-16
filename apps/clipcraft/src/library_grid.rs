@@ -315,6 +315,11 @@ impl GridState {
         }
         let mut scroll = egui::ScrollArea::vertical()
             .id_salt("clip-grid")
+            // Dragging on the page draws a selection box or moves a card; it must not also scroll.
+            .scroll_source(
+                egui::scroll_area::ScrollSource::SCROLL_BAR
+                    | egui::scroll_area::ScrollSource::MOUSE_WHEEL,
+            )
             .auto_shrink([false, false]);
         if let Some((index, _)) = self.target
             && let Some(&(row, _)) = natural.cells.get(index)
@@ -468,6 +473,7 @@ impl GridState {
                 .collect();
             if let Some(paths) = self.drive_box(
                 &context,
+                ui.layer_id(),
                 origin,
                 output.inner_rect,
                 &shown,
@@ -582,6 +588,7 @@ impl GridState {
     fn drive_box(
         &mut self,
         context: &egui::Context,
+        layer: egui::LayerId,
         origin: egui::Pos2,
         area: egui::Rect,
         layout: &Layout,
@@ -610,6 +617,8 @@ impl GridState {
         if pressed
             && !egui::Popup::is_any_open(context)
             && let Some(point) = pointer
+            // Not through a dialog or menu drawn over the page.
+            && context.layer_id_at(point).is_none_or(|top| top == layer)
             && area.contains(point)
             // Not on the scrollbar at the right edge.
             && point.x < area.right() - 14.0
@@ -1232,6 +1241,66 @@ mod box_tests {
             set = Some(paths);
         }
         set
+    }
+
+    #[test]
+    fn a_click_inside_a_dialog_over_the_page_does_not_clear_the_choice() {
+        let context = crate::kit::test_context();
+        let (few, few_view) = clips(2);
+        let mut grid = GridState::default();
+        let chosen: std::collections::BTreeSet<String> =
+            [few.entries[0].path.clone()].into_iter().collect();
+        let blank = egui::pos2(800.0, 600.0);
+        let mut thumbs = Thumbnails::default();
+        let mut answers = Vec::new();
+        // The first frames let the dialog take its place before the pointer arrives.
+        let steps = [
+            vec![],
+            vec![],
+            vec![egui::Event::PointerMoved(blank)],
+            vec![press(blank, true, egui::Modifiers::NONE)],
+            vec![press(blank, false, egui::Modifiers::NONE)],
+            vec![],
+        ];
+        for events in steps {
+            let _ = context.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 700.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        answers.push(grid.show(
+                            ui,
+                            &few,
+                            &few_view,
+                            &mut thumbs,
+                            false,
+                            GridShape::default(),
+                            Some(&chosen),
+                        ));
+                    });
+                    // A dialog drawn over the page, covering the pointer.
+                    egui::Area::new(egui::Id::new("dialog"))
+                        .order(egui::Order::Foreground)
+                        .fixed_pos(egui::pos2(700.0, 500.0))
+                        .show(ctx, |ui| {
+                            ui.allocate_exact_size(egui::vec2(300.0, 200.0), egui::Sense::click());
+                        });
+                },
+            );
+        }
+        assert!(
+            answers
+                .iter()
+                .all(|answer| !matches!(answer, Some(ClipCardAction::SetSelection(_)))),
+            "{:?}",
+            answers.len()
+        );
     }
 
     #[test]

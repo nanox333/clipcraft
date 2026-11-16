@@ -25,7 +25,7 @@ drag a box over empty space like on a desktop (Ctrl or Shift adds to what is cho
 A for all shown clips, Esc to leave. A bar then offers **Favorite**, **Collection** (a tick or a
 dash for each collection, and a field for a new one) and **Delete**. Delete asks first, names the
 clips and the space they use, leaves favorites out unless the box for them is ticked, and moves the
-clips to the Recycle Bin with a 10-second **Undo** notice. At most 500 clips go in one delete.
+clips to the Recycle Bin after 10 seconds, with **Undo** and **Delete now** buttons on the notice. At most 500 clips go in one delete.
 
 Safety measures that came with it:
 
@@ -44,7 +44,7 @@ Safety measures that came with it:
 - **After three starts in a row that never got going,** ClipCraft opens with default settings and
   asks whether to keep them (the saved settings are kept beside them) or go back to the saved ones.
 
-Checked here (Linux): unit tests for the selection maths (ranges, box, the 500 limit, favorite and
+Checked here (Linux, Xvfb, software OpenGL): a recording and screenshots of choosing clips (click, Shift-click, drawing a box, Ctrl and A, Favorite, the Collection menu, the Delete dialog, the Undo notice and a real move to the Trash). Doing this found and fixed three faults: dragging up with the box also scrolled the page, a click inside the Delete dialog reached the grid below and cleared the choice, and the dialog stayed painted until the next input. Unit tests for the selection maths (ranges, box, the 500 limit, favorite and
 collection edits), the delete summary (favorites left out, missing files), the undo window, the
 storage clean-up skipping protected clips, the clip check on good, truncated and picture-less files,
 the disk levels, the backup rotation and restore (settings and index), the pause rules, the start

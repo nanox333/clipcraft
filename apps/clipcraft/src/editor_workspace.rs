@@ -404,6 +404,9 @@ impl EditorState {
         if modal.should_close() {
             decision = decision.or(Some(false));
         }
+        if decision.is_some() {
+            context.request_repaint();
+        }
         match decision {
             Some(true) => {
                 self.draft.confirming_discard = false;

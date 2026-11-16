@@ -22,7 +22,7 @@ never goes online if you turn that off.
 - **Browse:** a searchable library with favorites, collections, game labels, a list or picture
   cards, and drag-to-reorder.
 - **Choose many:** **Select** clips, drag a box around them, then favorite, collect or delete them
-  together, with **Undo**.
+  together, with **Undo** (or **Delete now**).
 - **Edit:** trim, split, fade, add styled text, step frame by frame, and export in 16:9, 9:16, 1:1
   and other shapes, or as a small file or GIF for Discord.
 - **Share:** drag a clip straight into Discord or any program that takes files.

@@ -10,7 +10,7 @@ The full, detailed feature list and known limits. The [README](../README.md) has
   (a tick when all chosen clips are in it, a dash when some are; a field makes a new one) and
   **Delete**. Delete lists the clips and their size, leaves favorites out unless the box for them
   is ticked, skips clips whose file is already missing, and moves up to 500 clips at a time to the
-  Recycle Bin; an **Undo** button on the notice puts them back for 10 seconds. Enter never confirms
+  Recycle Bin after 10 seconds; the notice has an **Undo** button that puts them back, and a **Delete now** button for when you are sure. Enter never confirms
   a delete.
 - **Safety:** the storage limit moves the oldest clips to the Recycle Bin and skips favorites, clips
   in a collection and clips used in an open edit. A saved clip is reopened and checked for a

@@ -114,6 +114,9 @@ impl ClipCraftApp {
                     }
                 });
             });
+        if defaults || saved {
+            context.request_repaint();
+        }
         if defaults {
             self.keep_default_settings();
         } else if saved {
