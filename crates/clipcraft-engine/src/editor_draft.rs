@@ -392,6 +392,7 @@ mod tests {
         let quality = SequenceQuality {
             resolution: crate::SequenceResolution::Source,
             fps: 60,
+            ..Default::default()
         };
         let value = draft(&dir).with_quality(quality).unwrap();
         save_editor_draft(&dir.path(), &value).unwrap();

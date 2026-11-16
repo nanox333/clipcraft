@@ -324,6 +324,7 @@ fn game_replay_library_editor_export_and_recovery_share_one_recording() {
     .with_quality(SequenceQuality {
         resolution: SequenceResolution::Source,
         fps: 60,
+        ..Default::default()
     })
     .unwrap();
     execute(Command::SaveEditorDraft {

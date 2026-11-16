@@ -124,6 +124,7 @@ fn preview_and_export_use_identical_canvas_look_fade_and_text_at_the_same_tick()
     let text = crate::SequenceText::new(Tick::ZERO, Tick::from_units(2, 1), "same frame");
     let recipe = PreviewRecipe {
         canvas: Some([128, 72]),
+        framing: crate::SequenceFraming::Fit,
         source_start: Tick::from_units(1, 1),
         source_end: Tick::from_units(3, 1),
         timeline_start: Tick::ZERO,
@@ -143,6 +144,7 @@ fn preview_and_export_use_identical_canvas_look_fade_and_text_at_the_same_tick()
     let export = crate::sequence::compose_frame(
         image,
         [128, 72],
+        crate::SequenceFraming::Fit,
         recipe.look.effect,
         recipe
             .look

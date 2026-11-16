@@ -118,3 +118,82 @@ fn measure_sequence_composition() {
         );
     }
 }
+
+fn split_picture(width: u32, height: u32) -> image::RgbaImage {
+    // Red on the left half, green in the middle fifth of the height band, blue on the right half.
+    image::RgbaImage::from_fn(width, height, |x, y| {
+        let band = (height / 3..height * 2 / 3).contains(&y);
+        match (x < width / 2, band) {
+            (_, true) => image::Rgba([0, 255, 0, 255]),
+            (true, false) => image::Rgba([255, 0, 0, 255]),
+            (false, false) => image::Rgba([0, 0, 255, 255]),
+        }
+    })
+}
+
+#[test]
+fn each_framing_makes_the_picture_suit_a_tall_canvas() {
+    let canvas = [90, 160];
+    let source = split_picture(160, 90);
+    // Fit leaves the picture for the compositor to centre.
+    assert_eq!(
+        shape_for_canvas(source.clone(), canvas, SequenceFraming::Fit).dimensions(),
+        (160, 90)
+    );
+    // Stretch, Fill and Blur all give back exactly the canvas.
+    for framing in [
+        SequenceFraming::Stretch,
+        SequenceFraming::Fill,
+        SequenceFraming::Blur,
+    ] {
+        let shaped = shape_for_canvas(source.clone(), canvas, framing);
+        assert_eq!(shaped.dimensions(), (90, 160), "{framing:?}");
+        assert!(shaped.pixels().all(|p| p[3] == 255), "{framing:?}");
+    }
+    // Fill crops the sides: only the middle of the width is left, so the left and right edges
+    // are the colours that were near the middle (red just left of it, blue just right).
+    let filled = shape_for_canvas(source.clone(), canvas, SequenceFraming::Fill);
+    assert_eq!(filled.get_pixel(1, 5).0, [255, 0, 0, 255]);
+    assert_eq!(filled.get_pixel(88, 5).0, [0, 0, 255, 255]);
+    assert_eq!(filled.get_pixel(45, 80).0, [0, 255, 0, 255]);
+    // Stretch keeps every part of the picture: red on the far left, blue on the far right.
+    let stretched = shape_for_canvas(source.clone(), canvas, SequenceFraming::Stretch);
+    assert_eq!(stretched.get_pixel(0, 5).0, [255, 0, 0, 255]);
+    assert_eq!(stretched.get_pixel(89, 5).0, [0, 0, 255, 255]);
+    // Blur: the clip is in the middle at its own shape, and above and below it is a soft,
+    // darker copy rather than black bars.
+    let blurred = shape_for_canvas(source.clone(), canvas, SequenceFraming::Blur);
+    let front = crate::compositor::fit_size((160, 90), canvas);
+    assert_eq!(front, [90, 50]);
+    let middle = blurred.get_pixel(45, 80).0;
+    assert_eq!(
+        middle,
+        [0, 255, 0, 255],
+        "the clip itself is untouched in front"
+    );
+    let bar = blurred.get_pixel(10, 10).0;
+    assert!(
+        bar[3] == 255 && (bar[0] > 0 || bar[1] > 0 || bar[2] > 0),
+        "{bar:?} is a bar"
+    );
+    assert!(
+        u16::from(bar[0]) + u16::from(bar[1]) + u16::from(bar[2]) < 255 + 40,
+        "{bar:?} is darkened"
+    );
+    // A clip that already is the shape of the canvas is not touched by any of them.
+    let exact = split_picture(90, 160);
+    for framing in SequenceFraming::ALL {
+        assert_eq!(
+            shape_for_canvas(exact.clone(), canvas, framing),
+            exact,
+            "{framing:?}"
+        );
+    }
+    // Hostile shapes: an empty canvas leaves the picture alone, and a very wide canvas is bounded.
+    assert_eq!(
+        shape_for_canvas(source.clone(), [0, 0], SequenceFraming::Fill).dimensions(),
+        (160, 90)
+    );
+    let ultra = shape_for_canvas(source, [3840, 960], SequenceFraming::Fill);
+    assert_eq!(ultra.dimensions(), (3840, 960));
+}

@@ -26,7 +26,8 @@ pub use sequence::{
     sequence_to_mp4_with,
 };
 pub use sequence_quality::{
-    SequenceQuality, SequenceResolution, SequenceSettings, sequence_settings,
+    SequenceAspect, SequenceFraming, SequenceQuality, SequenceResolution, SequenceSettings,
+    sequence_settings,
 };
 pub use text::{TextRaster, text_position};
 

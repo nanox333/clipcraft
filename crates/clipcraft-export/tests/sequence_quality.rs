@@ -38,6 +38,7 @@ fn sixty_fps_fractional_cuts_keep_real_motion_and_audio_on_the_integer_clock() {
         quality: SequenceQuality {
             resolution: SequenceResolution::Source,
             fps: 60,
+            ..Default::default()
         },
         output: dir.file("out.mp4"),
     };
@@ -152,7 +153,11 @@ fn real_1080p_4k_portrait_and_ultrawide_outputs_have_the_requested_canvas() {
                 "Highlight",
             )],
             preset: None,
-            quality: SequenceQuality { resolution, fps },
+            quality: SequenceQuality {
+                resolution,
+                fps,
+                ..Default::default()
+            },
             output: dir.file(&format!("out-{i}.mp4")),
         };
         let report =
@@ -182,4 +187,78 @@ fn real_1080p_4k_portrait_and_ultrawide_outputs_have_the_requested_canvas() {
         }
         assert_eq!(std::fs::read(&input).unwrap(), original);
     }
+}
+
+#[test]
+fn a_chosen_shape_and_framing_are_rendered_into_the_exported_file() {
+    use clipcraft_export::{SequenceAspect, SequenceFraming};
+    let dir = Scratch::new("sequence-shapes");
+    let input = dir.file("wide.mp4");
+    flat_source(&input, 1280, 720);
+    let original = std::fs::read(&input).unwrap();
+    let mut seen = 0;
+    for (aspect, framing, expected) in [
+        (SequenceAspect::VERTICAL, SequenceFraming::Fit, (720, 1280)),
+        (SequenceAspect::VERTICAL, SequenceFraming::Blur, (720, 1280)),
+        (SequenceAspect::VERTICAL, SequenceFraming::Fill, (720, 1280)),
+        (
+            SequenceAspect::VERTICAL,
+            SequenceFraming::Stretch,
+            (720, 1280),
+        ),
+        (SequenceAspect::SQUARE, SequenceFraming::Fill, (720, 720)),
+        (SequenceAspect::PORTRAIT, SequenceFraming::Blur, (720, 900)),
+        (
+            SequenceAspect::Ratio(21, 9),
+            SequenceFraming::Fit,
+            (1680, 720),
+        ),
+        (SequenceAspect::Source, SequenceFraming::Fill, (1280, 720)),
+    ] {
+        let request = SequenceRequest {
+            segments: vec![segment(&input, Tick::ZERO, Tick::from_units(1, 30))],
+            texts: vec![],
+            preset: None,
+            quality: SequenceQuality {
+                resolution: SequenceResolution::Hd720,
+                aspect,
+                framing,
+                ..Default::default()
+            },
+            output: dir.file(&format!("out-{seen}.mp4")),
+        };
+        seen += 1;
+        let report =
+            sequence_to_mp4_with(&request, None, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        assert_eq!(
+            (report.width, report.height),
+            expected,
+            "{aspect:?} {framing:?}"
+        );
+        let decoded = source(&request.output);
+        let frame = decoded.video_frame(FrameRequest::full(Tick::ZERO)).unwrap();
+        assert_eq!(
+            (frame.width, frame.height),
+            expected,
+            "{aspect:?} {framing:?}"
+        );
+    }
+    assert_eq!(
+        std::fs::read(&input).unwrap(),
+        original,
+        "the source clip must never change"
+    );
+    // A shape that cannot be rendered is refused and nothing is written.
+    let refused = SequenceRequest {
+        segments: vec![segment(&input, Tick::ZERO, Tick::from_units(1, 30))],
+        texts: vec![],
+        preset: None,
+        quality: SequenceQuality {
+            aspect: SequenceAspect::Ratio(1, 9),
+            ..Default::default()
+        },
+        output: dir.file("refused.mp4"),
+    };
+    assert!(sequence_to_mp4_with(&refused, None, &mut |_| {}, &AtomicBool::new(false)).is_err());
+    assert!(!refused.output.exists());
 }

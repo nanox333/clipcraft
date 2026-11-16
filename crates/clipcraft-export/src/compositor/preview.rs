@@ -9,6 +9,8 @@ use std::sync::atomic::AtomicBool;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreviewRecipe {
     pub canvas: Option<[u32; 2]>,
+    /// Bars or a crop where the clip is not the shape of the canvas.
+    pub framing: crate::SequenceFraming,
     pub source_start: Tick,
     pub source_end: Tick,
     pub timeline_start: Tick,
@@ -19,6 +21,7 @@ impl Default for PreviewRecipe {
     fn default() -> Self {
         Self {
             canvas: None,
+            framing: crate::SequenceFraming::Fit,
             source_start: Tick::ZERO,
             source_end: Tick::from_units(86400, 1),
             timeline_start: Tick::ZERO,
@@ -71,6 +74,7 @@ impl PreviewRenderer {
         crate::sequence::compose_frame(
             image,
             canvas,
+            recipe.framing,
             recipe.look.effect,
             recipe
                 .look

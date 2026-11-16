@@ -59,10 +59,10 @@ mod storage;
 
 pub use clipcraft_export::compositor::{PreviewRecipe, PreviewRenderer};
 pub use clipcraft_export::{
-    Effect, FADE_LENGTH, Fade, MAX_TEXT_LAYERS, MAX_TITLE_CHARS, SegmentLook, SequenceQuality,
-    SequenceRequest, SequenceResolution, SequenceSegment, SequenceSettings, SequenceText,
-    TEXT_OPACITY_RANGE, TEXT_SIZE_RANGE, TEXT_TRACKING_RANGE, TextFont, TextRaster, TextWeight,
-    sequence_canvas, sequence_settings, text_position,
+    Effect, FADE_LENGTH, Fade, MAX_TEXT_LAYERS, MAX_TITLE_CHARS, SegmentLook, SequenceAspect,
+    SequenceFraming, SequenceQuality, SequenceRequest, SequenceResolution, SequenceSegment,
+    SequenceSettings, SequenceText, TEXT_OPACITY_RANGE, TEXT_SIZE_RANGE, TEXT_TRACKING_RANGE,
+    TextFont, TextRaster, TextWeight, sequence_canvas, sequence_settings, text_position,
 };
 pub use clipcraft_export::{
     ExportPreset, GifOptions, LOUDNESS_TARGETS, MAX_GIF_SECONDS, TrimRequest as ExportRange,
@@ -1824,7 +1824,8 @@ mod tests {
             valid.quality,
             super::SequenceQuality {
                 resolution: super::SequenceResolution::Source,
-                fps: 60
+                fps: 60,
+                ..Default::default()
             }
         );
         let mut invalid = json.clone();

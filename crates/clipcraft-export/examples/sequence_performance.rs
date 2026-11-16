@@ -49,6 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         quality: SequenceQuality {
             resolution: SequenceResolution::FullHd1080,
             fps: 60,
+            ..Default::default()
         },
         preset: None,
         output: root.join("warmup.mp4"),

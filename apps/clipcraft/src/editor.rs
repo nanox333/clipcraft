@@ -675,6 +675,7 @@ impl EditorState {
                 let (w, h) = self.export_canvas().unwrap_or((1280, 720));
                 [w, h]
             }),
+            framing: self.export_quality.framing,
             source_start: clip.start,
             source_end: clip.end,
             timeline_start: self.session.offset_of(clip.id).unwrap_or(Tick::ZERO),
@@ -1342,6 +1343,77 @@ impl EditorState {
                             ) {
                                 self.looping = !self.looping;
                             }
+                            // The shape of the picture: a chip that opens the shape and framing choices.
+                            if row.width() >= 460.0 {
+                                let label = frame_label(self.export_quality);
+                                let width = ui
+                                    .painter()
+                                    .layout_no_wrap(
+                                        label.clone(),
+                                        FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
+                                        Color32::PLACEHOLDER,
+                                    )
+                                    .size()
+                                    .x
+                                    + 34.0;
+                                let chip = egui::Rect::from_min_size(
+                                    egui::pos2(row.left() + 34.0, row.center().y - 13.0),
+                                    Vec2::new(width, 26.0),
+                                );
+                                let response = ui.interact(
+                                    chip,
+                                    egui::Id::new("editor-frame-chip"),
+                                    if any { Sense::click() } else { Sense::hover() },
+                                );
+                                response.widget_info(|| {
+                                    egui::WidgetInfo::labeled(
+                                        egui::WidgetType::Button,
+                                        any,
+                                        "Picture shape",
+                                    )
+                                });
+                                let open = egui::Popup::is_id_open(
+                                    ui.ctx(),
+                                    egui::Popup::default_response_id(&response),
+                                );
+                                ui.painter().rect_filled(
+                                    chip,
+                                    13.0,
+                                    if open || response.hovered() {
+                                        kit::CONTROL_HOVER
+                                    } else {
+                                        kit::CONTROL
+                                    },
+                                );
+                                ui.painter().text(
+                                    egui::pos2(chip.left() + 11.0, chip.center().y),
+                                    Align2::LEFT_CENTER,
+                                    label,
+                                    FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
+                                    if any { TEXT } else { FAINT },
+                                );
+                                kit::draw_icon(
+                                    ui.painter(),
+                                    egui::pos2(chip.right() - 12.0, chip.center().y),
+                                    kit::Icon::ChevronDown,
+                                    MUTED,
+                                    0.5,
+                                );
+                                let before = self.export_quality;
+                                if any {
+                                    egui::Popup::menu(&response)
+                                        .close_behavior(
+                                            egui::PopupCloseBehavior::CloseOnClickOutside,
+                                        )
+                                        .show(|ui| frame_menu(ui, &mut self.export_quality));
+                                }
+                                response
+                                    .on_hover_text("Picture shape: 16:9, 9:16 and more")
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                if self.export_quality != before {
+                                    self.dirty_recovery();
+                                }
+                            }
                             if previous {
                                 self.previous_cut();
                             }
@@ -1517,6 +1589,32 @@ impl EditorState {
                             (SequenceResolution::Source, "Source · up to 4K"),
                         ] {
                             ui.selectable_value(&mut self.export_quality.resolution, value, name);
+                        }
+                    });
+            });
+            ui.horizontal(|ui| {
+                ui.label("Shape");
+                egui::ComboBox::from_id_salt("editor-export-shape")
+                    .selected_text(self.export_quality.aspect.label())
+                    .show_ui(ui, |ui| {
+                        for aspect in clipcraft_engine::SequenceAspect::PRESETS {
+                            ui.selectable_value(
+                                &mut self.export_quality.aspect,
+                                aspect,
+                                aspect.label(),
+                            );
+                        }
+                    });
+                egui::ComboBox::from_id_salt("editor-export-framing")
+                    .selected_text(self.export_quality.framing.name())
+                    .show_ui(ui, |ui| {
+                        for framing in clipcraft_engine::SequenceFraming::ALL {
+                            ui.selectable_value(
+                                &mut self.export_quality.framing,
+                                framing,
+                                framing.name(),
+                            )
+                            .on_hover_text(framing.about());
                         }
                     });
             });
@@ -1800,6 +1898,154 @@ const TRANSITIONS: [TransitionItem; 8] = [
         kind: TransitionKind::All(TransitionPreset::None),
     },
 ];
+
+/// What the frame chip says: the shape, and how a clip that is not that shape is framed.
+fn frame_label(quality: SequenceQuality) -> String {
+    let shape = quality.aspect.label();
+    if quality.framing == clipcraft_engine::SequenceFraming::Fit {
+        shape
+    } else {
+        format!("{shape} \u{00b7} {}", quality.framing.name())
+    }
+}
+
+/// The choices behind the frame chip: the shape of the picture and how a clip is framed in it.
+fn frame_menu(ui: &mut egui::Ui, quality: &mut SequenceQuality) {
+    use clipcraft_engine::{SequenceAspect, SequenceFraming};
+    ui.set_min_width(268.0);
+    ui.set_max_width(268.0);
+    ui.label(
+        RichText::new("Shape")
+            .size(crate::kit::text_size::CAPTION)
+            .family(kit::semibold())
+            .color(MUTED),
+    );
+    ui.add_space(crate::kit::space::XS);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+        for aspect in SequenceAspect::PRESETS {
+            let (rect, response) = ui.allocate_exact_size(Vec2::new(38.0, 50.0), Sense::click());
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, aspect.label())
+            });
+            let on = quality.aspect == aspect;
+            if on {
+                ui.painter().rect_filled(
+                    rect,
+                    f32::from(crate::kit::radius::MD),
+                    Color32::from_rgba_unmultiplied(190, 255, 43, 24),
+                );
+            } else if response.hovered() {
+                ui.painter().rect_filled(
+                    rect,
+                    f32::from(crate::kit::radius::MD),
+                    Color32::from_white_alpha(12),
+                );
+            }
+            // A small picture of the shape, at its own proportions.
+            let (across, down) = aspect.ratio().unwrap_or((16, 9));
+            let longest = across.max(down) as f32;
+            let size = Vec2::new(22.0 * across as f32 / longest, 22.0 * down as f32 / longest);
+            let shape = egui::Rect::from_center_size(
+                egui::pos2(rect.center().x, rect.top() + 18.0),
+                size.max(Vec2::splat(8.0)),
+            );
+            let colour = if on { LIME } else { MUTED };
+            if aspect == SequenceAspect::Source {
+                ui.painter().rect_stroke(
+                    shape,
+                    2.0,
+                    Stroke::new(1.3_f32, colour),
+                    egui::StrokeKind::Inside,
+                );
+                ui.painter().line_segment(
+                    [shape.left_bottom(), shape.right_top()],
+                    Stroke::new(1.0_f32, colour),
+                );
+            } else {
+                ui.painter().rect_stroke(
+                    shape,
+                    2.0,
+                    Stroke::new(if on { 2.0_f32 } else { 1.3_f32 }, colour),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            ui.painter().text(
+                egui::pos2(rect.center().x, rect.bottom() - 9.0),
+                Align2::CENTER_CENTER,
+                if aspect == SequenceAspect::Source {
+                    "Original".to_owned()
+                } else {
+                    aspect.label()
+                },
+                FontId::new(10.5, kit::medium()),
+                if on { TEXT } else { MUTED },
+            );
+            if response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                quality.aspect = aspect;
+            }
+        }
+    });
+    // Any other shape, as two whole numbers.
+    ui.add_space(crate::kit::space::SM);
+    let (mut across, mut down) = quality.aspect.ratio().map_or((16_u16, 9_u16), |(a, d)| {
+        (
+            u16::try_from(a).unwrap_or(16),
+            u16::try_from(d).unwrap_or(9),
+        )
+    });
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = crate::kit::space::SM;
+        ui.label(
+            RichText::new("Custom")
+                .size(crate::kit::text_size::SMALL)
+                .color(MUTED),
+        );
+        let moved = ui
+            .add(egui::DragValue::new(&mut across).range(1..=99).speed(0.1))
+            .changed()
+            | {
+                ui.label(RichText::new(":").color(MUTED));
+                ui.add(egui::DragValue::new(&mut down).range(1..=99).speed(0.1))
+                    .changed()
+            };
+        let wanted = SequenceAspect::Ratio(across, down);
+        if moved && wanted.is_valid() {
+            quality.aspect = wanted;
+        } else if !wanted.is_valid() && quality.aspect.ratio().is_some() {
+            ui.label(
+                RichText::new("Between 1:4 and 4:1")
+                    .size(crate::kit::text_size::CAPTION)
+                    .color(DANGER),
+            );
+        }
+    });
+    ui.add_space(crate::kit::space::MD);
+    ui.label(
+        RichText::new("When a clip is another shape")
+            .size(crate::kit::text_size::CAPTION)
+            .family(kit::semibold())
+            .color(MUTED),
+    );
+    ui.add_space(crate::kit::space::XS);
+    let names: Vec<&str> = SequenceFraming::ALL.iter().map(|f| f.name()).collect();
+    let current = SequenceFraming::ALL
+        .iter()
+        .position(|f| *f == quality.framing)
+        .unwrap_or(0);
+    if let Some(index) = sub_tabs(ui, &names, current) {
+        quality.framing = SequenceFraming::ALL[index];
+    }
+    ui.add_space(crate::kit::space::XS);
+    ui.label(
+        RichText::new(quality.framing.about())
+            .size(crate::kit::text_size::CAPTION)
+            .color(MUTED),
+    );
+}
 
 /// What a transport button shows.
 #[derive(Clone, Copy)]
@@ -2717,6 +2963,7 @@ mod tests {
         editor.export_quality = SequenceQuality {
             resolution: SequenceResolution::Source,
             fps: 60,
+            ..Default::default()
         };
         for preset in [
             None,

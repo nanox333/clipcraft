@@ -22,7 +22,10 @@ use crate::ExportPreset;
 use crate::compress::{Temporary, check_cancel, source_size, write_video};
 use crate::hardware::{FastEncoder, FastOpener, FastPacket, FastRequest};
 use crate::text::TextRaster;
-use crate::{ExportError, ExportReport, SequenceQuality, io_error, mp4_error, sequence_settings};
+use crate::{
+    ExportError, ExportReport, SequenceFraming, SequenceQuality, io_error, mp4_error,
+    sequence_settings,
+};
 
 const MIN_SEGMENT: Tick = Tick(clipcraft_time::TICKS_PER_SECOND / 30);
 const AUDIO_RATE: u32 = 48_000;
@@ -731,10 +734,114 @@ fn write_packets(
 
 const TEXT_CACHE_BYTES: usize = 16 * 1024 * 1024;
 
+/// `image` made to suit `canvas` as `framing` says. Fit leaves it for the compositor to centre.
+fn shape_for_canvas(
+    image: image::RgbaImage,
+    canvas: [u32; 2],
+    framing: SequenceFraming,
+) -> image::RgbaImage {
+    let [canvas_width, canvas_height] = canvas;
+    if canvas_width == 0 || canvas_height == 0 || image.width() == 0 || image.height() == 0 {
+        return image;
+    }
+    match framing {
+        SequenceFraming::Fit => image,
+        SequenceFraming::Fill => cover(image, canvas),
+        SequenceFraming::Stretch => {
+            if image.dimensions() == (canvas_width, canvas_height) {
+                image
+            } else {
+                image::imageops::resize(
+                    &image,
+                    canvas_width,
+                    canvas_height,
+                    image::imageops::FilterType::Triangle,
+                )
+            }
+        }
+        SequenceFraming::Blur => {
+            let fitted = crate::compositor::fit_size(image.dimensions(), canvas);
+            if fitted == canvas {
+                // Nothing to fill around it.
+                return image;
+            }
+            // A soft backdrop: the clip cropped to the canvas shape, shrunk hard and blown back
+            // up, then darkened so the clip in front stands out.
+            let small = [(canvas_width / 16).max(2), (canvas_height / 16).max(2)];
+            let tiny = cover(image.clone(), small);
+            let mut backdrop = image::imageops::resize(
+                &tiny,
+                canvas_width,
+                canvas_height,
+                image::imageops::FilterType::Triangle,
+            );
+            for pixel in backdrop.pixels_mut() {
+                for channel in pixel.0.iter_mut().take(3) {
+                    *channel = (u16::from(*channel) * 11 / 20) as u8;
+                }
+                pixel[3] = 255;
+            }
+            let front = if image.dimensions() == (fitted[0], fitted[1]) {
+                image
+            } else {
+                image::imageops::thumbnail(&image, fitted[0], fitted[1])
+            };
+            image::imageops::overlay(
+                &mut backdrop,
+                &front,
+                i64::from((canvas_width - fitted[0]) / 2),
+                i64::from((canvas_height - fitted[1]) / 2),
+            );
+            backdrop
+        }
+    }
+}
+
+/// `image` cropped around its middle to the shape of `canvas`, then scaled to exactly the canvas.
+fn cover(image: image::RgbaImage, canvas: [u32; 2]) -> image::RgbaImage {
+    let (width, height) = image.dimensions();
+    let [canvas_width, canvas_height] = canvas;
+    if width == 0 || height == 0 || canvas_width == 0 || canvas_height == 0 {
+        return image;
+    }
+    let (crop_width, crop_height) = if u64::from(width) * u64::from(canvas_height)
+        > u64::from(height) * u64::from(canvas_width)
+    {
+        // Wider than the canvas: all the height, and the middle of the width.
+        (
+            ((u64::from(height) * u64::from(canvas_width)) / u64::from(canvas_height)).max(1)
+                as u32,
+            height,
+        )
+    } else {
+        (
+            width,
+            ((u64::from(width) * u64::from(canvas_height)) / u64::from(canvas_width)).max(1) as u32,
+        )
+    };
+    let (left, top) = ((width - crop_width) / 2, (height - crop_height) / 2);
+    let cropped = if (crop_width, crop_height) == (width, height) {
+        image
+    } else {
+        image::imageops::crop_imm(&image, left, top, crop_width, crop_height).to_image()
+    };
+    if cropped.dimensions() == (canvas_width, canvas_height) {
+        cropped
+    } else {
+        image::imageops::resize(
+            &cropped,
+            canvas_width,
+            canvas_height,
+            image::imageops::FilterType::Triangle,
+        )
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compose_frame(
     image: image::RgbaImage,
     canvas: [u32; 2],
+    framing: SequenceFraming,
     effect: Effect,
     fade: Option<(Fade, f32)>,
     texts: &[SequenceText],
@@ -743,6 +850,9 @@ pub(crate) fn compose_frame(
     compositor: &mut crate::compositor::Compositor,
     cancel: &AtomicBool,
 ) -> Result<image::RgbaImage, ExportError> {
+    // Framing: for Fill, Stretch and Blur the picture is made the shape of the canvas before
+    // anything else, so the compositor (CPU and GPU) sees a picture that already is the canvas.
+    let image = shape_for_canvas(image, canvas, framing);
     cache.retain(|index, raster| {
         texts.get(*index).is_some_and(|text| {
             time >= text.start && time < text.end && raster.matches(text, canvas[0], canvas[1])
@@ -817,6 +927,7 @@ fn picture(
     compose_frame(
         image,
         [width, height],
+        request.quality.framing,
         segment.look.effect,
         segment
             .look

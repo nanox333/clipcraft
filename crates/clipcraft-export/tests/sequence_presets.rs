@@ -431,6 +431,7 @@ fn sixty_fps_reaches_hardware_and_survives_device_failure_without_changing_timin
         req.quality = SequenceQuality {
             resolution: SequenceResolution::Source,
             fps: 60,
+            ..Default::default()
         };
         let report =
             sequence_to_mp4_with(&req, Some(&gpu), &mut |_| {}, &AtomicBool::new(false)).unwrap();

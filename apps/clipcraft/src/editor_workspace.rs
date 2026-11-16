@@ -445,6 +445,7 @@ mod tests {
         let quality = clipcraft_engine::SequenceQuality {
             resolution: clipcraft_engine::SequenceResolution::Source,
             fps: 60,
+            ..Default::default()
         };
         let draft = snapshot(&[healthy.clone(), missing.clone()], "Recovered edit")
             .with_quality(quality)
