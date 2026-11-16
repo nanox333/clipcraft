@@ -935,4 +935,49 @@ mod tests {
             duration: Tick::from_units(2, 1),
         })
     }
+
+    #[test]
+    fn text_saved_before_styling_existed_loads_and_looks_the_same() {
+        let layer = SequenceText::new(Tick::ZERO, Tick::from_units(2, 1), "Old title");
+        let mut json = serde_json::to_value(&layer).unwrap();
+        let fields = json.as_object_mut().unwrap();
+        for key in [
+            "font",
+            "weight",
+            "italic",
+            "caps",
+            "underline",
+            "tracking",
+            "shadow",
+            "outline",
+            "backdrop",
+            "opacity",
+        ] {
+            assert!(fields.remove(key).is_some(), "{key} was not saved");
+        }
+        let loaded: SequenceText = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            loaded, layer,
+            "an old layer must come back with the look it had"
+        );
+        assert!(loaded.shadow && loaded.opacity == 100 && !loaded.outline && !loaded.backdrop);
+        assert!(loaded.is_valid());
+        // A styled layer survives a save and load as it was.
+        let styled = SequenceText {
+            font: clipcraft_export::TextFont::Serif,
+            weight: clipcraft_export::TextWeight::Bold,
+            italic: true,
+            caps: true,
+            underline: true,
+            tracking: 120,
+            shadow: false,
+            outline: true,
+            backdrop: true,
+            opacity: 70,
+            ..layer
+        };
+        let again: SequenceText =
+            serde_json::from_str(&serde_json::to_string(&styled).unwrap()).unwrap();
+        assert_eq!(again, styled);
+    }
 }

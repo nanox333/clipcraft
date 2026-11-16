@@ -61,7 +61,8 @@ pub use clipcraft_export::compositor::{PreviewRecipe, PreviewRenderer};
 pub use clipcraft_export::{
     Effect, FADE_LENGTH, Fade, MAX_TEXT_LAYERS, MAX_TITLE_CHARS, SegmentLook, SequenceQuality,
     SequenceRequest, SequenceResolution, SequenceSegment, SequenceSettings, SequenceText,
-    TEXT_SIZE_RANGE, TextRaster, sequence_canvas, sequence_settings, text_position,
+    TEXT_OPACITY_RANGE, TEXT_SIZE_RANGE, TEXT_TRACKING_RANGE, TextFont, TextRaster, TextWeight,
+    sequence_canvas, sequence_settings, text_position,
 };
 pub use clipcraft_export::{
     ExportPreset, GifOptions, LOUDNESS_TARGETS, MAX_GIF_SECONDS, TrimRequest as ExportRange,

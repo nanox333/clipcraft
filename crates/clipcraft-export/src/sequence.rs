@@ -134,6 +134,87 @@ pub struct SegmentLook {
 
 /// Smallest and largest text size, in thousandths of the picture height.
 pub const TEXT_SIZE_RANGE: std::ops::RangeInclusive<u16> = 20..=250;
+/// Space added after every letter, in thousandths of the letter height (negative pulls them in).
+pub const TEXT_TRACKING_RANGE: std::ops::RangeInclusive<i16> = -50..=400;
+/// Faintest text, as a percentage.
+pub const TEXT_OPACITY_RANGE: std::ops::RangeInclusive<u8> = 10..=100;
+
+/// Which of the built-in typefaces a text layer uses.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum TextFont {
+    /// Inter: clean and modern.
+    #[default]
+    Sans,
+    /// Noto Serif: classic, for titles.
+    Serif,
+    /// JetBrains Mono: fixed-width, for a technical look.
+    Mono,
+}
+impl TextFont {
+    pub const ALL: [TextFont; 3] = [TextFont::Sans, TextFont::Serif, TextFont::Mono];
+    pub fn name(self) -> &'static str {
+        match self {
+            TextFont::Sans => "Sans",
+            TextFont::Serif => "Serif",
+            TextFont::Mono => "Mono",
+        }
+    }
+    /// The family name the text engine knows it by.
+    pub fn family(self) -> &'static str {
+        match self {
+            TextFont::Sans => "Inter",
+            TextFont::Serif => "Noto Serif",
+            TextFont::Mono => "JetBrains Mono",
+        }
+    }
+}
+
+/// How heavy the letters are. A typeface without that weight is thickened to match.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum TextWeight {
+    Regular,
+    Medium,
+    SemiBold,
+    Bold,
+}
+impl Default for TextWeight {
+    /// The weight text had before it could be chosen.
+    fn default() -> Self {
+        TextWeight::SemiBold
+    }
+}
+impl TextWeight {
+    pub const ALL: [TextWeight; 4] = [
+        TextWeight::Regular,
+        TextWeight::Medium,
+        TextWeight::SemiBold,
+        TextWeight::Bold,
+    ];
+    pub fn name(self) -> &'static str {
+        match self {
+            TextWeight::Regular => "Regular",
+            TextWeight::Medium => "Medium",
+            TextWeight::SemiBold => "Semibold",
+            TextWeight::Bold => "Bold",
+        }
+    }
+    /// The style name the text engine knows it by.
+    pub fn style(self) -> &'static str {
+        match self {
+            TextWeight::Regular => "Regular",
+            TextWeight::Medium => "Medium",
+            TextWeight::SemiBold => "SemiBold",
+            TextWeight::Bold => "Bold",
+        }
+    }
+}
+
+fn yes() -> bool {
+    true
+}
+fn fully_opaque() -> u8 {
+    100
+}
 /// Most text layers in one edit.
 pub const MAX_TEXT_LAYERS: usize = 256;
 
@@ -159,6 +240,33 @@ pub struct SequenceText {
     pub fade_out: Fade,
     #[serde(default)]
     pub effect: Effect,
+    /// Typeface, weight and the small switches of how the letters look.
+    #[serde(default)]
+    pub font: TextFont,
+    #[serde(default)]
+    pub weight: TextWeight,
+    #[serde(default)]
+    pub italic: bool,
+    /// Every letter drawn as a capital.
+    #[serde(default)]
+    pub caps: bool,
+    #[serde(default)]
+    pub underline: bool,
+    /// Space between letters, in thousandths of the letter height.
+    #[serde(default)]
+    pub tracking: i16,
+    /// A soft dark shadow under the letters (on, as text always had).
+    #[serde(default = "yes")]
+    pub shadow: bool,
+    /// A thin dark outline around the letters.
+    #[serde(default)]
+    pub outline: bool,
+    /// A dark box behind the text, for reading over busy pictures.
+    #[serde(default)]
+    pub backdrop: bool,
+    /// How solid the text is, as a percentage (`10..=100`).
+    #[serde(default = "fully_opaque")]
+    pub opacity: u8,
 }
 impl SequenceText {
     /// A white line in the middle of the picture, from `start` for `length`.
@@ -174,6 +282,16 @@ impl SequenceText {
             fade_in: Fade::None,
             fade_out: Fade::None,
             effect: Effect::None,
+            font: TextFont::default(),
+            weight: TextWeight::default(),
+            italic: false,
+            caps: false,
+            underline: false,
+            tracking: 0,
+            shadow: true,
+            outline: false,
+            backdrop: false,
+            opacity: 100,
         }
     }
     pub fn duration(&self) -> Tick {
@@ -189,11 +307,15 @@ impl SequenceText {
             && self.x <= 1000
             && self.y <= 1000
             && TEXT_SIZE_RANGE.contains(&self.size)
+            && TEXT_TRACKING_RANGE.contains(&self.tracking)
+            && TEXT_OPACITY_RANGE.contains(&self.opacity)
     }
-    /// How opaque the layer is `local` into its range (`1.0` when no fade applies).
+    /// How opaque the layer is `local` into its range (`1.0` when no fade applies), with the
+    /// layer's own opacity applied.
     pub fn opacity_at(&self, local: Tick) -> f32 {
-        fade_amount(self.fade_in, self.fade_out, local, self.duration())
-            .map_or(1.0, |(_, amount)| 1.0 - amount)
+        let fade = fade_amount(self.fade_in, self.fade_out, local, self.duration())
+            .map_or(1.0, |(_, amount)| 1.0 - amount);
+        fade * f32::from(self.opacity.min(100)) / 100.0
     }
 }
 

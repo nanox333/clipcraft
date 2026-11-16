@@ -121,7 +121,6 @@ pub struct EditorState {
     saved: Option<PathBuf>,
     /// Width the person dragged the Library to; `None` lets it follow the 16:9 preview.
     selected_text: Option<u64>,
-    segment_settings: bool,
     title_draft: (u64, String),
     title_drag: Option<(u64, u16, u16)>,
     text_drag: Option<(u64, Tick, Tick)>,
@@ -170,7 +169,6 @@ impl Default for EditorState {
             export_quality: SequenceQuality::default(),
             saved: None,
             selected_text: None,
-            segment_settings: true,
             title_draft: (0, String::new()),
             title_drag: None,
             text_drag: None,
@@ -1105,11 +1103,7 @@ impl EditorState {
         });
         ui.add_space(crate::kit::space::MD);
         // The panel under the timeline for the selected segment takes room too.
-        let segment_height = match (self.selected, self.segment_settings) {
-            (None, _) => 0.0,
-            (Some(_), true) => 86.0,
-            (Some(_), false) => 52.0,
-        };
+        let segment_height = if self.selected.is_some() { 56.0 } else { 0.0 };
         let status_height = segment_height + if self.message.is_some() { 26.0 } else { 0.0 };
         let full_top = (view - 432.0 - status_height).max(MIN_TOP + 40.0);
         let top = self
@@ -2089,6 +2083,66 @@ fn transport_button(
         && enabled
 }
 
+/// A small segmented switch for the groups inside a tab (Transitions, Effects): a quiet capsule
+/// with the chosen part raised, so it reads as a sub-choice next to the lime tabs above it.
+/// Returns the part that was clicked.
+fn sub_tabs(ui: &mut egui::Ui, items: &[&str], active: usize) -> Option<usize> {
+    const HEIGHT: f32 = 26.0;
+    const PAD: f32 = 12.0;
+    let font = FontId::new(crate::kit::text_size::CAPTION, kit::medium());
+    let widths: Vec<f32> = items
+        .iter()
+        .map(|label| {
+            ui.painter()
+                .layout_no_wrap((*label).to_owned(), font.clone(), Color32::PLACEHOLDER)
+                .size()
+                .x
+                + PAD * 2.0
+        })
+        .collect();
+    let total = widths.iter().sum::<f32>() + 4.0;
+    let (frame, _) = ui.allocate_exact_size(Vec2::new(total, HEIGHT), Sense::hover());
+    ui.painter().rect_filled(frame, HEIGHT / 2.0, CANVAS);
+    ui.painter().rect_stroke(
+        frame,
+        HEIGHT / 2.0,
+        Stroke::new(1.0_f32, BORDER),
+        egui::StrokeKind::Inside,
+    );
+    let mut clicked = None;
+    let mut left = frame.left() + 2.0;
+    for (index, (label, width)) in items.iter().zip(&widths).enumerate() {
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(left, frame.top() + 2.0),
+            Vec2::new(*width, HEIGHT - 4.0),
+        );
+        left += width;
+        let response = ui.interact(rect, egui::Id::new(("sub-tab", *label)), Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, *label));
+        if index == active {
+            ui.painter()
+                .rect_filled(rect, (HEIGHT - 4.0) / 2.0, CARD_HOVER);
+        } else if response.hovered() {
+            ui.painter()
+                .rect_filled(rect, (HEIGHT - 4.0) / 2.0, Color32::from_white_alpha(10));
+        }
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            *label,
+            font.clone(),
+            if index == active { TEXT } else { MUTED },
+        );
+        if response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            clicked = Some(index);
+        }
+    }
+    clicked
+}
+
 /// A pill tab like the ones above the Library.
 fn tab_pill(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
@@ -2142,6 +2196,9 @@ fn preset_card(
         ui.painter()
             .rect_filled(picture, 0, Color32::from_black_alpha(120));
     }
+    // Rounded corners: the picture is painted square, so the corners are filled with the panel.
+    let corner = f32::from(crate::kit::radius::MD);
+    round_corners(ui.painter(), picture, corner, PANEL);
     let outline = if active {
         LIME
     } else if response.hovered() && enabled {
@@ -2151,18 +2208,51 @@ fn preset_card(
     };
     ui.painter().rect_stroke(
         picture,
-        0,
+        corner,
         Stroke::new(if active { 2.0_f32 } else { 1.0_f32 }, outline),
         egui::StrokeKind::Inside,
     );
     ui.painter().text(
-        egui::pos2(rect.left(), rect.bottom() - 2.0),
+        egui::pos2(rect.left() + 2.0, rect.bottom() - 2.0),
         Align2::LEFT_BOTTOM,
         name,
         FontId::new(crate::kit::text_size::CAPTION, kit::medium()),
-        if enabled { TEXT } else { FAINT },
+        if !enabled {
+            FAINT
+        } else if active {
+            LIME
+        } else {
+            TEXT
+        },
     );
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Fills the four corners of `rect` outside a rounded rectangle of radius `radius` with `colour`,
+/// to round off something that was painted square.
+fn round_corners(painter: &egui::Painter, rect: egui::Rect, radius: f32, colour: Color32) {
+    const STEPS: usize = 8;
+    for (corner, sx, sy) in [
+        (rect.left_top(), 1.0_f32, 1.0_f32),
+        (rect.right_top(), -1.0, 1.0),
+        (rect.left_bottom(), 1.0, -1.0),
+        (rect.right_bottom(), -1.0, -1.0),
+    ] {
+        let centre = corner + Vec2::new(sx * radius, sy * radius);
+        let mut mesh = egui::epaint::Mesh::default();
+        mesh.colored_vertex(corner, colour);
+        for step in 0..=STEPS {
+            let turn = step as f32 / STEPS as f32 * std::f32::consts::FRAC_PI_2;
+            mesh.colored_vertex(
+                centre + Vec2::new(-sx * radius * turn.sin(), -sy * radius * turn.cos()),
+                colour,
+            );
+        }
+        for step in 0..STEPS as u32 {
+            mesh.add_triangle(0, step + 1, step + 2);
+        }
+        painter.add(egui::Shape::mesh(mesh));
+    }
 }
 
 /// Quiet or lime text button. Standard egui buttons keep keyboard activation and the app's
@@ -3412,7 +3502,6 @@ mod tests {
         state.edit(EditorAction::Split {
             at: Tick::from_units(1, 1),
         });
-        state.segment_settings = true;
         state.selected = state.session.clips().last().map(|c| c.id);
         let mut labels = Vec::new();
         for _ in 0..3 {

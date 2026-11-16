@@ -21,8 +21,9 @@ mod source;
 mod text;
 pub use sequence::{
     Effect, FADE_LENGTH, Fade, MAX_TEXT_LAYERS, MAX_TITLE_CHARS, SegmentLook, SequenceReport,
-    SequenceRequest, SequenceSegment, SequenceText, TEXT_SIZE_RANGE, sequence_canvas,
-    sequence_to_mp4, sequence_to_mp4_with,
+    SequenceRequest, SequenceSegment, SequenceText, TEXT_OPACITY_RANGE, TEXT_SIZE_RANGE,
+    TEXT_TRACKING_RANGE, TextFont, TextWeight, sequence_canvas, sequence_to_mp4,
+    sequence_to_mp4_with,
 };
 pub use sequence_quality::{
     SequenceQuality, SequenceResolution, SequenceSettings, sequence_settings,

@@ -869,57 +869,29 @@ impl EditorState {
             .fill(CANVAS)
             .stroke(Stroke::new(1.0_f32, BORDER))
             .corner_radius(crate::kit::radius::MD)
-            .inner_margin(egui::Margin::symmetric(14, 10))
+            .inner_margin(egui::Margin::symmetric(14, 8))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.spacing_mut().item_spacing =
                     Vec2::new(crate::kit::space::MD, crate::kit::space::SM);
-                // The header: which segment, how long, and a way to fold the panel away.
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("Segment {number}"))
-                            .size(crate::kit::text_size::BODY)
-                            .family(kit::semibold())
-                            .color(TEXT),
-                    );
-                    ui.label(
-                        RichText::new(stamp_precise(clip.duration()))
-                            .size(crate::kit::text_size::SMALL)
-                            .family(egui::FontFamily::Monospace)
-                            .color(MUTED),
-                    );
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let fold = ui
-                            .add(
-                                egui::Label::new(
-                                    RichText::new(if self.segment_settings {
-                                        "Hide"
-                                    } else {
-                                        "Trim and volume"
-                                    })
-                                    .size(crate::kit::text_size::CAPTION)
-                                    .color(MUTED),
-                                )
-                                .sense(Sense::click()),
-                            )
-                            .on_hover_cursor(egui::CursorIcon::PointingHand);
-                        if fold.clicked() {
-                            self.segment_settings = !self.segment_settings;
-                        }
-                    });
-                });
-                if !self.segment_settings {
-                    return;
-                }
                 ui.add_enabled_ui(!self.busy(), |ui| {
+                    // One row: which segment and how long, then its trim and volume.
                     ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            RichText::new(format!("Segment {number}"))
+                                .size(crate::kit::text_size::BODY)
+                                .family(kit::semibold())
+                                .color(TEXT),
+                        );
+                        ui.label(
+                            RichText::new(stamp_precise(clip.duration()))
+                                .size(crate::kit::text_size::SMALL)
+                                .family(egui::FontFamily::Monospace)
+                                .color(MUTED),
+                        );
+                        separator(ui);
                         let mut start = clip.start.seconds();
                         let mut end = clip.end.seconds();
-                        let caption = |text: &str| {
-                            RichText::new(text.to_owned())
-                                .size(crate::kit::text_size::SMALL)
-                                .color(MUTED)
-                        };
                         let changed_in = ui
                             .add(
                                 egui::DragValue::new(&mut start)
@@ -950,10 +922,14 @@ impl EditorState {
                             });
                         }
                         separator(ui);
-                        ui.label(caption("Volume"));
+                        ui.label(
+                            RichText::new("Volume")
+                                .size(crate::kit::text_size::SMALL)
+                                .color(MUTED),
+                        );
                         if let Some(next) = kit::slim_slider(
                             ui,
-                            140.0,
+                            120.0,
                             f32::from(clip.volume_percent) / 100.0,
                             true,
                             "Selected segment audio volume",
