@@ -151,6 +151,8 @@ pub struct Notice {
     pub error: bool,
     pub at: Instant,
     pub path: Option<PathBuf>,
+    /// Shows an **Undo** button (for clips waiting to be moved to the Recycle Bin).
+    pub undo: bool,
 }
 
 fn hotkey_failure_notice(current: Option<&Notice>) -> Option<Notice> {
@@ -357,6 +359,18 @@ pub(crate) fn notice(
         error,
         at: Instant::now(),
         path,
+        undo: false,
+    })
+}
+
+/// A message with an **Undo** button.
+pub(crate) fn notice_with_undo(text: impl Into<String>) -> Option<Notice> {
+    Some(Notice {
+        text: text.into(),
+        error: false,
+        at: Instant::now(),
+        path: None,
+        undo: true,
     })
 }
 
@@ -1628,15 +1642,18 @@ Encoder: {}",
     /// The latest message as a small card under the top bar, so a long one is never squeezed into
     /// the bar itself. A message with a file offers to show it; any can be dismissed.
     pub(crate) fn notice_toast(&mut self, context: &egui::Context) {
-        let Some((text, error, path)) = self
-            .capture
-            .notice
-            .as_ref()
-            .map(|current| (current.text.clone(), current.error, current.path.clone()))
-        else {
+        let Some((text, error, path, undo)) = self.capture.notice.as_ref().map(|current| {
+            (
+                current.text.clone(),
+                current.error,
+                current.path.clone(),
+                current.undo,
+            )
+        }) else {
             return;
         };
         let mut show = false;
+        let mut undone = false;
         let mut dismiss = false;
         // It rises into place from the bottom of the window (so it never sits on the controls at
         // the top of a page) and fades in; a coloured dot says at a glance whether it is good news.
@@ -1719,6 +1736,12 @@ Encoder: {}",
                             {
                                 show = true;
                             }
+                            if undo
+                                && kit::labelled_button(ui, Icon::Restart, "Undo", true, true)
+                                    .clicked()
+                            {
+                                undone = true;
+                            }
                             let (rect, response) =
                                 ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::click());
                             response.widget_info(|| {
@@ -1751,6 +1774,9 @@ Encoder: {}",
             held_for += context.input(|input| input.unstable_dt).min(0.25);
         }
         context.data_mut(|data| data.insert_temp(held_key, (held_for, text_key)));
+        if undone {
+            self.undo_pending_trash();
+        }
         if show && let Some(path) = path {
             self.reveal_media(path);
         }
@@ -2160,6 +2186,7 @@ mod tests {
                     .checked_sub(Duration::from_secs(seconds))
                     .expect("a time in the past"),
                 path: None,
+                undo: false,
             })
         };
         for (seconds, stays) in [(1, true), (20, true), (29, true), (45, false)] {

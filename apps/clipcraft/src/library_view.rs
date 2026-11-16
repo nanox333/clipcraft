@@ -68,6 +68,8 @@ pub(crate) struct ViewCache {
     manual: HashMap<String, usize>,
     manual_version: u64,
     key: Option<(LibraryFilter, String, Sort)>,
+    /// Clips kept out of the list for now (waiting to be moved to the Recycle Bin).
+    hidden: std::collections::BTreeSet<String>,
     pub indices: Vec<usize>,
     pub total: usize,
     pub favorites: usize,
@@ -77,6 +79,13 @@ pub(crate) struct ViewCache {
     builds: usize,
 }
 impl ViewCache {
+    /// Keeps these clips out of the list until it is told otherwise.
+    pub fn set_hidden(&mut self, hidden: &std::collections::BTreeSet<String>) {
+        if &self.hidden != hidden {
+            self.hidden = hidden.clone();
+            self.key = None;
+        }
+    }
     pub fn invalidate(&mut self) {
         self.ready = false;
         self.key = None;
@@ -116,6 +125,9 @@ impl ViewCache {
             let (Some(entry), Some(row)) = (result.entries.get(index), self.rows.get(index)) else {
                 continue;
             };
+            if self.hidden.contains(&entry.path) {
+                continue;
+            }
             let matches = match filter {
                 LibraryFilter::All => true,
                 LibraryFilter::Favorites => entry.favorite,

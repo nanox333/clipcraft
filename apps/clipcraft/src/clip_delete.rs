@@ -61,6 +61,14 @@ impl ClipCraftApp {
                         .color(MUTED)
                         .size(crate::kit::text_size::CAPTION),
                 );
+                if entry.favorite {
+                    ui.add_space(crate::kit::space::SM);
+                    ui.label(
+                        RichText::new("This clip is one of your favorites.")
+                            .color(DANGER)
+                            .size(crate::kit::text_size::SMALL),
+                    );
+                }
                 ui.add_space(crate::kit::space::MD);
                 ui.label(
                     RichText::new(
@@ -109,17 +117,7 @@ impl ClipCraftApp {
         self.playback = None;
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
-            let mut last = Err(EngineError::TrashUnavailable);
-            for _ in 0..20 {
-                last = execute(Command::TrashClip { path: path.clone() }).map(|_| ());
-                match &last {
-                    Err(EngineError::TrashUnavailable) if path.exists() => {
-                        std::thread::sleep(Duration::from_millis(100));
-                    }
-                    _ => break,
-                }
-            }
-            let _ = sender.send(last);
+            let _ = sender.send(move_clip_to_trash(path));
         });
         self.trashing = Some(Trashing {
             title,
@@ -159,8 +157,24 @@ impl ClipCraftApp {
     }
 }
 
+/// Moves one clip's file to the Recycle Bin. The player may still hold the file for a moment, so
+/// a refusal is tried again for a couple of seconds. Never deletes for good.
+pub(crate) fn move_clip_to_trash(path: PathBuf) -> Result<(), EngineError> {
+    let mut last = Err(EngineError::TrashUnavailable);
+    for _ in 0..20 {
+        last = execute(Command::TrashClip { path: path.clone() }).map(|_| ());
+        match &last {
+            Err(EngineError::TrashUnavailable) if path.exists() => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            _ => break,
+        }
+    }
+    last
+}
+
 /// A red button for a step that removes something.
-fn danger_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+pub(crate) fn danger_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     let font = egui::FontId::new(crate::kit::text_size::SMALL, kit::medium());
     let galley = ui
         .painter()

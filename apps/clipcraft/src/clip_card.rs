@@ -30,8 +30,26 @@ pub(crate) enum ClipCardAction {
     Prepare(Box<MediaEntry>),
     /// Open the rename box for the clip.
     Rename(Box<MediaEntry>),
+    /// In selection mode: the clip was clicked. `range` (Shift held) extends the selection from the
+    /// last clip clicked.
+    ToggleSelected {
+        path: String,
+        range: bool,
+    },
+    /// In selection mode: a drawn box changed the selection to exactly these clips.
+    SetSelection(Vec<String>),
     /// Look for a clip whose file moved: its path, name and size.
     FindFile(String, String, u64),
+}
+
+/// How a clip is shown: as a card or a line, and whether it is being picked for a group action.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct CardMode {
+    /// A line of the list rather than a picture card.
+    pub row: bool,
+    /// `Some(chosen)` while choosing several clips: the clip shows a check and a click picks it
+    /// instead of opening it. `None` is the normal page.
+    pub select: Option<bool>,
 }
 
 /// Height of a clip in the list layout, and of its small picture.
@@ -47,9 +65,18 @@ pub(crate) fn clip_card(
     thumbs: &mut thumbs::Thumbnails,
     game: Option<&str>,
     collections: &[String],
-    row: bool,
+    mode: CardMode,
 ) -> Option<ClipCardAction> {
     const RADIUS: u8 = crate::kit::radius::LG;
+    let row = mode.row;
+    let selecting = mode.select.is_some();
+    let chosen = mode.select == Some(true);
+    // While choosing, the quick buttons are not there and a click picks the clip.
+    let quick = if selecting {
+        egui::Sense::hover()
+    } else {
+        egui::Sense::click()
+    };
     let thumb_height = if row {
         ROW_PICTURE
     } else {
@@ -95,13 +122,22 @@ pub(crate) fn clip_card(
     let copy_area = button_area(2.0);
     let reveal_area = button_area(1.0);
     // Added after the card so they sit on top of it and take their own clicks.
-    let copy = ui.interact(copy_area, response.id.with("copy"), egui::Sense::click());
+    let copy = ui.interact(copy_area, response.id.with("copy"), quick);
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
-            true,
-            format!("Open {}", entry.title),
-        )
+        if selecting {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::Checkbox,
+                true,
+                chosen,
+                format!("Select {}", entry.title),
+            )
+        } else {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!("Open {}", entry.title),
+            )
+        }
     });
     copy.widget_info(|| {
         egui::WidgetInfo::labeled(
@@ -114,11 +150,7 @@ pub(crate) fn clip_card(
             },
         )
     });
-    let reveal = ui.interact(
-        reveal_area,
-        response.id.with("reveal"),
-        egui::Sense::click(),
-    );
+    let reveal = ui.interact(reveal_area, response.id.with("reveal"), quick);
     reveal.widget_info(|| {
         egui::WidgetInfo::labeled(
             egui::WidgetType::Button,
@@ -131,7 +163,7 @@ pub(crate) fn clip_card(
         )
     });
     let heart_area = button_area(0.0);
-    let heart = ui.interact(heart_area, response.id.with("heart"), egui::Sense::click());
+    let heart = ui.interact(heart_area, response.id.with("heart"), quick);
     heart.widget_info(|| {
         egui::WidgetInfo::selected(
             egui::WidgetType::Checkbox,
@@ -172,7 +204,48 @@ pub(crate) fn clip_card(
         ),
         egui::StrokeKind::Inside,
     );
-    if hovered && !entry.offline {
+    if selecting {
+        // The pick: a lime frame and tint when chosen, and a round check at the corner.
+        if chosen {
+            painter.rect_filled(
+                thumbnail,
+                egui::CornerRadius::same(RADIUS),
+                Color32::from_rgba_unmultiplied(190, 255, 43, 30),
+            );
+            painter.rect_stroke(
+                thumbnail,
+                egui::CornerRadius::same(RADIUS),
+                Stroke::new(3.0_f32, LIME),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let dot = thumbnail.left_top() + Vec2::new(22.0, 22.0);
+        painter.circle_filled(
+            dot,
+            12.0,
+            if chosen {
+                LIME
+            } else {
+                Color32::from_black_alpha(150)
+            },
+        );
+        painter.circle_stroke(
+            dot,
+            12.0,
+            Stroke::new(
+                1.5_f32,
+                if chosen {
+                    LIME
+                } else {
+                    Color32::from_white_alpha(170)
+                },
+            ),
+        );
+        if chosen {
+            kit::draw_icon(&painter, dot, Icon::Check, Color32::BLACK, 0.75);
+        }
+    }
+    if hovered && !entry.offline && !selecting {
         painter.circle_filled(
             thumbnail.center(),
             if row { 16.0 } else { 26.0 },
@@ -205,7 +278,7 @@ pub(crate) fn clip_card(
     }
 
     // Favorite heart (always shown when set) and the game badge.
-    if entry.favorite || hovered {
+    if entry.favorite || (hovered && !selecting) {
         painter.circle_filled(heart_area.center(), 16.0, Color32::from_black_alpha(150));
         if entry.favorite {
             kit::draw_heart(&painter, heart_area.center(), LIME, true, 0.85);
@@ -318,7 +391,7 @@ pub(crate) fn clip_card(
     };
     let focused =
         response.has_focus() || copy.has_focus() || reveal.has_focus() || heart.has_focus();
-    if hovered || focused {
+    if (hovered || focused) && !selecting {
         for (area, response, icon) in [
             (copy_area, &copy, first_icon),
             (reveal_area, &reveal, second_icon),
@@ -360,6 +433,12 @@ pub(crate) fn clip_card(
         });
     }
 
+    if selecting {
+        return response.clicked().then(|| ClipCardAction::ToggleSelected {
+            path: entry.path.clone(),
+            range: ui.input(|input| input.modifiers.shift),
+        });
+    }
     let mut menu_action = None;
     response.context_menu(|ui| {
         if !entry.offline && ui.button("Open").clicked() {

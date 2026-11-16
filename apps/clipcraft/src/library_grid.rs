@@ -48,6 +48,22 @@ const HEADER_HEIGHT: f32 = 40.0;
 const GLIDE_SECONDS: f32 = 0.18;
 /// How far the pointer has to move before a press becomes a pick-up.
 const PICK_UP_DISTANCE: f32 = 6.0;
+/// How far it has to move before a press on a card or the empty page becomes a drawn box.
+const BOX_DISTANCE: f32 = 6.0;
+
+/// A box being drawn over the clips to choose them, like on a desktop.
+struct Marquee {
+    /// Where the press was, from the top left of the content (so scrolling keeps it in place).
+    start: egui::Vec2,
+    /// What was chosen before, kept when the box adds to it.
+    base: std::collections::BTreeSet<String>,
+    /// Ctrl, ⌘ or Shift was held: the box adds to what was chosen.
+    additive: bool,
+    /// The pointer has moved far enough for it to be a box and not a click.
+    active: bool,
+    /// The press was on a clip (a click there chooses that clip).
+    on_card: bool,
+}
 
 #[derive(Default)]
 pub(crate) struct GridState {
@@ -62,6 +78,8 @@ pub(crate) struct GridState {
     /// The scroll position last frame, and a nudge to apply (dragging near an edge scrolls).
     offset: f32,
     nudge: f32,
+    /// The box being drawn while choosing clips.
+    marquee: Option<Marquee>,
     #[cfg(test)]
     pub painted: usize,
 }
@@ -193,6 +211,7 @@ impl GridState {
         thumbs: &mut Thumbnails,
         by_date: bool,
         shape: GridShape,
+        selecting: Option<&std::collections::BTreeSet<String>>,
     ) -> Option<ClipCardAction> {
         let count = view.indices.len();
         if self.target.is_some_and(|(index, _)| index >= count) {
@@ -289,7 +308,9 @@ impl GridState {
             self.visible = 0..0;
         }
         if self.carrying.is_none() {
-            self.navigate(ui, result, &view.indices, &natural);
+            // A card has four places to Tab to, and one while choosing several clips.
+            let parts = if selecting.is_some() { 1 } else { 4 };
+            self.navigate(ui, result, &view.indices, &natural, parts);
         }
         let mut scroll = egui::ScrollArea::vertical()
             .id_salt("clip-grid")
@@ -395,7 +416,11 @@ impl GridState {
                                             thumbs,
                                             view.game(source),
                                             &result.collections,
-                                            shape.list,
+                                            crate::clip_card::CardMode {
+                                                row: shape.list,
+                                                select: selecting
+                                                    .map(|chosen| chosen.contains(&entry.path)),
+                                            },
                                         )
                                     })
                                     .inner;
@@ -408,6 +433,7 @@ impl GridState {
                                 }
                                 // A press that has moved far enough picks the card up.
                                 if self.carrying.is_none()
+                                    && selecting.is_none()
                                     && !self.spent
                                     && picked.is_none()
                                     && context.dragged_id() == Some(id)
@@ -430,6 +456,29 @@ impl GridState {
         self.offset = output.state.offset.y;
         if !down {
             self.spent = false;
+        }
+        // While choosing clips, a box can be drawn over them (and over empty space).
+        if let Some(chosen) = selecting {
+            let paths: Vec<&str> = view
+                .indices
+                .iter()
+                .filter_map(|&source| result.entries.get(source))
+                .map(|entry| entry.path.as_str())
+                .collect();
+            if let Some(paths) = self.drive_box(
+                &context,
+                origin,
+                output.inner_rect,
+                &shown,
+                egui::vec2(width, height),
+                gap,
+                &paths,
+                chosen,
+            ) {
+                action = Some(ClipCardAction::SetSelection(paths));
+            }
+        } else {
+            self.marquee = None;
         }
         // Picking up: holding Alt, or an offline clip, never reorders. Alt hands the file to the
         // system at once.
@@ -526,12 +575,112 @@ impl GridState {
         action
     }
 
+    /// Draws and follows the box while choosing clips. Returns the whole new set of chosen clips
+    /// whenever the box (or a click on empty space) changes it.
+    #[allow(clippy::too_many_arguments)]
+    fn drive_box(
+        &mut self,
+        context: &egui::Context,
+        origin: egui::Pos2,
+        area: egui::Rect,
+        layout: &Layout,
+        card: egui::Vec2,
+        gap: f32,
+        paths: &[&str],
+        chosen: &std::collections::BTreeSet<String>,
+    ) -> Option<Vec<String>> {
+        let (pressed, down, pointer, modifiers) = context.input(|input| {
+            (
+                input.pointer.primary_pressed(),
+                input.pointer.primary_down(),
+                input.pointer.latest_pos(),
+                input.modifiers,
+            )
+        });
+        let rect_of = |flat: usize| {
+            layout.cells.get(flat).and_then(|&(row, column)| {
+                let top = layout.rows.get(row)?.top;
+                Some(egui::Rect::from_min_size(
+                    origin + egui::vec2(column as f32 * (card.x + gap), top),
+                    card,
+                ))
+            })
+        };
+        if pressed
+            && !egui::Popup::is_any_open(context)
+            && let Some(point) = pointer
+            && area.contains(point)
+            // Not on the scrollbar at the right edge.
+            && point.x < area.right() - 14.0
+        {
+            self.marquee = Some(Marquee {
+                start: point - origin,
+                base: chosen.clone(),
+                additive: modifiers.ctrl || modifiers.command || modifiers.shift,
+                active: false,
+                on_card: (0..paths.len())
+                    .any(|flat| rect_of(flat).is_some_and(|r| r.contains(point))),
+            });
+        }
+        let marquee = self.marquee.as_mut()?;
+        if !down {
+            let done = self.marquee.take()?;
+            // A plain click on empty space chooses nothing.
+            return (!done.active && !done.on_card && !done.additive).then(Vec::new);
+        }
+        let point = pointer?;
+        if !marquee.active && (point - origin - marquee.start).length() > BOX_DISTANCE {
+            marquee.active = true;
+        }
+        if !marquee.active {
+            return None;
+        }
+        let band = egui::Rect::from_two_pos(origin + marquee.start, point);
+        let painter = context
+            .layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("clip-box"),
+            ))
+            .with_clip_rect(area);
+        painter.rect_filled(
+            band,
+            3.0,
+            egui::Color32::from_rgba_unmultiplied(190, 255, 43, 34),
+        );
+        painter.rect_stroke(
+            band,
+            3.0,
+            egui::Stroke::new(1.5_f32, crate::kit::LIME),
+            egui::StrokeKind::Inside,
+        );
+        // Near the top or bottom edge the page scrolls, so the box can reach further.
+        let edge = 56.0;
+        if point.y < area.top() + edge {
+            self.nudge = -((area.top() + edge - point.y) / edge * 18.0);
+        } else if point.y > area.bottom() - edge {
+            self.nudge = (point.y - (area.bottom() - edge)) / edge * 18.0;
+        }
+        context.request_repaint();
+        let mut now = if marquee.additive {
+            marquee.base.clone()
+        } else {
+            std::collections::BTreeSet::new()
+        };
+        for (flat, path) in paths.iter().enumerate() {
+            if rect_of(flat).is_some_and(|rect| rect.intersects(band)) {
+                now.insert((*path).to_owned());
+            }
+        }
+        Some(now.into_iter().collect())
+    }
+
     fn navigate(
         &mut self,
         ui: &mut egui::Ui,
         result: &LibraryScanResult,
         indices: &[usize],
         layout: &Layout,
+        parts: usize,
     ) {
         if egui::Popup::is_any_open(ui.ctx()) {
             return;
@@ -601,13 +750,13 @@ impl GridState {
         };
         let next = match key {
             Key::Tab => {
-                let ordinal = index * 4 + part;
+                let ordinal = index * parts + part;
                 let next = if shift {
                     ordinal.checked_sub(1)
                 } else {
-                    (ordinal + 1 < indices.len() * 4).then_some(ordinal + 1)
+                    (ordinal + 1 < indices.len() * parts).then_some(ordinal + 1)
                 };
-                next.map(|n| (n / 4, n % 4))
+                next.map(|n| (n / parts, n % parts))
             }
             Key::Home => Some((0, part)),
             Key::End => Some((last, part)),
@@ -791,7 +940,15 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        grid.show(ui, &result, &view, &mut thumbs, false, GridShape::default());
+                        grid.show(
+                            ui,
+                            &result,
+                            &view,
+                            &mut thumbs,
+                            false,
+                            GridShape::default(),
+                            None,
+                        );
                     });
                 },
             );
@@ -840,7 +997,7 @@ mod shape_tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    grid.show(ui, result, view, thumbs, by_date, shape);
+                    grid.show(ui, result, view, thumbs, by_date, shape, None);
                 });
             },
         );
@@ -970,6 +1127,241 @@ mod shape_tests {
 }
 
 #[cfg(test)]
+mod box_tests {
+    use super::*;
+
+    fn clips(count: usize) -> (LibraryScanResult, ViewCache) {
+        let result = LibraryScanResult {
+            directory: "/clips".into(),
+            entries: (0..count)
+                .map(|i| crate::tests::media_entry(&format!("Clip {i:03}"), None))
+                .collect(),
+            persisted: false,
+            collections: Vec::new(),
+        };
+        let mut view = ViewCache::default();
+        view.prepare(&result, &crate::LibraryFilter::All, "", false);
+        (result, view)
+    }
+
+    /// One frame with these pointer events; the action the grid answered with.
+    fn frame(
+        context: &egui::Context,
+        grid: &mut GridState,
+        result: &LibraryScanResult,
+        view: &ViewCache,
+        chosen: &std::collections::BTreeSet<String>,
+        events: Vec<egui::Event>,
+        modifiers: egui::Modifiers,
+    ) -> Option<ClipCardAction> {
+        let mut answer = None;
+        let mut thumbs = Thumbnails::default();
+        let _ = context.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 700.0),
+                )),
+                events,
+                modifiers,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    answer = grid.show(
+                        ui,
+                        result,
+                        view,
+                        &mut thumbs,
+                        false,
+                        GridShape::default(),
+                        Some(chosen),
+                    );
+                });
+            },
+        );
+        answer
+    }
+
+    fn press(pos: egui::Pos2, pressed: bool, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+        }
+    }
+
+    fn drag(
+        context: &egui::Context,
+        grid: &mut GridState,
+        result: &LibraryScanResult,
+        view: &ViewCache,
+        chosen: &std::collections::BTreeSet<String>,
+        from: egui::Pos2,
+        to: egui::Pos2,
+        modifiers: egui::Modifiers,
+    ) -> Option<Vec<String>> {
+        let none = egui::Modifiers::NONE;
+        let mut set = None;
+        let steps = [
+            vec![egui::Event::PointerMoved(from)],
+            vec![press(from, true, modifiers)],
+            vec![egui::Event::PointerMoved(from.lerp(to, 0.5))],
+            vec![egui::Event::PointerMoved(to)],
+        ];
+        for events in steps {
+            if let Some(ClipCardAction::SetSelection(paths)) =
+                frame(context, grid, result, view, chosen, events, modifiers)
+            {
+                set = Some(paths);
+            }
+        }
+        // Let go.
+        if let Some(ClipCardAction::SetSelection(paths)) = frame(
+            context,
+            grid,
+            result,
+            view,
+            chosen,
+            vec![press(to, false, modifiers)],
+            none,
+        ) {
+            set = Some(paths);
+        }
+        set
+    }
+
+    #[test]
+    fn a_drawn_box_chooses_what_it_touches_ctrl_adds_and_empty_space_clears() {
+        let context = crate::kit::test_context();
+        let (result, view) = clips(40);
+        let mut grid = GridState::default();
+        let none = egui::Modifiers::NONE;
+        let empty = std::collections::BTreeSet::new();
+        // Start in the page margin (not on a card) and drag down and right over the first cards.
+        let from = egui::pos2(14.0, 14.0);
+        let to = egui::pos2(700.0, 300.0);
+        let chosen = drag(&context, &mut grid, &result, &view, &empty, from, to, none)
+            .expect("the box chose something");
+        assert!(chosen.len() >= 3, "{chosen:?}");
+        assert!(chosen.contains(&result.entries[0].path));
+        // The box covers the top two rows of cards: chosen clips come from the first clips
+        // only, from more than one row, and not every card of a row is necessarily touched.
+        let index_of = |path: &String| result.entries.iter().position(|e| &e.path == path).unwrap();
+        let indices: Vec<usize> = chosen.iter().map(index_of).collect();
+        assert!(indices.iter().all(|&index| index < 12), "{indices:?}");
+        assert!(
+            indices.iter().any(|&index| index >= 3),
+            "more than one row: {indices:?}"
+        );
+        // A smaller box chooses fewer.
+        let small = drag(
+            &context,
+            &mut grid,
+            &result,
+            &view,
+            &empty,
+            from,
+            egui::pos2(200.0, 150.0),
+            none,
+        )
+        .expect("a small box");
+        assert!(
+            !small.is_empty() && small.len() < chosen.len(),
+            "{small:?} vs {chosen:?}"
+        );
+        // With Ctrl the box adds to what was already chosen.
+        let already: std::collections::BTreeSet<String> =
+            [result.entries[30].path.clone()].into_iter().collect();
+        let added = drag(
+            &context,
+            &mut grid,
+            &result,
+            &view,
+            &already,
+            from,
+            egui::pos2(200.0, 150.0),
+            egui::Modifiers::CTRL,
+        )
+        .expect("an adding box");
+        assert!(added.contains(&result.entries[30].path), "{added:?}");
+        assert!(added.len() > 1);
+        // Without Ctrl it replaces what was chosen.
+        let replaced = drag(
+            &context,
+            &mut grid,
+            &result,
+            &view,
+            &already,
+            from,
+            egui::pos2(200.0, 150.0),
+            none,
+        )
+        .expect("a replacing box");
+        assert!(!replaced.contains(&result.entries[30].path), "{replaced:?}");
+        // A plain click on empty space chooses nothing at all (two clips leave room to click).
+        let (few, few_view) = clips(2);
+        let blank = egui::pos2(800.0, 600.0);
+        let cleared = drag(
+            &context, &mut grid, &few, &few_view, &already, blank, blank, none,
+        );
+        assert_eq!(cleared, Some(Vec::new()));
+        // A click on a clip is that clip's own click and clears nothing.
+        let on_card = drag(
+            &context, &mut grid, &few, &few_view, &already, from, from, none,
+        );
+        assert_eq!(on_card, None);
+        // And Ctrl on empty space keeps what was chosen.
+        let kept = drag(
+            &context,
+            &mut grid,
+            &few,
+            &few_view,
+            &already,
+            blank,
+            blank,
+            egui::Modifiers::CTRL,
+        );
+        assert_eq!(kept, None);
+        // And not while the page is not choosing: the box is not drawn and nothing is returned.
+        let mut thumbs = Thumbnails::default();
+        for events in [
+            vec![egui::Event::PointerMoved(from)],
+            vec![press(from, true, none)],
+            vec![egui::Event::PointerMoved(to)],
+            vec![press(to, false, none)],
+        ] {
+            let mut answer = None;
+            let _ = context.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 700.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        answer = grid.show(
+                            ui,
+                            &result,
+                            &view,
+                            &mut thumbs,
+                            false,
+                            GridShape::default(),
+                            None,
+                        );
+                    });
+                },
+            );
+            assert!(!matches!(answer, Some(ClipCardAction::SetSelection(_))));
+        }
+    }
+}
+
+#[cfg(test)]
 mod traversal_tests {
     use super::*;
     #[test]
@@ -999,7 +1391,15 @@ mod traversal_tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        grid.show(ui, &result, &view, thumbs, false, GridShape::default());
+                        grid.show(
+                            ui,
+                            &result,
+                            &view,
+                            thumbs,
+                            false,
+                            GridShape::default(),
+                            None,
+                        );
                     });
                 },
             );
@@ -1052,7 +1452,15 @@ mod traversal_tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        grid.show(ui, &result, &view, &mut thumbs, false, GridShape::default());
+                        grid.show(
+                            ui,
+                            &result,
+                            &view,
+                            &mut thumbs,
+                            false,
+                            GridShape::default(),
+                            None,
+                        );
                     });
                 },
             );
@@ -1159,6 +1567,7 @@ mod layout_and_drag_tests {
                             &mut self.thumbs,
                             by_date,
                             GridShape::default(),
+                            None,
                         );
                     });
                 },

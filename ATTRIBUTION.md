@@ -29,6 +29,7 @@ See [ADR 0022](docs/adr/0022-local-game-state.md) for the narrowly scoped trust 
 | `assets/fonts/Inter-Regular.ttf` | Inter 4.1, The Inter Project Authors, <https://github.com/rsms/inter/releases/tag/v4.1> | SIL OFL 1.1, unmodified; text in `assets/fonts/OFL-Inter.md` |
 | `assets/fonts/Inter-Medium.ttf` | Inter 4.1, The Inter Project Authors, <https://github.com/rsms/inter/releases/tag/v4.1> | SIL OFL 1.1, unmodified; text in `assets/fonts/OFL-Inter.md` |
 | `assets/fonts/Inter-SemiBold.ttf` | Inter 4.1, The Inter Project Authors, <https://github.com/rsms/inter/releases/tag/v4.1> | SIL OFL 1.1, unmodified; text in `assets/fonts/OFL-Inter.md` |
+| `assets/icons/check.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/chevron-down.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/chevron-left.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |
 | `assets/icons/copy.svg` | Original artwork drawn for ClipCraft | Project license; no third-party source |

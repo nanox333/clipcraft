@@ -14,6 +14,7 @@ mod clip_delete;
 mod clip_label;
 mod clip_page;
 mod clip_rename;
+mod clip_select;
 mod colour_picker;
 mod crash;
 mod editor;
@@ -240,6 +241,8 @@ struct ClipCraftApp {
     confirm_delete: Option<MediaEntry>,
     /// A clip being moved to the Recycle Bin.
     trashing: Option<clip_delete::Trashing>,
+    /// Clips chosen on the Clips page for a group action (favorite, collection, delete).
+    selection: clip_select::Selection,
     /// A share copy being made.
     sharing: Option<share::ShareJob>,
     /// The rename box, while it is open.
@@ -511,6 +514,7 @@ impl ClipCraftApp {
                 error: false,
                 at: std::time::Instant::now(),
                 path: None,
+                undo: false,
             });
         }
         if self.editor.take_saved().is_some() {
@@ -742,6 +746,7 @@ impl ClipCraftApp {
         self.navigation(context);
         self.notice_toast(context);
         self.poll_trash(context);
+        self.poll_bulk_trash(context);
         self.poll_rename(context);
         self.poll_share(context);
 
@@ -784,6 +789,7 @@ impl ClipCraftApp {
                 }
             });
         self.delete_dialog(context);
+        self.bulk_trash_dialog(context);
         self.gpu_restart_dialog(context);
         self.rename_dialog(context);
         self.bug_report_dialog(context);
@@ -1212,6 +1218,9 @@ impl ClipCraftApp {
     }
 
     fn library_view(&mut self, ui: &mut egui::Ui) {
+        // Clips waiting to be moved to the Recycle Bin stay out of sight, so an Undo brings them
+        // back where they were.
+        self.library_view.set_hidden(&self.selection.hidden());
         if let Some(result) = &self.library {
             self.library_view
                 .prepare(result, &self.filter, &self.search_text, self.sort);
@@ -1383,6 +1392,14 @@ impl ClipCraftApp {
     }
 
     fn edit_library(&mut self, edit: MetaEdit) {
+        self.edit_library_batch(vec![edit]);
+    }
+
+    /// Applies several edits with one copy of the library, and sends each to the index writer.
+    pub(crate) fn edit_library_batch(&mut self, edits: Vec<MetaEdit>) {
+        if edits.is_empty() {
+            return;
+        }
         if self.index_store.closing {
             return;
         }
@@ -1390,19 +1407,21 @@ impl ClipCraftApp {
         let Some(mut result) = self.library.clone() else {
             return;
         };
-        if let Err(error) = apply_edit(&mut result.entries, &mut result.collections, &edit) {
-            self.error = Some(error.to_string());
-            return;
-        }
-        if let Some(index) = self.index_path.clone()
-            && let Err(error) = self.index_store.submit(library_store::Write::Edit {
-                index,
-                directory: result.directory.clone(),
-                edit,
-            })
-        {
-            self.error = Some(error);
-            return;
+        for edit in edits {
+            if let Err(error) = apply_edit(&mut result.entries, &mut result.collections, &edit) {
+                self.error = Some(error.to_string());
+                return;
+            }
+            if let Some(index) = self.index_path.clone()
+                && let Err(error) = self.index_store.submit(library_store::Write::Edit {
+                    index,
+                    directory: result.directory.clone(),
+                    edit,
+                })
+            {
+                self.error = Some(error);
+                return;
+            }
         }
         if let Some(open) = self.selected.as_mut()
             && let Some(fresh) = result.entries.iter().find(|entry| entry.path == open.path)
@@ -1541,6 +1560,25 @@ impl ClipCraftApp {
                         self.reveal_media(PathBuf::from(folder));
                     }
                 }
+                // Choose several clips at once, to favorite, collect or delete them together.
+                let has_clips = self.library.as_ref().is_some_and(|r| !r.entries.is_empty());
+                let choosing = self.selection.active;
+                if kit::labelled_button(
+                    ui,
+                    Icon::Check,
+                    if choosing { "Done" } else { "Select" },
+                    choosing,
+                    has_clips,
+                )
+                .on_hover_text(if choosing {
+                    "Stop choosing clips (Esc)"
+                } else {
+                    "Choose several clips: drag a box around them, or click them"
+                })
+                .clicked()
+                {
+                    self.set_choosing(!choosing);
+                }
             });
         });
         ui.add_space(crate::kit::space::XS);
@@ -1668,6 +1706,14 @@ impl ClipCraftApp {
             ui.add_space(crate::kit::space::MD);
         }
 
+        // While choosing: how many are chosen and what to do with them.
+        self.prune_selection();
+        self.selection_keys(ui);
+        if self.selection.active {
+            ui.add_space(crate::kit::space::SM);
+            self.selection_bar(ui);
+            ui.add_space(crate::kit::space::SM);
+        }
         let mut card_action = None;
         match self.library.as_ref() {
             Some(result) if result.entries.is_empty() => self.empty_state(ui),
@@ -1695,6 +1741,7 @@ impl ClipCraftApp {
                             list: self.recording.library_list,
                             size: self.recording.library_card_size,
                         },
+                        self.selection.active.then_some(&self.selection.chosen),
                     );
                 }
             }
@@ -1720,6 +1767,12 @@ impl ClipCraftApp {
                 }
                 ClipCardAction::Delete(entry) => self.ask_to_delete(*entry),
                 ClipCardAction::Rename(entry) => self.ask_to_rename(*entry),
+                ClipCardAction::ToggleSelected { path, range } => {
+                    self.toggle_selected(path, range);
+                }
+                ClipCardAction::SetSelection(paths) => {
+                    self.selection.chosen = paths.into_iter().collect();
+                }
                 ClipCardAction::DragOut(entry) => self.drag_clip_out(ui.ctx(), &entry),
                 ClipCardAction::Reordered(paths) => self.apply_reorder(paths),
                 ClipCardAction::Prepare(entry) => self.prepare_share(&entry, false),
