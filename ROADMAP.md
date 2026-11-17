@@ -36,7 +36,7 @@ The path, in the order I suggest working on it. Each step names the gate it clos
 | 8 | Run the published packages and the command line release; fix what breaks | 1.0 | ⬜ Not done |
 | 9 | Decide whether Linux (X11 and Wayland) ships as supported or as experimental in 1.0 | 1.0 | ◷ Open decision |
 
-New features wait unless they serve this list. After 1.0: a macOS capture provider (M6),
+Each step is a backlog item, R1.1 to R1.9 in [`docs/backlog.md`](docs/backlog.md). New features wait unless they serve this list. After 1.0: a macOS capture provider (M6),
 optional client-side encrypted backup (M9; the rolling backups in 0.4.0 are local copies of the
 settings and library index, not this), controller shortcuts and overlays, and more editor polish.
 

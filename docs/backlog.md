@@ -490,6 +490,31 @@ muxer, plus the workspace image resizer. No new upstream revision or license exc
 software-only implementation does not require GPU evidence; representative-machine throughput
 still needs measurement. Estimate: initial implementation complete, remaining controls TBD.
 
+### M4.6 — Clips page redesign, choosing many clips and Refresh
+
+**Status:** implemented in 0.4.0 and checked on Linux (virtual display, generated clips, unit tests);
+the Windows Recycle Bin, mouse selection and drag to reorder or out of the window were only
+type-checked and linted. Evidence and limits: [`gaps.md`](gaps.md), "Choosing many clips, and
+keeping them safe" and "Window redesign round".
+
+**User problem:** the clips page was a flat grid that could not act on several clips at once, and a
+delete could not be taken back.
+
+**Requirements:** a heading for each day; picture cards in three sizes or a list; your own order by
+dragging cards; a colour and mark per game; **Select** with click, Shift-click, a drawn box, Ctrl or
+⌘ and A, and Esc; Favorite, Collection (tick, dash, new collection) and Delete for the chosen clips;
+every delete (one clip or many) shows a list, leaves favorites out unless chosen, and moves the
+files to the Recycle Bin when the message with **Undo** and **Delete now** is closed; **Refresh**
+rescans the folder and checks that every clip opens and has a picture and a length.
+
+**Limitations:** at most 500 clips in one delete; Undo works only while the message is on screen;
+closing ClipCraft first leaves waiting clips where they are; Refresh names damaged clips but never
+changes or deletes them.
+
+**Acceptance (met on Linux):** unit tests for the selection maths, the box, the delete summary and
+the Undo flow; screenshots and a recording of choose, delete and Undo; a real move to the Trash.
+**Open:** the same checks on Windows (Recycle Bin, mouse, drag).
+
 ## M5 — Reliability and release
 
 ### M5.B1 — Reviewable local bug reports
@@ -692,6 +717,71 @@ final cancellation check. No source or occupied temporary is deleted to make a r
 Native virtual audio, playback, edits, retry and normal/crash recovery pass; `strace` observed no
 Internet-addressed calls across five sessions. Namespace creation was unavailable, so physical
 network disconnection and Windows/hardware release gates remain open. See `testing.md`.
+
+### M5.4 — Data safety: Undo, backups, clip check, safe start, quit question
+
+**Status:** implemented in 0.4.0; unit tests and Linux checks. Windows behaviour is not yet
+verified. Evidence: [`gaps.md`](gaps.md), "Choosing many clips, and keeping them safe".
+
+**User problem:** a mistake, a damaged file or a crash must not cost the person their clips or
+their library.
+
+**Requirements:** the storage limit never touches favorites, clips in a collection or clips in an
+open edit, and moves old clips to the Recycle Bin; every saved clip is reopened and checked (a
+clip under half its recorded length, with no picture or missing sound is reported); a notice when
+free space is under 2 GB and again under 500 MB while recording; three rolling backups, at most one
+a day, of the settings and the library index, used automatically when a file is damaged (the damaged
+file is kept); after three starts in a row that never ran for 30 seconds ClipCraft opens with
+default settings and asks whether to keep them (the saved settings are kept); a question before
+quitting while the replay holds footage (Settings → General turns it off); discarding the editor
+draft asks first.
+
+**Limitations:** these local backups are copies of the settings and the library index, not
+[M9.1](#m91--user-configured-client-side-encrypted-backup-and-restore) encrypted backup of clips;
+a backup can be up to a day old; the quit question is not asked on a crash or a killed process.
+
+**Acceptance (met on Linux):** unit tests for each rule, including a damaged settings file and a
+damaged index coming back from a backup; checks in the running app. **Open:** a real crash loop, a
+full disk and hardware-encoded clips on Windows.
+
+### M5.5 — Experimental privacy pauses
+
+**Status:** implemented in 0.4.0, off by default (Settings → Experimental). Tested on Linux/X11
+with a real window; not tried with a real password manager, on Windows or on a real lock screen.
+
+**User problem:** a password manager or the lock screen should not end up in a replay that gets
+shared.
+
+**Requirements:** pause the desktop recording while a built-in password manager, a program the
+person names, or the lock screen is up, and resume after; a pause or resume the person chose is
+never undone; pausing clears the replay unless **Keep the replay while paused** is on.
+
+**Limitations:** needs to see which windows are open, which works on Windows and X11 and not on
+Wayland (the page says so); programs are matched by file name, so a script or a Flatpak or Snap app
+may show under another name; websites in a browser are not recognized; the lock screen is read from
+the session manager on Linux and from `LogonUI.exe` on Windows.
+
+**Acceptance (met on Linux/X11):** unit tests for the rules and the list; a real window of a named
+program paused and resumed the recording. **Open:** Windows, a real password manager, a real lock
+screen, Wayland lock status.
+
+### M5.6 — One message design
+
+**Status:** implemented in 0.4.0 and checked in the running Windows 11 app only. The guide is
+[`notifications.md`](notifications.md); evidence and limits are in [`gaps.md`](gaps.md), "0.4.0
+release verification".
+
+**User problem:** saved, failed, warning and information messages looked and behaved differently.
+
+**Requirements:** four kinds with a coloured badge that stay 8, 8, 16 and 30 seconds; the same
+corners, close button and slide; a thin line showing the time left; a message with Undo stays until
+closed; the "clip saved" pop-up in the corner is larger and slides smoothly while minimized.
+
+**Limitations:** rounded pop-up corners need Windows 11; not checked on a second machine, Windows
+10 or Linux/Wayland.
+
+**Acceptance:** the guide's rules hold in every screen (tests and by hand). **Open:** the platforms
+above.
 
 ## M6 — Additional local platforms
 
@@ -1036,7 +1126,7 @@ or mark them uncollected. **Dependencies:** M8.1 shared core boundaries. **Estim
 
 ### M9.1 — User-configured client-side-encrypted backup and restore
 
-**Status:** proposed; no backup provider, encryption format, or key recovery mechanism is selected.
+**Status:** proposed; no backup provider, encryption format, or key recovery mechanism is selected. The rolling local backups of the settings and library in [M5.4](#m54--data-safety-undo-backups-clip-check-safe-start-quit-question) are not this feature.
 
 **User problem:** the user wants a way to protect local clips with encrypted cloud backups while
 keeping ClipCraft usable offline and avoiding a ClipCraft-hosted server or sharing service.
@@ -1583,6 +1673,29 @@ Cargo-machete reports clean with a documented `windows-core` macro-use exception
 **Docs:** README/gaps, roadmap/backlog/plan, architecture/editor/performance/testing, provenance,
 ADR 0004/0026 follow-ups. **Dependency/estimate:** M11.1i; one maintenance slice, no release gate closed.
 
+### M11.1k — Editor controls, picture shapes and text styling
+
+**Status:** implemented in 0.4.0 and checked with real software exports on Linux; a physical GPU,
+styled text in an exported MP4 and a vertical export played in other programs are not checked.
+Evidence: [`gaps.md`](gaps.md), "Window redesign round".
+
+**User problem:** the editor lacked frame stepping and zoom, could not make vertical or square
+video, and its text was too plain.
+
+**Requirements:** loop, previous and next cut, frame step by each clip's own frame rate, time to the
+hundredth, Home and End, timeline zoom and a segment panel (In, Out, volume, mute); preview and
+export in twelve picture shapes or any 1:4 to 4:1, with fit, blur, fill or stretch; text in three
+font families and four weights with italic, underline, capitals, spacing, shadow, outline, a dark
+box, opacity and six ready-made styles; the command line accepts the same shape and framing.
+
+**Limitations:** fill always crops around the middle; text position and timing are set by dragging
+in the preview and on the timeline, not typed; the shape is set in the editor and its export window,
+not in the Settings pages.
+
+**Acceptance (met on Linux):** unit tests for the maths, each shape's output size and the four
+framings' pixels, each text option changing the picture, saved-edit round trips; real MP4 exports at
+9:16, 1:1, 4:5, 21:9 and original. **Open:** the checks listed above.
+
 ### M11.2 — Local CLI and MCP footage-management adapter
 
 **Status:** planned; the local Rust CLI exists, but an MCP adapter does not.
@@ -1607,3 +1720,137 @@ revocable; outputs avoid leaking private paths unless explicitly requested.
 **Verification:** protocol/schema tests, sandboxed temp-library tests, malicious path/oversize-input
 tests, and an end-to-end stdio host test with synthetic clips. **Dependencies:** stable command IDs
 and M9 backup permissions. **Estimate:** TBD.
+
+## R1 — Road to the first stable release (1.0)
+
+These items are the work of the [roadmap](../ROADMAP.md) goal, in the order to do them. Open a
+GitHub issue from the matching template for each before starting, and add its number here. Each
+needs a person with the hardware named; none can be closed from a build alone.
+
+### R1.1 — One written Windows pass with a real game
+
+**Status:** not started.
+
+**User problem:** nobody has yet recorded a real game on Windows, pressed the hotkey, trimmed and
+exported it with the network off, and written down what happened.
+
+**Requirements:** on Windows 10 and 11, with a real game: start clipping, press the hotkey, see the
+clip in the library, play it with sound, trim and export it, with network access disabled; record
+the Windows version, graphics card, game, steps, screenshots and the result in `testing.md`.
+
+**Limitations:** one game and one machine per run; does not cover other cards or anti-cheat games.
+
+**Acceptance:** a written, reproducible pass with evidence for every step, and a list of what
+failed with a gap-report entry or issue for each.
+
+### R1.2 — Windows finds the game window reliably
+
+**Status:** fixes shipped in 0.4.0; not verified on real games.
+
+**User problem:** capture sometimes cannot find the game window (fullscreen, borderless, launcher
+games), so nothing is recorded.
+
+**Requirements:** a set of real games covering exclusive fullscreen, borderless and launcher
+bootstraps; for each, game-only mode finds the window or falls back to the screen, and says why when
+it cannot.
+
+**Limitations:** games with protection that blocks capture stay unsupported and must say so.
+
+**Acceptance:** a table of games with the result and the evidence, and no unexplained "window not
+found".
+
+### R1.3 — Real-game performance and a two-hour 1080p60 soak
+
+**Status:** not started; so far one AMD card, generated footage and a two-hour 1080p30 soak.
+
+**User problem:** the performance numbers are for a generated window, not a game.
+
+**Requirements:** CPU, memory and dropped frames in real games at 1080p60 on at least two graphics-card
+makers (proposed), and a two-hour 1080p60 soak, compared with the measurements in `windows-performance.md`.
+
+**Limitations:** results are per machine; power use is not part of this item.
+
+**Acceptance:** measured results recorded with the hardware named, and any shortfall written in the gap
+report.
+
+### R1.4 — Recovery when a device disappears or the disk fills
+
+**Status:** partial: low-disk warning, backups and simulated full-disk recovery are built; device
+loss is open.
+
+**User problem:** unplugging a microphone or monitor, or filling the disk, must not lose the clip.
+
+**Requirements:** recording continues or stops cleanly and keeps the replay when a microphone,
+monitor or output device is lost; a full disk saves what it can and says so.
+
+**Limitations:** the first slice covers microphone, output device and monitor.
+
+**Acceptance:** tests with simulated loss plus a real unplug on Windows, with the replay kept.
+
+### R1.5 — Accessibility review with a real screen reader
+
+**Status:** partial: control names and keyboard focus are tested; no review with a screen reader.
+
+**User problem:** the app has not been tried by someone who relies on a screen reader.
+
+**Requirements:** a review with NVDA or Narrator on Windows covering the clips page, the editor and
+the settings; fix blocking problems and list the rest.
+
+**Limitations:** no claim of full conformance.
+
+**Acceptance:** the review notes in `testing.md` and no blocking problem left in the main workflows.
+
+### R1.6 — Signing key, signed installer and signed update check
+
+**Status:** not started: no signing key is set, so downloads are unsigned.
+
+**User problem:** Windows warns about an unknown publisher, and an update cannot be proven to come
+from the maintainer.
+
+**Requirements:** a code-signing certificate, a signed installer and executables, and an update
+check that verifies a signature (see `release-checklist.md`, "Signing releases").
+
+**Limitations:** needs a paid certificate chosen by the maintainer.
+
+**Acceptance:** a released installer shows the publisher, and an update with a bad signature is
+refused (test).
+
+### R1.7 — Clean-machine install, upgrade and uninstall
+
+**Status:** not started for 0.4.0.
+
+**User problem:** the installer has not been checked on a computer that never had ClipCraft.
+
+**Requirements:** on a clean Windows machine: install, run, upgrade from the previous release,
+check that settings and clips survive, uninstall and check that clips and settings are kept.
+
+**Limitations:** Windows only.
+
+**Acceptance:** the steps and results written in `release-checklist.md` for the release.
+
+### R1.8 — Run the published packages and the command line release
+
+**Status:** not started for 0.4.0.
+
+**User problem:** the release workflow builds the packages, but nobody has run what was published.
+
+**Requirements:** download each published file, check it against `SHA256SUMS.txt`, run the Windows
+installer, the portable zip, the Linux tarball and the command line release, and fix what breaks.
+
+**Limitations:** macOS has no download.
+
+**Acceptance:** each file run once on its platform, with the result recorded.
+
+### R1.9 — Decide Linux support for 1.0
+
+**Status:** open decision.
+
+**User problem:** Linux works on X11 with generated captures; Wayland and real games are untested.
+
+**Requirements:** decide whether Linux (X11, Wayland) ships in 1.0 as supported or as experimental,
+and say so in the release notes and README.
+
+**Limitations:** the decision is the maintainer's.
+
+**Acceptance:** the decision is written in the roadmap, and the platform gates for any "supported"
+claim have evidence.
