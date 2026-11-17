@@ -36,6 +36,7 @@ never goes online if you turn that off.
 - Everything stays on your computer. Original clips are never overwritten by trim or export.
 - Deleting (one clip or many) goes to the Recycle Bin, and an Undo message stays up until you close it. The storage limit never touches favorites, clips in
   a collection or clips in an open edit.
+- The small "clip saved" card in the corner of the screen draws and slides in at the screen's own pace even while ClipCraft is minimized to the tray, and its Play, folder, delete and close buttons work from there. Every other message (cards, banners, field notes) follows one design guide, [docs/notifications.md](docs/notifications.md).
 - Every saved clip is reopened and checked for missing footage, and you are warned when the disk is getting full. **Refresh** on the Clips page checks them all again.
 - ClipCraft asks before quitting while the replay holds footage.
 - Settings and the library keep rolling backups and recover from a damaged file.

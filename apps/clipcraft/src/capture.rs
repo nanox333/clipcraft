@@ -1506,8 +1506,12 @@ impl ClipCraftApp {
             None => {}
         }
         if alive {
+            // The card's own window draws and times itself; this window only keeps it alive and
+            // picks up what was asked for. It asks the card's window nothing, and is woken by it
+            // when it can be, but a minimized window can miss that wake-up, so it also looks in
+            // now and then.
             self.saved_toast = Some(toast);
-            context.request_repaint_after(std::time::Duration::from_millis(16));
+            context.request_repaint_after(std::time::Duration::from_millis(100));
         }
         // A clip the card was asked to play opens once the library lists it.
         if let Some(wanted) = self.pending_open.clone() {
@@ -1978,8 +1982,11 @@ Encoder: {}",
         } else if undo {
             context.request_repaint_after(std::time::Duration::from_millis(500));
         } else {
-            // The time-left line moves, a little at a time.
-            context.request_repaint_after(std::time::Duration::from_millis(100));
+            // The time-left line moves about a pixel every 2 frames at most: the card is around
+            // 400 points wide, so a short stay needs a frame every 40 ms (it was 100 ms, which
+            // made the line step visibly) and a long one needs fewer.
+            let step = (stay * 1000.0 / 400.0 * 2.0).clamp(33.0, 100.0);
+            context.request_repaint_after(std::time::Duration::from_millis(step as u64));
         }
         let area = egui::Area::new(egui::Id::new("notice-toast"))
             .anchor(

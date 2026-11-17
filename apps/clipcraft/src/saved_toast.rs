@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
@@ -25,6 +26,8 @@ const MARGIN: f32 = 18.0;
 const SLIDE: f32 = 80.0;
 const SLIDE_IN: f32 = notify::ENTER_SECONDS;
 const SLIDE_OUT: f32 = notify::EXIT_SECONDS;
+/// Where the window waits, in points, until it has drawn: far to the left of any screen.
+const OFF_SCREEN: f32 = -12_000.0;
 /// The window's title, which is how the system is asked not to give it the focus.
 const TITLE: &str = "ClipCraft saved clip";
 
@@ -36,11 +39,22 @@ pub(crate) enum ToastAction {
     Delete,
 }
 
+/// The pop-up's window runs its own frames (a deferred viewport), so what it draws and times
+/// lives behind a lock that the main window and the pop-up share. The main window hands over where
+/// the card rests and collects what was asked for; everything else happens in the pop-up's frames.
 pub(crate) struct SavedToast {
     pub path: PathBuf,
+    shared: Arc<Mutex<Shared>>,
+}
+
+struct Shared {
     title: String,
     meta: String,
-    created: Instant,
+    /// Where the card rests, in points: the bottom right of the free part of the screen.
+    rest: Pos2,
+    /// When the window was first shown; the slide-in is timed from here, not from when the window
+    /// was asked for, because making a window can take a while and the slide must not be skipped.
+    shown_at: Option<Instant>,
     last_frame: Instant,
     remaining: f32,
     closing: Option<Instant>,
@@ -51,6 +65,17 @@ pub(crate) struct SavedToast {
     deleted: bool,
     /// The window system rounds the window's corners (Windows 11), so no outline is painted.
     rounded: bool,
+    /// What was asked for and not yet collected by the main window.
+    action: Option<ToastAction>,
+    /// The slide out is over: the window can go.
+    finished: bool,
+    /// The position last asked of the window system.
+    sent_position: Option<Pos2>,
+}
+
+/// The shared state, even if a frame once panicked while holding it (the card is only a card).
+fn lock(shared: &Mutex<Shared>) -> MutexGuard<'_, Shared> {
+    shared.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl SavedToast {
@@ -66,11 +91,11 @@ impl SavedToast {
         std::thread::spawn(move || {
             let _ = sender.send(cache_dir.and_then(|dir| load_picture(&source, dir)));
         });
-        Self {
-            path,
+        let shared = Shared {
             title,
             meta,
-            created: Instant::now(),
+            rest: Pos2::ZERO,
+            shown_at: None,
             last_frame: Instant::now(),
             remaining: Kind::Success.stay(),
             closing: None,
@@ -80,35 +105,33 @@ impl SavedToast {
             sure_to_delete: None,
             deleted: false,
             rounded: false,
+            action: None,
+            finished: false,
+            sent_position: None,
+        };
+        Self {
+            path,
+            shared: Arc::new(Mutex::new(shared)),
         }
     }
 
     /// The clip was moved to the Recycle Bin from the card: say so, then leave soon.
     pub(crate) fn mark_deleted(&mut self) {
-        self.deleted = true;
-        self.sure_to_delete = None;
-        self.remaining = self.remaining.min(2.2);
+        let mut state = lock(&self.shared);
+        state.deleted = true;
+        state.sure_to_delete = None;
+        state.remaining = state.remaining.min(2.2);
     }
 
-    /// Draws the card. Returns what was asked for, and whether the card is still on screen.
+    /// Keeps the card's window alive for this frame of the main window. Returns what was asked
+    /// for, and whether the card is still on screen. The card is drawn and timed by its own
+    /// window's frames, which run at the screen's pace even while the main window is minimized
+    /// (a minimized window sleeps between frames, and a card drawn inside its frames would too).
     pub(crate) fn show(
         &mut self,
         context: &egui::Context,
         free: Option<Rect>,
     ) -> (Option<ToastAction>, bool) {
-        if let Some(receiver) = &self.picture
-            && let Ok(image) = receiver.try_recv()
-        {
-            self.picture = None;
-            if let Some(image) = image {
-                self.texture =
-                    Some(context.load_texture("saved-clip-picture", image, Default::default()));
-            }
-        }
-        let now = Instant::now();
-        let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
-        self.last_frame = now;
-        // Where the card rests: the bottom right of the free part of the screen, in points.
         let free = free.unwrap_or_else(|| {
             let screen = context
                 .input(|input| input.viewport().monitor_size)
@@ -119,76 +142,145 @@ impl SavedToast {
             free.right() - WIDTH - MARGIN,
             free.bottom() - HEIGHT - MARGIN,
         );
-        let age = self.created.elapsed().as_secs_f32();
-        let arriving = ease_out((age / SLIDE_IN).clamp(0.0, 1.0));
-        let leaving = self.closing.map_or(0.0, |at| {
-            ease_in((at.elapsed().as_secs_f32() / SLIDE_OUT).clamp(0.0, 1.0))
-        });
-        let offset = (1.0 - arriving + leaving) * SLIDE;
-        let position = Pos2::new(rest.x + offset, rest.y);
-
+        {
+            let mut state = lock(&self.shared);
+            if state.finished {
+                return (state.action.take(), false);
+            }
+            state.rest = rest;
+        }
         let builder = ViewportBuilder::default()
             .with_title(TITLE)
             .with_decorations(false)
             .with_always_on_top()
             .with_taskbar(false)
             .with_resizable(false)
+            // A window that is not shown gets no frames of its own, so its first frame moves it far
+            // off the screen and shows it there; it is moved into view once it has drawn.
             .with_visible(false)
             .with_active(false)
-            .with_position(position)
+            .with_position(Pos2::new(OFF_SCREEN, rest.y))
             .with_inner_size([WIDTH, HEIGHT]);
-        let mut action = None;
-        let mut hovered = false;
-        let mut dismiss = false;
-        context.show_viewport_immediate(
+        let shared = Arc::clone(&self.shared);
+        context.show_viewport_deferred(
             ViewportId::from_hash_of("clipcraft-saved-toast"),
             builder,
-            |context, _class| {
-                self.frames += 1;
-                // The window system rewrites a window's style when it is shown, so the "never take
-                // the focus" marking is renewed every frame; it is cheap and does nothing when
-                // the marking is already there.
-                if self.frames >= 2 {
-                    clipcraft_platform::make_window_passive(TITLE);
-                    // Rounded corners, like every other card; where the system cannot do that the
-                    // card paints its own plain outline instead.
-                    self.rounded = clipcraft_platform::round_window_corners(TITLE, [62, 62, 68]);
-                }
-                if self.frames == 3 {
-                    context.send_viewport_cmd(ViewportCommand::Visible(true));
-                }
-                context.send_viewport_cmd(ViewportCommand::OuterPosition(position));
-                hovered = context.input(|input| input.pointer.hover_pos().is_some());
-                let outline = if self.rounded {
-                    Stroke::NONE
-                } else {
-                    Stroke::new(1.0_f32, notify::CARD_OUTLINE)
-                };
-                egui::CentralPanel::default()
-                    .frame(egui::Frame::new().fill(PANEL).stroke(outline))
-                    .show(context, |ui| {
-                        let rect = ui.max_rect();
-                        self.paint(ui, rect, &mut action, &mut dismiss);
-                    });
-                context.request_repaint_after(Duration::from_millis(16));
-            },
+            move |context, _class| frame(&shared, context),
         );
-        if !hovered && self.closing.is_none() {
-            self.remaining -= dt;
+        (lock(&self.shared).action.take(), true)
+    }
+}
+
+/// One frame of the pop-up's own window.
+fn frame(shared: &Mutex<Shared>, context: &egui::Context) {
+    let mut state = lock(shared);
+    state.frames += 1;
+    if let Some(receiver) = &state.picture
+        && let Ok(image) = receiver.try_recv()
+    {
+        state.picture = None;
+        if let Some(image) = image {
+            state.texture =
+                Some(context.load_texture("saved-clip-picture", image, Default::default()));
         }
-        if (self.remaining <= 0.0 || dismiss) && self.closing.is_none() {
-            self.closing = Some(now);
-        }
-        if self
-            .sure_to_delete
-            .is_some_and(|at| at.elapsed() > Duration::from_secs(3))
-        {
-            self.sure_to_delete = None;
-        }
-        let alive = leaving < 1.0;
-        (action, alive)
+    }
+    let now = Instant::now();
+    let dt = now.duration_since(state.last_frame).as_secs_f32().min(0.1);
+    state.last_frame = now;
+
+    // Two frames to draw and be marked passive off the screen, then the slide in begins.
+    if state.frames == 3 {
+        state.shown_at = Some(Instant::now());
+    }
+    // Where the card is on its way in or out.
+    let age = state.shown_at.map_or(0.0, |at| at.elapsed().as_secs_f32());
+    let arriving = ease_out((age / SLIDE_IN).clamp(0.0, 1.0));
+    let leaving = state.closing.map_or(0.0, |at| {
+        ease_in((at.elapsed().as_secs_f32() / SLIDE_OUT).clamp(0.0, 1.0))
+    });
+    if leaving >= 1.0 {
+        state.finished = true;
+        context.send_viewport_cmd(ViewportCommand::Visible(false));
+        // The main window drops the card (and so closes this window); it may be asleep.
+        context.request_repaint_of(ViewportId::ROOT);
+        return;
+    }
+    let position = if state.shown_at.is_some() {
+        Pos2::new(
+            state.rest.x + (1.0 - arriving + leaving) * SLIDE,
+            state.rest.y,
+        )
+    } else {
+        Pos2::new(OFF_SCREEN, state.rest.y)
+    };
+
+    // The window system rewrites a window's style when it is shown, so the "never take the focus"
+    // marking is renewed every frame; it is cheap and does nothing when the marking is already
+    // there.
+    if state.frames >= 1 {
+        clipcraft_platform::make_window_passive(TITLE);
+    }
+    // Rounded corners, like every other card, asked for once (the setting stays); where the
+    // system cannot do that the card paints its own plain outline instead.
+    if !state.rounded && (2..=6).contains(&state.frames) {
+        state.rounded = clipcraft_platform::round_window_corners(TITLE, [62, 62, 68]);
+    }
+    // Sending a command asks for another frame, so a position that has not changed is not sent;
+    // a resting card then needs no frames but its time-left line's.
+    if state.sent_position != Some(position) {
+        state.sent_position = Some(position);
+        context.send_viewport_cmd(ViewportCommand::OuterPosition(position));
+    }
+    if state.frames == 1 {
+        context.send_viewport_cmd(ViewportCommand::Visible(true));
     }
 
+    let hovered = context.input(|input| input.pointer.hover_pos().is_some());
+    let outline = if state.rounded {
+        Stroke::NONE
+    } else {
+        Stroke::new(1.0_f32, notify::CARD_OUTLINE)
+    };
+    let mut action = None;
+    let mut dismiss = false;
+    egui::CentralPanel::default()
+        .frame(egui::Frame::new().fill(PANEL).stroke(outline))
+        .show(context, |ui| {
+            let rect = ui.max_rect();
+            state.paint(ui, rect, &mut action, &mut dismiss);
+        });
+
+    if action.is_some() {
+        state.action = action;
+        context.request_repaint_of(ViewportId::ROOT);
+    }
+    if !hovered && state.closing.is_none() && state.shown_at.is_some() {
+        state.remaining -= dt;
+    }
+    if (state.remaining <= 0.0 || dismiss) && state.closing.is_none() {
+        state.closing = Some(now);
+    }
+    if state
+        .sure_to_delete
+        .is_some_and(|at| at.elapsed() > Duration::from_secs(3))
+    {
+        state.sure_to_delete = None;
+    }
+    // While it slides (or has not been shown yet), one frame per screen refresh, because a timer
+    // asks for 15.6 ms steps at best, which is a stutter; while it rests only the time-left line
+    // moves, a pixel or two at a time.
+    let sliding = state.closing.is_some()
+        || state
+            .shown_at
+            .is_none_or(|at| at.elapsed().as_secs_f32() < SLIDE_IN);
+    if sliding {
+        context.request_repaint();
+    } else {
+        context.request_repaint_after(Duration::from_millis(40));
+    }
+}
+
+impl Shared {
     fn paint(
         &mut self,
         ui: &mut egui::Ui,

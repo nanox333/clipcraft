@@ -53,10 +53,15 @@ One entrance and one exit, the same length everywhere:
 - **out:** 0.22 s, ease-in (slow, then quick), sinking while fading out;
 - a banner fades in the first time a message appears and does not move;
 - the saved-clip pop-up is a window of its own (with rounded corners from the window system on Windows 11, a plain outline elsewhere), so it slides in from the screen's right edge
-  (80 px) instead of rising and fading; its timing and easing are the same.
+  (80 px) instead of rising and fading; its timing and easing are the same. It draws and times
+  itself in its own window's frames, not inside the main window's, because a minimized main window
+  sleeps between frames and would hold the slide to about 30 frames a second. The slide is timed
+  from the moment the window is shown, and a position that has not changed is not sent again
+  (sending one asks for another frame, and a window that always asks starves the main window).
 
-Nothing bounces, flashes or repeats. Reduced work for the computer: a card asks for a new frame
-about ten times a second while its time-left line moves, and not at all while it is still.
+Nothing bounces, flashes or repeats. Reduced work for the computer: while a card's time-left line
+moves it asks for a new frame every 40 ms (a longer stay asks less often, down to every 100 ms),
+and not at all while it is still; during its entrance and exit it asks for one per screen refresh.
 
 ## Writing the message
 
