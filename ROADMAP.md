@@ -1,22 +1,50 @@
 # ClipCraft roadmap
 
-**Stage:** active prototype · **Last reviewed:** 2026-11-17 · **Target:** offline-first, game-aware capture and local editing
+**Stage:** early release (0.4.0), working toward the first stable release · **Last reviewed:** 2026-11-17 · **Target:** offline-first, game-aware capture and local editing
 
 ClipCraft is a pure-Rust, offline-first native desktop product. Capture, library, editing, and export
 must work offline. Optional user-configured client-side-encrypted backup is planned, with no
 ClipCraft-hosted storage or account. The complete direction and constraints are in
 [`PLAN.md`](PLAN.md).
 
+## Goal: the first stable release (1.0)
+
+Everything on this page serves one goal: a stable **1.0 release for Windows** that people can
+install, trust with their clips, and update without worry. Linux follows if its gates pass;
+macOS is not needed for 1.0.
+
+1.0 is ready when the local alpha and beta gates below pass **and**:
+
+- a signed installer installs, upgrades from the previous release and uninstalls cleanly on a
+  machine that never had ClipCraft;
+- there is no known bug that can lose a clip, and the known-limits list in the
+  [gap report](docs/gaps.md) matches what the program really does;
+- the release workflow builds the packages from the tag, and the downloaded packages themselves
+  have been run.
+
+The path, in the order I suggest working on it. Each step names the gate it closes.
+
+| # | Step | Closes | Status |
+| --- | --- | --- | --- |
+| 1 | One written Windows pass: record a real game, press the hotkey, trim, export, with the network off | Local alpha | ⬜ Not done |
+| 2 | Windows finds the game window reliably (fullscreen, borderless, launcher games), checked on real games | Local alpha | 🟡 Fixes in 0.4.0, not yet verified on real games |
+| 3 | Real-game performance and a two-hour 1080p60 soak, on at least two graphics-card makers (proposed; so far one AMD card and generated footage) | Beta | ⬜ Not done |
+| 4 | Recovery when a device disappears (microphone, monitor) and when the disk fills | Beta | 🟡 Low-disk warning and backups built; device loss open |
+| 5 | Accessibility review with a real screen reader | Beta | 🟡 Names and keyboard focus tested; no review |
+| 6 | Signing key set, signed installer and signed update check | Beta / 1.0 | ⬜ Not done (downloads are unsigned) |
+| 7 | Clean-machine install, upgrade from the previous release and uninstall | 1.0 | ⬜ Not done for 0.4.0 |
+| 8 | Run the published packages and the command line release; fix what breaks | 1.0 | ⬜ Not done |
+| 9 | Decide whether Linux (X11 and Wayland) ships as supported or as experimental in 1.0 | 1.0 | ◷ Open decision |
+
+New features wait unless they serve this list. After 1.0: a macOS capture provider (M6),
+optional client-side encrypted backup (M9; the rolling backups in 0.4.0 are local copies of the
+settings and library index, not this), controller shortcuts and overlays, and more editor polish.
+
 ## Current focus (2026-11-17)
 
-1. **Real-hardware evidence.** Most of the product was built and checked on Linux. The biggest gap
-   is Windows with real games and other graphics cards, then Wayland and per-application sound. The
-   [gap report](docs/gaps.md) lists every unverified item.
-2. **Fewer "window not found" and capture failures** in real games (fullscreen, borderless, launcher
-   games), with evidence from real machines.
-3. **Next features, in order:** a macOS capture provider (M6, not started), optional client-side
-   encrypted backup (M9; the rolling backups in 0.4.0 are local copies of settings and the library
-   index, not this), controller shortcuts and overlays, then more editor polish.
+Steps 1 to 3 above. The first two need real Windows machines and real games; the
+[gap report](docs/gaps.md) lists every unverified item. Anyone with a Windows PC can help by
+testing and sending the bug report from Settings → About.
 
 ## Release gates
 
@@ -31,6 +59,9 @@ ClipCraft-hosted storage or account. The complete direction and constraints are 
 - **Beta:** crash recovery, storage limits, device-loss and full-disk recovery, signed installer,
   accessibility review, measured performance budget, and two-hour capture soak pass on reference
   hardware.
+- **Release (1.0):** the local alpha and beta gates pass, the installer is signed and installs,
+  upgrades and uninstalls cleanly on a clean machine, the published packages have been run, and
+  no known bug can lose a clip.
 - **Additional platforms:** macOS and Linux providers pass the same local capture, audio, recovery,
   and export contract.
 
