@@ -567,6 +567,11 @@ impl ClipCraftApp {
     }
 
     pub(crate) fn save_recording_settings(&mut self) {
+        // Never write over the person's saved file while they have not chosen between it and the
+        // defaults this start is running on (see `safe_start`).
+        if self.settings_on_hold {
+            return;
+        }
         let Some(path) = self.settings_path.clone() else {
             return;
         };

@@ -65,6 +65,10 @@ pub const MUTED: Color32 = Color32::from_rgb(150, 150, 161);
 pub const FAINT: Color32 = Color32::from_rgb(92, 92, 102);
 pub const LIME: Color32 = Color32::from_rgb(190, 255, 43);
 pub const DANGER: Color32 = Color32::from_rgb(255, 112, 112);
+/// Warnings: something worked but needs a look (amber).
+pub const WARNING: Color32 = Color32::from_rgb(255, 190, 92);
+/// Information that is neither good nor bad news (a calm blue).
+pub const INFO: Color32 = Color32::from_rgb(122, 170, 255);
 
 // Inter (SIL OFL 1.1), unmodified; see ATTRIBUTION.md and assets/fonts/OFL-Inter.md.
 const INTER_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
@@ -231,11 +235,14 @@ pub enum Icon {
     Restart,
     Pencil,
     Check,
+    Info,
+    Alert,
+    Close,
 }
 
 impl Icon {
     /// Every icon, in declaration order (the cache below is indexed by it).
-    pub const ALL: [Icon; 28] = [
+    pub const ALL: [Icon; 31] = [
         Icon::Play,
         Icon::Pause,
         Icon::StepBack,
@@ -264,6 +271,9 @@ impl Icon {
         Icon::Restart,
         Icon::Pencil,
         Icon::Check,
+        Icon::Info,
+        Icon::Alert,
+        Icon::Close,
     ];
 
     /// The icon's file under `assets/icons`, a plain SVG that any vector editor can open.
@@ -297,6 +307,9 @@ impl Icon {
             Icon::Trash => include_str!("../../../assets/icons/trash.svg"),
             Icon::Restart => include_str!("../../../assets/icons/restart.svg"),
             Icon::Pencil => include_str!("../../../assets/icons/pencil.svg"),
+            Icon::Info => include_str!("../../../assets/icons/info.svg"),
+            Icon::Alert => include_str!("../../../assets/icons/alert.svg"),
+            Icon::Close => include_str!("../../../assets/icons/close.svg"),
         }
     }
 }
@@ -776,6 +789,51 @@ pub fn pill_menu(
     response
         .on_hover_text(tooltip)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A small heading at the top of a menu, such as "Sort by".
+pub fn menu_heading(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(space::XS);
+    ui.label(
+        egui::RichText::new(text.to_uppercase())
+            .size(text_size::CAPTION)
+            .family(semibold())
+            .color(FAINT),
+    );
+    ui.add_space(space::XS);
+}
+
+/// One choice in a menu: a full-width row with a soft hover and a lime tick on the chosen one.
+pub fn menu_option(ui: &mut egui::Ui, label: &str, chosen: bool) -> Response {
+    let font = FontId::new(text_size::BODY, if chosen { semibold() } else { medium() });
+    let width = ui.available_width().max(200.0);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 32.0), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, chosen, label)
+    });
+    if response.hovered() || response.has_focus() {
+        ui.painter().rect_filled(rect, 8.0, CONTROL_HOVER);
+    } else if chosen {
+        ui.painter()
+            .rect_filled(rect, 8.0, Color32::from_rgba_unmultiplied(190, 255, 43, 18));
+    }
+    ui.painter().text(
+        Pos2::new(rect.left() + 12.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        font,
+        if chosen { LIME } else { TEXT },
+    );
+    if chosen {
+        draw_icon(
+            ui.painter(),
+            Pos2::new(rect.right() - 16.0, rect.center().y),
+            Icon::Check,
+            LIME,
+            0.6,
+        );
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// A key-style label such as `F8`, painted at an exact size so it never stretches in a row.

@@ -12,7 +12,7 @@ use clipcraft_engine::{
 use eframe::egui::{self, RichText};
 
 use crate::capture::notice;
-use crate::kit::{self, DANGER, MUTED, TEXT};
+use crate::kit::{self, MUTED, TEXT};
 use crate::{ClipCraftApp, Icon};
 
 /// The rename box while it is open.
@@ -104,7 +104,7 @@ impl ClipCraftApp {
                         );
                     }
                     Err(error) => {
-                        ui.label(RichText::new(error.to_string()).color(DANGER).size(12.5));
+                        crate::notify::inline(ui, crate::notify::Kind::Error, &error.to_string());
                     }
                 }
                 ui.add_space(16.0);

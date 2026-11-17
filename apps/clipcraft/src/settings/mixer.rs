@@ -67,12 +67,10 @@ pub(crate) fn mixer_rows_with(
     // The system sound includes these programs too: they would be recorded twice.
     if available && s.capture_game_audio && s.audio_apps.iter().any(|row| row.own_track) {
         rows.extra(ui, |ui| {
-            ui.label(
-                RichText::new(
-                    "\u{26a0} \u{201c}Record game and system sound\u{201d} above also contains these programs, so they are in two places. Turn it off to keep them only on their own tracks.",
-                )
-                .color(kit::DANGER)
-                .size(12.5),
+            crate::notify::inline(
+                ui,
+                crate::notify::Kind::Warning,
+                "\u{201c}Record game and system sound\u{201d} above also contains these programs, so they are in two places. Turn it off to keep them only on their own tracks.",
             );
             ui.add_space(6.0);
         });

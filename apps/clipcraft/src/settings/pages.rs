@@ -1236,10 +1236,10 @@ pub fn audio_tab(ui: &mut egui::Ui, settings: &mut RecordingSettings, state: &mu
     let mut rows = Rows::new("");
     audio_rows(&mut rows, ui, settings, state);
     if settings.push_to_talk && settings.hotkeys.get(HotkeyAction::PushToTalk).is_empty() {
-        ui.label(
-            RichText::new("No push-to-talk key is set yet. Choose one in Hotkeys.")
-                .color(DANGER)
-                .size(crate::kit::text_size::CAPTION),
+        crate::notify::inline(
+            ui,
+            crate::notify::Kind::Warning,
+            "No push-to-talk key is set yet. Choose one in Hotkeys.",
         );
     }
 }
@@ -1549,12 +1549,10 @@ pub(crate) fn experimental_rows(rows: &mut Rows, ui: &mut egui::Ui, s: &mut Reco
     // The pause looks at the windows on the screen, which some desktops (Wayland) do not share.
     if !clipcraft_platform::can_list_windows() {
         rows.extra(ui, |ui| {
-            ui.label(
-                RichText::new(
-                    "This desktop does not let ClipCraft see which windows are open, so the pause for programs cannot work here. The lock screen pause is not affected.",
-                )
-                .color(DANGER)
-                .size(crate::kit::text_size::SMALL),
+            crate::notify::inline(
+                ui,
+                crate::notify::Kind::Warning,
+                "This desktop does not let ClipCraft see which windows are open, so the pause for programs cannot work here. The lock screen pause is not affected.",
             );
             ui.add_space(crate::kit::space::SM);
         });

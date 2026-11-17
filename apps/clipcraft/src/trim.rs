@@ -13,7 +13,7 @@ use clipcraft_engine::{
 use eframe::egui;
 use egui::{Color32, RichText};
 
-use crate::kit::{self, DANGER, Icon, LIME, MUTED, TEXT};
+use crate::kit::{self, Icon, LIME, MUTED, TEXT};
 
 /// What "even out loudness" aims for, in LUFS: the usual level for clips shared online.
 const LOUDNESS_TARGET: i8 = -16;
@@ -491,48 +491,41 @@ impl TrimState {
             });
         });
         let too_long = self.too_long_for_gif(duration);
-        let note = match self.message.as_ref() {
-            _ if too_long => Some((
-                "A GIF can be at most 30 seconds. Move the handles closer together.",
-                DANGER,
-            )),
-            Some((text, error)) => Some((text.as_str(), if *error { DANGER } else { MUTED })),
-            None if self.start.is_none() && self.end.is_none() => Some((
-                "Drag the handles, or play to a moment and press I or O.",
-                MUTED,
-            )),
-            None => None,
-        };
         let saved = self
             .last_saved
             .clone()
             .filter(|_| idle && self.message.as_ref().is_some_and(|(_, error)| !error));
-        if note.is_some() || saved.is_some() {
+        if too_long {
             ui.add_space(crate::kit::space::SM);
-            ui.horizontal_wrapped(|ui| {
-                if let Some((text, color)) = note {
-                    ui.label(
-                        RichText::new(text)
-                            .color(color)
-                            .size(crate::kit::text_size::CAPTION),
-                    );
-                }
-                if let Some(path) = saved
-                    && ui
-                        .add(
-                            egui::Label::new(
-                                RichText::new("Show in folder")
-                                    .color(LIME)
-                                    .size(crate::kit::text_size::CAPTION),
-                            )
-                            .sense(egui::Sense::click()),
-                        )
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
+            crate::notify::inline(
+                ui,
+                crate::notify::Kind::Warning,
+                "A GIF can be at most 30 seconds. Move the handles closer together.",
+            );
+        } else if let Some((text, error)) = self.message.clone() {
+            ui.add_space(crate::kit::space::SM);
+            let kind = crate::notify::Kind::from_message(&text, error);
+            let mut show = false;
+            let closed = crate::notify::banner_actions(ui, kind, &text, true, |ui| {
+                if saved.is_some()
+                    && kit::labelled_button(ui, Icon::Folder, "Show", false, true).clicked()
                 {
-                    let _ = execute(Command::RevealInFileManager { path });
+                    show = true;
                 }
             });
+            if show && let Some(path) = saved {
+                let _ = execute(Command::RevealInFileManager { path });
+            }
+            if closed {
+                self.message = None;
+            }
+        } else if self.start.is_none() && self.end.is_none() {
+            ui.add_space(crate::kit::space::SM);
+            ui.label(
+                RichText::new("Drag the handles, or play to a moment and press I or O.")
+                    .color(MUTED)
+                    .size(crate::kit::text_size::CAPTION),
+            );
         }
         seek
     }

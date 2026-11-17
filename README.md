@@ -3,13 +3,13 @@
 **Instant game clips that stay on your computer.** Record a replay buffer, press a key to save the
 moment, then trim, edit and share it. No account, no server, no upload.
 
-> **Early release (0.3.0).** Tested on Windows/AMD and Linux/X11 with generated captures. Real
+> **Early release (0.4.0).** Tested on Windows/AMD and Linux/X11 with generated captures. Real
 > games, other graphics cards and Wayland are not fully tested, and macOS capture is not built yet.
 > [`docs/gaps.md`](docs/gaps.md) lists what is verified and what is not.
 
 ## Get it
 
-Download [ClipCraft 0.3.0](https://github.com/nanox333/clipcraft/releases/tag/v0.3.0): a Windows
+Download [ClipCraft 0.4.0](https://github.com/nanox333/clipcraft/releases/tag/v0.4.0): a Windows
 installer (or portable zip) or a Linux tarball. Downloads are not code-signed, so Windows may warn;
 choose *More info*, then *Run anyway*. ClipCraft can tell you about updates (Settings → About) and
 never goes online if you turn that off.
@@ -22,9 +22,12 @@ never goes online if you turn that off.
 - **Browse:** a searchable library with favorites, collections, game labels, a list or picture
   cards, and drag-to-reorder.
 - **Choose many:** **Select** clips, drag a box around them, then favorite, collect or delete them
-  together, with **Undo** (or **Delete now**).
+  together, with **Undo** (or **Delete now**). **Esc** clears what you chose; a second **Esc**
+  leaves choosing.
 - **Edit:** trim, split, fade, add styled text, step frame by frame, and export in 16:9, 9:16, 1:1
-  and other shapes, or as a small file or GIF for Discord.
+  and other shapes, or as a small file or GIF for Discord. The viewer draws the output shape as a
+  quietly framed picture with a small badge ("Original · 1280 × 720", "9:16 · 1080 × 1920"), and the Export
+  video window shows where the file will be saved and lets you pick another folder.
 - **Share:** drag a clip straight into Discord or any program that takes files.
 - **Script it:** `clipcraft-cli` runs the same commands as the app.
 
@@ -33,11 +36,12 @@ never goes online if you turn that off.
 - Everything stays on your computer. Original clips are never overwritten by trim or export.
 - Deleting (one clip or many) goes to the Recycle Bin, and an Undo message stays up until you close it. The storage limit never touches favorites, clips in
   a collection or clips in an open edit.
+- The small "clip saved" card in the corner of the screen draws and slides in at the screen's own pace even while ClipCraft is minimized to the tray, and its Play, folder, delete and close buttons work from there. Every other message (cards, banners, field notes) follows one design guide, [docs/notifications.md](docs/notifications.md).
 - Every saved clip is reopened and checked for missing footage, and you are warned when the disk is getting full. **Refresh** on the Clips page checks them all again.
 - ClipCraft asks before quitting while the replay holds footage.
 - Settings and the library keep rolling backups and recover from a damaged file.
 - Experimental, off by default (Settings → Experimental): recording pauses while a password manager, a program you name (Windows and X11, not Wayland), or the lock screen is up. Pausing also clears the replay unless you ask it to keep it.
-- If ClipCraft keeps failing to start, it opens with default settings and keeps your old ones.
+- If ClipCraft keeps failing to start, it opens with default settings and asks you whether to keep them or go back to your saved ones. Your saved settings file is not changed until you answer, and the first-run setup waits until after you do.
 - A watchdog slows down or stops clipping if it would starve your computer, and an internal error
   never closes the program or loses the replay.
 
@@ -75,6 +79,7 @@ More on the command line, tests and benchmarks is in [`docs/testing.md`](docs/te
 | --- | --- |
 | [`docs/features.md`](docs/features.md) | every feature, with platform limits |
 | [`docs/how-it-works.md`](docs/how-it-works.md) | recording, saving, the library and export, start to finish |
+| [`docs/notifications.md`](docs/notifications.md) | how every message (card, banner, inline line) looks, moves and is worded |
 | [`docs/gaps.md`](docs/gaps.md) | what is verified, what is not |
 | [`CHANGELOG.md`](CHANGELOG.md) | what each release contains |
 | [`ROADMAP.md`](ROADMAP.md), [`docs/backlog.md`](docs/backlog.md) | what is planned |

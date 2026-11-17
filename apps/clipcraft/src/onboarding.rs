@@ -1178,13 +1178,10 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                                         .size(crate::kit::text_size::SMALL),
                                 );
                                 if let Some(other) = setup.draft.hotkeys.conflict(action) {
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "Also used by \u{201c}{}\u{201d}.",
-                                            other.label()
-                                        ))
-                                        .color(kit::DANGER)
-                                        .size(crate::kit::text_size::CAPTION),
+                                    crate::notify::inline(
+                                        ui,
+                                        crate::notify::Kind::Error,
+                                        &format!("Also used by \u{201c}{}\u{201d}.", other.label()),
                                     );
                                 }
                             });
@@ -1242,7 +1239,7 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
                 ui.add_space(crate::kit::space::MD);
             }
             if let Some(error) = setup.controls.hotkey_error.as_ref() {
-                ui.colored_label(kit::DANGER, error);
+                crate::notify::inline(ui, crate::notify::Kind::Error, error);
             }
             ui.label(
                 egui::RichText::new(
@@ -1373,7 +1370,7 @@ fn setup_body(ui: &mut egui::Ui, setup: &mut Setup, gpu: &settings::GpuProbe) {
     }
     if let Some(error) = setup.error.as_ref() {
         ui.add_space(crate::kit::space::MD);
-        ui.colored_label(kit::DANGER, error);
+        crate::notify::banner(ui, crate::notify::Kind::Error, error, false);
     }
     ui.add_space(crate::kit::space::HUGE);
 }

@@ -582,7 +582,16 @@ pub(crate) fn import_media(paths: Vec<PathBuf>) -> Result<Vec<crate::MediaEntry>
         if path.as_os_str().is_empty() || path.as_os_str().len() > 4096 {
             return Err(EngineError::LibraryPathInvalid);
         }
-        let path = std::fs::canonicalize(path).map_err(|_| EngineError::FileUnavailable)?;
+        // A path that arrives already in the Windows `\\?\` form (a draft saved before the plain
+        // form was used) keeps it, so its clips still match the media entry; every other path is
+        // stored plain, so one file is never listed twice.
+        let was_verbatim = path.to_string_lossy().starts_with(r"\\?\");
+        let canonical = std::fs::canonicalize(path).map_err(|_| EngineError::FileUnavailable)?;
+        let path = if was_verbatim {
+            canonical
+        } else {
+            crate::plain_path(canonical)
+        };
         let text = path
             .to_str()
             .ok_or(EngineError::LibraryPathInvalid)?

@@ -62,6 +62,50 @@ pub fn make_window_passive(title: &str) -> bool {
     true
 }
 
+/// Asks the window system to round the corners of the window with this exact title and to draw its
+/// outline in `border` (red, green, blue). True when it did (Windows 11 and newer); false when
+/// the window is not found or the system does not do this, so the caller paints its own corners.
+#[cfg(windows)]
+pub fn round_window_corners(title: &str, border: [u8; 3]) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{
+        DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+    use windows::core::PCWSTR;
+    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: `wide` is a zero-terminated string that outlives the call.
+    let Ok(window): Result<HWND, _> =
+        (unsafe { FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr())) })
+    else {
+        return false;
+    };
+    let corner = DWMWCP_ROUND;
+    // SAFETY: `window` was just returned by the system and `corner` is a live value of exactly
+    // the size passed; a window that has closed makes the call fail harmlessly.
+    let rounded = unsafe {
+        DwmSetWindowAttribute(
+            window,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            std::ptr::from_ref(&corner).cast(),
+            std::mem::size_of_val(&corner) as u32,
+        )
+    }
+    .is_ok();
+    // A colour reference is 0x00BBGGRR.
+    let colour: u32 = u32::from(border[2]) << 16 | u32::from(border[1]) << 8 | u32::from(border[0]);
+    // SAFETY: as above, with `colour` a live 4-byte value.
+    let _ = unsafe {
+        DwmSetWindowAttribute(
+            window,
+            DWMWA_BORDER_COLOR,
+            std::ptr::from_ref(&colour).cast(),
+            std::mem::size_of_val(&colour) as u32,
+        )
+    };
+    rounded
+}
+
 /// This process's top-level window with this exact title. Looked up by process so a second
 /// ClipCraft (or any other program with the same title) is never touched.
 #[cfg(windows)]
@@ -181,5 +225,11 @@ pub fn set_taskbar_button(title: &str, visible: bool) -> bool {
 #[cfg(not(windows))]
 pub fn make_window_passive(title: &str) -> bool {
     let _ = title;
+    false
+}
+
+#[cfg(not(windows))]
+pub fn round_window_corners(title: &str, border: [u8; 3]) -> bool {
+    let _ = (title, border);
     false
 }

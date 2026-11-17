@@ -30,6 +30,7 @@ mod library_grid;
 mod library_scan;
 mod library_store;
 mod library_view;
+mod notify;
 mod onboarding;
 mod organize;
 mod playback;
@@ -175,6 +176,9 @@ struct ClipCraftApp {
     gpu_session: Option<gpu_restart::GpuSession>,
     /// Notices a start that keeps failing and offers the default settings (see `safe_start`).
     safe_start: Option<safe_start::SafeStart>,
+    /// The saved settings file is not to be written: this start is running on defaults while the
+    /// person has not yet said whether to keep them, and saving now would replace their file.
+    settings_on_hold: bool,
     /// Asks before quitting while the replay holds footage (see `quit_guard`).
     quit_guard: quit_guard::QuitGuard,
     /// A refresh that is checking every clip in the background.
@@ -531,13 +535,11 @@ impl ClipCraftApp {
             // Stay where the person is (the library, on launch) and say the draft is waiting;
             // the Editor tab reopens it as it was.
             self.editor.open = false;
-            self.capture.notice = Some(capture::Notice {
-                text: "Your editor draft was restored. Open the Editor to continue.".into(),
-                error: false,
-                at: std::time::Instant::now(),
-                path: None,
-                undo: false,
-            });
+            self.capture.notice = capture::notice_as(
+                notify::Kind::Info,
+                "Your editor draft was restored. Open the Editor to continue.",
+                None,
+            );
         }
         if self.editor.take_saved().is_some() {
             self.scan_library();
@@ -836,15 +838,14 @@ impl ClipCraftApp {
             settings_path,
             index_path,
             thumbnail_dir: default_thumbnail_dir(),
+            settings_on_hold: default_settings,
             ..Self::default()
         };
         if !default_settings {
             app.load_saved_settings();
         }
         let Some(index_path) = app.index_path.clone() else {
-            if !app.recording.setup_completed {
-                app.setup = Some(onboarding::Setup::new(app.recording.clone()));
-            }
+            app.start_first_run_setup();
             return app;
         };
         match execute(Command::LoadLibrary { index_path }) {
@@ -861,10 +862,18 @@ impl ClipCraftApp {
         if app.error.is_none() {
             app.error = restore_error;
         }
-        if !app.recording.setup_completed {
-            app.setup = Some(onboarding::Setup::new(app.recording.clone()));
-        }
+        app.start_first_run_setup();
         app
+    }
+
+    /// Opens the first-run setup when it has not been done. While the safe-start question is on
+    /// screen it waits: the setup would cover the question, and the defaults it would start from
+    /// are not the person's settings.
+    fn start_first_run_setup(&mut self) {
+        if self.settings_on_hold || self.recording.setup_completed {
+            return;
+        }
+        self.setup = Some(onboarding::Setup::new(self.recording.clone()));
     }
 
     /// Reads the saved settings file and uses what it holds.
@@ -1736,19 +1745,10 @@ impl ClipCraftApp {
             );
             ui.add_space(crate::kit::space::SM);
         }
-        if let Some(error) = self.error.as_deref() {
-            egui::Frame::new()
-                .fill(Color32::from_rgba_unmultiplied(255, 112, 112, 24))
-                .stroke(Stroke::new(
-                    1.0_f32,
-                    Color32::from_rgba_unmultiplied(255, 112, 112, 90),
-                ))
-                .corner_radius(egui::CornerRadius::same(crate::kit::radius::MD))
-                .inner_margin(egui::Margin::symmetric(16, 12))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label(RichText::new(error).color(DANGER));
-                });
+        if let Some(error) = self.error.clone() {
+            if notify::banner(ui, notify::Kind::Error, &error, true) {
+                self.error = None;
+            }
             ui.add_space(crate::kit::space::MD);
         }
 
@@ -1918,11 +1918,11 @@ impl ClipCraftApp {
     fn sort_menu(&mut self, ui: &mut egui::Ui) {
         let label = self.sort.label();
         kit::pill_menu(ui, label, "Sort clips", |ui| {
+            ui.set_width(220.0);
+            ui.spacing_mut().item_spacing.y = 2.0;
+            kit::menu_heading(ui, "Sort by");
             for sort in library_view::Sort::ALL {
-                if ui
-                    .selectable_label(self.sort == sort, sort.label())
-                    .clicked()
-                {
+                if kit::menu_option(ui, sort.label(), self.sort == sort).clicked() {
                     self.sort = sort;
                     let manual = sort == library_view::Sort::Manual;
                     if self.recording.library_manual != manual {
@@ -1992,9 +1992,9 @@ impl ClipCraftApp {
         self.error = None;
         match execute(Command::CopyClipFile { path: path.clone() }) {
             Ok(_) => {
-                self.capture.notice = capture::notice(
+                self.capture.notice = capture::notice_as(
+                    notify::Kind::Success,
                     "File copied. Paste it into Discord, a message or a folder.",
-                    false,
                     None,
                 );
             }
@@ -2512,6 +2512,78 @@ mod tests {
         let relaunched = ClipCraftApp::restored_from(Some(index_path));
         assert_eq!(relaunched.recording.container, Container::Mkv);
         assert_eq!(relaunched.recording.framing, Framing::Letterbox);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    /// A person who has used ClipCraft: finished the setup, chose a library folder, changed a setting.
+    fn used_profile() -> (PathBuf, PathBuf, PathBuf) {
+        let directory = temporary_directory();
+        let library = directory.join("clips");
+        fs::create_dir_all(&library).expect("library folder");
+        let index_path = directory.join("library-index.json");
+        let mut app = ClipCraftApp::restored_from(Some(index_path.clone()));
+        app.set_library_folder(Some(library.clone()));
+        finish_scan(&mut app);
+        app.recording.container = Container::Mkv;
+        app.recording.setup_completed = true;
+        app.save_recording_settings();
+        let settings = directory.join("recording-settings.json");
+        assert!(settings.is_file());
+        (directory, index_path, settings)
+    }
+
+    #[test]
+    fn a_safe_start_does_not_overwrite_the_saved_settings_or_hide_its_question() {
+        let (directory, index_path, settings) = used_profile();
+        let before = fs::read(&settings).expect("saved settings");
+
+        let mut app = ClipCraftApp::restored_with(Some(index_path.clone()), true);
+        // The defaults are in use, but nothing was written over the person's file, and the
+        // first-run setup (which would cover the question) is not open.
+        assert_eq!(
+            app.recording.container,
+            RecordingSettings::default().container
+        );
+        assert!(app.settings_on_hold);
+        assert!(
+            app.setup.is_none(),
+            "the setup must not cover the safe-start question"
+        );
+        assert_eq!(fs::read(&settings).expect("still there"), before);
+        // Later changes while the question is open are not written either.
+        app.recording.shape = OutputShape::Wide16x9;
+        app.save_recording_settings();
+        assert_eq!(fs::read(&settings).expect("still there"), before);
+
+        // "Use my settings": the saved ones come back, nothing is lost, no setup is asked for.
+        app.load_saved_settings();
+        app.answer_safe_start(true);
+        assert_eq!(app.recording.container, Container::Mkv);
+        assert!(!app.settings_on_hold);
+        assert!(app.setup.is_none());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn keeping_the_defaults_after_a_safe_start_keeps_a_copy_and_then_runs_the_setup() {
+        let (directory, index_path, settings) = used_profile();
+        let before = fs::read(&settings).expect("saved settings");
+
+        let mut app = ClipCraftApp::restored_with(Some(index_path), true);
+        assert!(app.setup.is_none());
+        let safe_to_save = app.keep_default_settings();
+        assert!(safe_to_save);
+        app.answer_safe_start(safe_to_save);
+        // The old file is kept beside the defaults, byte for byte.
+        let mut kept = settings.clone().into_os_string();
+        kept.push(".before-safe-start");
+        assert_eq!(
+            fs::read(PathBuf::from(kept)).expect("the kept copy"),
+            before
+        );
+        assert!(!app.settings_on_hold);
+        // The defaults have not completed the setup, so it opens now, after the choice.
+        assert!(app.setup.is_some());
         let _ = fs::remove_dir_all(directory);
     }
 

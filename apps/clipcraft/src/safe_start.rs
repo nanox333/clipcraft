@@ -118,20 +118,32 @@ impl ClipCraftApp {
             context.request_repaint();
         }
         if defaults {
-            self.keep_default_settings();
+            let safe_to_save = self.keep_default_settings();
+            self.answer_safe_start(safe_to_save);
         } else if saved {
             self.load_saved_settings();
-        }
-        if (defaults || saved)
-            && let Some(start) = self.safe_start.as_mut()
-        {
-            start.asking = false;
+            self.answer_safe_start(true);
         }
     }
 
-    fn keep_default_settings(&mut self) {
+    /// The person chose. Until now the saved file was not written and the first-run setup was held
+    /// back; both now go ahead, from whichever settings were chosen.
+    pub(crate) fn answer_safe_start(&mut self, safe_to_save: bool) {
+        if let Some(start) = self.safe_start.as_mut() {
+            start.asking = false;
+        }
+        self.settings_on_hold = !safe_to_save;
+        if safe_to_save {
+            self.reconcile_clips_folder();
+        }
+        self.start_first_run_setup();
+    }
+
+    /// Sets the saved settings aside so the defaults can be used. False when that failed: the
+    /// saved file is then left alone and not written to this time.
+    pub(crate) fn keep_default_settings(&mut self) -> bool {
         let Some(path) = self.settings_path.clone() else {
-            return;
+            return true;
         };
         match safe_start::reset_settings(&path) {
             Ok(Some(_)) => {
@@ -140,14 +152,16 @@ impl ClipCraftApp {
                     false,
                     None,
                 );
+                true
             }
-            Ok(None) => {}
+            Ok(None) => true,
             Err(_) => {
                 self.capture.notice = crate::capture::notice(
-                    "Could not set the old settings aside, so they were left as they are.",
+                    "Could not set the old settings aside, so they were left as they are. Changes to settings will not be saved until the next start.",
                     true,
                     None,
                 );
+                false
             }
         }
     }

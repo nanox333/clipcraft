@@ -187,11 +187,7 @@ pub fn games_tab(
                 .map(|error| error.to_string());
         }
         if let Some(error) = &state.game_preset_error {
-            ui.label(
-                RichText::new(error)
-                    .color(DANGER)
-                    .size(crate::kit::text_size::CAPTION),
-            );
+            crate::notify::inline(ui, crate::notify::Kind::Error, error);
         }
         ui.add_space(crate::kit::space::XS);
         ui.label(
@@ -220,11 +216,7 @@ pub fn games_tab(
             refresh_processes = true;
         }
         if let Some(warning) = &state.steam_warning {
-            ui.label(
-                RichText::new(warning)
-                    .color(DANGER)
-                    .size(crate::kit::text_size::CAPTION),
-            );
+            crate::notify::inline(ui, crate::notify::Kind::Warning, warning);
         }
         if state.steam_games.skipped > 0 {
             ui.label(
@@ -423,11 +415,7 @@ pub(crate) fn custom_games(
                 });
             });
             if let Some(error) = state.game_process_error.as_ref() {
-                ui.label(
-                    RichText::new(error)
-                        .color(DANGER)
-                        .size(crate::kit::text_size::CAPTION),
-                );
+                crate::notify::inline(ui, crate::notify::Kind::Error, error);
             } else if state.game_processes_loaded && state.game_processes.is_empty() {
                 ui.label(
                     RichText::new("No running apps found. You can enter the details below.")

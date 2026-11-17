@@ -21,6 +21,7 @@ mod games;
 
 use crate::ClipCraftApp;
 use crate::kit::{self, DANGER, FAINT, Icon, LIME, MUTED, TEXT};
+use crate::notify::{self, Kind};
 use crate::settings::GpuProbe;
 
 /// Opens microphones and the computer's own sound for the recorder.
@@ -145,9 +146,11 @@ fn audio_provider(
     })
 }
 
-/// A short message shown in the top bar.
+/// A short message shown as a card at the bottom of the window (see `notify`).
 pub struct Notice {
     pub text: String,
+    pub kind: Kind,
+    /// Whether the kind is an error, for the code that only cares about that.
     pub error: bool,
     pub at: Instant,
     pub path: Option<PathBuf>,
@@ -159,9 +162,9 @@ fn hotkey_failure_notice(current: Option<&Notice>) -> Option<Notice> {
     if current.is_some_and(|notice| notice.error) {
         return None;
     }
-    notice(
+    notice_as(
+        Kind::Warning,
         "Global shortcuts are unavailable. Some keys work while ClipCraft is focused; push-to-talk needs global access.",
-        false,
         None,
     )
 }
@@ -355,10 +358,6 @@ impl CaptureState {
     }
 }
 
-/// How long a message stays before it fades out, and how long the fade takes.
-const NOTICE_SECONDS: f32 = 30.0;
-const NOTICE_FADE_SECONDS: f32 = 1.2;
-
 /// Why the recording is being held paused for privacy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PrivacyReason {
@@ -428,14 +427,26 @@ fn window_owner_is_private<'a>(
     })
 }
 
+/// A message that is an error or plain information. For a finished task or a warning use
+/// [`notice_as`].
 pub(crate) fn notice(
     text: impl Into<String>,
     error: bool,
     path: Option<PathBuf>,
 ) -> Option<Notice> {
+    notice_as(Kind::from_error(error), text, path)
+}
+
+/// A message of the given kind (success, information, warning or error).
+pub(crate) fn notice_as(
+    kind: Kind,
+    text: impl Into<String>,
+    path: Option<PathBuf>,
+) -> Option<Notice> {
     Some(Notice {
         text: text.into(),
-        error,
+        kind,
+        error: kind == Kind::Error,
         at: Instant::now(),
         path,
         undo: false,
@@ -446,6 +457,7 @@ pub(crate) fn notice(
 pub(crate) fn notice_with_undo(text: impl Into<String>) -> Option<Notice> {
     Some(Notice {
         text: text.into(),
+        kind: Kind::Info,
         error: false,
         at: Instant::now(),
         path: None,
@@ -485,9 +497,9 @@ impl ClipCraftApp {
                     true,
                     None,
                 ),
-                _ => notice(
+                _ => notice_as(
+                    Kind::Warning,
                     format!("Your disk is getting full: {room} left for clips."),
-                    false,
                     None,
                 ),
             };
@@ -681,9 +693,9 @@ impl ClipCraftApp {
                     .as_ref()
                     .is_none_or(|notice| !notice.error)
             {
-                self.capture.notice = notice(
+                self.capture.notice = notice_as(
+                    Kind::Warning,
                     "Shortcuts were interrupted. Release your push-to-talk key, then press it again.",
-                    false,
                     None,
                 );
             }
@@ -788,9 +800,9 @@ impl ClipCraftApp {
             self.capture.saving.is_some(),
             self.capture.notice.as_ref(),
         ) {
-            self.capture.notice = notice(
+            self.capture.notice = notice_as(
+                Kind::Warning,
                 "Replay buffer restarted. Previous buffered footage was cleared; the buffer is filling again.",
-                false,
                 None,
             );
         }
@@ -947,12 +959,12 @@ impl ClipCraftApp {
         match HotkeyListener::start_with_options(bindings, self.recording.wayland_raw_hotkeys) {
             Ok(listener) => {
                 if !listener.skipped().is_empty() {
-                    self.capture.notice = notice(
+                    self.capture.notice = notice_as(
+                        Kind::Warning,
                         format!(
                             "{} is used by another program, so it only works while ClipCraft is open in front.",
                             listener.skipped().join(", ")
                         ),
-                        false,
                         None,
                     );
                 }
@@ -1128,9 +1140,9 @@ impl ClipCraftApp {
                 self.capture.status = self.capture.session.status();
                 let warnings = self.capture.session.warnings().join(" ");
                 if !warnings.is_empty() {
-                    self.capture.notice = notice(
+                    self.capture.notice = notice_as(
+                        Kind::Warning,
                         format!("Clipping without some sound. {warnings}"),
-                        true,
                         None,
                     );
                 }
@@ -1414,18 +1426,23 @@ impl ClipCraftApp {
                 }
                 // The card says it all; the top bar only speaks up when there is more to tell.
                 if let Some(why) = doubt {
-                    self.capture.notice = notice(
+                    self.capture.notice = notice_as(
+                        Kind::Warning,
                         format!(
                             "Saved {name}, but it may be damaged: {why}. Play it before you rely on it."
                         ),
-                        true,
                         Some(report.clip.path.clone()),
                     );
                 } else if !self.recording.show_save_notification
                     || metadata_warning
                     || !report.deleted.is_empty()
                 {
-                    self.capture.notice = notice(
+                    self.capture.notice = notice_as(
+                        if metadata_warning {
+                            Kind::Warning
+                        } else {
+                            Kind::Success
+                        },
                         format!(
                             "Saved {name}{removed}{}",
                             if metadata_warning {
@@ -1434,7 +1451,6 @@ impl ClipCraftApp {
                                 ""
                             }
                         ),
-                        metadata_warning,
                         Some(report.clip.path.clone()),
                     );
                 }
@@ -1490,8 +1506,12 @@ impl ClipCraftApp {
             None => {}
         }
         if alive {
+            // The card's own window draws and times itself; this window only keeps it alive and
+            // picks up what was asked for. It asks the card's window nothing, and is woken by it
+            // when it can be, but a minimized window can miss that wake-up, so it also looks in
+            // now and then.
             self.saved_toast = Some(toast);
-            context.request_repaint_after(std::time::Duration::from_millis(16));
+            context.request_repaint_after(std::time::Duration::from_millis(100));
         }
         // A clip the card was asked to play opens once the library lists it.
         if let Some(wanted) = self.pending_open.clone() {
@@ -1563,7 +1583,7 @@ impl ClipCraftApp {
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                self.capture.notice = notice(format!("Saved {name}"), false, Some(path));
+                self.capture.notice = notice_as(Kind::Success, format!("Saved {name}"), Some(path));
                 self.cue(Cue::Screenshot);
             }
             Err(message) => {
@@ -1844,7 +1864,7 @@ impl ClipCraftApp {
             if !lost.is_empty() {
                 ui.label(
                     RichText::new(format!("\u{00b7} sound lost: {}", lost.join(", ")))
-                        .color(DANGER)
+                        .color(kit::WARNING)
                         .size(crate::kit::text_size::CAPTION),
                 )
                 .on_hover_text({
@@ -1865,7 +1885,7 @@ impl ClipCraftApp {
             if behind {
                 ui.label(
                     RichText::new(format!("\u{00b7} dropping {dropped:.0}% of frames"))
-                        .color(DANGER)
+                        .color(kit::WARNING)
                         .size(crate::kit::text_size::CAPTION),
                 )
                 .on_hover_text(
@@ -1911,13 +1931,15 @@ Encoder: {}",
         (parts.join("  \u{b7}  "), tip)
     }
 
-    /// The latest message as a small card under the top bar, so a long one is never squeezed into
-    /// the bar itself. A message with a file offers to show it; any can be dismissed.
+    /// The latest message as a card that rises from the bottom of the window (so it never sits on
+    /// the controls at the top of a page). It is built from the parts in `notify`: a badge for the
+    /// kind of news, the words, any buttons, a close button and a line showing the time left. A
+    /// message with a file offers to show it; one with Undo stays until it is closed.
     pub(crate) fn notice_toast(&mut self, context: &egui::Context) {
-        let Some((text, error, path, undo)) = self.capture.notice.as_ref().map(|current| {
+        let Some((text, kind, path, undo)) = self.capture.notice.as_ref().map(|current| {
             (
                 current.text.clone(),
-                current.error,
+                current.kind,
                 current.path.clone(),
                 current.undo,
             )
@@ -1928,17 +1950,15 @@ Encoder: {}",
         let mut undone = false;
         let mut delete_now = false;
         let mut dismiss = false;
-        // It rises into place from the bottom of the window (so it never sits on the controls at
-        // the top of a page) and fades in; a coloured dot says at a glance whether it is good news.
         let age = self
             .capture
             .notice
             .as_ref()
             .map_or(1.0, |current| current.at.elapsed().as_secs_f32());
-        // It stays for NOTICE_SECONDS (the time it is held under the pointer does not count), then
-        // fades out and goes. Holding the pointer over it keeps it for reading.
+        // It stays for the kind's time (the time it is held under the pointer does not count),
+        // then goes the way it came. Holding the pointer over it keeps it for reading.
         let held_key = egui::Id::new("notice-held");
-        let text_key = text.len() as u64 * 1_000_003 + u64::from(error);
+        let text_key = text.len() as u64 * 1_000_003 + kind as u64;
         let (mut held_for, held_text) = context
             .data(|data| data.get_temp::<(f32, u64)>(held_key))
             .unwrap_or((0.0, text_key));
@@ -1946,109 +1966,77 @@ Encoder: {}",
             held_for = 0.0;
         }
         let on_screen = (age - held_for).max(0.0);
-        // A message with Undo stays until it is closed.
+        let stay = kind.stay();
         let leaving = if undo {
             0.0
         } else {
-            ((on_screen - NOTICE_SECONDS) / NOTICE_FADE_SECONDS).clamp(0.0, 1.0)
+            (on_screen - stay).max(0.0)
         };
-        if leaving >= 1.0 {
+        if leaving >= notify::EXIT_SECONDS {
             self.capture.notice = None;
             return;
         }
-        let arrive = (age / 0.22).clamp(0.0, 1.0);
-        let eased = (1.0 - (1.0 - arrive) * (1.0 - arrive)) * (1.0 - leaving);
-        if arrive < 1.0 || leaving > 0.0 {
+        let shown = notify::presence(age, leaving);
+        if age < notify::ENTER_SECONDS || leaving > 0.0 {
             context.request_repaint();
-        } else {
+        } else if undo {
             context.request_repaint_after(std::time::Duration::from_millis(500));
+        } else {
+            // The time-left line moves about a pixel every 2 frames at most: the card is around
+            // 400 points wide, so a short stay needs a frame every 40 ms (it was 100 ms, which
+            // made the line step visibly) and a long one needs fewer.
+            let step = (stay * 1000.0 / 400.0 * 2.0).clamp(33.0, 100.0);
+            context.request_repaint_after(std::time::Duration::from_millis(step as u64));
         }
         let area = egui::Area::new(egui::Id::new("notice-toast"))
             .anchor(
                 egui::Align2::CENTER_BOTTOM,
-                egui::vec2(0.0, -28.0 + 14.0 * (1.0 - eased)),
+                egui::vec2(0.0, -28.0 + notify::RISE * (1.0 - shown)),
             )
             .order(egui::Order::Foreground)
             .show(context, |ui| {
-                ui.set_opacity(eased);
-                egui::Frame::new()
-                    .fill(kit::PANEL)
-                    .stroke(Stroke::new(
-                        1.0_f32,
-                        if error {
-                            Color32::from_rgba_unmultiplied(255, 112, 112, 150)
-                        } else {
-                            kit::BORDER
-                        },
-                    ))
-                    .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
-                    .inner_margin(egui::Margin::symmetric(16, 12))
-                    .shadow(egui::Shadow {
-                        offset: [0, 4],
-                        blur: 16,
-                        spread: 0,
-                        color: Color32::from_black_alpha(120),
-                    })
-                    .show(ui, |ui| {
-                        ui.set_max_width(420.0);
-                        ui.horizontal(|ui| {
-                            let (dot, _) =
-                                ui.allocate_exact_size(Vec2::new(12.0, 22.0), egui::Sense::hover());
-                            ui.painter().circle_filled(
-                                dot.center(),
-                                4.5,
-                                if error { DANGER } else { kit::LIME },
-                            );
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(&text)
-                                        .color(if error { DANGER } else { TEXT })
-                                        .size(crate::kit::text_size::SMALL),
-                                )
-                                .wrap(),
-                            );
-                            ui.add_space(crate::kit::space::SM);
-                            if path.is_some()
-                                && kit::labelled_button(ui, Icon::Folder, "Show", false, true)
-                                    .clicked()
-                            {
-                                show = true;
-                            }
-                            if undo
-                                && kit::labelled_button(ui, Icon::Restart, "Undo", true, true)
-                                    .clicked()
-                            {
-                                undone = true;
-                            }
-                            if undo
-                                && kit::labelled_button(ui, Icon::Trash, "Delete now", false, true)
-                                    .clicked()
-                            {
-                                delete_now = true;
-                            }
-                            let (rect, response) =
-                                ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::click());
-                            response.widget_info(|| {
-                                egui::WidgetInfo::labeled(
-                                    egui::WidgetType::Button,
-                                    true,
-                                    "Dismiss message",
-                                )
-                            });
-                            let ink = if response.hovered() { TEXT } else { MUTED };
-                            let stroke = Stroke::new(1.4_f32, ink);
-                            let c = rect.center();
-                            ui.painter().line_segment(
-                                [c + Vec2::new(-4.0, -4.0), c + Vec2::new(4.0, 4.0)],
-                                stroke,
-                            );
-                            ui.painter().line_segment(
-                                [c + Vec2::new(4.0, -4.0), c + Vec2::new(-4.0, 4.0)],
-                                stroke,
-                            );
-                            dismiss = response.on_hover_text("Dismiss").clicked();
-                        });
+                ui.set_opacity(shown);
+                let card = notify::show_card(ui, kind, |ui| {
+                    ui.set_max_width(notify::CARD_MAX_WIDTH);
+                    ui.set_min_width(300.0);
+                    ui.horizontal(|ui| {
+                        notify::badge(ui, kind);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&text)
+                                    .color(TEXT)
+                                    .size(crate::kit::text_size::BODY),
+                            )
+                            .wrap(),
+                        );
+                        ui.add_space(crate::kit::space::SM);
+                        if path.is_some()
+                            && kit::labelled_button(ui, Icon::Folder, "Show", false, true).clicked()
+                        {
+                            show = true;
+                        }
+                        if undo
+                            && kit::labelled_button(ui, Icon::Restart, "Undo", true, true).clicked()
+                        {
+                            undone = true;
+                        }
+                        if undo
+                            && kit::labelled_button(ui, Icon::Trash, "Delete now", false, true)
+                                .clicked()
+                        {
+                            delete_now = true;
+                        }
+                        dismiss = notify::close_button(ui).clicked();
                     });
+                });
+                if !undo {
+                    notify::paint_time_left(
+                        ui.painter(),
+                        card.response.rect,
+                        1.0 - on_screen / stay,
+                        kind,
+                    );
+                }
             });
         // Time spent with the pointer over it does not count towards its stay.
         let hovered = context
@@ -2510,11 +2498,12 @@ mod tests {
         }
         let status = app.capture.session.status().unwrap();
         assert_eq!(status.buffer_resets, 0);
+        // Slowing down is a warning: it carries on, but needs a look.
         assert!(
             app.capture
                 .notice
                 .as_ref()
-                .is_some_and(|notice| notice.error)
+                .is_some_and(|notice| notice.kind == Kind::Warning)
         );
 
         app.apply_safety_verdict(Verdict::Stop(StopReason::Processor));
@@ -2547,25 +2536,47 @@ mod tests {
     }
 
     #[test]
-    fn a_message_stays_half_a_minute_then_fades_and_goes() {
+    fn a_message_stays_as_long_as_its_kind_says_then_leaves() {
         let context = crate::kit::test_context();
         let mut app = ClipCraftApp::default();
-        let aged = |seconds: u64| {
-            Some(Notice {
-                text: "Saved".to_owned(),
-                error: false,
-                at: Instant::now()
-                    .checked_sub(Duration::from_secs(seconds))
-                    .expect("a time in the past"),
-                path: None,
-                undo: false,
-            })
-        };
-        for (seconds, stays) in [(1, true), (20, true), (29, true), (45, false)] {
-            app.capture.notice = aged(seconds);
-            let _ = context.run(egui::RawInput::default(), |ctx| app.notice_toast(ctx));
-            assert_eq!(app.capture.notice.is_some(), stays, "after {seconds} s");
+        for kind in [Kind::Success, Kind::Info, Kind::Warning, Kind::Error] {
+            let stay = kind.stay() as u64;
+            let aged = |seconds: u64| {
+                Some(Notice {
+                    text: "Saved".to_owned(),
+                    kind,
+                    error: kind == Kind::Error,
+                    at: Instant::now()
+                        .checked_sub(Duration::from_secs(seconds))
+                        .expect("a time in the past"),
+                    path: None,
+                    undo: false,
+                })
+            };
+            for (seconds, stays) in [(1, true), (stay - 1, true), (stay + 2, false)] {
+                app.capture.notice = aged(seconds);
+                let _ = context.run(egui::RawInput::default(), |ctx| app.notice_toast(ctx));
+                assert_eq!(
+                    app.capture.notice.is_some(),
+                    stays,
+                    "{kind:?} after {seconds} s"
+                );
+            }
         }
+        // A message with Undo does not leave by itself.
+        app.capture.notice = capture_notice_with_undo_aged(600);
+        let _ = context.run(egui::RawInput::default(), |ctx| app.notice_toast(ctx));
+        assert!(app.capture.notice.is_some());
+    }
+
+    fn capture_notice_with_undo_aged(seconds: u64) -> Option<Notice> {
+        let mut notice = notice_with_undo("Moving clips");
+        if let Some(notice) = notice.as_mut() {
+            notice.at = Instant::now()
+                .checked_sub(Duration::from_secs(seconds))
+                .expect("a time in the past");
+        }
+        notice
     }
 
     #[test]

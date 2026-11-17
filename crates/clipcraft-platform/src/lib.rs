@@ -86,7 +86,9 @@ pub use process::{
     ProcessObserver, RunningProcess, process_family, running_processes, steam_installation_roots,
 };
 pub use resources::{SelfMeter, SelfUsage};
-pub use screen::{make_window_passive, set_taskbar_button, window_minimized, work_area};
+pub use screen::{
+    make_window_passive, round_window_corners, set_taskbar_button, window_minimized, work_area,
+};
 pub use screen_lock::screen_locked;
 pub use timer::set_fine_timer;
 pub use trash::move_to_trash;

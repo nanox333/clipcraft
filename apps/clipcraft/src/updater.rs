@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use clipcraft_engine::update::{UpdateInfo, UpdateStatus};
 use clipcraft_engine::{Command, CommandOutput, EngineError, execute};
-use eframe::egui::{self, Align, Layout, RichText, Stroke};
+use eframe::egui::{self, Align, Layout, RichText};
 
 use crate::kit::{self, MUTED, TEXT};
 use crate::{ClipCraftApp, Icon};
@@ -178,36 +178,22 @@ impl ClipCraftApp {
         }
         let update = update.clone();
         let (mut install, mut later, mut notes) = (false, false, false);
-        egui::Frame::new()
-            .fill(egui::Color32::from_rgba_unmultiplied(190, 255, 43, 18))
-            .stroke(Stroke::new(
-                1.0_f32,
-                egui::Color32::from_rgba_unmultiplied(190, 255, 43, 80),
-            ))
-            .corner_radius(egui::CornerRadius::same(crate::kit::radius::LG))
-            .inner_margin(egui::Margin::symmetric(16, 12))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("ClipCraft {} is available", update.version))
-                            .color(TEXT)
-                            .size(crate::kit::text_size::BODY)
-                            .family(kit::semibold()),
-                    );
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        later = kit::labelled_button(ui, Icon::Restart, "Later", false, true)
-                            .clicked();
-                        notes = kit::labelled_button(ui, Icon::Search, "What\u{2019}s new", false, true)
-                            .clicked();
-                        install = kit::labelled_button(ui, Icon::Import, "Update now", true, true)
-                            .on_hover_text(
-                                "Downloads the update, checks it, then closes ClipCraft and opens its setup. Your clips are not touched.",
-                            )
-                            .clicked();
-                    });
-                });
-            });
+        crate::notify::banner_actions(
+            ui,
+            crate::notify::Kind::Info,
+            &format!("ClipCraft {} is available", update.version),
+            false,
+            |ui| {
+                later = kit::labelled_button(ui, Icon::Restart, "Later", false, true).clicked();
+                notes = kit::labelled_button(ui, Icon::Search, "What\u{2019}s new", false, true)
+                    .clicked();
+                install = kit::labelled_button(ui, Icon::Import, "Update now", true, true)
+                    .on_hover_text(
+                        "Downloads the update, checks it, then closes ClipCraft and opens its setup. Your clips are not touched.",
+                    )
+                    .clicked();
+            },
+        );
         ui.add_space(crate::kit::space::MD);
         if install {
             self.download_update(update, ui.ctx());

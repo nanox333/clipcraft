@@ -157,10 +157,10 @@ pub fn hotkeys_tab(
             ) = status
                 && !unbound.is_empty()
             {
-                ui.label(
-                    RichText::new(format!("Not registered globally: {}", unbound.join(", ")))
-                        .color(DANGER)
-                        .size(crate::kit::text_size::CAPTION),
+                crate::notify::inline(
+                    ui,
+                    crate::notify::Kind::Warning,
+                    &format!("Not registered globally: {}", unbound.join(", ")),
                 );
             }
             ui.add_space(crate::kit::space::SM);
@@ -203,10 +203,10 @@ pub fn hotkeys_tab(
                         }
                     }
                     if let Some(other) = settings.hotkeys.conflict(action) {
-                        ui.label(
-                            RichText::new(format!("Also used by “{}”.", other.label()))
-                                .color(DANGER)
-                                .size(crate::kit::text_size::CAPTION),
+                        crate::notify::inline(
+                            ui,
+                            crate::notify::Kind::Error,
+                            &format!("Also used by “{}”.", other.label()),
                         );
                     }
                 });
@@ -322,7 +322,7 @@ pub fn hotkeys_tab(
     });
     clip_length_card(ui, settings, state);
     if let Some(error) = state.hotkey_error.as_ref() {
-        ui.colored_label(DANGER, error);
+        crate::notify::banner(ui, crate::notify::Kind::Error, error, false);
     }
     ui.label(
         RichText::new("Click a shortcut, then press the keys you want. Press Esc to cancel.")
