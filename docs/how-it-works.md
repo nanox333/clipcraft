@@ -70,8 +70,11 @@ The data folder is `%APPDATA%` on Windows, `~/Library/Application Support` on ma
    the recorder, which runs on its own threads, is untouched. Stopping waits at most five seconds for them. Each recording thread runs inside `guarded`: a panic marks the recording failed at
    once (the buffer is kept and can still be saved). The app reads ClipCraft's own processor and memory use once a second while it
    records; a runaway first lowers the picture rate and then stops clipping (`safety.rs`).
-6. **Pause.** The recorder's clock can stop (`set_paused`): nothing is captured or kept, sound is
-   read and discarded, and later pictures carry on from the same time so a clip has no frozen gap.
+6. **Pause.** The recorder's clock can stop (`set_paused`): nothing is captured, sound is read and
+   discarded, and later pictures carry on from the same time so a clip has no frozen gap. Pausing
+   by hand clears the replay so it holds no memory; the experimental **Keep the replay while
+   paused** keeps it. The experimental privacy pauses (a password manager, a program the person
+   names, the lock screen) also use `set_paused` but never clear the replay.
 7. **Resets.** A change of picture size (when the stream cannot be kept), a silence longer than the
    gap setting, or a hardware/software encoder switch starts a new stream and clears the buffer.
    The capture bar reports it. When the source changes in game-only mode the stream is *kept*
@@ -94,9 +97,12 @@ thread so the window and the game are never blocked.
    MKV with a unique name (`ClipCraft 2026-10-19 21-04-55`, or `<Game> …` when a game is known).
    Nothing is re-encoded; the buffered packets are muxed as they are. A failed or interrupted
    write leaves no half file, and unfinished files from a crash are cleaned at the next start.
-4. **Trim the folder:** with "delete oldest" on, the oldest ClipCraft clips go until the folder is
-   under its limit. Clips that ClipCraft did not make are never deleted.
-5. **Tell the library:** the finished clip is registered in the library index with its game label.
+4. **Trim the folder:** with "delete oldest" on, the oldest ClipCraft clips go to the Recycle Bin
+   until the folder is under its limit. Clips that ClipCraft did not make, favorites, clips in a
+   collection and clips used in an open edit are never touched.
+5. **Check the clip:** the file is reopened and checked (it opens, has a picture, is not under half
+   as long as recorded, has its sound). A doubtful clip is kept and reported.
+6. **Tell the library:** the finished clip is registered in the library index with its game label.
 
 ## The sound mixer
 
@@ -168,9 +174,16 @@ The library is a view of a folder plus a small index.
   is written by a single writer thread, so the screen never waits for the disk.
 - **Rename** (`library.rename`): same folder, same extension, never replaces a file; the entry is
   moved in the index so favorite, collections and game stay.
-- **Delete:** always asks, then moves the file to the Recycle Bin / trash (retried for two seconds
-  in case the player still holds it). ClipCraft itself never deletes for good except when trimming
-  its own folder to the storage limit.
+- **Delete:** always asks, whether it is one clip or many chosen with **Select**. After the
+  question the clips leave the page and a message with **Undo** and **Delete now** stays until it
+  is closed; closing it moves the files to the Recycle Bin / trash (retried for two seconds in
+  case the player still holds one). Nothing is deleted for good.
+- **Refresh:** scans the folder again and checks that every clip opens and has a picture and a
+  length; damaged ones are named and left alone.
+- **Backups:** the settings file and the library index each keep three rolling copies (at most one
+  a day, `.bak1` to `.bak3`). A damaged file is set aside as `.damaged` and the newest copy that
+  reads takes its place, with a notice. After three starts in a row that never ran 30 seconds,
+  ClipCraft starts with default settings and asks whether to keep them (`.before-safe-start`).
 
 ## Playing, trimming and exporting
 

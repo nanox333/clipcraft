@@ -1,5 +1,9 @@
 # Settings and advanced controls
 
+> **Changed 2026-11-17:** there is an **Experimental** page after Hotkeys (see the section at the end
+> of this file), General has **Ask before quitting while clipping**, and pausing by hand now clears
+> the replay unless an experimental switch keeps it. The Quality tab is now called **Video**.
+>
 > **Changed 2026-10-28:** the **Show advanced settings** switch is gone. Custom game rules are always
 > shown at the bottom of Settings → Games, and the `show_advanced` field is kept only so older settings
 > files still load. Settings still apply as you change them; a bar offers **Cancel changes** (back to how
@@ -21,7 +25,8 @@ choices remain available in Settings; no account or internet is needed.
 
 Hotkeys: Save clip (F8), Start or stop clipping (F9), mute microphone (F10), push to talk, take
 screenshot (F11) and **Pause or resume clipping** (no key until you choose one; it also has a
-Pause button in the top bar). Pausing keeps the replay and adds nothing until you resume.
+Pause button in the top bar). Pausing adds nothing until you resume and, by default, clears the replay so it holds no memory
+(Settings → Experimental → **Keep the replay while paused** keeps it).
 
 In **Settings → Hotkeys**, press **+** next to an action, then press a shortcut. Each action can
 have five bindings. Click a binding to replace it, × to remove it, or Reset to defaults to restore
@@ -166,3 +171,27 @@ with an error; a Wayland chooser is not opened automatically to work around this
 subject to the main automatic-recognition switch. **Refresh games** refreshes the catalog and
 running apps; installed games have per-Steam-ID exclusions. The shared search above also filters
 that list. Custom overrides still win. See the catalog guide for root/platform and parsing limits.
+
+## Experimental page, and quitting (0.4.0)
+
+**Settings → Experimental** holds things that work but have not been tried on enough computers.
+Everything there is off until you turn it on.
+
+- **Pause for password managers:** while 1Password, Bitwarden, KeePass, KeePassXC, Dashlane,
+  Enpass, Keeper, LastPass, NordPass, Proton Pass, RoboForm or Authy has a window open on a recorded
+  screen, nothing is added to the replay; it resumes when the window closes. A pause or resume you
+  chose yourself is never undone.
+- **Also pause for these programs:** your own programs, as file names separated by commas (for
+  example `mybank.exe`). Up to 32 names; case and `.exe` do not matter. They count like a password
+  manager while the first switch is on. A program is matched by its file name, so a script or a
+  Flatpak or Snap app may show under another name. Seeing which programs have a window works on
+  Windows and on X11, not on Wayland; the page says so there.
+- **Pause when the screen is locked:** nothing is added while the screen is locked (read from the
+  session manager on Linux, from the lock screen program on Windows).
+- **Keep the replay while paused:** pausing by hand normally clears the replay; this keeps it,
+  which keeps its memory in use while paused.
+
+**Settings → General → Ask before quitting while clipping** (on by default): closing ClipCraft, or
+choosing Quit in the tray, while the replay holds at least a second of footage asks first. A close
+that only minimizes to the tray never asks.
+

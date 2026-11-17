@@ -214,7 +214,7 @@ keys their own clip length, for example Shift + F8 for the last 2 minutes next t
 whole replay.
 On Wayland, ClipCraft asks the desktop's Global Shortcuts portal to register keys. Settings →
 Hotkeys shows the desktop's assigned keys and offers an explicit, default-off keyboard-device
-fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
+fallback; see [`docs/linux.md`](linux.md) for limitations and permissions.
 
 ### What it does
 
@@ -227,7 +227,7 @@ fallback; see [`docs/linux.md`](docs/linux.md) for limitations and permissions.
   program vanishing. Automatic quality (on by default) records half, then a third, of the
   pictures per second when the computer cannot keep up, and goes back when there is room, without
   clearing the replay. It also steps down before anything is lost when a game starts taking the
-  computer and each picture suddenly takes much longer to encode. Pause and resume clipping with a hotkey or the Pause button, and an optional
+  computer and each picture suddenly takes much longer to encode. Pause and resume clipping with a hotkey or the Pause button (pausing clears the replay unless Settings → Experimental keeps it), and an optional
   setting that starts the replay over after each save so clips never repeat footage. If a game
   window delivers only black, ClipCraft switches to recording the screen in the same recording.
   Capture a screen or game window into a bounded replay buffer and save the
@@ -276,12 +276,12 @@ For a bug report without the desktop UI, pass JSON such as
 `{"observed":"Clipping stopped","steps":"Press F8","include_settings":false}` to
 `clipcraft-cli bug-report` on standard input. It prints the report locally and does not submit it.
 
-Details and known limits for every feature are in [`docs/features.md`](docs/features.md).
+Details and known limits for every feature are in [`docs/features.md`](features.md).
 
 ### Measured performance
 
-Numbers from real runs, with their limits, in [`docs/windows-performance.md`](docs/windows-performance.md)
-and [`docs/performance.md`](docs/performance.md). They use a generated workload (a moving window and a
+Numbers from real runs, with their limits, in [`docs/windows-performance.md`](windows-performance.md)
+and [`docs/performance.md`](performance.md). They use a generated workload (a moving window and a
 tone), not a real game, on one AMD Ryzen 7 5700X3D with an AMD graphics card, so read them as what
 ClipCraft itself costs, not as FPS in your game:
 
@@ -296,10 +296,10 @@ On a processor-only Linux test machine the built-in encoder reached about 53 pic
 ### Privacy and design
 
 The app, engine, capture, playback, CLI and tooling are Rust workspace crates, using pinned
-open-source [FilmCraft](docs/adr/0004-filmcraft-crates.md) crates for media. Captured media,
+open-source [FilmCraft](adr/0004-filmcraft-crates.md) crates for media. Captured media,
 settings, thumbnails and the library index stay on the device, and source clips are never
 overwritten by trim or export. FFmpeg is used only as an external test tool. Source boundaries are
-in [`docs/upstream-ports.md`](docs/upstream-ports.md).
+in [`docs/upstream-ports.md`](upstream-ports.md).
 
 ClipCraft guards the computer it runs on: it caps its own memory use and file growth, ends clipboard
 tools that hang, only ever contacts GitHub (for the optional update check), and a watchdog lightens

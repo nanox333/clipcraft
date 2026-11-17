@@ -73,7 +73,7 @@ and a numeric suffix is used if a matching output already exists.
 | Ctrl/Cmd+D | Duplicate the selected segment |
 | Ctrl/Cmd+Z | Undo |
 | Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y | Redo |
-| Left/Right | Pause and step the playhead by one 30 fps timeline frame |
+| Left/Right | Pause and step the playhead by one frame of the clip under it (1/30 s when its frame rate is unknown) |
 | Tab, Enter | Reach and activate buttons/segments |
 
 Shortcuts remain active when a button is focused; text/numeric input retains normal typing.
@@ -258,7 +258,7 @@ to 16 MiB and at most 5,000 deduplicated absolute media references. Missing sour
 references, so reconnect the drive or restore the original paths before preview/export.
 
 Damaged, oversized, unreadable or future-version recovery is kept unchanged and shown as an error.
-Use the editor's explicit discard action to remove its recovery metadata, or resolve the reported
+Use the editor's explicit discard action (it asks first, because the saved copy cannot be brought back) to remove its recovery metadata, or resolve the reported
 file-access problem and retry. Discard never deletes source videos or exported copies. The fixed
 recovery filename and existing path components cannot be symbolic links. See
 [ADR 0020](adr/0020-internal-editor-recovery.md) for atomic-write and failure behavior.

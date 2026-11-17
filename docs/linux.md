@@ -14,6 +14,7 @@ or a udev rule). No code from them was used or ported; they are GPL-licensed.
 | Screen capture | core protocol and shared memory (MIT-SHM) | desktop's screen-cast portal and PipeWire | X11: virtual display, real clips decoded by ffmpeg. Wayland: a fake portal against a real PipeWire server; **no real GNOME, KDE or wlroots desktop has delivered a picture yet** |
 | Global hotkeys | key grabs | GlobalShortcuts portal; optional evdev or limited XWayland fallback | X11: virtual display. Portal: private D-Bus fake. evdev: synthetic device file; no real Wayland desktop or physical keyboard |
 | Game recognition | process list (Steam IDs, names) | process list | virtual display; no real game |
+| Experimental privacy pauses (Settings → Experimental) | which programs have a window comes from the window manager's client list; the lock screen from `loginctl` (`LockedHint`) | cannot see windows, so the program pause does nothing (the page says so); the lock screen pause works where the session manager sets `LockedHint` | X11: a real window of a named program paused and resumed the recording; lock status only by its parsing test |
 | Sound | PulseAudio client library (also answered by PipeWire) | same | a PulseAudio null sink |
 | Encoding | processor (pure Rust H.264); NVIDIA NVENC and AMD/Intel VA-API when present | same | processor only; no graphics card was available |
 
@@ -86,3 +87,4 @@ Unplugging and re-plugging a keyboard is noticed within a few seconds.
 * Tagging a clip with the game in front on Wayland: Wayland does not say which window has the focus.
 * Flatpak and other sandboxed packages (including immutable Fedora variants); AppImage.
 * Real GlobalShortcuts portal compatibility and consent behavior on GNOME, KDE and wlroots desktops.
+* The lock screen pause on a real GNOME or KDE lock screen, and the program pause under a real window manager (the test display had none, so its window list was set by hand).

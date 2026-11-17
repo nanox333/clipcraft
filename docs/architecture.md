@@ -27,11 +27,22 @@ on its own. Behaviour lives in the engine; these files draw it and call engine c
 | --- | --- |
 | `main.rs` | startup, the frame loop, library page, scan/probe/thumbnail polling, tests |
 | `clip_card.rs`, `clip_page.rs` | a library card and its menu; the page for one clip |
-| `clip_delete.rs`, `clip_rename.rs` | the delete and rename boxes and their background work |
+| `clip_delete.rs`, `clip_rename.rs` | the one-clip delete box and the rename box; a confirmed delete goes to `clip_select.rs`, which holds the clips until the Undo message is closed |
+| `clip_select.rs`, `library_check.rs` | choosing many clips (click, range, drawn box, Ctrl+A), the bar with Favorite, Collection and Delete, the Undo hold and the move to the Recycle Bin on a thread; **Refresh**, which rescans and checks every clip |
+| `library_grid.rs`, `library_view.rs` | the grid or list of clips (virtual rows, day headings, drag to reorder, the selection box) and the derived order it draws |
 | `settings.rs`, `settings_page.rs`, `settings/` | settings state; the page shell and General tab; one file per tab group (`games`, `hotkeys`, `storage`, `capture`) and the shared `widgets` |
 | `capture.rs`, `capture/games.rs` | recording, saving, hotkeys; game-only automation and source switching |
 | `editor.rs`, `editor/inspector.rs`, `editor/timeline.rs` | the editor, its side panels and its timeline |
-| `window_chrome.rs`, `kit.rs` | title bar and edge resizing; shared widgets, colours, icons |
+| `quit_guard.rs`, `safe_start.rs` | the question before quitting with footage in the replay; the start counter and the default-settings offer after failed starts |
+| `notify.rs`, `saved_toast.rs` | the one design every message follows (see [`notifications.md`](notifications.md)) and the "clip saved" pop-up |
+| `window_chrome.rs`, `kit.rs`, `colour_picker.rs` | title bar and edge resizing; shared widgets, colours, icons; the colour picker |
+
+In the engine (`crates/clipcraft-engine/src`), 0.4.0 added `backup.rs` (three rolling backups of a
+file and the restore notes the app shows), `privacy.rs` (which programs count as private, and the
+pause rules that never undo a pause the person chose) and `safe_start.rs` (the start counter and
+the settings copy); `session.rs` holds the saved-clip check (`check_saved_clip`,
+`check_library_clip`) and the storage trim that skips protected clips. The platform crate added
+`screen_lock.rs` (is the screen locked) and `can_list_windows`.
 
 ## Dependency layers
 

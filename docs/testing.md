@@ -1282,7 +1282,7 @@ folders with a retry so a finishing capture worker cannot make them flaky, and t
 to the behaviour they test (for example the post-roll length) instead of a tight wall clock, so a busy
 CI machine does not fail them (a test that a slow sound device does not hold up the others times
 every step and compares with the 600 ms the device sleeps, not with a tight limit). Longer
-robustness runs are described in [`docs/testing.md`](docs/testing.md): thousands of damaged media,
+robustness runs are described in this guide: thousands of damaged media,
 settings and draft files, and a ten-minute soak. Run the Windows lint from Linux before pushing:
 `cargo clippy --workspace --target x86_64-pc-windows-gnu --all-targets -- -D warnings`.
 
@@ -1304,12 +1304,38 @@ cargo run --package clipcraft-cli -- diagnose
 
 To compare video encoders on real footage, `cargo run --release -p clipcraft-platform --example
 encoder_bench` can read raw pictures (`BENCH_RGBA`) and pick the codec and bitrate; the method and
-a first comparison on an AMD card are in [`docs/windows-performance.md`](docs/windows-performance.md).
+a first comparison on an AMD card are in [`windows-performance.md`](windows-performance.md).
 
 The desktop app needs a graphical session and an available capture provider for recording. See
-[`docs/testing.md`](docs/testing.md) for focused test commands and platform evidence requirements.
+this guide for focused test commands and platform evidence requirements.
 For compression, the last CLI argument is the estimated target in decimal MB. In the player, open
 Trim (T), choose an Export option, and save the new file beside the original. If the first encode
 comes out bigger than the target, it is encoded once more at a lower bitrate (and, for a big
 overshoot, a smaller picture) before anything is saved; the completion message and CLI JSON report
 the actual bytes and whether it was re-encoded (`retried`).
+
+## The 0.4.0 round: choosing clips, safety and the Experimental page (2026-11-16 to 17)
+
+What was checked, and how to repeat it. Everything below ran on Linux (Xvfb 1800×900, software
+OpenGL, generated clips) unless it says otherwise; none of it ran on Windows.
+
+- **Unit tests** in `apps/clipcraft` (`clip_select`, `library_grid` box tests, `library_check`,
+  `quit_guard`, `capture` privacy tests, `clip_delete` Undo flow), in `clipcraft-engine`
+  (`backup`, `privacy`, `safe_start`, `session` clip checks, settings and index restore from a
+  backup) and in `clipcraft-platform` (`screen_lock`). Run `cargo test -p clipcraft -p
+  clipcraft-engine -p clipcraft-platform`.
+- **By hand on the virtual display** (XTest mouse and keys, ImageMagick `import`, `ffmpeg -f x11grab`
+  for the recording): click, Shift-click, a drawn box, Ctrl+A, Favorite, the Collection menu, the
+  Delete dialog, the Undo message and a real move to the Trash, Refresh naming a fake broken file,
+  the quit question while clipping, pause clearing the replay, and the Experimental page. This found
+  and fixed: dragging a box upward scrolled the page, a click inside the Delete dialog reached the
+  grid below and cleared the choice, a dialog stayed painted until the next input, and the program
+  box lost focus after the first letter.
+- **A real window for the program pause:** a renamed copy of `xterm` as the "private program";
+  the test display has no window manager, so the `_NET_CLIENT_LIST` property was set by hand. The
+  recording paused while the window was open and resumed when it closed.
+- **Not run:** everything on Windows (Recycle Bin, mouse selection, process and lock-screen
+  detection), a real password manager, a real lock screen, a real full disk, a real crash loop,
+  hardware-encoded clips and Wayland. The backlog item [R1.1](backlog.md) asks for one written
+  Windows pass.
+

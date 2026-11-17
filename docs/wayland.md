@@ -44,6 +44,7 @@ Run them with a PipeWire server, `pw-cli`, `gst-launch-1.0` (with the PipeWire p
   ClipCraft, but it means **no real portal backend has delivered a picture to ClipCraft.** GNOME,
   KDE, and a GPU-backed wlroots desktop are untested, so are DMA-BUF-only compositors, fractional
   scaling, and several monitors.
+- **Seeing which windows are open.** ClipCraft cannot list windows on Wayland, so the experimental pause for password managers and your own programs cannot work there; the lock screen pause depends on the session manager's `LockedHint` and was not tried on a real desktop.
 - Window sharing, the cursor option, and what each desktop does when the person stops the share
   from its own indicator.
 - Restoring a previous choice so the chooser does not appear every time.
