@@ -1,5 +1,17 @@
 # Known gaps
 
+## 0.4.0 release verification
+
+Prepared, not yet released: the version is 0.4.0 and the notes are in
+[releases/v0.4.0.md](releases/v0.4.0.md), but no tag has been pushed, so the release workflow has
+not built the 0.4.0 packages. `cargo xtask ci` passed on Windows for each change in this round
+and again on the version-bump commit. The new interface, messages and
+pop-up were checked by hand in the running Windows 11 app only. Not verified: the Windows and Linux
+packages built from the tag, a clean second-machine install, upgrade from 0.3.0 and removal, the
+Windows 10 and Linux/Wayland look of the pop-up and cards, and everything listed for 0.3.0 below that
+was not yet tried with real games. The signing key is still not set, so the packages and update
+checks are unsigned.
+
 ## 0.3.0 release verification
 
 Linux and Windows CI ran the full gate (`cargo xtask ci`) on the 0.3.0 release commit. Two releases

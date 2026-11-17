@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-11-17
+
+- **One look for every message:** saved, failed, warning and information messages (the card at the
+  bottom, the "clip saved" pop-up, page banners, form errors, the update notice) follow one design
+  guide, [docs/notifications.md](docs/notifications.md): four kinds with a coloured badge (green
+  tick, blue "i", amber "!", red cross) that stay 8, 8, 16 and 30 seconds, the same corners and
+  close button, one slide in and out, and a thin line that shows the time left. A message with Undo
+  stays until closed. The pop-up in the corner of the screen is larger, has rounded corners on
+  Windows 11, and now slides smoothly even while ClipCraft is minimized (it used to move at about
+  30 frames a second then).
+- **Interface pass:** the export window is redone and says where the file will be saved (with a
+  button to pick another folder); the editor's viewer shows the picture shape you are working in; the
+  library's sort menu looks like the rest; the folder button on a clip opens its folder with the clip
+  selected.
+- **Fixes:** Ctrl and A and Esc work after a clip card was clicked; Esc clears the choice first and
+  leaves choosing mode the second time; a start that did not go well no longer overwrites your saved
+  settings or hides the question about them.
 
 - **Choose many clips at once:** a **Select** button on the Clips page. Click, Shift-click for a
   range, drag a box over empty space (Ctrl or Shift adds), Ctrl or ⌘ and A for all, Esc to leave.
@@ -14,8 +30,8 @@
   password manager is open (Settings → Experimental, off by default); discarding the editor draft asks first; ClipCraft asks before quitting while the replay holds footage; a **Refresh** button on the Clips page checks every clip; deleting one clip uses the same Undo message; pausing clears the replay unless you turn on **Keep the replay while paused** (Settings → Experimental, which also has a screen-lock pause and a list of your own programs); and
   after three failed starts ClipCraft offers to start with default settings.
 - **A redesigned window:** a calmer capture bar (a status capsule with a replay meter and one
-  lime action: *Save last 30 s* while clipping, *Start clipping* when idle); notifications that
-  slide in at the bottom, stay for 30 seconds and fade; a clearer first-run screen; short **?**
+  lime action: *Save last 30 s* while clipping, *Start clipping* when idle); messages that
+  slide in at the bottom (see above); a clearer first-run screen; short **?**
   buttons instead of hint paragraphs where something is hard to grasp; and normal spacing between
   controls inside the Clips and Settings pages.
 - **Clips page:** a heading for each day (Today, Yesterday, Earlier this week, then months),

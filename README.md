@@ -3,13 +3,13 @@
 **Instant game clips that stay on your computer.** Record a replay buffer, press a key to save the
 moment, then trim, edit and share it. No account, no server, no upload.
 
-> **Early release (0.3.0).** Tested on Windows/AMD and Linux/X11 with generated captures. Real
+> **Early release (0.4.0).** Tested on Windows/AMD and Linux/X11 with generated captures. Real
 > games, other graphics cards and Wayland are not fully tested, and macOS capture is not built yet.
 > [`docs/gaps.md`](docs/gaps.md) lists what is verified and what is not.
 
 ## Get it
 
-Download [ClipCraft 0.3.0](https://github.com/nanox333/clipcraft/releases/tag/v0.3.0): a Windows
+Download [ClipCraft 0.4.0](https://github.com/nanox333/clipcraft/releases/tag/v0.4.0): a Windows
 installer (or portable zip) or a Linux tarball. Downloads are not code-signed, so Windows may warn;
 choose *More info*, then *Run anyway*. ClipCraft can tell you about updates (Settings → About) and
 never goes online if you turn that off.
