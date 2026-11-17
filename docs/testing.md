@@ -1317,7 +1317,9 @@ the actual bytes and whether it was re-encoded (`retried`).
 ## The 0.4.0 round: choosing clips, safety and the Experimental page (2026-11-16 to 17)
 
 What was checked, and how to repeat it. Everything below ran on Linux (Xvfb 1800×900, software
-OpenGL, generated clips) unless it says otherwise; none of it ran on Windows.
+OpenGL, generated clips) unless it says otherwise. On Windows 11 the maintainer ran the
+three-failed-starts safe start and the keyboard choosing (Ctrl+A, Esc) by hand; both found a
+fault that was fixed (see [gaps.md](gaps.md)).
 
 - **Unit tests** in `apps/clipcraft` (`clip_select`, `library_grid` box tests, `library_check`,
   `quit_guard`, `capture` privacy tests, `clip_delete` Undo flow), in `clipcraft-engine`
@@ -1334,8 +1336,8 @@ OpenGL, generated clips) unless it says otherwise; none of it ran on Windows.
 - **A real window for the program pause:** a renamed copy of `xterm` as the "private program";
   the test display has no window manager, so the `_NET_CLIENT_LIST` property was set by hand. The
   recording paused while the window was open and resumed when it closed.
-- **Not run:** everything on Windows (Recycle Bin, mouse selection, process and lock-screen
-  detection), a real password manager, a real lock screen, a real full disk, a real crash loop,
+- **Not run:** on Windows, the Recycle Bin, drawing a selection box with the mouse, process and
+  lock-screen detection, a real password manager, a real lock screen, a real full disk, a real crash loop,
   hardware-encoded clips and Wayland. The backlog item [R1.1](backlog.md) asks for one written
   Windows pass.
 

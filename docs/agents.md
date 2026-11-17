@@ -7,10 +7,13 @@ actionable errors.
 | Interface | Current use | Requires a server? |
 | --- | --- | --- |
 | Desktop UI | Capture status and settings, local recording, library organization, playback, trim/export, diagnostics | No |
-| `clipcraft-cli` | List commands; inspect, scan, reveal, and thumbnail local clips; view recording settings; list capture targets; record; trim; run diagnostics | No |
+| `clipcraft-cli` | List commands; inspect, scan, reveal, rename, trash and thumbnail local clips; view recording settings; list capture targets; record; trim, export, GIF and loudness; edit sequences; run diagnostics and prepare a bug report | No |
 | Engine/platform tests | Deterministic command, media, capture, audio, and failure/recovery verification | No |
 
-The CLI's main command groups are `library`, `recording`, `capture`, `clip`, and `diagnose`. Use
+The CLI's command groups are `library` (scan, path, reveal, trash, copy-file, rename, probe,
+thumbnail), `recording` (settings, games, mic-test), `capture` (targets, record), `clip` (trim,
+export, gif, normalize), `editor` (import, apply, export, timeline, draft-load, draft-save,
+draft-discard), `game-data`, `presence`, `diagnose`, `bug-report` and `version`. Use
 `clipcraft-cli help` for exact arguments. Commands read and write local files only; they do not
 start an HTTP/WebSocket control endpoint, MCP server, or remote automation service.
 

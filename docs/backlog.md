@@ -493,8 +493,9 @@ still needs measurement. Estimate: initial implementation complete, remaining co
 ### M4.6 — Clips page redesign, choosing many clips and Refresh
 
 **Status:** implemented in 0.4.0 and checked on Linux (virtual display, generated clips, unit tests);
-the Windows Recycle Bin, mouse selection and drag to reorder or out of the window were only
-type-checked and linted. Evidence and limits: [`gaps.md`](gaps.md), "Choosing many clips, and
+on Windows 11 the keyboard choosing (Ctrl+A, Esc) was checked in the running app (and a fault in it
+fixed); the Windows Recycle Bin, drawing a selection box with a mouse and drag to reorder or out of
+the window are not recorded as checked. Evidence and limits: [`gaps.md`](gaps.md), "Choosing many clips, and
 keeping them safe" and "Window redesign round".
 
 **User problem:** the clips page was a flat grid that could not act on several clips at once, and a
@@ -513,7 +514,7 @@ changes or deletes them.
 
 **Acceptance (met on Linux):** unit tests for the selection maths, the box, the delete summary and
 the Undo flow; screenshots and a recording of choose, delete and Undo; a real move to the Trash.
-**Open:** the same checks on Windows (Recycle Bin, mouse, drag).
+**Open:** the rest of the checks on Windows (Recycle Bin, mouse box, drag).
 
 ## M5 — Reliability and release
 
@@ -720,8 +721,9 @@ network disconnection and Windows/hardware release gates remain open. See `testi
 
 ### M5.4 — Data safety: Undo, backups, clip check, safe start, quit question
 
-**Status:** implemented in 0.4.0; unit tests and Linux checks. Windows behaviour is not yet
-verified. Evidence: [`gaps.md`](gaps.md), "Choosing many clips, and keeping them safe".
+**Status:** implemented in 0.4.0; unit tests and Linux checks. The safe start was also run on
+Windows 11 (it found and fixed a fault); the rest of the Windows behaviour is not recorded as
+checked. Evidence: [`gaps.md`](gaps.md), "Choosing many clips, and keeping them safe".
 
 **User problem:** a mistake, a damaged file or a crash must not cost the person their clips or
 their library.
@@ -741,8 +743,9 @@ draft asks first.
 a backup can be up to a day old; the quit question is not asked on a crash or a killed process.
 
 **Acceptance (met on Linux):** unit tests for each rule, including a damaged settings file and a
-damaged index coming back from a backup; checks in the running app. **Open:** a real crash loop, a
-full disk and hardware-encoded clips on Windows.
+damaged index coming back from a backup; checks in the running app; the three-failed-starts safe
+start on Windows 11. **Open:** a full disk, hardware-encoded clips, backups, the clip check and the
+quit question on Windows.
 
 ### M5.5 — Experimental privacy pauses
 
