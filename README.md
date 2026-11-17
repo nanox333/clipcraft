@@ -47,16 +47,8 @@ never goes online if you turn that off.
 
 ## Screenshots
 
-**Clips:** search, favorites, collections, a heading for each day.
-
 ![The clip library](docs/screenshots/library.png)
-
-**Editor:** split on the timeline, add text, pick a picture shape, export.
-
 ![The editor](docs/screenshots/editor.png)
-
-**Settings:** choose what to record and how.
-
 ![Capture settings](docs/screenshots/capture-settings.png)
 
 ## Build and run
