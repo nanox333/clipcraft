@@ -46,6 +46,23 @@ Steps 1 to 3 above. The first two need real Windows machines and real games; the
 [gap report](docs/gaps.md) lists every unverified item. Anyone with a Windows PC can help by
 testing and sending the bug report from Settings → About.
 
+## What is built (0.4.0)
+
+The important features that exist today. "Evidence" says how far each was checked; the
+[gap report](docs/gaps.md) has the detail and the limits. Real games are not yet covered anywhere.
+
+| Area | Built | Evidence |
+| --- | --- | --- |
+| Capture and replay | Screen or window capture into a bounded replay buffer; save the last moments with a global hotkey (up to five shortcuts per action, shortcuts for different clip lengths); pause and resume; post-roll; automatic quality and a safety watchdog that protect your computer; hardware H.264/H.265 on supported Windows GPUs and a built-in software H.264 encoder | Windows/AMD and Linux/X11 with generated captures; two-hour generated soak at 1080p30 |
+| Game awareness | Game-only mode that follows a recognized game (348 bundled games plus local Steam discovery), desktop fallback when no game window is found, per-game exclusions | Logic and unit tests; no real-game evidence yet |
+| Audio | System sound and microphone on mixed or separate tracks, sound of one program on its own track, optional offline noise suppression, push-to-talk | Generated audio on Windows and Linux; real games open |
+| Library | Search, sort, favorites, collections, game labels and colours, a heading for each day, cards or a list, your own order by dragging, rename, thumbnails, choose many clips at once, Refresh that checks every clip | Linux with generated clips; Windows Recycle Bin and mouse selection not yet run |
+| Editor and export | Trim, split, arrange, fades, colour effects, styled text, frame stepping, timeline zoom, undo/redo, draft recovery, preview and export in any picture shape (fit, blur, fill, stretch), 720p/1080p/source at 30 or 60 FPS, size targets, GIF, loudness evening | Real software exports on Linux; physical GPU not checked |
+| Safety | Recycle Bin with an Undo message instead of deleting, storage limit that spares favorites, every saved clip checked, low-disk warning, rolling backups of settings and library, safe start after failed starts, question before quitting with footage, crash-safe saves and recovery | Unit tests and Linux; Windows behaviour not yet verified |
+| Sharing | Drag a clip into Discord or any program, copy file, export sized for Discord, optional Discord Rich Presence | Linux and tests; Windows drag-and-drop not yet run |
+| Privacy | Fully offline, no account or telemetry, optional update check you can turn off; experimental pause for password managers, programs you name and the lock screen | Linux X11 tested with a real window |
+| App and release | Windows installer and portable zip, Linux tarball, system tray, one copy at a time, bug-report helper, one message design, the command line tool with the same commands | 0.4.0 published; packages not yet run here, unsigned |
+
 ## Release gates
 
 - **Prototype:** local capture/replay/save, playback, persistent clip library, and no-reencode trim
