@@ -15,7 +15,6 @@ See [ADR 0022](docs/adr/0022-local-game-state.md) for the narrowly scoped trust 
 | Asset | Source | License / attribution |
 | --- | --- | --- |
 | `docs/screenshots/library.png` | ClipCraft (November 2026 development version) captured by contributors with original generated sample footage | MIT; interface text uses Inter under SIL OFL 1.1 |
-| `docs/screenshots/choose-clips.png` | ClipCraft (November 2026 development version) captured by contributors with original generated sample footage | MIT; interface text uses Inter under SIL OFL 1.1 |
 | `docs/screenshots/editor.png` | ClipCraft (November 2026 development version) captured by contributors with original generated sample footage | MIT; interface text uses Inter under SIL OFL 1.1 |
 | `docs/screenshots/capture-settings.png` | ClipCraft (November 2026 development version) captured by contributors on a private Linux display | MIT; interface text uses Inter under SIL OFL 1.1 |
 | `assets/brand/mark-lime.svg` | Original ClipCraft CUT geometry, developed from the maintainer-selected AI-assisted concept A; ClipCraft contributors | MIT; no third-party artwork or embedded font |

@@ -51,10 +51,6 @@ never goes online if you turn that off.
 
 ![The clip library](docs/screenshots/library.png)
 
-**Choose many at once:** click, Shift-click or draw a box, then favorite, collect or delete.
-
-![Choosing several clips](docs/screenshots/choose-clips.png)
-
 **Editor:** split on the timeline, add text, pick a picture shape, export.
 
 ![The editor](docs/screenshots/editor.png)
