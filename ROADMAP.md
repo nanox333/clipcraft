@@ -1,6 +1,6 @@
 # ClipCraft roadmap
 
-**Stage:** active prototype · **Last reviewed:** 2026-10-27 · **Target:** offline-first, game-aware capture and local editing
+**Stage:** active prototype · **Last reviewed:** 2026-11-17 · **Target:** offline-first, game-aware capture and local editing
 
 ClipCraft is a pure-Rust, offline-first native desktop product. Capture, library, editing, and export
 must work offline. Optional user-configured client-side-encrypted backup is planned, with no
