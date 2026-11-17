@@ -125,6 +125,18 @@ impl Rows {
         }
     }
 
+    /// Draws the heading of the section that has not shown one yet, if any.
+    fn draw_pending_heading(&mut self, ui: &mut egui::Ui) {
+        if let Some(pending) = self.pending.take() {
+            let heading = if self.searching() && !self.page.is_empty() {
+                format!("{}  \u{b7}  {}", self.page, pending.title)
+            } else {
+                pending.title
+            };
+            kit::section_heading(ui, &heading);
+        }
+    }
+
     fn matches(&self, meta: &Meta<'_>) -> bool {
         if self.words.is_empty() {
             return true;
@@ -145,22 +157,7 @@ impl Rows {
         if !self.matches(meta) {
             return false;
         }
-        if let Some(pending) = self.pending.take() {
-            let heading = if self.searching() && !self.page.is_empty() {
-                format!("{}  \u{b7}  {}", self.page, pending.title)
-            } else {
-                pending.title
-            };
-            kit::section_heading(ui, &heading);
-            let slot = ui.painter().add(Shape::Noop);
-            self.surface = Some(Surface {
-                slot,
-                top: ui.cursor().top(),
-                left: ui.max_rect().left(),
-                width: ui.available_width(),
-                rows: 0,
-            });
-        }
+        self.draw_pending_heading(ui);
         if self.surface.is_none() {
             // A row outside any section gets a surface of its own.
             let slot = ui.painter().add(Shape::Noop);
@@ -485,6 +482,8 @@ impl Rows {
     /// Draws something that is not a row, such as a note or a device list, unless searching.
     pub fn extra(&mut self, ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
         if !self.searching() {
+            // A note that opens a section sits under the section's heading, not above it.
+            self.draw_pending_heading(ui);
             body(ui);
         }
     }
